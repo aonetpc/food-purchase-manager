@@ -19,7 +19,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build project
         run: npm run build
@@ -27,8 +27,11 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Install COS CLI
-        run: npm install -g cos-nodejs-sdk-v5
+      - name: Install AWS CLI
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          sudo ./aws/install
 
       - name: Deploy to COS
         env:
@@ -37,85 +40,9 @@ jobs:
           BUCKET: ${{ secrets.COS_BUCKET }}
           REGION: ${{ secrets.COS_REGION }}
         run: |
-          cat > /tmp/deploy.js << 'EOF'
-          const COS = require('cos-nodejs-sdk-v5');
-          const fs = require('fs');
-          const path = require('path');
-          
-          const cos = new COS({
-            SecretId: process.env.SECRET_ID,
-            SecretKey: process.env.SECRET_KEY,
-          });
-          
-          const bucket = process.env.BUCKET;
-          const region = process.env.REGION;
-          const distDir = './dist';
-          
-          async function uploadFiles(dir, prefix = '') {
-            const files = fs.readdirSync(dir);
-            for (const file of files) {
-              const filePath = path.join(dir, file);
-              const stats = fs.statSync(filePath);
-              const key = prefix ? `${prefix}/${file}` : file;
-              
-              if (stats.isDirectory()) {
-                await uploadFiles(filePath, key);
-              } else {
-                const content = fs.readFileSync(filePath);
-                await new Promise((resolve, reject) => {
-                  cos.putObject({
-                    Bucket: bucket,
-                    Region: region,
-                    Key: key,
-                    Body: content,
-                    ContentType: getContentType(file),
-                    CacheControl: getCacheControl(file),
-                  }, (err) => {
-                    if (err) reject(err);
-                    else {
-                      console.log(`Uploaded: ${key}`);
-                      resolve();
-                    }
-                  });
-                });
-              }
-            }
-          }
-          
-          function getContentType(file) {
-            const ext = path.extname(file).toLowerCase();
-            const types = {
-              '.html': 'text/html',
-              '.css': 'text/css',
-              '.js': 'application/javascript',
-              '.json': 'application/json',
-              '.svg': 'image/svg+xml',
-              '.png': 'image/png',
-              '.jpg': 'image/jpeg',
-              '.jpeg': 'image/jpeg',
-              '.gif': 'image/gif',
-              '.ico': 'image/x-icon',
-              '.txt': 'text/plain',
-              '.woff': 'font/woff',
-              '.woff2': 'font/woff2',
-              '.ttf': 'font/ttf',
-            };
-            return types[ext] || 'application/octet-stream';
-          }
-          
-          function getCacheControl(file) {
-            const ext = path.extname(file).toLowerCase();
-            if (ext === '.html' || ext === '.json') {
-              return 'no-cache, no-store, must-revalidate';
-            }
-            return 'public, max-age=31536000';
-          }
-          
-          uploadFiles(distDir).then(() => {
-            console.log('Deployment completed successfully!');
-          }).catch((err) => {
-            console.error('Deployment failed:', err);
-            process.exit(1);
-          });
-          EOF
-          node /tmp/deploy.js
+          aws configure set aws_access_key_id $SECRET_ID
+          aws configure set aws_secret_access_key $SECRET_KEY
+          aws s3 sync ./dist/ s3://$BUCKET/ \
+            --endpoint-url https://$REGION.cos.tencentcloudapi.com \
+            --delete \
+            --cache-control "max-age=31536000"
