@@ -1,0 +1,121 @@
+name: Deploy to Tencent Cloud COS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Install COS CLI
+        run: npm install -g cos-nodejs-sdk-v5
+
+      - name: Deploy to COS
+        env:
+          SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          BUCKET: ${{ secrets.COS_BUCKET }}
+          REGION: ${{ secrets.COS_REGION }}
+        run: |
+          cat > /tmp/deploy.js << 'EOF'
+          const COS = require('cos-nodejs-sdk-v5');
+          const fs = require('fs');
+          const path = require('path');
+          
+          const cos = new COS({
+            SecretId: process.env.SECRET_ID,
+            SecretKey: process.env.SECRET_KEY,
+          });
+          
+          const bucket = process.env.BUCKET;
+          const region = process.env.REGION;
+          const distDir = './dist';
+          
+          async function uploadFiles(dir, prefix = '') {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+              const filePath = path.join(dir, file);
+              const stats = fs.statSync(filePath);
+              const key = prefix ? `${prefix}/${file}` : file;
+              
+              if (stats.isDirectory()) {
+                await uploadFiles(filePath, key);
+              } else {
+                const content = fs.readFileSync(filePath);
+                await new Promise((resolve, reject) => {
+                  cos.putObject({
+                    Bucket: bucket,
+                    Region: region,
+                    Key: key,
+                    Body: content,
+                    ContentType: getContentType(file),
+                    CacheControl: getCacheControl(file),
+                  }, (err) => {
+                    if (err) reject(err);
+                    else {
+                      console.log(`Uploaded: ${key}`);
+                      resolve();
+                    }
+                  });
+                });
+              }
+            }
+          }
+          
+          function getContentType(file) {
+            const ext = path.extname(file).toLowerCase();
+            const types = {
+              '.html': 'text/html',
+              '.css': 'text/css',
+              '.js': 'application/javascript',
+              '.json': 'application/json',
+              '.svg': 'image/svg+xml',
+              '.png': 'image/png',
+              '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
+              '.gif': 'image/gif',
+              '.ico': 'image/x-icon',
+              '.txt': 'text/plain',
+              '.woff': 'font/woff',
+              '.woff2': 'font/woff2',
+              '.ttf': 'font/ttf',
+            };
+            return types[ext] || 'application/octet-stream';
+          }
+          
+          function getCacheControl(file) {
+            const ext = path.extname(file).toLowerCase();
+            if (ext === '.html' || ext === '.json') {
+              return 'no-cache, no-store, must-revalidate';
+            }
+            return 'public, max-age=31536000';
+          }
+          
+          uploadFiles(distDir).then(() => {
+            console.log('Deployment completed successfully!');
+          }).catch((err) => {
+            console.error('Deployment failed:', err);
+            process.exit(1);
+          });
+          EOF
+          node /tmp/deploy.js
