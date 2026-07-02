@@ -1,0 +1,299 @@
+import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil } from 'lucide-react';
+import { format, addDays, subDays } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
+import { generateDailyRecord, getLastMonthRecord } from '@/data/dailyRecords';
+import type { DailyPurchaseRecord } from '@/types';
+import { formatCurrency, formatPercent, formatNumber, getPriceChangeColor, getPriceChangeBgColor } from '@/utils/format';
+import { formatDate } from '@/utils/date';
+import { usePurchaseStore, buildDailyRecordFromEntry } from '@/store/purchaseStore';
+import { useIngredientStore } from '@/store/ingredientStore';
+import { useCategoryStore } from '@/store/categoryStore';
+import { useAuthStore } from '@/store/authStore';
+import StatCard from '@/components/StatCard';
+
+export default function DailyPurchase() {
+  const navigate = useNavigate();
+  const { hasRecord, getItems } = usePurchaseStore();
+  const { ingredients } = useIngredientStore();
+  const { categories } = useCategoryStore();
+  const { isAdmin } = useAuthStore();
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+
+  const dateKey = formatDate(selectedDate);
+  const useEntryData = hasRecord(dateKey);
+
+  const record: DailyPurchaseRecord = useMemo(() => {
+    if (useEntryData) {
+      return buildDailyRecordFromEntry(dateKey, getItems(dateKey));
+    }
+    return generateDailyRecord(selectedDate, ingredients, categories);
+  }, [selectedDate, dateKey, useEntryData, getItems, ingredients, categories]);
+
+  const lastMonthRecord = useMemo(() => {
+    return getLastMonthRecord(selectedDate, ingredients, categories);
+  }, [selectedDate, ingredients, categories]);
+
+  const amountChangeRate = useMemo(() => {
+    if (lastMonthRecord.totalAmount === 0) return 0;
+    return Math.round(((record.totalAmount - lastMonthRecord.totalAmount) / lastMonthRecord.totalAmount) * 1000) / 10;
+  }, [record.totalAmount, lastMonthRecord.totalAmount]);
+
+  const handlePrevDay = () => {
+    setSelectedDate(prev => subDays(prev, 1));
+  };
+
+  const handleNextDay = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (selectedDate < today) {
+      setSelectedDate(prev => addDays(prev, 1));
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const dateStr = format(selectedDate, 'yyyy年MM月dd日 EEEE', { locale: zhCN });
+  const lastMonthDateStr = format(
+    new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, selectedDate.getDate()),
+    'MM月dd日',
+    { locale: zhCN }
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="print-only text-center mb-6">
+        <h1 className="text-xl font-serif font-bold">每日采购清单</h1>
+        <p className="text-sm text-gray-600 mt-1">{dateStr}</p>
+      </div>
+
+      <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-serif font-bold text-gray-800">每日采购清单</h1>
+            {useEntryData && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-success-100 text-success-700">
+                <ClipboardList size={12} />
+                实际录入
+              </span>
+            )}
+          </div>
+          <p className="text-gray-500 mt-1">查看每日采购明细及与上月同期价格对比</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {isAdmin() && (
+            <button
+              onClick={() => navigate('/purchase-entry')}
+              className="btn-secondary flex items-center gap-2"
+            >
+              {useEntryData ? <Pencil size={18} /> : <ClipboardList size={18} />}
+              <span>{useEntryData ? '编辑录入' : '录入数据'}</span>
+            </button>
+          )}
+          <div className="flex items-center bg-white rounded-lg border border-gray-200 p-1">
+            <button
+              onClick={handlePrevDay}
+              className="p-2 hover:bg-gray-100 rounded-md transition-colors"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div className="px-4 py-1.5 min-w-[180px] text-center font-medium">
+              {dateStr}
+            </div>
+            <button
+              onClick={handleNextDay}
+              className="p-2 hover:bg-gray-100 rounded-md transition-colors"
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+          <button onClick={handlePrint} className="btn-primary flex items-center gap-2">
+            <Printer size={18} />
+            <span>打印清单</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="采购总金额"
+          value={record.totalAmount}
+          prefix="¥"
+          changeRate={amountChangeRate}
+          changeLabel={`较上月${lastMonthDateStr}`}
+          icon={<DollarSign size={24} />}
+          iconBg="bg-primary-100"
+        />
+        <StatCard
+          title="采购品类数"
+          value={record.items.length}
+          suffix=" 种"
+          icon={<Package size={24} />}
+          iconBg="bg-accent-100"
+          valueColor="text-accent-600"
+        />
+        <StatCard
+          title="分类数量"
+          value={record.categorySummary.length}
+          suffix=" 类"
+          icon={<FileText size={24} />}
+          iconBg="bg-blue-100"
+          valueColor="text-blue-600"
+        />
+        <StatCard
+          title="上月同期金额"
+          value={lastMonthRecord.totalAmount}
+          prefix="¥"
+          icon={<TrendingUp size={24} />}
+          iconBg="bg-purple-100"
+          valueColor="text-purple-600"
+        />
+      </div>
+
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4">分类汇总</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {record.categorySummary.map(cat => (
+            <div
+              key={cat.categoryId}
+              className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: cat.color }}
+                />
+                <span className="text-sm font-medium text-gray-700">{cat.categoryName}</span>
+              </div>
+              <p className="text-lg font-bold text-gray-800">{formatCurrency(cat.amount)}</p>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-xs text-gray-500">{cat.itemCount} 项</span>
+                <span className="text-xs text-gray-500">{cat.percentage}%</span>
+              </div>
+              <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${cat.percentage}%`, backgroundColor: cat.color }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-800">采购明细</h2>
+          <span className="text-sm text-gray-500">共 {record.items.length} 项</span>
+        </div>
+        <div className="overflow-x-auto -mx-6 px-6">
+          <table className="data-table min-w-full">
+            <thead>
+              <tr>
+                <th className="whitespace-nowrap">食材名称</th>
+                <th className="whitespace-nowrap">分类</th>
+                <th className="whitespace-nowrap text-right">采购单位</th>
+                <th className="whitespace-nowrap text-right">数量</th>
+                <th className="whitespace-nowrap text-right">采购单价</th>
+                <th className="whitespace-nowrap text-right">金额</th>
+                <th className="whitespace-nowrap text-right">基准单价/{record.items[0]?.baseUnit || '公斤'}</th>
+                <th className="whitespace-nowrap text-right">上月基准价</th>
+                <th className="whitespace-nowrap text-right">涨跌</th>
+              </tr>
+            </thead>
+            <tbody>
+              {record.items.map((item, idx) => (
+                <tr key={item.id} style={{ animationDelay: `${idx * 20}ms` }} className="animate-fade-in">
+                  <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
+                  <td>
+                    <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }}
+                      />
+                      {item.categoryName}
+                    </span>
+                  </td>
+                  <td className="text-right text-gray-600">{item.purchaseUnit}</td>
+                  <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
+                  <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
+                  <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
+                  <td className="text-right text-gray-700">{formatCurrency(item.baseUnitPrice)}</td>
+                  <td className="text-right text-gray-500">{formatCurrency(item.lastMonthBasePrice)}</td>
+                  <td className="text-right">
+                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${getPriceChangeBgColor(item.priceChangeRate)}`}>
+                      {item.priceChangeRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                      {formatPercent(item.priceChangeRate)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-gray-50 font-semibold">
+                <td colSpan={5} className="text-right text-gray-600">合计</td>
+                <td className="text-right text-lg text-primary-600">{formatCurrency(record.totalAmount)}</td>
+                <td colSpan={3}></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div className="no-print card">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4">价格变动统计</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 bg-danger-50 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp className="text-danger-500" size={20} />
+              <span className="font-medium text-danger-700">价格上涨</span>
+            </div>
+            <p className="text-2xl font-bold text-danger-600">
+              {record.items.filter(i => i.priceChangeRate > 0).length} 项
+            </p>
+            <p className="text-sm text-danger-600 mt-1">
+              平均涨幅 {formatPercent(
+                record.items.filter(i => i.priceChangeRate > 0).reduce((s, i) => s + i.priceChangeRate, 0) /
+                Math.max(1, record.items.filter(i => i.priceChangeRate > 0).length)
+              )}
+            </p>
+          </div>
+          <div className="p-4 bg-success-50 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingDown className="text-success-500" size={20} />
+              <span className="font-medium text-success-700">价格下降</span>
+            </div>
+            <p className="text-2xl font-bold text-success-600">
+              {record.items.filter(i => i.priceChangeRate < 0).length} 项
+            </p>
+            <p className="text-sm text-success-600 mt-1">
+              平均降幅 {formatPercent(
+                record.items.filter(i => i.priceChangeRate < 0).reduce((s, i) => s + i.priceChangeRate, 0) /
+                Math.max(1, record.items.filter(i => i.priceChangeRate < 0).length)
+              )}
+            </p>
+          </div>
+          <div className="p-4 bg-gray-50 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="text-gray-500" size={20} />
+              <span className="font-medium text-gray-700">价格持平</span>
+            </div>
+            <p className="text-2xl font-bold text-gray-600">
+              {record.items.filter(i => i.priceChangeRate === 0).length} 项
+            </p>
+            <p className="text-sm text-gray-500 mt-1">
+              占比 {Math.round(record.items.filter(i => i.priceChangeRate === 0).length / record.items.length * 100)}%
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
