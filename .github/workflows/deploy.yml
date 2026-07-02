@@ -27,22 +27,13 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Install AWS CLI
-        run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip -q awscliv2.zip
-          sudo ./aws/install
-
       - name: Deploy to COS
-        env:
-          SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
-          SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
-          BUCKET: ${{ secrets.COS_BUCKET }}
-          REGION: ${{ secrets.COS_REGION }}
-        run: |
-          aws configure set aws_access_key_id $SECRET_ID
-          aws configure set aws_secret_access_key $SECRET_KEY
-          aws s3 sync ./dist/ s3://$BUCKET/ \
-            --endpoint-url https://$REGION.cos.tencentcloudapi.com \
-            --delete \
-            --cache-control "max-age=31536000"
+        uses: TencentCloud/cos-action@v1
+        with:
+          secret_id: ${{ secrets.TENCENT_SECRET_ID }}
+          secret_key: ${{ secrets.TENCENT_SECRET_KEY }}
+          cos_bucket: ${{ secrets.COS_BUCKET }}
+          cos_region: ${{ secrets.COS_REGION }}
+          local_path: ./dist
+          remote_path: /
+          clean: true
