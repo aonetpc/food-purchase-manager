@@ -27,13 +27,61 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
+      - name: Install COS SDK
+        run: npm install cos-nodejs-sdk-v5
+
       - name: Deploy to COS
-        uses: TencentCloud/cos-action@v1
-        with:
-          secret_id: ${{ secrets.TENCENT_SECRET_ID }}
-          secret_key: ${{ secrets.TENCENT_SECRET_KEY }}
-          cos_bucket: ${{ secrets.COS_BUCKET }}
-          cos_region: ${{ secrets.COS_REGION }}
-          local_path: ./dist
-          remote_path: /
-          clean: true
+        env:
+          SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          BUCKET: ${{ secrets.COS_BUCKET }}
+          REGION: ${{ secrets.COS_REGION }}
+        run: |
+          node -e "
+          const COS = require('cos-nodejs-sdk-v5');
+          const fs = require('fs');
+          const path = require('path');
+          
+          const cos = new COS({
+            SecretId: process.env.SECRET_ID,
+            SecretKey: process.env.SECRET_KEY,
+          });
+          
+          const bucket = process.env.BUCKET;
+          const region = process.env.REGION;
+          
+          async function uploadFile(localPath, key) {
+            const data = fs.readFileSync(localPath);
+            return new Promise((resolve, reject) => {
+              cos.putObject({
+                Bucket: bucket,
+                Region: region,
+                Key: key,
+                Body: data,
+              }, (err) => err ? reject(err) : resolve());
+            });
+          }
+          
+          async function uploadDir(dir, prefix = '') {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+              const filePath = path.join(dir, file);
+              const stats = fs.statSync(filePath);
+              const key = prefix ? prefix + '/' + file : file;
+              
+              if (stats.isDirectory()) {
+                await uploadDir(filePath, key);
+              } else {
+                await uploadFile(filePath, key);
+                console.log('Uploaded:', key);
+              }
+            }
+          }
+          
+          uploadDir('./dist').then(() => {
+            console.log('Deployment completed!');
+          }).catch((err) => {
+            console.error('Error:', err);
+            process.exit(1);
+          });
+          "
