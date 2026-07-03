@@ -33,13 +33,13 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Install COS SDK
+        run: npm install cos-nodejs-sdk-v5
+
       - name: Deploy to COS
-        continue-on-error: true
         env:
           TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
           TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
           COS_BUCKET: ${{ secrets.COS_BUCKET }}
           COS_REGION: ${{ secrets.COS_REGION }}
-        run: |
-          npm install cos-nodejs-sdk-v5
-          node scripts/deploy-cos.js
+        run: node scripts/deploy-cos.js
