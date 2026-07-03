@@ -71,8 +71,8 @@ export default function Layout() {
                 <UtensilsCrossed className="text-white" size={22} />
               </div>
               <div>
-                <h1 className="font-serif text-lg font-bold text-gray-800">食材采购管理平台</h1>
-                <p className="text-xs text-gray-500 -mt-1">专业采购成本管理工具</p>
+                <h1 className="font-serif text-lg font-bold text-gray-800">华医食材采购管理平台</h1>
+                <p className="text-xs text-gray-500 -mt-1">Daniel个人开发测试工具</p>
               </div>
             </div>
           </div>
