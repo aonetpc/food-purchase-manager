@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { supabase } from '@/lib/supabase';
+import { cache } from '@/lib/cache';
 import type { Category } from '@/types';
+
+const CACHE_KEY = 'categories';
 
 interface CategoryStore {
   categories: Category[];
@@ -18,6 +21,13 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
   error: null,
 
   fetchCategories: async () => {
+    // 先从缓存读取
+    const cached = cache.get<Category[]>(CACHE_KEY);
+    if (cached && cached.length > 0) {
+      set({ categories: cached, loading: false });
+      return;
+    }
+
     set({ loading: true, error: null });
     try {
       const { data, error } = await supabase
@@ -37,6 +47,8 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
         color: row.color || '#666666',
       }));
 
+      // 写入缓存
+      cache.set(CACHE_KEY, categories);
       set({ categories, loading: false });
     } catch (err) {
       set({ loading: false, error: '获取分类失败' });
@@ -69,10 +81,9 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
         color: result.color,
       };
 
-      set((state) => ({
-        categories: [...state.categories, newCategory],
-        error: null,
-      }));
+      const updatedCategories = [...get().categories, newCategory];
+      cache.set(CACHE_KEY, updatedCategories);
+      set({ categories: updatedCategories, error: null });
 
       return newCategory;
     } catch (err) {
@@ -97,12 +108,11 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
         return false;
       }
 
-      set((state) => ({
-        categories: state.categories.map((cat) =>
-          cat.id === id ? { ...cat, ...data } : cat
-        ),
-        error: null,
-      }));
+      const updatedCategories = get().categories.map((cat) =>
+        cat.id === id ? { ...cat, ...data } : cat
+      );
+      cache.set(CACHE_KEY, updatedCategories);
+      set({ categories: updatedCategories, error: null });
 
       return true;
     } catch (err) {
@@ -123,10 +133,9 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
         return false;
       }
 
-      set((state) => ({
-        categories: state.categories.filter((cat) => cat.id !== id),
-        error: null,
-      }));
+      const updatedCategories = get().categories.filter((cat) => cat.id !== id);
+      cache.set(CACHE_KEY, updatedCategories);
+      set({ categories: updatedCategories, error: null });
 
       return true;
     } catch (err) {

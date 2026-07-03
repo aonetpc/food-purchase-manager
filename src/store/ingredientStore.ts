@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { supabase } from '@/lib/supabase';
+import { cache } from '@/lib/cache';
 import type { Ingredient, UnitConversion } from '@/types';
+
+const CACHE_KEY = 'ingredients';
 
 interface IngredientStore {
   ingredients: Ingredient[];
@@ -27,6 +30,13 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
   error: null,
 
   fetchIngredients: async () => {
+    // 先从缓存读取
+    const cached = cache.get<Ingredient[]>(CACHE_KEY);
+    if (cached && cached.length > 0) {
+      set({ ingredients: cached, loading: false });
+      return;
+    }
+
     set({ loading: true, error: null });
     try {
       const { data, error } = await supabase
@@ -49,6 +59,8 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
         units: row.units || [{ unit: row.base_unit, factor: 1, isCommon: true }],
       }));
 
+      // 写入缓存
+      cache.set(CACHE_KEY, ingredients);
       set({ ingredients, loading: false });
     } catch (err) {
       set({ loading: false, error: '获取食材失败' });
@@ -85,10 +97,9 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
         units: result.units || [{ unit: result.base_unit, factor: 1, isCommon: true }],
       };
 
-      set((state) => ({
-        ingredients: [...state.ingredients, newIngredient],
-        error: null,
-      }));
+      const updatedIngredients = [...get().ingredients, newIngredient];
+      cache.set(CACHE_KEY, updatedIngredients);
+      set({ ingredients: updatedIngredients, error: null });
 
       return newIngredient;
     } catch (err) {
@@ -120,12 +131,11 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
         return false;
       }
 
-      set((state) => ({
-        ingredients: state.ingredients.map((ing) =>
-          ing.id === id ? { ...ing, ...data } : ing
-        ),
-        error: null,
-      }));
+      const updatedIngredients = get().ingredients.map((ing) =>
+        ing.id === id ? { ...ing, ...data } : ing
+      );
+      cache.set(CACHE_KEY, updatedIngredients);
+      set({ ingredients: updatedIngredients, error: null });
 
       return true;
     } catch (err) {
@@ -146,10 +156,9 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
         return false;
       }
 
-      set((state) => ({
-        ingredients: state.ingredients.filter((ing) => ing.id !== id),
-        error: null,
-      }));
+      const updatedIngredients = get().ingredients.filter((ing) => ing.id !== id);
+      cache.set(CACHE_KEY, updatedIngredients);
+      set({ ingredients: updatedIngredients, error: null });
 
       return true;
     } catch (err) {
