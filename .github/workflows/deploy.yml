@@ -33,13 +33,23 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Install COS SDK
-        run: npm install cos-nodejs-sdk-v5
+      - name: Install coscmd
+        run: |
+          pip install coscmd
+
+      - name: Configure coscmd
+        env:
+          SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          BUCKET: ${{ secrets.COS_BUCKET }}
+          REGION: ${{ secrets.COS_REGION }}
+        run: |
+          coscmd config -a $SECRET_ID -s $SECRET_KEY -b $BUCKET -r $REGION
+
+      - name: Test COS connection
+        run: |
+          coscmd list / || true
 
       - name: Deploy to COS
-        env:
-          TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
-          TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
-          COS_BUCKET: ${{ secrets.COS_BUCKET }}
-          COS_REGION: ${{ secrets.COS_REGION }}
-        run: node scripts/deploy-cos.js
+        run: |
+          cd dist && coscmd upload -r . /
