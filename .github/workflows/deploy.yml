@@ -33,23 +33,23 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Install coscmd
-        run: |
-          pip install coscmd
+      - name: Deploy to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "dist/"
+          target: "/usr/share/nginx/html/"
+          strip_components: 1
+          rm: true
 
-      - name: Configure coscmd
-        env:
-          SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
-          SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
-          BUCKET: ${{ secrets.COS_BUCKET }}
-          REGION: ${{ secrets.COS_REGION }}
-        run: |
-          coscmd config -a $SECRET_ID -s $SECRET_KEY -b $BUCKET -r $REGION
-
-      - name: Test COS connection
-        run: |
-          coscmd list / || true
-
-      - name: Deploy to COS
-        run: |
-          cd dist && coscmd upload -r . /
+      - name: Restart Nginx
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            chmod -R 755 /usr/share/nginx/html
+            nginx -t && systemctl reload nginx
