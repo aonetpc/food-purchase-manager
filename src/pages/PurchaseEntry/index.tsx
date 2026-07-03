@@ -125,7 +125,19 @@ export default function PurchaseEntry() {
       return;
     }
     const entryItems = draftItems.map(toEntryItem);
-    saveDateItems(dateStr, entryItems);
+    saveDateItems(dateStr, entryItems).then((savedItems) => {
+      if (savedItems && savedItems.length > 0) {
+        setDraftItems(prev => {
+          const result = [...prev];
+          savedItems.forEach((saved, idx) => {
+            if (idx < result.length && !result[idx].id.includes('-')) {
+              result[idx].id = saved.id;
+            }
+          });
+          return result;
+        });
+      }
+    });
     setAutoSaving(true);
     const timer = setTimeout(() => setAutoSaving(false), 800);
     return () => clearTimeout(timer);
