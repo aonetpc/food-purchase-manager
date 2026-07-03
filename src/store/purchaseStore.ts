@@ -4,6 +4,7 @@ import type { PurchaseItem } from '@/types';
 
 export interface PurchaseEntryItem {
   id: string;
+  date?: string;
   ingredientId: string;
   ingredientName: string;
   categoryId: string;
@@ -22,6 +23,8 @@ interface PurchaseStore {
   loading: boolean;
   error: string | null;
   fetchRecords: (date: string) => Promise<void>;
+  fetchMonthRecords: (yearMonth: string) => Promise<PurchaseEntryItem[]>;
+  fetchYearRecords: (year: string) => Promise<PurchaseEntryItem[]>;
   addItem: (date: string, item: PurchaseEntryItem) => Promise<boolean>;
   updateItem: (date: string, itemId: string, updates: Partial<PurchaseEntryItem>) => Promise<boolean>;
   removeItem: (date: string, itemId: string) => Promise<boolean>;
@@ -34,6 +37,7 @@ interface PurchaseStore {
 // 辅助函数：将数据库记录转换为前端格式
 const dbToFrontend = (row: any): PurchaseEntryItem => ({
   id: row.id,
+  date: row.date,
   ingredientId: row.ingredient_id,
   ingredientName: row.ingredient_name,
   categoryId: row.category_id || '',
@@ -91,6 +95,78 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
     } catch (err) {
       set({ loading: false, error: '获取采购记录失败' });
+    }
+  },
+
+  fetchMonthRecords: async (yearMonth) => {
+    set({ loading: true, error: null });
+    try {
+      const { data, error } = await supabase
+        .from('purchase_records')
+        .select('*')
+        .gte('date', `${yearMonth}-01`)
+        .lte('date', `${yearMonth}-31`)
+        .order('date', { ascending: true });
+
+      if (error) {
+        set({ loading: false, error: error.message });
+        return [];
+      }
+
+      const items = data.map(dbToFrontend);
+      const byDate: Record<string, PurchaseEntryItem[]> = {};
+      items.forEach(item => {
+        const row = data.find(r => r.id === item.id);
+        const d = row?.date || '';
+        if (!byDate[d]) byDate[d] = [];
+        byDate[d].push(item);
+      });
+
+      set((state) => ({
+        records: { ...state.records, ...byDate },
+        loading: false,
+      }));
+
+      return items;
+    } catch (err) {
+      set({ loading: false, error: '获取月度采购记录失败' });
+      return [];
+    }
+  },
+
+  fetchYearRecords: async (year) => {
+    set({ loading: true, error: null });
+    try {
+      const { data, error } = await supabase
+        .from('purchase_records')
+        .select('*')
+        .gte('date', `${year}-01-01`)
+        .lte('date', `${year}-12-31`)
+        .order('date', { ascending: true });
+
+      if (error) {
+        set({ loading: false, error: error.message });
+        return [];
+      }
+
+      const items = data.map(dbToFrontend);
+      const byDate: Record<string, PurchaseEntryItem[]> = {};
+      items.forEach(item => {
+        const row = data.find(r => r.id === item.id);
+        const d = row?.date || '';
+        if (!byDate[d]) byDate[d] = [];
+        byDate[d].push(item);
+      });
+
+      set((state) => ({
+        records: { ...state.records, ...byDate },
+        loading: false,
+      }));
+
+      return items;
+    } catch (err) {
+      set({ loading: false, error: '获取年度采购记录失败' });
+      return [];
     }
   },
 

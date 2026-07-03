@@ -1,18 +1,68 @@
-import { useState, useMemo } from 'react';
-import { Search, TrendingUp, TrendingDown, Info, Scale } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Search, Info, Scale } from 'lucide-react';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
-import { getYearlyPriceData } from '@/data/monthlyData';
+import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import type { Ingredient, YearlyPriceData } from '@/types';
 import { formatCurrency, formatPercent, getPriceChangeColor } from '@/utils/format';
-import { getMonthLabel } from '@/utils/date';
+import { getPastMonths, getMonthLabel } from '@/utils/date';
+
+const buildYearlyPriceData = (
+  ingredientId: string,
+  items: PurchaseEntryItem[]
+): YearlyPriceData | null => {
+  const ingredientItems = items.filter(i => i.ingredientId === ingredientId);
+  if (ingredientItems.length === 0) return null;
+
+  const past6Months = getPastMonths(6);
+  const byMonth: Record<string, number[]> = {};
+  ingredientItems.forEach(item => {
+    const d = item.date || '';
+    if (!d) return;
+    const ym = d.substring(0, 7);
+    if (!byMonth[ym]) byMonth[ym] = [];
+    byMonth[ym].push(item.baseUnitPrice);
+  });
+
+  const monthlyPrices = past6Months.map(month => {
+    const prices = byMonth[month] || [];
+    const avgPrice = prices.length > 0
+      ? Math.round(prices.reduce((s, p) => s + p, 0) / prices.length * 100) / 100
+      : 0;
+    return { month, avgPrice, minPrice: 0, maxPrice: 0 };
+  }).filter(m => m.avgPrice > 0);
+
+  const yearlyAvg = monthlyPrices.length > 0
+    ? Math.round(monthlyPrices.reduce((s, m) => s + m.avgPrice, 0) / monthlyPrices.length * 100) / 100
+    : 0;
+
+  return {
+    ingredientId,
+    ingredientName: '',
+    categoryName: '',
+    baseUnit: '',
+    yearlyAvg,
+    monthlyPrices,
+  };
+};
 
 export default function IngredientQuery() {
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
+  const { fetchYearRecords } = usePurchaseStore();
+  const [yearItems, setYearItems] = useState<PurchaseEntryItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const year = new Date().getFullYear().toString();
+      const data = await fetchYearRecords(year);
+      setYearItems(data);
+    };
+    load();
+  }, [fetchYearRecords]);
 
   const filteredIngredients = useMemo(() => {
     return ingredients.filter(ing => {
@@ -24,12 +74,12 @@ export default function IngredientQuery() {
 
   const yearlyData: YearlyPriceData | null = useMemo(() => {
     if (!selectedIngredient) return null;
-    return getYearlyPriceData(selectedIngredient.id);
-  }, [selectedIngredient]);
+    return buildYearlyPriceData(selectedIngredient.id, yearItems);
+  }, [selectedIngredient, yearItems]);
 
-  const getIngredientChange = (ingredientId: string): number => {
-    const data = getYearlyPriceData(ingredientId);
-    if (data.monthlyPrices.length < 2) return 0;
+  const getIngredientChange = (ingredientId: string): number | null => {
+    const data = buildYearlyPriceData(ingredientId, yearItems);
+    if (!data || data.monthlyPrices.length < 2) return null;
     const first = data.monthlyPrices[0].avgPrice;
     const last = data.monthlyPrices[data.monthlyPrices.length - 1].avgPrice;
     return Math.round(((last - first) / first) * 1000) / 10;
@@ -101,7 +151,7 @@ export default function IngredientQuery() {
             </div>
           </div>
 
-          {selectedIngredient && yearlyData ? (
+          {selectedIngredient ? (
             <div className="card">
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-start gap-4">
@@ -130,17 +180,15 @@ export default function IngredientQuery() {
                           {formatCurrency(selectedIngredient.basePrice)}
                         </p>
                       </div>
-                      <div>
-                        <p className="text-sm text-gray-500">年度涨跌</p>
-                        <p className={`font-semibold flex items-center gap-1 ${getPriceChangeColor(getIngredientChange(selectedIngredient.id))}`}>
-                          {getIngredientChange(selectedIngredient.id) >= 0 ? (
-                            <TrendingUp size={16} />
-                          ) : (
-                            <TrendingDown size={16} />
-                          )}
-                          {formatPercent(getIngredientChange(selectedIngredient.id))}
-                        </p>
-                      </div>
+                      {getIngredientChange(selectedIngredient.id) !== null && (
+                        <div>
+                          <p className="text-sm text-gray-500">年度涨跌</p>
+                          <p className={`font-semibold flex items-center gap-1 ${getPriceChangeColor(getIngredientChange(selectedIngredient.id)!)}`}>
+                            {getIngredientChange(selectedIngredient.id)! >= 0 ? '↑' : '↓'}
+                            {formatPercent(getIngredientChange(selectedIngredient.id)!)}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -186,20 +234,22 @@ export default function IngredientQuery() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-100 pt-6 mt-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <Info className="text-primary-500" size={20} />
-                  <h3 className="font-semibold text-gray-800">近期价格走势</h3>
+              {yearlyData && yearlyData.monthlyPrices.length > 0 && (
+                <div className="border-t border-gray-100 pt-6 mt-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Info className="text-primary-500" size={20} />
+                    <h3 className="font-semibold text-gray-800">近期价格走势</h3>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                    {yearlyData.monthlyPrices.slice(-6).map(m => (
+                      <div key={m.month} className="p-3 bg-gray-50 rounded-xl text-center">
+                        <p className="text-xs text-gray-500">{getMonthLabel(m.month)}</p>
+                        <p className="font-semibold text-gray-800 mt-1">{formatCurrency(m.avgPrice)}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {yearlyData.monthlyPrices.slice(-6).map(m => (
-                    <div key={m.month} className="p-3 bg-gray-50 rounded-xl text-center">
-                      <p className="text-xs text-gray-500">{getMonthLabel(m.month)}</p>
-                      <p className="font-semibold text-gray-800 mt-1">{formatCurrency(m.avgPrice)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              )}
             </div>
           ) : null}
 
@@ -235,13 +285,15 @@ export default function IngredientQuery() {
                           {categories.find(c => c.id === ing.categoryId)?.name}
                         </p>
                       </div>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                          change >= 0 ? 'bg-danger-50 text-danger-600' : 'bg-success-50 text-success-600'
-                        }`}
-                      >
-                        {formatPercent(change)}
-                      </span>
+                      {change !== null && (
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            change >= 0 ? 'bg-danger-50 text-danger-600' : 'bg-success-50 text-success-600'
+                          }`}
+                        >
+                          {formatPercent(change)}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-3 pt-3 border-t border-gray-100 flex items-end justify-between">
                       <div>

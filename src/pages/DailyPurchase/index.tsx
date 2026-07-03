@@ -1,21 +1,49 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil, ClipboardCheck } from 'lucide-react';
 import { format, addDays, subDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { generateDailyRecord, getLastMonthRecord } from '@/data/dailyRecords';
-import type { DailyPurchaseRecord } from '@/types';
+import type { DailyPurchaseRecord, CategorySummary } from '@/types';
 import { formatCurrency, formatPercent, formatNumber, getPriceChangeColor, getPriceChangeBgColor } from '@/utils/format';
 import { formatDate } from '@/utils/date';
-import { usePurchaseStore, buildDailyRecordFromEntry } from '@/store/purchaseStore';
+import { usePurchaseStore, buildDailyRecordFromEntry, type PurchaseEntryItem } from '@/store/purchaseStore';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useAuthStore } from '@/store/authStore';
 import StatCard from '@/components/StatCard';
 
+const buildDailyRecord = (date: string, items: PurchaseEntryItem[], categories: { id: string; name: string; color: string }[]): DailyPurchaseRecord | null => {
+  if (items.length === 0) return null;
+
+  const categoryMap: Record<string, { amount: number; count: number; color: string }> = {};
+  items.forEach(item => {
+    const cid = item.categoryId || 'other';
+    if (!categoryMap[cid]) {
+      const cat = categories.find(c => c.id === cid);
+      categoryMap[cid] = { amount: 0, count: 0, color: cat?.color || '#999' };
+    }
+    categoryMap[cid].amount += item.amount;
+    categoryMap[cid].count += 1;
+  });
+
+  const totalAmount = items.reduce((s, i) => s + i.amount, 0);
+  const categorySummary: CategorySummary[] = Object.entries(categoryMap).map(([cid, data]) => ({
+    categoryId: cid,
+    categoryName: categories.find(c => c.id === cid)?.name || '其他',
+    color: data.color,
+    amount: Math.round(data.amount * 100) / 100,
+    itemCount: data.count,
+    percentage: totalAmount > 0 ? Math.round((data.amount / totalAmount) * 1000) / 10 : 0,
+  })).sort((a, b) => b.amount - a.amount);
+
+  const record = buildDailyRecordFromEntry(date, items);
+  record.categorySummary = categorySummary;
+  return record;
+};
+
 export default function DailyPurchase() {
   const navigate = useNavigate();
-  const { hasRecord, getItems } = usePurchaseStore();
+  const { fetchRecords, getItems } = usePurchaseStore();
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
   const { isAdmin } = useAuthStore();
@@ -24,25 +52,30 @@ export default function DailyPurchase() {
     d.setHours(0, 0, 0, 0);
     return d;
   });
+  const [items, setItems] = useState<PurchaseEntryItem[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const dateKey = formatDate(selectedDate);
-  const useEntryData = hasRecord(dateKey);
 
-  const record: DailyPurchaseRecord = useMemo(() => {
-    if (useEntryData) {
-      return buildDailyRecordFromEntry(dateKey, getItems(dateKey));
-    }
-    return generateDailyRecord(selectedDate, ingredients, categories);
-  }, [selectedDate, dateKey, useEntryData, getItems, ingredients, categories]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      await fetchRecords(dateKey);
+      if (!cancelled) {
+        setItems(getItems(dateKey));
+        setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [dateKey, fetchRecords, getItems]);
 
-  const lastMonthRecord = useMemo(() => {
-    return getLastMonthRecord(selectedDate, ingredients, categories);
-  }, [selectedDate, ingredients, categories]);
+  const record: DailyPurchaseRecord | null = useMemo(() => {
+    return buildDailyRecord(dateKey, items, categories);
+  }, [dateKey, items, categories]);
 
-  const amountChangeRate = useMemo(() => {
-    if (lastMonthRecord.totalAmount === 0) return 0;
-    return Math.round(((record.totalAmount - lastMonthRecord.totalAmount) / lastMonthRecord.totalAmount) * 1000) / 10;
-  }, [record.totalAmount, lastMonthRecord.totalAmount]);
+  const amountChangeRate = 0;
 
   const handlePrevDay = () => {
     setSelectedDate(prev => subDays(prev, 1));
@@ -78,7 +111,7 @@ export default function DailyPurchase() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-serif font-bold text-gray-800">每日采购清单</h1>
-            {useEntryData && (
+            {record && (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-success-100 text-success-700">
                 <ClipboardList size={12} />
                 实际录入
@@ -93,8 +126,8 @@ export default function DailyPurchase() {
               onClick={() => navigate('/purchase-entry')}
               className="btn-secondary flex items-center gap-2"
             >
-              {useEntryData ? <Pencil size={18} /> : <ClipboardList size={18} />}
-              <span>{useEntryData ? '编辑录入' : '录入数据'}</span>
+              {record ? <Pencil size={18} /> : <ClipboardList size={18} />}
+              <span>{record ? '编辑录入' : '录入数据'}</span>
             </button>
           )}
           <div className="flex items-center bg-white rounded-lg border border-gray-200 p-1">
@@ -114,186 +147,158 @@ export default function DailyPurchase() {
               <ChevronRight size={18} />
             </button>
           </div>
-          <button onClick={handlePrint} className="btn-primary flex items-center gap-2">
-            <Printer size={18} />
-            <span>打印清单</span>
-          </button>
+          {record && (
+            <button onClick={handlePrint} className="btn-primary flex items-center gap-2">
+              <Printer size={18} />
+              <span>打印清单</span>
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="采购总金额"
-          value={record.totalAmount}
-          prefix="¥"
-          changeRate={amountChangeRate}
-          changeLabel={`较上月${lastMonthDateStr}`}
-          icon={<DollarSign size={24} />}
-          iconBg="bg-primary-100"
-        />
-        <StatCard
-          title="采购品类数"
-          value={record.items.length}
-          suffix=" 种"
-          icon={<Package size={24} />}
-          iconBg="bg-accent-100"
-          valueColor="text-accent-600"
-        />
-        <StatCard
-          title="分类数量"
-          value={record.categorySummary.length}
-          suffix=" 类"
-          icon={<FileText size={24} />}
-          iconBg="bg-blue-100"
-          valueColor="text-blue-600"
-        />
-        <StatCard
-          title="上月同期金额"
-          value={lastMonthRecord.totalAmount}
-          prefix="¥"
-          icon={<TrendingUp size={24} />}
-          iconBg="bg-purple-100"
-          valueColor="text-purple-600"
-        />
-      </div>
+      {loading && (
+        <div className="card flex items-center justify-center py-16">
+          <p className="text-gray-500">加载中...</p>
+        </div>
+      )}
 
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">分类汇总</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {record.categorySummary.map(cat => (
-            <div
-              key={cat.categoryId}
-              className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm"
+      {!loading && !record && (
+        <div className="card flex flex-col items-center justify-center py-20">
+          <ClipboardCheck size={64} className="text-gray-300 mb-4" />
+          <h3 className="text-lg font-medium text-gray-600 mb-2">当日暂无采购数据</h3>
+          <p className="text-gray-400 text-sm mb-6">该日期还没有录入采购清单</p>
+          {isAdmin() && (
+            <button
+              onClick={() => navigate('/purchase-entry')}
+              className="btn-primary flex items-center gap-2"
             >
-              <div className="flex items-center gap-2 mb-2">
-                <div
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: cat.color }}
-                />
-                <span className="text-sm font-medium text-gray-700">{cat.categoryName}</span>
-              </div>
-              <p className="text-lg font-bold text-gray-800">{formatCurrency(cat.amount)}</p>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-xs text-gray-500">{cat.itemCount} 项</span>
-                <span className="text-xs text-gray-500">{cat.percentage}%</span>
-              </div>
-              <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${cat.percentage}%`, backgroundColor: cat.color }}
-                />
-              </div>
-            </div>
-          ))}
+              <ClipboardList size={18} />
+              <span>去录入</span>
+            </button>
+          )}
         </div>
-      </div>
+      )}
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-800">采购明细</h2>
-          <span className="text-sm text-gray-500">共 {record.items.length} 项</span>
-        </div>
-        <div className="overflow-x-auto -mx-6 px-6">
-          <table className="data-table min-w-full">
-            <thead>
-              <tr>
-                <th className="whitespace-nowrap">食材名称</th>
-                <th className="whitespace-nowrap">分类</th>
-                <th className="whitespace-nowrap text-right">采购单位</th>
-                <th className="whitespace-nowrap text-right">数量</th>
-                <th className="whitespace-nowrap text-right">采购单价</th>
-                <th className="whitespace-nowrap text-right">金额</th>
-                <th className="whitespace-nowrap text-right">基准单价/{record.items[0]?.baseUnit || '公斤'}</th>
-                <th className="whitespace-nowrap text-right">上月基准价</th>
-                <th className="whitespace-nowrap text-right">涨跌</th>
-              </tr>
-            </thead>
-            <tbody>
-              {record.items.map((item, idx) => (
-                <tr key={item.id} style={{ animationDelay: `${idx * 20}ms` }} className="animate-fade-in">
-                  <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
-                  <td>
-                    <span className="inline-flex items-center gap-1 text-xs text-gray-600">
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }}
-                      />
-                      {item.categoryName}
-                    </span>
-                  </td>
-                  <td className="text-right text-gray-600">{item.purchaseUnit}</td>
-                  <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
-                  <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
-                  <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
-                  <td className="text-right text-gray-700">{formatCurrency(item.baseUnitPrice)}</td>
-                  <td className="text-right text-gray-500">{formatCurrency(item.lastMonthBasePrice)}</td>
-                  <td className="text-right">
-                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${getPriceChangeBgColor(item.priceChangeRate)}`}>
-                      {item.priceChangeRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                      {formatPercent(item.priceChangeRate)}
-                    </span>
-                  </td>
-                </tr>
+      {!loading && record && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard
+              title="采购总金额"
+              value={record.totalAmount}
+              prefix="¥"
+              changeRate={amountChangeRate}
+              changeLabel={`较上月${lastMonthDateStr}`}
+              icon={<DollarSign size={24} />}
+              iconBg="bg-primary-100"
+            />
+            <StatCard
+              title="采购品类数"
+              value={record.items.length}
+              suffix=" 种"
+              icon={<Package size={24} />}
+              iconBg="bg-accent-100"
+              valueColor="text-accent-600"
+            />
+            <StatCard
+              title="分类数量"
+              value={record.categorySummary.length}
+              suffix=" 类"
+              icon={<FileText size={24} />}
+              iconBg="bg-blue-100"
+              valueColor="text-blue-600"
+            />
+            <StatCard
+              title="上月同期金额"
+              value={0}
+              prefix="¥"
+              icon={<TrendingUp size={24} />}
+              iconBg="bg-purple-100"
+              valueColor="text-purple-600"
+            />
+          </div>
+
+          <div className="card">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">分类汇总</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {record.categorySummary.map(cat => (
+                <div
+                  key={cat.categoryId}
+                  className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: cat.color }}
+                    />
+                    <span className="text-sm font-medium text-gray-700">{cat.categoryName}</span>
+                  </div>
+                  <p className="text-lg font-bold text-gray-800">{formatCurrency(cat.amount)}</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-xs text-gray-500">{cat.itemCount} 项</span>
+                    <span className="text-xs text-gray-500">{cat.percentage}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${cat.percentage}%`, backgroundColor: cat.color }}
+                    />
+                  </div>
+                </div>
               ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-gray-50 font-semibold">
-                <td colSpan={5} className="text-right text-gray-600">合计</td>
-                <td className="text-right text-lg text-primary-600">{formatCurrency(record.totalAmount)}</td>
-                <td colSpan={3}></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
+            </div>
+          </div>
 
-      <div className="no-print card">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">价格变动统计</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 bg-danger-50 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="text-danger-500" size={20} />
-              <span className="font-medium text-danger-700">价格上涨</span>
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-800">采购明细</h2>
+              <span className="text-sm text-gray-500">共 {record.items.length} 项</span>
             </div>
-            <p className="text-2xl font-bold text-danger-600">
-              {record.items.filter(i => i.priceChangeRate > 0).length} 项
-            </p>
-            <p className="text-sm text-danger-600 mt-1">
-              平均涨幅 {formatPercent(
-                record.items.filter(i => i.priceChangeRate > 0).reduce((s, i) => s + i.priceChangeRate, 0) /
-                Math.max(1, record.items.filter(i => i.priceChangeRate > 0).length)
-              )}
-            </p>
-          </div>
-          <div className="p-4 bg-success-50 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingDown className="text-success-500" size={20} />
-              <span className="font-medium text-success-700">价格下降</span>
+            <div className="overflow-x-auto -mx-6 px-6">
+              <table className="data-table min-w-full">
+                <thead>
+                  <tr>
+                    <th className="whitespace-nowrap">食材名称</th>
+                    <th className="whitespace-nowrap">分类</th>
+                    <th className="whitespace-nowrap text-right">采购单位</th>
+                    <th className="whitespace-nowrap text-right">数量</th>
+                    <th className="whitespace-nowrap text-right">采购单价</th>
+                    <th className="whitespace-nowrap text-right">金额</th>
+                    <th className="whitespace-nowrap text-right">基准单价/{record.items[0]?.baseUnit || '公斤'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {record.items.map((item, idx) => (
+                    <tr key={item.id} style={{ animationDelay: `${idx * 20}ms` }} className="animate-fade-in">
+                      <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
+                      <td>
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }}
+                          />
+                          {item.categoryName}
+                        </span>
+                      </td>
+                      <td className="text-right text-gray-600">{item.purchaseUnit}</td>
+                      <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
+                      <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
+                      <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
+                      <td className="text-right text-gray-700">{formatCurrency(item.baseUnitPrice)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-50 font-semibold">
+                    <td colSpan={5} className="text-right text-gray-600">合计</td>
+                    <td className="text-right text-lg text-primary-600">{formatCurrency(record.totalAmount)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
-            <p className="text-2xl font-bold text-success-600">
-              {record.items.filter(i => i.priceChangeRate < 0).length} 项
-            </p>
-            <p className="text-sm text-success-600 mt-1">
-              平均降幅 {formatPercent(
-                record.items.filter(i => i.priceChangeRate < 0).reduce((s, i) => s + i.priceChangeRate, 0) /
-                Math.max(1, record.items.filter(i => i.priceChangeRate < 0).length)
-              )}
-            </p>
           </div>
-          <div className="p-4 bg-gray-50 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <FileText className="text-gray-500" size={20} />
-              <span className="font-medium text-gray-700">价格持平</span>
-            </div>
-            <p className="text-2xl font-bold text-gray-600">
-              {record.items.filter(i => i.priceChangeRate === 0).length} 项
-            </p>
-            <p className="text-sm text-gray-500 mt-1">
-              占比 {Math.round(record.items.filter(i => i.priceChangeRate === 0).length / record.items.length * 100)}%
-            </p>
-          </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

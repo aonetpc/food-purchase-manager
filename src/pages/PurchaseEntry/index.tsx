@@ -55,7 +55,7 @@ interface QuickIngredientForm {
 
 export default function PurchaseEntry() {
   const navigate = useNavigate();
-  const { saveDateItems, getItems, hasRecord, clearDate } = usePurchaseStore();
+  const { saveDateItems, fetchRecords, clearDate } = usePurchaseStore();
   const { ingredients, addIngredient } = useIngredientStore();
   const { categories } = useCategoryStore();
 
@@ -84,25 +84,39 @@ export default function PurchaseEntry() {
   });
   const [quickError, setQuickError] = useState('');
   const [autoSaving, setAutoSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const skipSaveRef = useRef(true);
 
-  // 加载已有录入数据
+  // 加载已有录入数据（异步）
   useEffect(() => {
-    skipSaveRef.current = true;
-    const existing = getItems(dateStr);
-    setDraftItems(existing.map((it) => ({
-      id: it.id,
-      ingredientId: it.ingredientId,
-      ingredientName: it.ingredientName,
-      categoryId: it.categoryId,
-      categoryName: it.categoryName,
-      purchaseUnit: it.purchaseUnit,
-      factor: it.purchaseUnitPrice > 0 ? (ingredients.find(i => i.id === it.ingredientId)?.units.find(u => u.unit === it.purchaseUnit)?.factor || 1) : 1,
-      baseUnit: it.baseUnit,
-      purchaseQuantity: it.purchaseQuantity,
-      purchaseUnitPrice: it.purchaseUnitPrice,
-    })));
-  }, [dateStr, getItems]);
+    let cancelled = false;
+    const load = async () => {
+      skipSaveRef.current = true;
+      setLoading(true);
+      await fetchRecords(dateStr);
+      if (cancelled) return;
+
+      const existing = usePurchaseStore.getState().records[dateStr] || [];
+      setDraftItems(existing.map((it) => ({
+        id: it.id,
+        ingredientId: it.ingredientId,
+        ingredientName: it.ingredientName,
+        categoryId: it.categoryId,
+        categoryName: it.categoryName,
+        purchaseUnit: it.purchaseUnit,
+        factor: it.purchaseUnitPrice > 0 ? (ingredients.find(i => i.id === it.ingredientId)?.units.find(u => u.unit === it.purchaseUnit)?.factor || 1) : 1,
+        baseUnit: it.baseUnit,
+        purchaseQuantity: it.purchaseQuantity,
+        purchaseUnitPrice: it.purchaseUnitPrice,
+      })));
+      setLoading(false);
+      setTimeout(() => {
+        skipSaveRef.current = false;
+      }, 100);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [dateStr, fetchRecords, ingredients]);
 
   // 实时自动保存（跳过数据加载触发的更新）
   useEffect(() => {
@@ -207,7 +221,7 @@ export default function PurchaseEntry() {
     navigate('/daily');
   };
 
-  const existingRecord = hasRecord(dateStr);
+  const existingRecord = draftItems.length > 0;
 
   return (
     <div className="space-y-6">
