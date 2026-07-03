@@ -1,4 +1,4 @@
-name: Deploy to Tencent Cloud COS
+name: Build and Deploy
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -27,13 +27,19 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Install COS SDK
-        run: npm install cos-nodejs-sdk-v5
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
 
       - name: Deploy to COS
+        continue-on-error: true
         env:
           TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
           TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
           COS_BUCKET: ${{ secrets.COS_BUCKET }}
           COS_REGION: ${{ secrets.COS_REGION }}
-        run: node scripts/deploy-cos.js
+        run: |
+          npm install cos-nodejs-sdk-v5
+          node scripts/deploy-cos.js
