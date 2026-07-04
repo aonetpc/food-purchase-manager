@@ -63,8 +63,17 @@ echo ""
 # ====== 第四步：安装 Node.js ======
 echo "=== 第四步：安装 Node.js ==="
 if ! command -v node &> /dev/null; then
-    curl -fsSL https://rpm.nodesource.com/setup_18.x | bash - 2>&1 | tail -3
-    yum install -y nodejs 2>&1 | tail -3
+    cd /tmp
+    echo "  下载 Node.js 18..."
+    wget -q --tries=3 --timeout=60 \
+        https://nodejs.org/dist/v18.20.4/node-v18.20.4-linux-x64.tar.xz \
+        -O node.tar.xz
+    tar -xf node.tar.xz
+    mv node-v18.20.4-linux-x64 /usr/local/node
+    ln -sf /usr/local/node/bin/node /usr/local/bin/node
+    ln -sf /usr/local/node/bin/npm /usr/local/bin/npm
+    ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
+    rm -f node.tar.xz
 fi
 echo "  Node.js 版本: $(node -v)"
 echo "  npm 版本: $(npm -v)"
@@ -457,7 +466,7 @@ CREATE TABLE IF NOT EXISTS categories (
   icon VARCHAR(10) DEFAULT '🏷️',
   color VARCHAR(20) DEFAULT '#666666',
   sort_order INT DEFAULT 0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME DEFAULT NOW()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS ingredients (
@@ -467,9 +476,9 @@ CREATE TABLE IF NOT EXISTS ingredients (
   base_unit VARCHAR(20) NOT NULL,
   base_price DECIMAL(10, 2) NOT NULL,
   image TEXT,
-  units JSON,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  units TEXT,
+  created_at DATETIME DEFAULT NOW(),
+  updated_at DATETIME DEFAULT NOW() ON UPDATE NOW(),
   INDEX idx_category (category_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -488,7 +497,7 @@ CREATE TABLE IF NOT EXISTS purchase_records (
   base_quantity DECIMAL(10, 2),
   amount DECIMAL(10, 2) NOT NULL,
   created_by VARCHAR(36),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT NOW(),
   INDEX idx_date (date),
   INDEX idx_ingredient (ingredient_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -499,7 +508,7 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(100) NOT NULL,
   role VARCHAR(20) DEFAULT 'viewer',
   password_hash VARCHAR(255) NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME DEFAULT NOW()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT IGNORE INTO categories (id, name, icon, color, sort_order) VALUES
