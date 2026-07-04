@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import type { PurchaseItem } from '@/types';
 
 export interface PurchaseEntryItem {
@@ -80,16 +80,7 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
   fetchRecords: async (date) => {
     set({ loading: true, error: null });
     try {
-      const { data, error } = await supabase
-        .from('purchase_records')
-        .select('*')
-        .eq('date', date)
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        set({ loading: false, error: error.message });
-        return;
-      }
+      const data = await api.get<any[]>(`/purchase?date=${date}`);
 
       const items = data.map(dbToFrontend);
 
@@ -97,25 +88,17 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
         records: { ...state.records, [date]: items },
         loading: false,
       }));
-    } catch (err) {
-      set({ loading: false, error: '获取采购记录失败' });
+    } catch (err: any) {
+      set({ loading: false, error: err.message || '获取采购记录失败' });
     }
   },
 
   fetchMonthRecords: async (yearMonth) => {
     set({ loading: true, error: null });
     try {
-      const { data, error } = await supabase
-        .from('purchase_records')
-        .select('*')
-        .gte('date', `${yearMonth}-01`)
-        .lte('date', `${yearMonth}-31`)
-        .order('date', { ascending: true });
-
-      if (error) {
-        set({ loading: false, error: error.message });
-        return [];
-      }
+      const data = await api.get<any[]>(
+        `/purchase?start_date=${yearMonth}-01&end_date=${yearMonth}-31`
+      );
 
       const items = data.map(dbToFrontend);
       const byDate: Record<string, PurchaseEntryItem[]> = {};
@@ -132,8 +115,8 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
 
       return items;
-    } catch (err) {
-      set({ loading: false, error: '获取月度采购记录失败' });
+    } catch (err: any) {
+      set({ loading: false, error: err.message || '获取月度采购记录失败' });
       return [];
     }
   },
@@ -141,17 +124,9 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
   fetchYearRecords: async (year) => {
     set({ loading: true, error: null });
     try {
-      const { data, error } = await supabase
-        .from('purchase_records')
-        .select('*')
-        .gte('date', `${year}-01-01`)
-        .lte('date', `${year}-12-31`)
-        .order('date', { ascending: true });
-
-      if (error) {
-        set({ loading: false, error: error.message });
-        return [];
-      }
+      const data = await api.get<any[]>(
+        `/purchase?start_date=${year}-01-01&end_date=${year}-12-31`
+      );
 
       const items = data.map(dbToFrontend);
       const byDate: Record<string, PurchaseEntryItem[]> = {};
@@ -168,22 +143,15 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
 
       return items;
-    } catch (err) {
-      set({ loading: false, error: '获取年度采购记录失败' });
+    } catch (err: any) {
+      set({ loading: false, error: err.message || '获取年度采购记录失败' });
       return [];
     }
   },
 
   addItem: async (date, item) => {
     try {
-      const { error } = await supabase
-        .from('purchase_records')
-        .insert(frontendToDb(item, date));
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.post('/purchase', frontendToDb(item, date));
 
       set((state) => ({
         records: {
@@ -194,8 +162,8 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
 
       return true;
-    } catch (err) {
-      set({ error: '添加记录失败' });
+    } catch (err: any) {
+      set({ error: err.message || '添加记录失败' });
       return false;
     }
   },
@@ -215,15 +183,7 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       if (updates.baseQuantity) updateData.base_quantity = updates.baseQuantity;
       if (updates.amount) updateData.amount = updates.amount;
 
-      const { error } = await supabase
-        .from('purchase_records')
-        .update(updateData)
-        .eq('id', itemId);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.put(`/purchase/${itemId}`, updateData);
 
       set((state) => ({
         records: {
@@ -236,23 +196,15 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
 
       return true;
-    } catch (err) {
-      set({ error: '更新记录失败' });
+    } catch (err: any) {
+      set({ error: err.message || '更新记录失败' });
       return false;
     }
   },
 
   removeItem: async (date, itemId) => {
     try {
-      const { error } = await supabase
-        .from('purchase_records')
-        .delete()
-        .eq('id', itemId);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.delete(`/purchase/${itemId}`);
 
       set((state) => ({
         records: {
@@ -263,23 +215,15 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
 
       return true;
-    } catch (err) {
-      set({ error: '删除记录失败' });
+    } catch (err: any) {
+      set({ error: err.message || '删除记录失败' });
       return false;
     }
   },
 
   clearDate: async (date) => {
     try {
-      const { error } = await supabase
-        .from('purchase_records')
-        .delete()
-        .eq('date', date);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.delete(`/purchase/date/${date}`);
 
       set((state) => ({
         records: { ...state.records, [date]: [] },
@@ -287,62 +231,43 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       }));
 
       return true;
-    } catch (err) {
-      set({ error: '清空记录失败' });
+    } catch (err: any) {
+      set({ error: err.message || '清空记录失败' });
       return false;
     }
   },
 
   saveDateItems: async (date, items) => {
     try {
-      await supabase.from('purchase_records').delete().eq('date', date);
+      const savedItems = await api.post<any[]>('/purchase/batch-save', {
+        date,
+        items: items.map((item) => frontendToDb(item, date)),
+      });
 
-      if (items.length > 0) {
-        const dbItems = items.map((item) => frontendToDb(item, date));
-        const { data, error } = await supabase
-          .from('purchase_records')
-          .insert(dbItems)
-          .select();
-
-        if (error) {
-          set({ error: error.message });
-          return false;
-        }
-
-        if (data) {
-          const savedItems: PurchaseEntryItem[] = data.map((row: any) => ({
-            id: row.id,
-            date: row.date,
-            ingredientId: row.ingredient_id,
-            ingredientName: row.ingredient_name,
-            categoryId: row.category_id,
-            categoryName: row.category_name,
-            purchaseUnit: row.purchase_unit,
-            purchaseQuantity: parseFloat(row.purchase_quantity),
-            purchaseUnitPrice: parseFloat(row.purchase_unit_price),
-            baseUnit: row.base_unit,
-            baseUnitPrice: parseFloat(row.base_unit_price),
-            baseQuantity: parseFloat(row.base_quantity),
-            amount: parseFloat(row.amount),
-          }));
-
-          set((state) => ({
-            records: { ...state.records, [date]: savedItems },
-            error: null,
-          }));
-          return true;
-        }
-      }
-
-      set((state) => ({
-        records: { ...state.records, [date]: [] },
-        error: null,
+      const resultItems: PurchaseEntryItem[] = savedItems.map((row: any) => ({
+        id: row.id,
+        date: row.date,
+        ingredientId: row.ingredient_id,
+        ingredientName: row.ingredient_name,
+        categoryId: row.category_id,
+        categoryName: row.category_name,
+        purchaseUnit: row.purchase_unit,
+        purchaseQuantity: parseFloat(row.purchase_quantity),
+        purchaseUnitPrice: parseFloat(row.purchase_unit_price),
+        baseUnit: row.base_unit,
+        baseUnitPrice: parseFloat(row.base_unit_price),
+        baseQuantity: parseFloat(row.base_quantity),
+        amount: parseFloat(row.amount),
       }));
 
-      return true;
-    } catch (err) {
-      set({ error: '保存记录失败' });
-      return false;
+      set((state) => ({
+        records: { ...state.records, [date]: resultItems },
+        error: null,
+      }));
+      return resultItems;
+    } catch (err: any) {
+      set({ error: err.message || '保存记录失败' });
+      return null;
     }
   },
 

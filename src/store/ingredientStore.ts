@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { cache } from '@/lib/cache';
 import type { Ingredient, UnitConversion } from '@/types';
 
@@ -30,7 +30,6 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
   error: null,
 
   fetchIngredients: async () => {
-    // 先从缓存读取
     const cached = cache.get<Ingredient[]>(CACHE_KEY);
     if (cached && cached.length > 0) {
       set({ ingredients: cached, loading: false });
@@ -39,15 +38,7 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
 
     set({ loading: true, error: null });
     try {
-      const { data, error } = await supabase
-        .from('ingredients')
-        .select('*')
-        .order('name', { ascending: true });
-
-      if (error) {
-        set({ loading: false, error: error.message });
-        return;
-      }
+      const data = await api.get<any[]>('/ingredients');
 
       const ingredients: Ingredient[] = data.map((row) => ({
         id: row.id,
@@ -59,33 +50,23 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
         units: row.units || [{ unit: row.base_unit, factor: 1, isCommon: true }],
       }));
 
-      // 写入缓存
       cache.set(CACHE_KEY, ingredients);
       set({ ingredients, loading: false });
-    } catch (err) {
-      set({ loading: false, error: '获取食材失败' });
+    } catch (err: any) {
+      set({ loading: false, error: err.message || '获取食材失败' });
     }
   },
 
   addIngredient: async (data) => {
     try {
-      const { data: result, error } = await supabase
-        .from('ingredients')
-        .insert({
-          name: data.name,
-          category_id: data.categoryId,
-          base_unit: data.baseUnit,
-          base_price: data.basePrice,
-          image: data.image || '',
-          units: data.units || [{ unit: data.baseUnit, factor: 1, isCommon: true }],
-        })
-        .select()
-        .single();
-
-      if (error || !result) {
-        set({ error: error?.message || '添加食材失败' });
-        return null;
-      }
+      const result = await api.post<any>('/ingredients', {
+        name: data.name,
+        category_id: data.categoryId,
+        base_unit: data.baseUnit,
+        base_price: data.basePrice,
+        image: data.image || '',
+        units: data.units || [{ unit: data.baseUnit, factor: 1, isCommon: true }],
+      });
 
       const newIngredient: Ingredient = {
         id: result.id,
@@ -102,17 +83,15 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
       set({ ingredients: updatedIngredients, error: null });
 
       return newIngredient;
-    } catch (err) {
-      set({ error: '添加食材失败' });
+    } catch (err: any) {
+      set({ error: err.message || '添加食材失败' });
       return null;
     }
   },
 
   updateIngredient: async (id, data) => {
     try {
-      const updateData: any = {
-        updated_at: new Date().toISOString(),
-      };
+      const updateData: any = {};
       
       if (data.name) updateData.name = data.name;
       if (data.categoryId) updateData.category_id = data.categoryId;
@@ -121,15 +100,7 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
       if (data.image) updateData.image = data.image;
       if (data.units) updateData.units = data.units;
 
-      const { error } = await supabase
-        .from('ingredients')
-        .update(updateData)
-        .eq('id', id);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.put(`/ingredients/${id}`, updateData);
 
       const updatedIngredients = get().ingredients.map((ing) =>
         ing.id === id ? { ...ing, ...data } : ing
@@ -138,31 +109,23 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
       set({ ingredients: updatedIngredients, error: null });
 
       return true;
-    } catch (err) {
-      set({ error: '更新食材失败' });
+    } catch (err: any) {
+      set({ error: err.message || '更新食材失败' });
       return false;
     }
   },
 
   deleteIngredient: async (id) => {
     try {
-      const { error } = await supabase
-        .from('ingredients')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.delete(`/ingredients/${id}`);
 
       const updatedIngredients = get().ingredients.filter((ing) => ing.id !== id);
       cache.set(CACHE_KEY, updatedIngredients);
       set({ ingredients: updatedIngredients, error: null });
 
       return true;
-    } catch (err) {
-      set({ error: '删除食材失败' });
+    } catch (err: any) {
+      set({ error: err.message || '删除食材失败' });
       return false;
     }
   },

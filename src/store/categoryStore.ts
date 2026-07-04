@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { cache } from '@/lib/cache';
 import type { Category } from '@/types';
 
@@ -21,7 +21,6 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
   error: null,
 
   fetchCategories: async () => {
-    // 先从缓存读取
     const cached = cache.get<Category[]>(CACHE_KEY);
     if (cached && cached.length > 0) {
       set({ categories: cached, loading: false });
@@ -30,15 +29,7 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
 
     set({ loading: true, error: null });
     try {
-      const { data, error } = await supabase
-        .from('categories')
-        .select('*')
-        .order('sort_order', { ascending: true });
-
-      if (error) {
-        set({ loading: false, error: error.message });
-        return;
-      }
+      const data = await api.get<any[]>('/categories');
 
       const categories: Category[] = data.map((row) => ({
         id: row.id,
@@ -47,32 +38,20 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
         color: row.color || '#666666',
       }));
 
-      // 写入缓存
       cache.set(CACHE_KEY, categories);
       set({ categories, loading: false });
-    } catch (err) {
-      set({ loading: false, error: '获取分类失败' });
+    } catch (err: any) {
+      set({ loading: false, error: err.message || '获取分类失败' });
     }
   },
 
   addCategory: async (data) => {
     try {
-      const sort_order = get().categories.length + 1;
-      const { data: result, error } = await supabase
-        .from('categories')
-        .insert({
-          name: data.name,
-          icon: data.icon || '🏷️',
-          color: data.color || '#666666',
-          sort_order,
-        })
-        .select()
-        .single();
-
-      if (error || !result) {
-        set({ error: error?.message || '添加分类失败' });
-        return null;
-      }
+      const result = await api.post<any>('/categories', {
+        name: data.name,
+        icon: data.icon || '🏷️',
+        color: data.color || '#666666',
+      });
 
       const newCategory: Category = {
         id: result.id,
@@ -86,27 +65,19 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
       set({ categories: updatedCategories, error: null });
 
       return newCategory;
-    } catch (err) {
-      set({ error: '添加分类失败' });
+    } catch (err: any) {
+      set({ error: err.message || '添加分类失败' });
       return null;
     }
   },
 
   updateCategory: async (id, data) => {
     try {
-      const { error } = await supabase
-        .from('categories')
-        .update({
-          name: data.name,
-          icon: data.icon,
-          color: data.color,
-        })
-        .eq('id', id);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.put(`/categories/${id}`, {
+        name: data.name,
+        icon: data.icon,
+        color: data.color,
+      });
 
       const updatedCategories = get().categories.map((cat) =>
         cat.id === id ? { ...cat, ...data } : cat
@@ -115,31 +86,23 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
       set({ categories: updatedCategories, error: null });
 
       return true;
-    } catch (err) {
-      set({ error: '更新分类失败' });
+    } catch (err: any) {
+      set({ error: err.message || '更新分类失败' });
       return false;
     }
   },
 
   deleteCategory: async (id) => {
     try {
-      const { error } = await supabase
-        .from('categories')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        set({ error: error.message });
-        return false;
-      }
+      await api.delete(`/categories/${id}`);
 
       const updatedCategories = get().categories.filter((cat) => cat.id !== id);
       cache.set(CACHE_KEY, updatedCategories);
       set({ categories: updatedCategories, error: null });
 
       return true;
-    } catch (err) {
-      set({ error: '删除分类失败' });
+    } catch (err: any) {
+      set({ error: err.message || '删除分类失败' });
       return false;
     }
   },

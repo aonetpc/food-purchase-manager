@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 
 export type UserRole = 'admin' | 'viewer';
 
@@ -32,18 +32,7 @@ export const useAuthStore = create<AuthStore>()(
         set({ loading: true, error: null });
         
         try {
-          // 查询用户
-          const { data, error } = await supabase
-            .from('users')
-            .select('id, username, name, role')
-            .eq('username', username)
-            .eq('password_hash', password)
-            .single();
-
-          if (error || !data) {
-            set({ loading: false, error: '用户名或密码错误' });
-            return false;
-          }
+          const data = await api.post<any>('/auth/login', { username, password });
 
           const user: User = {
             id: data.id,
@@ -54,8 +43,8 @@ export const useAuthStore = create<AuthStore>()(
 
           set({ user, loading: false, error: null });
           return true;
-        } catch (err) {
-          set({ loading: false, error: '登录失败，请检查网络连接' });
+        } catch (err: any) {
+          set({ loading: false, error: err.message || '登录失败，请检查网络连接' });
           return false;
         }
       },

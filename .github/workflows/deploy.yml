@@ -15,7 +15,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
@@ -24,8 +24,7 @@ jobs:
       - name: Build project
         run: npm run build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_API_URL: /api
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
@@ -33,23 +32,35 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Deploy to server
+      - name: Deploy frontend to server
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "dist/"
-          target: "/usr/share/nginx/html/"
+          target: "/opt/food-purchase/backend/"
           strip_components: 1
           rm: true
 
-      - name: Restart Nginx
+      - name: Deploy backend to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "backend/package.json,backend/server.js,backend/db.js,backend/routes/"
+          target: "/opt/food-purchase/backend/"
+          strip_components: 1
+
+      - name: Install backend deps and restart
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            chmod -R 755 /usr/share/nginx/html
-            nginx -t && systemctl reload nginx
+            cd /opt/food-purchase/backend
+            npm install --production
+            systemctl restart food-purchase-backend
+            systemctl status food-purchase-backend --no-pager
