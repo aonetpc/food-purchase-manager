@@ -125,7 +125,7 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
     set({ loading: true, error: null });
     try {
       const data = await api.get<any[]>(
-        `/purchase?start_date=${year}-01-01&end_date=${year}-12-31`
+        `/purchase?year=${year}`
       );
 
       const items = data.map(dbToFrontend);

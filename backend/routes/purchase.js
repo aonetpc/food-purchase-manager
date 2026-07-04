@@ -144,15 +144,18 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.post('/batch-save', async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { date, items } = req.body;
 
-    await pool.query('DELETE FROM purchase_records WHERE date = ?', [date]);
+    await conn.beginTransaction();
+
+    await conn.query('DELETE FROM purchase_records WHERE date = ?', [date]);
 
     const savedItems = [];
     for (const item of items) {
       const id = item.id && item.id.length === 36 ? item.id : uuidv4();
-      await pool.query(
+      await conn.query(
         `INSERT INTO purchase_records 
          (id, date, ingredient_id, ingredient_name, category_id, category_name,
           purchase_unit, purchase_quantity, purchase_unit_price,
@@ -177,10 +180,14 @@ router.post('/batch-save', async (req, res) => {
       savedItems.push({ ...item, id, date });
     }
 
+    await conn.commit();
     res.json(savedItems);
   } catch (err) {
-    console.error(err);
+    await conn.rollback();
+    console.error('batch-save error:', err);
     res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
