@@ -22,13 +22,19 @@ const dbToFrontend = (row) => ({
 
 router.get('/', async (req, res) => {
   try {
-    const { date, start_date, end_date } = req.query;
+    const { date, start_date, end_date, month, year } = req.query;
     let sql = 'SELECT * FROM purchase_records';
     const params = [];
 
     if (date) {
       sql += ' WHERE date = ?';
       params.push(date);
+    } else if (month) {
+      sql += " WHERE DATE_FORMAT(date, '%Y-%m') = ?";
+      params.push(month);
+    } else if (year) {
+      sql += ' WHERE YEAR(date) = ?';
+      params.push(year);
     } else if (start_date && end_date) {
       sql += ' WHERE date >= ? AND date <= ?';
       params.push(start_date, end_date);

@@ -3,6 +3,18 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 
+function parseUnits(unitsData) {
+  if (!unitsData) return null;
+  if (typeof unitsData === 'string') {
+    try {
+      return JSON.parse(unitsData);
+    } catch {
+      return null;
+    }
+  }
+  return unitsData;
+}
+
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -10,7 +22,7 @@ router.get('/', async (req, res) => {
     );
     const result = rows.map(row => ({
       ...row,
-      units: row.units ? JSON.parse(row.units) : null,
+      units: parseUnits(row.units),
       base_price: parseFloat(row.base_price),
     }));
     res.json(result);
@@ -43,7 +55,7 @@ router.post('/', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM ingredients WHERE id = ?', [id]);
     const result = {
       ...rows[0],
-      units: rows[0].units ? JSON.parse(rows[0].units) : null,
+      units: parseUnits(rows[0].units),
       base_price: parseFloat(rows[0].base_price),
     };
     res.json(result);
@@ -77,7 +89,7 @@ router.put('/:id', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM ingredients WHERE id = ?', [id]);
     const result = {
       ...rows[0],
-      units: rows[0].units ? JSON.parse(rows[0].units) : null,
+      units: parseUnits(rows[0].units),
       base_price: parseFloat(rows[0].base_price),
     };
     res.json(result);

@@ -15,7 +15,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
@@ -26,19 +26,13 @@ jobs:
         env:
           VITE_API_URL: /api
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: dist
-          path: dist/
-
       - name: Deploy frontend to server
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "dist/"
+          source: "dist/*"
           target: "/var/www/food-purchase/"
           strip_components: 1
           rm: true
