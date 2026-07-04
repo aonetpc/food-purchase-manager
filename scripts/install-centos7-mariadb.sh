@@ -43,7 +43,15 @@ DB_PASS=$(openssl rand -base64 24 | tr -d '/+=' | head -c 16)
 
 mysql -u root -p"$DB_ROOT_PASS" <<EOF
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+FLUSH PRIVILEGES;
+EOF
+
+mysql -u root -p"$DB_ROOT_PASS" <<EOF
+SELECT COUNT(*) INTO @cnt FROM mysql.user WHERE user = '${DB_USER}' AND host = 'localhost';
+SET @sql = IF(@cnt = 0, CONCAT('CREATE USER ''${DB_USER}''@''localhost'' IDENTIFIED BY ''${DB_PASS}'''), 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
