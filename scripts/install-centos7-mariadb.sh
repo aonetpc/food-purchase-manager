@@ -33,7 +33,7 @@ systemctl start mariadb
 sleep 2
 
 echo "  设置 root 密码..."
-DB_ROOT_PASS=$(openssl rand -base64 24 | tr -d '/+=' | head -c 16)
+DB_ROOT_PASS="admin123"
 mysqladmin -u root password "$DB_ROOT_PASS" 2>/dev/null || true
 echo ""
 
