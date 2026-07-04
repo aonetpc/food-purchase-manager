@@ -1,6 +1,6 @@
 -- ================================================
 -- 食材采购管理系统 - 数据库初始化脚本
--- MySQL / MariaDB 兼容
+-- MySQL 8.0 / MariaDB 10.5+ 兼容
 -- ================================================
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS purchase_records (
   base_unit_price DECIMAL(10, 2),
   base_quantity DECIMAL(10, 2),
   amount DECIMAL(10, 2) NOT NULL,
-  created_by VARCHAR(36),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_date (date),
   INDEX idx_ingredient (ingredient_id)

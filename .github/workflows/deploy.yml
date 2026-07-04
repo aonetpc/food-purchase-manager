@@ -15,7 +15,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "dist/"
-          target: "/usr/share/nginx/html/"
+          target: "/var/www/food-purchase/"
           strip_components: 1
           rm: true
 
@@ -62,7 +62,6 @@ jobs:
           script: |
             cd /opt/food-purchase/backend
             npm install --production
-            pkill -f "node server.js" || true
-            nohup node server.js > /var/log/food-purchase-backend.log 2>&1 &
+            sudo systemctl restart food-purchase-backend
             sleep 2
             curl -s http://127.0.0.1:3001/api/health
