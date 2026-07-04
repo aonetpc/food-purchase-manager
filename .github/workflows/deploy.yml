@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "dist/"
-          target: "/opt/food-purchase/backend/"
+          target: "/usr/share/nginx/html/"
           strip_components: 1
           rm: true
 
@@ -62,5 +62,7 @@ jobs:
           script: |
             cd /opt/food-purchase/backend
             npm install --production
-            systemctl restart food-purchase-backend
-            systemctl status food-purchase-backend --no-pager
+            pkill -f "node server.js" || true
+            nohup node server.js > /var/log/food-purchase-backend.log 2>&1 &
+            sleep 2
+            curl -s http://127.0.0.1:3001/api/health
