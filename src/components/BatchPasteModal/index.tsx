@@ -87,6 +87,14 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
       const unit = parts.length >= 4 ? parts[3] : '公斤';
       const department = parts.length >= 5 ? parts[4] : '';
 
+      let finalQuantity = quantity;
+      let finalUnitPrice = unitPrice;
+
+      if (parts.length === 2) {
+        finalQuantity = 1;
+        finalUnitPrice = quantity;
+      }
+
       const ingredient = ingredients.find(i => i.name === name);
       const dept = departments.find(d => d.name === department || d.name === deptMap[department]);
 
@@ -111,8 +119,8 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
         rawText: line,
         rowIndex: idx,
         name,
-        quantity,
-        unitPrice,
+        quantity: finalQuantity,
+        unitPrice: finalUnitPrice,
         unit,
         department,
         status,
