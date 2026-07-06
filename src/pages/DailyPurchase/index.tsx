@@ -123,7 +123,7 @@ export default function DailyPurchase() {
         <div className="flex items-center gap-3">
           {isAdmin() && (
             <button
-              onClick={() => navigate('/purchase-entry')}
+              onClick={() => navigate(`/purchase-entry?date=${dateKey}`)}
               className="btn-secondary flex items-center gap-2"
             >
               {record ? <Pencil size={18} /> : <ClipboardList size={18} />}
@@ -169,7 +169,7 @@ export default function DailyPurchase() {
           <p className="text-gray-400 text-sm mb-6">该日期还没有录入采购清单</p>
           {isAdmin() && (
             <button
-              onClick={() => navigate('/purchase-entry')}
+              onClick={() => navigate(`/purchase-entry?date=${dateKey}`)}
               className="btn-primary flex items-center gap-2"
             >
               <ClipboardList size={18} />

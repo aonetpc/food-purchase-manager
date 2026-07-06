@@ -60,6 +60,15 @@ export default function PurchaseEntry() {
   const { categories } = useCategoryStore();
 
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const dateParam = params.get('date');
+    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      const d = new Date(dateParam + 'T00:00:00');
+      if (!isNaN(d.getTime())) {
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+    }
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
