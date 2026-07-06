@@ -1,8 +1,8 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Search,
-  Calendar, ShoppingCart, CheckCircle2, X, Package, Settings, AlertCircle, Cloud, ClipboardList
+  Calendar, ShoppingCart, CheckCircle2, X, Package, Settings, AlertCircle, Cloud, ClipboardList, Save
 } from 'lucide-react';
 import { format, subDays, addDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -99,12 +99,13 @@ export default function PurchaseEntry() {
     basePrice: '',
   });
   const [quickError, setQuickError] = useState('');
-  const [autoSaving, setAutoSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState<string | null>(null);
   const [movingItem, setMovingItem] = useState<DraftItem | null>(null);
   const [showBatchPaste, setShowBatchPaste] = useState(false);
-  const skipSaveRef = useRef(true);
 
   useEffect(() => {
     fetchDepartments();
@@ -114,7 +115,6 @@ export default function PurchaseEntry() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      skipSaveRef.current = true;
       setLoading(true);
       await fetchRecords(dateStr);
       if (cancelled) return;
@@ -135,38 +135,11 @@ export default function PurchaseEntry() {
         purchaseUnitPrice: it.purchaseUnitPrice,
       })));
       setLoading(false);
-      setTimeout(() => {
-        skipSaveRef.current = false;
-      }, 100);
+      setHasUnsavedChanges(false);
     };
     load();
     return () => { cancelled = true; };
   }, [dateStr, fetchRecords, ingredients]);
-
-  // 实时自动保存（跳过数据加载触发的更新）
-  useEffect(() => {
-    if (skipSaveRef.current) {
-      skipSaveRef.current = false;
-      return;
-    }
-    const entryItems = draftItems.map(toEntryItem);
-    saveDateItems(dateStr, entryItems).then((savedItems) => {
-      if (savedItems && savedItems.length > 0) {
-        setDraftItems(prev => {
-          const result = [...prev];
-          savedItems.forEach((saved, idx) => {
-            if (idx < result.length && !result[idx].id.includes('-')) {
-              result[idx].id = saved.id;
-            }
-          });
-          return result;
-        });
-      }
-    });
-    setAutoSaving(true);
-    const timer = setTimeout(() => setAutoSaving(false), 800);
-    return () => clearTimeout(timer);
-  }, [draftItems, dateStr, saveDateItems]);
 
   const filteredIngredients = useMemo(() => {
     return ingredients.filter(ing => {
@@ -228,6 +201,7 @@ export default function PurchaseEntry() {
       purchaseUnitPrice: Math.round(ing.basePrice * commonUnit.factor * 100) / 100,
     };
     setDraftItems(prev => [...prev, newItem]);
+    setHasUnsavedChanges(true);
     setShowAddPanel(false);
     setSearchTerm('');
   };
@@ -236,7 +210,6 @@ export default function PurchaseEntry() {
     setDraftItems(prev => prev.map(item => {
       if (item.id !== id) return item;
       const updated = { ...item, [field]: value };
-      // 切换食材单位时同步 factor
       if (field === 'purchaseUnit') {
         const ing = ingredients.find(i => i.id === item.ingredientId);
         const unitObj = ing?.units.find((u: UnitConversion) => u.unit === value);
@@ -244,10 +217,48 @@ export default function PurchaseEntry() {
       }
       return updated;
     }));
+    setHasUnsavedChanges(true);
   };
 
   const removeDraftItem = (id: string) => {
     setDraftItems(prev => prev.filter(item => item.id !== id));
+    setHasUnsavedChanges(true);
+  };
+
+  const handleSave = async () => {
+    if (draftItems.length === 0) {
+      if (window.confirm('当前没有数据，保存后将清空当日所有记录，确定继续吗？')) {
+        await clearDate(dateStr);
+        setHasUnsavedChanges(false);
+        setSaveError('');
+      }
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError('');
+    try {
+      const entryItems = draftItems.map(toEntryItem);
+      const savedItems = await saveDateItems(dateStr, entryItems);
+      if (savedItems) {
+        setDraftItems(prev => prev.map((item, idx) => {
+          if (idx < savedItems.length && savedItems[idx]) {
+            return {
+              ...item,
+              id: savedItems[idx].id,
+            };
+          }
+          return item;
+        }));
+        setHasUnsavedChanges(false);
+      } else {
+        setSaveError('保存失败，请重试');
+      }
+    } catch (err: any) {
+      setSaveError(err.message || '保存失败');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleMoveDate = (item: DraftItem) => {
@@ -268,8 +279,8 @@ export default function PurchaseEntry() {
 
   const handleClear = () => {
     if (window.confirm('确定清空当日所有录入数据吗？')) {
-      clearDate(dateStr);
       setDraftItems([]);
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -297,6 +308,7 @@ export default function PurchaseEntry() {
       };
     });
     setDraftItems(prev => [...prev, ...newDraftItems]);
+    setHasUnsavedChanges(true);
   };
 
   const existingRecord = draftItems.length > 0;
@@ -307,7 +319,7 @@ export default function PurchaseEntry() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-serif font-bold text-gray-800">采买清单录入</h1>
-          <p className="text-gray-500 mt-1">录入每日实际采买明细，系统自动保存</p>
+          <p className="text-gray-500 mt-1">录入每日实际采买明细，点击保存按钮保存数据</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center bg-white rounded-lg border border-gray-200 p-1">
@@ -351,17 +363,29 @@ export default function PurchaseEntry() {
             <div>
               <p className="text-sm text-gray-500 font-medium">录入状态</p>
               <p className="text-lg font-bold mt-2 flex items-center gap-2">
-                {autoSaving ? (
+                {isSaving ? (
                   <><Cloud className="text-primary-500 animate-pulse" size={20} /><span className="text-primary-600">保存中...</span></>
+                ) : saveError ? (
+                  <><AlertCircle className="text-danger-500" size={20} /><span className="text-danger-600">保存失败</span></>
+                ) : hasUnsavedChanges ? (
+                  <><Settings className="text-warning-500" size={20} /><span className="text-warning-600">未保存</span></>
                 ) : draftItems.length > 0 ? (
-                  <><CheckCircle2 className="text-success-500" size={20} /><span className="text-success-600">已自动保存</span></>
+                  <><CheckCircle2 className="text-success-500" size={20} /><span className="text-success-600">已保存</span></>
                 ) : (
                   <><Calendar className="text-gray-400" size={20} /><span className="text-gray-500">暂无数据</span></>
                 )}
               </p>
             </div>
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${autoSaving ? 'bg-primary-100 text-primary-600' : draftItems.length > 0 ? 'bg-success-100 text-success-600' : 'bg-gray-100 text-gray-400'}`}>
-              {autoSaving ? <Cloud size={24} /> : draftItems.length > 0 ? <CheckCircle2 size={24} /> : <Calendar size={24} />}
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+              isSaving ? 'bg-primary-100 text-primary-600' :
+              saveError ? 'bg-danger-100 text-danger-600' :
+              hasUnsavedChanges ? 'bg-warning-100 text-warning-600' :
+              draftItems.length > 0 ? 'bg-success-100 text-success-600' : 'bg-gray-100 text-gray-400'
+            }`}>
+              {isSaving ? <Cloud size={24} /> :
+               saveError ? <AlertCircle size={24} /> :
+               hasUnsavedChanges ? <Settings size={24} /> :
+               draftItems.length > 0 ? <CheckCircle2 size={24} /> : <Calendar size={24} />}
             </div>
           </div>
         </div>
@@ -395,6 +419,14 @@ export default function PurchaseEntry() {
           <button onClick={handleViewDaily} className="btn-secondary flex items-center gap-2">
             <ShoppingCart size={16} />
             <span>查看清单</span>
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50"
+          >
+            <Save size={18} />
+            <span>{isSaving ? '保存中...' : '保存'}</span>
           </button>
         </div>
       </div>
