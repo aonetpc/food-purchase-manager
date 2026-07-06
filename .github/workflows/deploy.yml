@@ -18,7 +18,10 @@ jobs:
           script: |
             set -e
             cd ~/food-purchase-manager
-            git pull origin main
+            # 重试机制：处理网络不稳定
+            for i in 1 2 3; do
+              git pull origin main && break || sleep 5
+            done
             npm ci
             npm run build
             rm -rf /var/www/food-purchase/*
