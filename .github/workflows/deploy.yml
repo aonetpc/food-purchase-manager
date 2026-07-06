@@ -28,6 +28,13 @@ jobs:
             cp -r backend/routes/* /opt/food-purchase/backend/routes/
             cd /opt/food-purchase/backend
             npm ci --production
+            # 数据库迁移：确保 purchase_records 表有 department_id 和 department_name 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              ALTER TABLE purchase_records 
+              ADD COLUMN IF NOT EXISTS department_id VARCHAR(36),
+              ADD COLUMN IF NOT EXISTS department_name VARCHAR(50),
+              ADD INDEX IF NOT EXISTS idx_department (department_id);
+            " 2>/dev/null || true
             sudo systemctl restart food-purchase-backend
             sleep 3
             curl -s http://127.0.0.1:3001/api/health || exit 1

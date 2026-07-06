@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS purchase_records (
   ingredient_name VARCHAR(100) NOT NULL,
   category_id VARCHAR(36),
   category_name VARCHAR(50),
+  department_id VARCHAR(36),
+  department_name VARCHAR(50),
   purchase_unit VARCHAR(20) NOT NULL,
   purchase_quantity DECIMAL(10, 2) NOT NULL,
   purchase_unit_price DECIMAL(10, 2) NOT NULL,
@@ -41,7 +43,8 @@ CREATE TABLE IF NOT EXISTS purchase_records (
   amount DECIMAL(10, 2) NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_date (date),
-  INDEX idx_ingredient (ingredient_id)
+  INDEX idx_ingredient (ingredient_id),
+  INDEX idx_department (department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS users (

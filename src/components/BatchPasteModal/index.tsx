@@ -166,11 +166,18 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
     try {
       const saved = await addIngredient(newIng);
       if (saved) {
-        setParsedItems(prev => prev.map(i =>
-          i.id === resolvingItem?.id
-            ? { ...i, status: 'matched', matchedIngredient: saved, matchedUnit: saved.units[0] }
-            : i
-        ));
+        setParsedItems(prev => prev.map(i => {
+          if (i.id !== resolvingItem?.id) return i;
+          const existingDept = departments.find(d => d.name === i.department) || departments.find(d => d.name === deptMap[i.department]);
+          const newStatus: ParsedItem['status'] = existingDept ? 'matched' : (i.department ? 'department_missing' : 'matched');
+          return {
+            ...i,
+            status: newStatus,
+            matchedIngredient: saved,
+            matchedUnit: saved.units[0],
+            matchedDepartment: existingDept,
+          };
+        }));
       }
     } catch (err) {
       console.error('add ingredient error:', err);

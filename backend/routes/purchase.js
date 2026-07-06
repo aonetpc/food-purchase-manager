@@ -166,7 +166,7 @@ router.post('/batch-save', async (req, res) => {
       const incomingIds = new Set(
         items
           .map(item => item.id || item.ingredientId)
-          .filter(id => id && id.length === 36)
+          .filter(id => id && typeof id === 'string')
       );
 
       const idsToDelete = [...existingIds].filter(id => !incomingIds.has(id));
@@ -180,7 +180,7 @@ router.post('/batch-save', async (req, res) => {
 
       const savedItems = [];
       for (const item of items) {
-        const id = item.id && item.id.length === 36 ? item.id : uuidv4();
+        const id = item.id && typeof item.id === 'string' ? item.id : uuidv4();
         const ingredientId = item.ingredient_id || item.ingredientId;
         const ingredientName = item.ingredient_name || item.ingredientName;
         const categoryId = item.category_id || item.categoryId;
