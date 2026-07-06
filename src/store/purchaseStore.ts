@@ -352,6 +352,8 @@ export const buildDailyRecordFromEntry = (
       ingredientName: item.ingredientName,
       categoryId: item.categoryId,
       categoryName: item.categoryName,
+      departmentId: item.departmentId || '',
+      departmentName: item.departmentName || '',
       purchaseUnit: item.purchaseUnit,
       purchaseQuantity: item.purchaseQuantity,
       purchaseUnitPrice: item.purchaseUnitPrice,

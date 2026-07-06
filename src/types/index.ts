@@ -27,6 +27,8 @@ export interface PurchaseItem {
   ingredientName: string;
   categoryId: string;
   categoryName: string;
+  departmentId?: string;
+  departmentName?: string;
   purchaseUnit: string;
   purchaseQuantity: number;
   purchaseUnitPrice: number;
