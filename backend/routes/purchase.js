@@ -144,50 +144,115 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.post('/batch-save', async (req, res) => {
-  const conn = await pool.getConnection();
   try {
     const { date, items } = req.body;
 
-    await conn.beginTransaction();
-
-    await conn.query('DELETE FROM purchase_records WHERE date = ?', [date]);
-
-    const savedItems = [];
-    for (const item of items) {
-      const id = item.id && item.id.length === 36 ? item.id : uuidv4();
-      await conn.query(
-        `INSERT INTO purchase_records 
-         (id, date, ingredient_id, ingredient_name, category_id, category_name,
-          purchase_unit, purchase_quantity, purchase_unit_price,
-          base_unit, base_unit_price, base_quantity, amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          date,
-          item.ingredient_id || item.ingredientId,
-          item.ingredient_name || item.ingredientName,
-          item.category_id || item.categoryId,
-          item.category_name || item.categoryName,
-          item.purchase_unit || item.purchaseUnit,
-          item.purchase_quantity || item.purchaseQuantity,
-          item.purchase_unit_price || item.purchaseUnitPrice,
-          item.base_unit || item.baseUnit,
-          item.base_unit_price || item.baseUnitPrice,
-          item.base_quantity || item.baseQuantity,
-          item.amount,
-        ]
-      );
-      savedItems.push({ ...item, id, date });
+    if (!date) {
+      return res.status(400).json({ error: '缺少日期参数' });
     }
 
-    await conn.commit();
-    res.json(savedItems);
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [existingRows] = await conn.query(
+        'SELECT id FROM purchase_records WHERE date = ?',
+        [date]
+      );
+      const existingIds = new Set(existingRows.map(r => r.id));
+
+      const incomingIds = new Set(
+        items
+          .map(item => item.id || item.ingredientId)
+          .filter(id => id && id.length === 36)
+      );
+
+      const idsToDelete = [...existingIds].filter(id => !incomingIds.has(id));
+      if (idsToDelete.length > 0) {
+        const placeholders = idsToDelete.map(() => '?').join(',');
+        await conn.query(
+          `DELETE FROM purchase_records WHERE id IN (${placeholders})`,
+          idsToDelete
+        );
+      }
+
+      const savedItems = [];
+      for (const item of items) {
+        const id = item.id && item.id.length === 36 ? item.id : uuidv4();
+        const ingredientId = item.ingredient_id || item.ingredientId;
+        const ingredientName = item.ingredient_name || item.ingredientName;
+        const categoryId = item.category_id || item.categoryId;
+        const categoryName = item.category_name || item.categoryName;
+        const purchaseUnit = item.purchase_unit || item.purchaseUnit;
+        const purchaseQuantity = item.purchase_quantity ?? item.purchaseQuantity;
+        const purchaseUnitPrice = item.purchase_unit_price ?? item.purchaseUnitPrice;
+        const baseUnit = item.base_unit || item.baseUnit || '';
+        const baseUnitPrice = item.base_unit_price ?? item.baseUnitPrice ?? 0;
+        const baseQuantity = item.base_quantity ?? item.baseQuantity ?? 0;
+        const amount = item.amount ?? 0;
+
+        if (existingIds.has(id)) {
+          await conn.query(
+            `UPDATE purchase_records SET
+              ingredient_id = ?, ingredient_name = ?,
+              category_id = ?, category_name = ?,
+              purchase_unit = ?, purchase_quantity = ?, purchase_unit_price = ?,
+              base_unit = ?, base_unit_price = ?, base_quantity = ?,
+              amount = ?
+             WHERE id = ?`,
+            [
+              ingredientId, ingredientName,
+              categoryId, categoryName,
+              purchaseUnit, purchaseQuantity, purchaseUnitPrice,
+              baseUnit, baseUnitPrice, baseQuantity,
+              amount,
+              id
+            ]
+          );
+        } else {
+          await conn.query(
+            `INSERT INTO purchase_records 
+             (id, date, ingredient_id, ingredient_name, category_id, category_name,
+              purchase_unit, purchase_quantity, purchase_unit_price,
+              base_unit, base_unit_price, base_quantity, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              id, date, ingredientId, ingredientName, categoryId, categoryName,
+              purchaseUnit, purchaseQuantity, purchaseUnitPrice,
+              baseUnit, baseUnitPrice, baseQuantity, amount
+            ]
+          );
+        }
+
+        savedItems.push({
+          ...item,
+          id,
+          date,
+          ingredient_id: ingredientId,
+          ingredient_name: ingredientName,
+          category_id: categoryId,
+          category_name: categoryName,
+          purchase_unit: purchaseUnit,
+          purchase_quantity: purchaseQuantity,
+          purchase_unit_price: purchaseUnitPrice,
+          base_unit: baseUnit,
+          base_unit_price: baseUnitPrice,
+          base_quantity: baseQuantity,
+          amount,
+        });
+      }
+
+      await conn.commit();
+      res.json(savedItems);
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   } catch (err) {
-    await conn.rollback();
     console.error('batch-save error:', err);
     res.status(500).json({ error: err.message });
-  } finally {
-    conn.release();
   }
 });
 
