@@ -9,6 +9,8 @@ export interface PurchaseEntryItem {
   ingredientName: string;
   categoryId: string;
   categoryName: string;
+  departmentId: string;
+  departmentName: string;
   purchaseUnit: string;
   purchaseQuantity: number;
   purchaseUnitPrice: number;
@@ -43,6 +45,8 @@ const dbToFrontend = (row: any): PurchaseEntryItem => ({
   ingredientName: row.ingredient_name,
   categoryId: row.category_id || '',
   categoryName: row.category_name || '',
+  departmentId: row.department_id || '',
+  departmentName: row.department_name || '',
   purchaseUnit: row.purchase_unit,
   purchaseQuantity: parseFloat(row.purchase_quantity),
   purchaseUnitPrice: parseFloat(row.purchase_unit_price),
@@ -59,6 +63,8 @@ const frontendToDb = (item: PurchaseEntryItem, date: string) => {
     ingredient_name: item.ingredientName,
     category_id: item.categoryId,
     category_name: item.categoryName,
+    department_id: item.departmentId,
+    department_name: item.departmentName,
     purchase_unit: item.purchaseUnit,
     purchase_quantity: item.purchaseQuantity,
     purchase_unit_price: item.purchaseUnitPrice,

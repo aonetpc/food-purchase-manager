@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, BarChart3, Layers, FileBarChart } from 'lucide-react';
+import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, BarChart3, Layers, FileBarChart, Building2 } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
+import { useDepartmentStore } from '@/store/departmentStore';
 import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import type { MonthlyAnalysis, CategoryMonthlyData, PriceChangeItem, MonthlyTrendPoint } from '@/types';
 import { formatCurrency, formatPercent, getPriceChangeBgColor } from '@/utils/format';
@@ -173,6 +174,7 @@ const buildMonthlyAnalysis = (
 export default function MonthlyAnalysisPage() {
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
+  const { departments, fetchDepartments } = useDepartmentStore();
   const { fetchMonthRecords, fetchYearRecords } = usePurchaseStore();
   const [currentMonth, setCurrentMonth] = useState<Date>(() => {
     const d = new Date();
@@ -187,6 +189,10 @@ export default function MonthlyAnalysisPage() {
   const yearMonth = format(currentMonth, 'yyyy-MM');
   const lastYearMonth = format(subMonths(currentMonth, 1), 'yyyy-MM');
   const yearStr = format(currentMonth, 'yyyy');
+
+  useEffect(() => {
+    fetchDepartments();
+  }, [fetchDepartments]);
 
   useEffect(() => {
     let cancelled = false;
@@ -317,6 +323,52 @@ export default function MonthlyAnalysisPage() {
               valueColor="text-purple-600"
             />
           </div>
+
+          {/* 部门采购拆分 */}
+          {(() => {
+            const deptMap: Record<string, { name: string; amount: number; count: number }> = {};
+            monthItems.forEach(item => {
+              const deptId = (item as any).departmentId || '';
+              const deptName = (item as any).departmentName || '未分配';
+              if (!deptMap[deptId]) deptMap[deptId] = { name: deptName, amount: 0, count: 0 };
+              deptMap[deptId].amount += item.amount;
+              deptMap[deptId].count += 1;
+            });
+
+            const totalAmount = monthItems.reduce((s, i) => s + i.amount, 0);
+            const sortedDepts = departments
+              .filter(d => deptMap[d.id])
+              .map(d => ({ id: d.id, ...deptMap[d.id] }));
+
+            if (sortedDepts.length <= 1) return null;
+
+            return (
+              <div className="card">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">部门采购拆分</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  {sortedDepts.map(dept => {
+                    const pct = totalAmount > 0 ? Math.round((dept.amount / totalAmount) * 1000) / 10 : 0;
+                    return (
+                      <div key={dept.id} className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Building2 size={14} className="text-primary-500" />
+                          <span className="text-sm font-medium text-gray-700">{dept.name}</span>
+                        </div>
+                        <p className="text-lg font-bold text-gray-800">{formatCurrency(dept.amount)}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-gray-500">{dept.count} 项</span>
+                          <span className="text-xs text-gray-500">{pct}%</span>
+                        </div>
+                        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-primary-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="card lg:col-span-2">

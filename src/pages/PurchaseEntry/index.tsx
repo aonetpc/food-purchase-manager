@@ -8,6 +8,7 @@ import { format, subDays, addDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
+import { useDepartmentStore } from '@/store/departmentStore';
 import type { Ingredient, UnitConversion } from '@/types';
 import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import { formatCurrency, formatNumber, generateId } from '@/utils/format';
@@ -19,6 +20,8 @@ interface DraftItem {
   ingredientName: string;
   categoryId: string;
   categoryName: string;
+  departmentId: string;
+  departmentName: string;
   purchaseUnit: string;
   factor: number;
   baseUnit: string;
@@ -36,6 +39,8 @@ const toEntryItem = (d: DraftItem): PurchaseEntryItem => {
     ingredientName: d.ingredientName,
     categoryId: d.categoryId,
     categoryName: d.categoryName,
+    departmentId: d.departmentId,
+    departmentName: d.departmentName,
     purchaseUnit: d.purchaseUnit,
     purchaseQuantity: d.purchaseQuantity,
     purchaseUnitPrice: d.purchaseUnitPrice,
@@ -58,6 +63,7 @@ export default function PurchaseEntry() {
   const { saveDateItems, fetchRecords, clearDate, movePurchaseDate } = usePurchaseStore();
   const { ingredients, addIngredient } = useIngredientStore();
   const { categories } = useCategoryStore();
+  const { departments, fetchDepartments, getDefaultDepartment } = useDepartmentStore();
 
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -98,6 +104,10 @@ export default function PurchaseEntry() {
   const [movingItem, setMovingItem] = useState<DraftItem | null>(null);
   const skipSaveRef = useRef(true);
 
+  useEffect(() => {
+    fetchDepartments();
+  }, [fetchDepartments]);
+
   // 加载已有录入数据（异步）
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +124,8 @@ export default function PurchaseEntry() {
         ingredientName: it.ingredientName,
         categoryId: it.categoryId,
         categoryName: it.categoryName,
+        departmentId: it.departmentId,
+        departmentName: it.departmentName,
         purchaseUnit: it.purchaseUnit,
         factor: it.purchaseUnitPrice > 0 ? (ingredients.find(i => i.id === it.ingredientId)?.units.find(u => u.unit === it.purchaseUnit)?.factor || 1) : 1,
         baseUnit: it.baseUnit,
@@ -198,12 +210,15 @@ export default function PurchaseEntry() {
   const addIngredientToList = (ing: Ingredient) => {
     const commonUnit = ing.units.find(u => u.isCommon) || ing.units[0];
     const category = categories.find(c => c.id === ing.categoryId);
+    const defaultDept = getDefaultDepartment();
     const newItem: DraftItem = {
       id: Math.random().toString(36).substring(2, 11),
       ingredientId: ing.id,
       ingredientName: ing.name,
       categoryId: ing.categoryId,
       categoryName: category?.name || '',
+      departmentId: defaultDept?.id || '',
+      departmentName: defaultDept?.name || '',
       purchaseUnit: commonUnit.unit,
       factor: commonUnit.factor,
       baseUnit: ing.baseUnit,
@@ -390,6 +405,7 @@ export default function PurchaseEntry() {
                 <tr>
                   <th className="whitespace-nowrap">食材名称</th>
                   <th className="whitespace-nowrap">分类</th>
+                  <th className="whitespace-nowrap">部门</th>
                   <th className="whitespace-nowrap text-right">采购单位</th>
                   <th className="whitespace-nowrap text-right">数量</th>
                   <th className="whitespace-nowrap text-right">单价(元)</th>
@@ -411,6 +427,21 @@ export default function PurchaseEntry() {
                           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: categories.find(c => c.id === item.categoryId)?.color }} />
                           {item.categoryName}
                         </span>
+                      </td>
+                      <td>
+                        <select
+                          value={item.departmentId}
+                          onChange={(e) => {
+                            const dept = departments.find(d => d.id === e.target.value);
+                            updateDraftItem(item.id, 'departmentId', e.target.value);
+                            if (dept) updateDraftItem(item.id, 'departmentName', dept.name);
+                          }}
+                          className="border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                        >
+                          {departments.map(d => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
                       </td>
                       <td className="text-right">
                         <select

@@ -21,10 +21,10 @@ jobs:
             git pull origin main
             npm ci
             npm run build
+            rm -rf /var/www/food-purchase/*
             cp -r dist/* /var/www/food-purchase/
             cp backend/package.json /opt/food-purchase/backend/
             cp backend/server.js /opt/food-purchase/backend/
-            cp backend/db.js /opt/food-purchase/backend/
             cp -r backend/routes/* /opt/food-purchase/backend/routes/
             cd /opt/food-purchase/backend
             npm ci --production

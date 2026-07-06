@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil, ClipboardCheck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil, ClipboardCheck, Building2 } from 'lucide-react';
 import { format, addDays, subDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import type { DailyPurchaseRecord, CategorySummary } from '@/types';
@@ -9,6 +9,7 @@ import { formatDate } from '@/utils/date';
 import { usePurchaseStore, buildDailyRecordFromEntry, type PurchaseEntryItem } from '@/store/purchaseStore';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
+import { useDepartmentStore } from '@/store/departmentStore';
 import { useAuthStore } from '@/store/authStore';
 import StatCard from '@/components/StatCard';
 
@@ -46,6 +47,7 @@ export default function DailyPurchase() {
   const { fetchRecords, getItems } = usePurchaseStore();
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
+  const { departments, fetchDepartments } = useDepartmentStore();
   const { isAdmin } = useAuthStore();
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const d = new Date();
@@ -56,6 +58,10 @@ export default function DailyPurchase() {
   const [loading, setLoading] = useState(false);
 
   const dateKey = formatDate(selectedDate);
+
+  useEffect(() => {
+    fetchDepartments();
+  }, [fetchDepartments]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,48 +259,87 @@ export default function DailyPurchase() {
               <h2 className="text-lg font-semibold text-gray-800">采购明细</h2>
               <span className="text-sm text-gray-500">共 {record.items.length} 项</span>
             </div>
-            <div className="overflow-x-auto -mx-6 px-6">
-              <table className="data-table min-w-full">
-                <thead>
-                  <tr>
-                    <th className="whitespace-nowrap">食材名称</th>
-                    <th className="whitespace-nowrap">分类</th>
-                    <th className="whitespace-nowrap text-right">采购单位</th>
-                    <th className="whitespace-nowrap text-right">数量</th>
-                    <th className="whitespace-nowrap text-right">采购单价</th>
-                    <th className="whitespace-nowrap text-right">金额</th>
-                    <th className="whitespace-nowrap text-right">基准单价/{record.items[0]?.baseUnit || '公斤'}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {record.items.map((item, idx) => (
-                    <tr key={item.id} style={{ animationDelay: `${idx * 20}ms` }} className="animate-fade-in">
-                      <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
-                      <td>
-                        <span className="inline-flex items-center gap-1 text-xs text-gray-600">
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }}
-                          />
-                          {item.categoryName}
-                        </span>
-                      </td>
-                      <td className="text-right text-gray-600">{item.purchaseUnit}</td>
-                      <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
-                      <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
-                      <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
-                      <td className="text-right text-gray-700">{formatCurrency(item.baseUnitPrice)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-gray-50 font-semibold">
-                    <td colSpan={5} className="text-right text-gray-600">合计</td>
-                    <td className="text-right text-lg text-primary-600">{formatCurrency(record.totalAmount)}</td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
+            {(() => {
+              const deptGroups: Record<string, { name: string; items: PurchaseEntryItem[] }> = {};
+              record.items.forEach(item => {
+                const deptId = (item as any).departmentId || '';
+                const deptName = (item as any).departmentName || '未分配';
+                if (!deptGroups[deptId]) {
+                  deptGroups[deptId] = { name: deptName, items: [] };
+                }
+                deptGroups[deptId].items.push(item);
+              });
+
+              const sortedGroups = departments
+                .filter(d => deptGroups[d.id])
+                .map(d => ({ id: d.id, ...deptGroups[d.id] }));
+
+              const noDept = deptGroups[''];
+              if (noDept) {
+                sortedGroups.push({ id: '', name: noDept.name, items: noDept.items });
+              }
+
+              return sortedGroups.map(group => {
+                const groupTotal = group.items.reduce((s, i) => s + i.amount, 0);
+                return (
+                  <div key={group.id || 'none'} className="mb-6 last:mb-0">
+                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
+                      <div className="flex items-center gap-2">
+                        <Building2 size={16} className="text-primary-500" />
+                        <span className="font-semibold text-gray-800">{group.name}</span>
+                        <span className="text-xs text-gray-400">{group.items.length} 项</span>
+                      </div>
+                      <span className="font-semibold text-primary-600">{formatCurrency(groupTotal)}</span>
+                    </div>
+                    <div className="overflow-x-auto -mx-6 px-6">
+                      <table className="data-table min-w-full">
+                        <thead>
+                          <tr>
+                            <th className="whitespace-nowrap">食材名称</th>
+                            <th className="whitespace-nowrap">分类</th>
+                            <th className="whitespace-nowrap text-right">采购单位</th>
+                            <th className="whitespace-nowrap text-right">数量</th>
+                            <th className="whitespace-nowrap text-right">采购单价</th>
+                            <th className="whitespace-nowrap text-right">金额</th>
+                            <th className="whitespace-nowrap text-right">基准单价</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.items.map((item, idx) => (
+                            <tr key={item.id}>
+                              <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
+                              <td>
+                                <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }} />
+                                  {item.categoryName}
+                                </span>
+                              </td>
+                              <td className="text-right text-gray-600">{item.purchaseUnit}</td>
+                              <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
+                              <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
+                              <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
+                              <td className="text-right text-gray-700">{formatCurrency(item.baseUnitPrice)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-gray-50 font-semibold">
+                            <td colSpan={5} className="text-right text-gray-600">{group.name} 小计</td>
+                            <td className="text-right text-primary-600">{formatCurrency(groupTotal)}</td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+            <div className="border-t-2 border-primary-200 pt-3 mt-4">
+              <div className="flex justify-end">
+                <span className="text-gray-600 mr-4">总计</span>
+                <span className="text-xl font-bold text-primary-600">{formatCurrency(record.totalAmount)}</span>
+              </div>
             </div>
           </div>
         </>
