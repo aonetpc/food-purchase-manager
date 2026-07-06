@@ -103,6 +103,8 @@ router.put('/:id', async (req, res) => {
       ingredient_name: 'ingredient_name',
       category_id: 'category_id',
       category_name: 'category_name',
+      department_id: 'department_id',
+      department_name: 'department_name',
       purchase_unit: 'purchase_unit',
       purchase_quantity: 'purchase_quantity',
       purchase_unit_price: 'purchase_unit_price',

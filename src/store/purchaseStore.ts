@@ -182,6 +182,8 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       if (updates.ingredientName) updateData.ingredient_name = updates.ingredientName;
       if (updates.categoryId) updateData.category_id = updates.categoryId;
       if (updates.categoryName) updateData.category_name = updates.categoryName;
+      if (updates.departmentId) updateData.department_id = updates.departmentId;
+      if (updates.departmentName) updateData.department_name = updates.departmentName;
       if (updates.purchaseUnit) updateData.purchase_unit = updates.purchaseUnit;
       if (updates.purchaseQuantity) updateData.purchase_quantity = updates.purchaseQuantity;
       if (updates.purchaseUnitPrice) updateData.purchase_unit_price = updates.purchaseUnitPrice;
@@ -258,6 +260,8 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
         ingredientName: row.ingredient_name,
         categoryId: row.category_id,
         categoryName: row.category_name,
+        departmentId: row.department_id || '',
+        departmentName: row.department_name || '',
         purchaseUnit: row.purchase_unit,
         purchaseQuantity: parseFloat(row.purchase_quantity),
         purchaseUnitPrice: parseFloat(row.purchase_unit_price),
