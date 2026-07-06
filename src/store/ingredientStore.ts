@@ -85,7 +85,7 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
       return newIngredient;
     } catch (err: any) {
       set({ error: err.message || '添加食材失败' });
-      return null;
+      throw err;
     }
   },
 
@@ -93,12 +93,12 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
     try {
       const updateData: any = {};
       
-      if (data.name) updateData.name = data.name;
-      if (data.categoryId) updateData.category_id = data.categoryId;
-      if (data.baseUnit) updateData.base_unit = data.baseUnit;
-      if (data.basePrice) updateData.base_price = data.basePrice;
-      if (data.image) updateData.image = data.image;
-      if (data.units) updateData.units = data.units;
+      if (data.name !== undefined) updateData.name = data.name;
+      if (data.categoryId !== undefined) updateData.category_id = data.categoryId;
+      if (data.baseUnit !== undefined) updateData.base_unit = data.baseUnit;
+      if (data.basePrice !== undefined) updateData.base_price = data.basePrice;
+      if (data.image !== undefined) updateData.image = data.image;
+      if (data.units !== undefined) updateData.units = data.units;
 
       await api.put(`/ingredients/${id}`, updateData);
 
@@ -111,7 +111,7 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
       return true;
     } catch (err: any) {
       set({ error: err.message || '更新食材失败' });
-      return false;
+      throw err;
     }
   },
 

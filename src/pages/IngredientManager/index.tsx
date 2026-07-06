@@ -83,7 +83,7 @@ export default function IngredientManager() {
     setShowModal(true);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setError('');
     if (!form.name.trim()) { setError('请输入食材名称'); return; }
     if (!form.categoryId) { setError('请选择食材分类'); return; }
@@ -105,26 +105,30 @@ export default function IngredientManager() {
 
     const image = form.image.trim() || generateImageUrl(form.name.trim());
 
-    if (editing) {
-      updateIngredient(editing.id, {
-        name: form.name.trim(),
-        categoryId: form.categoryId,
-        baseUnit: form.baseUnit.trim(),
-        basePrice: parseFloat(form.basePrice),
-        image,
-        units,
-      });
-    } else {
-      addIngredient({
-        name: form.name.trim(),
-        categoryId: form.categoryId,
-        baseUnit: form.baseUnit.trim(),
-        basePrice: parseFloat(form.basePrice),
-        image,
-        units,
-      });
+    try {
+      if (editing) {
+        await updateIngredient(editing.id, {
+          name: form.name.trim(),
+          categoryId: form.categoryId,
+          baseUnit: form.baseUnit.trim(),
+          basePrice: parseFloat(form.basePrice),
+          image,
+          units,
+        });
+      } else {
+        await addIngredient({
+          name: form.name.trim(),
+          categoryId: form.categoryId,
+          baseUnit: form.baseUnit.trim(),
+          basePrice: parseFloat(form.basePrice),
+          image,
+          units,
+        });
+      }
+      setShowModal(false);
+    } catch (err: any) {
+      setError(err.message || '操作失败');
     }
-    setShowModal(false);
   };
 
   const handleDelete = (id: string) => {

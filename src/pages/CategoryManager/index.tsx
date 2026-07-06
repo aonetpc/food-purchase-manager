@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, X, Check, AlertCircle } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Check, AlertCircle, ArrowUp, ArrowDown } from 'lucide-react';
 import { useCategoryStore } from '@/store/categoryStore';
 import type { Category } from '@/types';
 
@@ -18,7 +18,7 @@ const DEFAULT_COLORS = [
 ];
 
 export default function CategoryManager() {
-  const { categories, addCategory, updateCategory, deleteCategory } = useCategoryStore();
+  const { categories, addCategory, updateCategory, deleteCategory, moveCategoryUp, moveCategoryDown } = useCategoryStore();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [form, setForm] = useState<FormState>({ name: '', icon: '🥬', color: '#10b981' });
@@ -39,18 +39,22 @@ export default function CategoryManager() {
     setShowModal(true);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setError('');
     if (!form.name.trim()) {
       setError('请输入分类名称');
       return;
     }
-    if (editing) {
-      updateCategory(editing.id, { name: form.name.trim(), icon: form.icon, color: form.color });
-    } else {
-      addCategory({ name: form.name.trim(), icon: form.icon, color: form.color });
+    try {
+      if (editing) {
+        await updateCategory(editing.id, { name: form.name.trim(), icon: form.icon, color: form.color });
+      } else {
+        await addCategory({ name: form.name.trim(), icon: form.icon, color: form.color });
+      }
+      setShowModal(false);
+    } catch (err: any) {
+      setError(err.message || '操作失败');
     }
-    setShowModal(false);
   };
 
   const handleDelete = (id: string) => {
@@ -58,12 +62,20 @@ export default function CategoryManager() {
     setDeleteConfirm(null);
   };
 
+  const handleMoveUp = (id: string) => {
+    moveCategoryUp(id);
+  };
+
+  const handleMoveDown = (id: string) => {
+    moveCategoryDown(id);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-serif font-bold text-gray-800">食材分类管理</h1>
-          <p className="text-gray-500 mt-1">管理食材分类，支持新增、编辑和删除</p>
+          <p className="text-gray-500 mt-1">管理食材分类，支持新增、编辑、删除和排序</p>
         </div>
         <button onClick={openAdd} className="btn-primary flex items-center gap-2">
           <Plus size={18} />
@@ -73,7 +85,7 @@ export default function CategoryManager() {
 
       <div className="card">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {categories.map((cat) => (
+          {categories.map((cat, index) => (
             <div
               key={cat.id}
               className="p-4 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-md transition-all group relative"
@@ -92,17 +104,36 @@ export default function CategoryManager() {
                   <span className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }} />
                   主题色
                 </span>
+                <span className="text-gray-400">#{index + 1}</span>
               </div>
               <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
+                  onClick={() => handleMoveUp(cat.id)}
+                  disabled={index === 0}
+                  className="p-1.5 bg-white border border-gray-200 rounded-md text-gray-500 hover:text-primary-600 hover:border-primary-300 hover:bg-primary-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="上移"
+                >
+                  <ArrowUp size={14} />
+                </button>
+                <button
+                  onClick={() => handleMoveDown(cat.id)}
+                  disabled={index === categories.length - 1}
+                  className="p-1.5 bg-white border border-gray-200 rounded-md text-gray-500 hover:text-primary-600 hover:border-primary-300 hover:bg-primary-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="下移"
+                >
+                  <ArrowDown size={14} />
+                </button>
+                <button
                   onClick={() => openEdit(cat)}
                   className="p-1.5 bg-white border border-gray-200 rounded-md text-gray-500 hover:text-primary-600 hover:border-primary-300 hover:bg-primary-50"
+                  title="编辑"
                 >
                   <Pencil size={14} />
                 </button>
                 <button
                   onClick={() => setDeleteConfirm(cat.id)}
                   className="p-1.5 bg-white border border-gray-200 rounded-md text-gray-500 hover:text-danger-600 hover:border-danger-300 hover:bg-danger-50"
+                  title="删除"
                 >
                   <Trash2 size={14} />
                 </button>

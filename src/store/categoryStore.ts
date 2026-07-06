@@ -13,6 +13,8 @@ interface CategoryStore {
   addCategory: (data: { name: string; icon?: string; color?: string }) => Promise<Category | null>;
   updateCategory: (id: string, data: Partial<Category>) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
+  moveCategoryUp: (id: string) => Promise<boolean>;
+  moveCategoryDown: (id: string) => Promise<boolean>;
 }
 
 export const useCategoryStore = create<CategoryStore>()((set, get) => ({
@@ -24,7 +26,6 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
     const cached = cache.get<Category[]>(CACHE_KEY);
     if (cached && cached.length > 0) {
       set({ categories: cached, loading: false });
-      return;
     }
 
     set({ loading: true, error: null });
@@ -67,7 +68,7 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
       return newCategory;
     } catch (err: any) {
       set({ error: err.message || '添加分类失败' });
-      return null;
+      throw err;
     }
   },
 
@@ -88,7 +89,7 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
       return true;
     } catch (err: any) {
       set({ error: err.message || '更新分类失败' });
-      return false;
+      throw err;
     }
   },
 
@@ -103,10 +104,47 @@ export const useCategoryStore = create<CategoryStore>()((set, get) => ({
       return true;
     } catch (err: any) {
       set({ error: err.message || '删除分类失败' });
-      return false;
+      throw err;
+    }
+  },
+
+  moveCategoryUp: async (id) => {
+    try {
+      await api.post(`/categories/${id}/move-up`);
+
+      const list = [...get().categories];
+      const index = list.findIndex(c => c.id === id);
+      if (index > 0) {
+        [list[index - 1], list[index]] = [list[index], list[index - 1]];
+        cache.set(CACHE_KEY, list);
+        set({ categories: list });
+      }
+
+      return true;
+    } catch (err: any) {
+      set({ error: err.message || '上移失败' });
+      throw err;
+    }
+  },
+
+  moveCategoryDown: async (id) => {
+    try {
+      await api.post(`/categories/${id}/move-down`);
+
+      const list = [...get().categories];
+      const index = list.findIndex(c => c.id === id);
+      if (index >= 0 && index < list.length - 1) {
+        [list[index], list[index + 1]] = [list[index + 1], list[index]];
+        cache.set(CACHE_KEY, list);
+        set({ categories: list });
+      }
+
+      return true;
+    } catch (err: any) {
+      set({ error: err.message || '下移失败' });
+      throw err;
     }
   },
 }));
 
-// 初始化时自动获取分类
 useCategoryStore.getState().fetchCategories();
