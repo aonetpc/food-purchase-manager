@@ -16,9 +16,10 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             cd ~/food-purchase-manager
             git pull origin main
-            npm install
+            npm ci
             npm run build
             cp -r dist/* /var/www/food-purchase/
             cp backend/package.json /opt/food-purchase/backend/
@@ -26,7 +27,8 @@ jobs:
             cp backend/db.js /opt/food-purchase/backend/
             cp -r backend/routes/* /opt/food-purchase/backend/routes/
             cd /opt/food-purchase/backend
-            npm install --production
+            npm ci --production
             sudo systemctl restart food-purchase-backend
-            sleep 2
-            curl -s http://127.0.0.1:3001/api/health
+            sleep 3
+            curl -s http://127.0.0.1:3001/api/health || exit 1
+            echo "✅ Deployment successful"
