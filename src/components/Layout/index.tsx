@@ -13,7 +13,8 @@ import {
   Tags,
   Package,
   LogOut,
-  ChevronDown
+  ChevronDown,
+  Building2
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 
@@ -32,6 +33,7 @@ export default function Layout() {
 
   const adminNavItems = [
     { path: '/purchase-entry', label: '采买清单录入', icon: ClipboardList },
+    { path: '/departments', label: '部门管理', icon: Building2 },
     { path: '/categories', label: '食材分类管理', icon: Tags },
     { path: '/ingredient-manager', label: '食材信息管理', icon: Package },
   ];

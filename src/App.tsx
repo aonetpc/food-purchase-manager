@@ -8,6 +8,7 @@ import PurchaseEntry from '@/pages/PurchaseEntry';
 import Login from '@/pages/Login';
 import CategoryManager from '@/pages/CategoryManager';
 import IngredientManager from '@/pages/IngredientManager';
+import DepartmentManager from '@/pages/DepartmentManager';
 import ProtectedRoute from '@/components/ProtectedRoute';
 
 export default function App() {
@@ -34,6 +35,11 @@ export default function App() {
           <Route path="ingredient-manager" element={
             <ProtectedRoute requiredRole="admin">
               <IngredientManager />
+            </ProtectedRoute>
+          } />
+          <Route path="departments" element={
+            <ProtectedRoute requiredRole="admin">
+              <DepartmentManager />
             </ProtectedRoute>
           } />
         </Route>

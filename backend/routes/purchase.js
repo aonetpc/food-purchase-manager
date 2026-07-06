@@ -10,6 +10,8 @@ const dbToFrontend = (row) => ({
   ingredient_name: row.ingredient_name,
   category_id: row.category_id || '',
   category_name: row.category_name || '',
+  department_id: row.department_id || '',
+  department_name: row.department_name || '',
   purchase_unit: row.purchase_unit,
   purchase_quantity: parseFloat(row.purchase_quantity),
   purchase_unit_price: parseFloat(row.purchase_unit_price),
@@ -183,6 +185,8 @@ router.post('/batch-save', async (req, res) => {
         const ingredientName = item.ingredient_name || item.ingredientName;
         const categoryId = item.category_id || item.categoryId;
         const categoryName = item.category_name || item.categoryName;
+        const departmentId = item.department_id || item.departmentId || '';
+        const departmentName = item.department_name || item.departmentName || '';
         const purchaseUnit = item.purchase_unit || item.purchaseUnit;
         const purchaseQuantity = item.purchase_quantity ?? item.purchaseQuantity;
         const purchaseUnitPrice = item.purchase_unit_price ?? item.purchaseUnitPrice;
@@ -196,6 +200,7 @@ router.post('/batch-save', async (req, res) => {
             `UPDATE purchase_records SET
               ingredient_id = ?, ingredient_name = ?,
               category_id = ?, category_name = ?,
+              department_id = ?, department_name = ?,
               purchase_unit = ?, purchase_quantity = ?, purchase_unit_price = ?,
               base_unit = ?, base_unit_price = ?, base_quantity = ?,
               amount = ?
@@ -203,6 +208,7 @@ router.post('/batch-save', async (req, res) => {
             [
               ingredientId, ingredientName,
               categoryId, categoryName,
+              departmentId, departmentName,
               purchaseUnit, purchaseQuantity, purchaseUnitPrice,
               baseUnit, baseUnitPrice, baseQuantity,
               amount,
@@ -213,11 +219,13 @@ router.post('/batch-save', async (req, res) => {
           await conn.query(
             `INSERT INTO purchase_records 
              (id, date, ingredient_id, ingredient_name, category_id, category_name,
+              department_id, department_name,
               purchase_unit, purchase_quantity, purchase_unit_price,
               base_unit, base_unit_price, base_quantity, amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               id, date, ingredientId, ingredientName, categoryId, categoryName,
+              departmentId, departmentName,
               purchaseUnit, purchaseQuantity, purchaseUnitPrice,
               baseUnit, baseUnitPrice, baseQuantity, amount
             ]
@@ -232,6 +240,8 @@ router.post('/batch-save', async (req, res) => {
           ingredient_name: ingredientName,
           category_id: categoryId,
           category_name: categoryName,
+          department_id: departmentId,
+          department_name: departmentName,
           purchase_unit: purchaseUnit,
           purchase_quantity: purchaseQuantity,
           purchase_unit_price: purchaseUnitPrice,
@@ -282,8 +292,8 @@ router.post('/move-date', async (req, res) => {
     }
 
     const [existingRows] = await conn.query(
-      'SELECT * FROM purchase_records WHERE date = ? AND ingredient_id = ? AND purchase_unit = ?',
-      [newDate, item.ingredient_id, item.purchase_unit]
+      'SELECT * FROM purchase_records WHERE date = ? AND ingredient_id = ? AND purchase_unit = ? AND department_id = ?',
+      [newDate, item.ingredient_id, item.purchase_unit, item.department_id || '']
     );
 
     if (existingRows.length > 0) {

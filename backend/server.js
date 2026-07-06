@@ -6,6 +6,7 @@ const categoriesRouter = require('./routes/categories');
 const ingredientsRouter = require('./routes/ingredients');
 const purchaseRouter = require('./routes/purchase');
 const authRouter = require('./routes/auth');
+const departmentsRouter = require('./routes/departments');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,6 +18,7 @@ app.use('/api/categories', categoriesRouter);
 app.use('/api/ingredients', ingredientsRouter);
 app.use('/api/purchase', purchaseRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/departments', departmentsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
