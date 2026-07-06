@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Search,
-  Calendar, ShoppingCart, CheckCircle2, X, Package, Settings, AlertCircle, Cloud
+  Calendar, ShoppingCart, CheckCircle2, X, Package, Settings, AlertCircle, Cloud, ClipboardList
 } from 'lucide-react';
 import { format, subDays, addDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -13,6 +13,7 @@ import type { Ingredient, UnitConversion } from '@/types';
 import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import { formatCurrency, formatNumber, generateId } from '@/utils/format';
 import { formatDate } from '@/utils/date';
+import BatchPasteModal from '@/components/BatchPasteModal';
 
 interface DraftItem {
   id: string;
@@ -102,6 +103,7 @@ export default function PurchaseEntry() {
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState<string | null>(null);
   const [movingItem, setMovingItem] = useState<DraftItem | null>(null);
+  const [showBatchPaste, setShowBatchPaste] = useState(false);
   const skipSaveRef = useRef(true);
 
   useEffect(() => {
@@ -275,6 +277,28 @@ export default function PurchaseEntry() {
     navigate('/daily');
   };
 
+  const handleBatchImport = (items: PurchaseEntryItem[]) => {
+    const newDraftItems: DraftItem[] = items.map(item => {
+      const ing = ingredients.find(i => i.id === item.ingredientId);
+      const unitObj = ing?.units.find(u => u.unit === item.purchaseUnit);
+      return {
+        id: item.id,
+        ingredientId: item.ingredientId,
+        ingredientName: item.ingredientName,
+        categoryId: item.categoryId,
+        categoryName: item.categoryName,
+        departmentId: item.departmentId,
+        departmentName: item.departmentName,
+        purchaseUnit: item.purchaseUnit,
+        factor: unitObj?.factor || 1,
+        baseUnit: item.baseUnit,
+        purchaseQuantity: item.purchaseQuantity,
+        purchaseUnitPrice: item.purchaseUnitPrice,
+      };
+    });
+    setDraftItems(prev => [...prev, ...newDraftItems]);
+  };
+
   const existingRecord = draftItems.length > 0;
 
   return (
@@ -345,13 +369,22 @@ export default function PurchaseEntry() {
 
       {/* 操作栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          onClick={() => setShowAddPanel(true)}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={18} />
-          <span>添加食材</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddPanel(true)}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus size={18} />
+            <span>添加食材</span>
+          </button>
+          <button
+            onClick={() => setShowBatchPaste(true)}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <ClipboardList size={18} />
+            <span>批量粘贴</span>
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           {draftItems.length > 0 && (
             <button onClick={handleClear} className="btn-secondary flex items-center gap-2 text-danger-600 hover:bg-danger-50">
@@ -744,6 +777,12 @@ export default function PurchaseEntry() {
           </div>
         </div>
       )}
+
+      <BatchPasteModal
+        open={showBatchPaste}
+        onClose={() => setShowBatchPaste(false)}
+        onConfirm={handleBatchImport}
+      />
 
     </div>
   );
