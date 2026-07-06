@@ -191,6 +191,61 @@ router.post('/batch-save', async (req, res) => {
   }
 });
 
+router.post('/move-date', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id, newDate } = req.body;
+
+    if (!id || !newDate) {
+      return res.status(400).json({ error: '缺少参数' });
+    }
+
+    await conn.beginTransaction();
+
+    const [itemRows] = await conn.query('SELECT * FROM purchase_records WHERE id = ?', [id]);
+    if (itemRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ error: '记录不存在' });
+    }
+
+    const item = itemRows[0];
+    const oldDate = item.date;
+
+    if (oldDate === newDate) {
+      await conn.rollback();
+      return res.status(400).json({ error: '目标日期与原日期相同' });
+    }
+
+    const [existingRows] = await conn.query(
+      'SELECT * FROM purchase_records WHERE date = ? AND ingredient_id = ? AND purchase_unit = ?',
+      [newDate, item.ingredient_id, item.purchase_unit]
+    );
+
+    if (existingRows.length > 0) {
+      const existing = existingRows[0];
+      const newQuantity = parseFloat(existing.purchase_quantity) + parseFloat(item.purchase_quantity);
+      const newAmount = parseFloat(existing.amount) + parseFloat(item.amount);
+
+      await conn.query(
+        'UPDATE purchase_records SET purchase_quantity = ?, amount = ? WHERE id = ?',
+        [newQuantity, newAmount, existing.id]
+      );
+      await conn.query('DELETE FROM purchase_records WHERE id = ?', [id]);
+    } else {
+      await conn.query('UPDATE purchase_records SET date = ? WHERE id = ?', [newDate, id]);
+    }
+
+    await conn.commit();
+    res.json({ success: true });
+  } catch (err) {
+    await conn.rollback();
+    console.error('move-date error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
 router.delete('/date/:date', async (req, res) => {
   try {
     const { date } = req.params;

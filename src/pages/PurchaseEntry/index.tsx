@@ -55,7 +55,7 @@ interface QuickIngredientForm {
 
 export default function PurchaseEntry() {
   const navigate = useNavigate();
-  const { saveDateItems, fetchRecords, clearDate } = usePurchaseStore();
+  const { saveDateItems, fetchRecords, clearDate, movePurchaseDate } = usePurchaseStore();
   const { ingredients, addIngredient } = useIngredientStore();
   const { categories } = useCategoryStore();
 
@@ -85,6 +85,8 @@ export default function PurchaseEntry() {
   const [quickError, setQuickError] = useState('');
   const [autoSaving, setAutoSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState<string | null>(null);
+  const [movingItem, setMovingItem] = useState<DraftItem | null>(null);
   const skipSaveRef = useRef(true);
 
   // 加载已有录入数据（异步）
@@ -220,6 +222,22 @@ export default function PurchaseEntry() {
 
   const removeDraftItem = (id: string) => {
     setDraftItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const handleMoveDate = (item: DraftItem) => {
+    setMovingItem(item);
+    setShowDatePicker(item.id);
+  };
+
+  const handleSelectDate = async (targetDateStr: string) => {
+    if (!movingItem) return;
+    
+    const success = await movePurchaseDate(movingItem.id, dateStr, targetDateStr);
+    if (success) {
+      setDraftItems(prev => prev.filter(item => item.id !== movingItem!.id));
+    }
+    setShowDatePicker(null);
+    setMovingItem(null);
   };
 
   const handleClear = () => {
@@ -421,12 +439,21 @@ export default function PurchaseEntry() {
                         {formatCurrency(baseUnitPrice)}/{item.baseUnit}
                       </td>
                       <td className="text-center">
-                        <button
-                          onClick={() => removeDraftItem(item.id)}
-                          className="p-1.5 text-gray-400 hover:text-danger-500 hover:bg-danger-50 rounded-md transition-colors"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => handleMoveDate(item)}
+                            className="p-1.5 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-md transition-colors"
+                            title="修改日期"
+                          >
+                            <Calendar size={16} />
+                          </button>
+                          <button
+                            onClick={() => removeDraftItem(item.id)}
+                            className="p-1.5 text-gray-400 hover:text-danger-500 hover:bg-danger-50 rounded-md transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -643,6 +670,36 @@ export default function PurchaseEntry() {
                 <Plus size={16} />
                 新增并添加
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDatePicker && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => { setShowDatePicker(null); setMovingItem(null); }}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">调整日期</h3>
+              <button onClick={() => { setShowDatePicker(null); setMovingItem(null); }} className="p-1 hover:bg-gray-100 rounded-md">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <p className="text-gray-600 mb-4">
+              将 <span className="font-medium text-primary-600">{movingItem?.ingredientName}</span>
+              从 <span className="font-medium">{dateStr}</span> 调整到：
+            </p>
+            <input
+              type="date"
+              defaultValue={dateStr}
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleSelectDate(e.target.value);
+                }
+              }}
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+            />
+            <div className="text-sm text-gray-400 mt-2">
+              提示：如果目标日期已有相同食材，数量将自动合并
             </div>
           </div>
         </div>

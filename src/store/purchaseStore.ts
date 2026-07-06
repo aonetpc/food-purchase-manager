@@ -30,6 +30,7 @@ interface PurchaseStore {
   removeItem: (date: string, itemId: string) => Promise<boolean>;
   clearDate: (date: string) => Promise<boolean>;
   saveDateItems: (date: string, items: PurchaseEntryItem[]) => Promise<PurchaseEntryItem[] | null>;
+  movePurchaseDate: (itemId: string, oldDate: string, newDate: string) => Promise<boolean>;
   getItems: (date: string) => PurchaseEntryItem[];
   hasRecord: (date: string) => boolean;
 }
@@ -268,6 +269,48 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
     } catch (err: any) {
       set({ error: err.message || '保存记录失败' });
       return null;
+    }
+  },
+
+  movePurchaseDate: async (itemId, oldDate, newDate) => {
+    try {
+      await api.post('/purchase/move-date', { id: itemId, newDate });
+
+      set((state) => {
+        const newRecords = { ...state.records };
+        
+        newRecords[oldDate] = (newRecords[oldDate] || []).filter(item => item.id !== itemId);
+        
+        if (oldDate !== newDate) {
+          const movedItem = state.records[oldDate]?.find(item => item.id === itemId);
+          if (movedItem) {
+            if (!newRecords[newDate]) {
+              newRecords[newDate] = [];
+            }
+            
+            const existingIdx = newRecords[newDate].findIndex(
+              item => item.ingredientId === movedItem.ingredientId && item.purchaseUnit === movedItem.purchaseUnit
+            );
+            
+            if (existingIdx !== -1) {
+              newRecords[newDate][existingIdx] = {
+                ...newRecords[newDate][existingIdx],
+                purchaseQuantity: newRecords[newDate][existingIdx].purchaseQuantity + movedItem.purchaseQuantity,
+                amount: newRecords[newDate][existingIdx].amount + movedItem.amount,
+              };
+            } else {
+              newRecords[newDate].push({ ...movedItem, date: newDate });
+            }
+          }
+        }
+        
+        return { records: newRecords, error: null };
+      });
+
+      return true;
+    } catch (err: any) {
+      set({ error: err.message || '移动日期失败' });
+      return false;
     }
   },
 
