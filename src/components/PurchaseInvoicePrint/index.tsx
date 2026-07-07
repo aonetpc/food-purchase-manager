@@ -13,7 +13,7 @@ interface PrintInvoiceProps {
   showPrintButton?: boolean;
 }
 
-const PAGE_ROWS = 15;
+const PAGE_ROWS = 16;
 
 const formatCurrency = (amount: number) => {
   return amount.toFixed(2);
@@ -215,32 +215,32 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
         }
 
         .print-page {
-          width: 241mm;
-          min-height: 140mm;
+          width: 225mm;
+          height: 140mm;
           margin-bottom: 10mm;
-          padding: 6mm 8mm;
+          padding: 4mm 4mm;
           border: 1px solid #ccc;
           box-sizing: border-box;
-          page-break-after: always;
+          overflow: hidden;
         }
 
         .invoice-header {
           text-align: center;
-          margin-bottom: 6mm;
+          margin-bottom: 3mm;
         }
 
         .invoice-title {
-          font-size: 16px;
+          font-size: 14px;
           font-weight: bold;
-          margin: 0 0 4mm 0;
+          margin: 0 0 2mm 0;
           color: #333;
         }
 
         .invoice-info {
           display: flex;
           justify-content: space-between;
-          margin-bottom: 2mm;
-          font-size: 10px;
+          margin-bottom: 1mm;
+          font-size: 9px;
         }
 
         .info-left, .info-right {
@@ -261,16 +261,17 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
         .invoice-table {
           width: 100%;
           border-collapse: collapse;
-          font-size: 9px;
-          margin-bottom: 4mm;
+          font-size: 8px;
+          margin-bottom: 2mm;
+          table-layout: fixed;
         }
 
         .invoice-table th, .invoice-table td {
           border: 1px solid #999;
-          padding: 1.5mm 2mm;
+          padding: 0.8mm 1.5mm;
           text-align: center;
           vertical-align: middle;
-          height: 5mm;
+          height: 4.5mm;
           box-sizing: border-box;
         }
 
@@ -314,8 +315,8 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 3mm;
-          font-size: 10px;
+          margin-bottom: 2mm;
+          font-size: 9px;
         }
 
         .total-left, .total-right {
@@ -334,8 +335,8 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
         }
 
         .invoice-uppercase {
-          margin-bottom: 5mm;
-          font-size: 10px;
+          margin-bottom: 2mm;
+          font-size: 9px;
         }
 
         .invoice-uppercase .label {
@@ -351,8 +352,8 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
         .invoice-signature {
           display: flex;
           justify-content: space-between;
-          margin-bottom: 4mm;
-          font-size: 10px;
+          margin-bottom: 2mm;
+          font-size: 9px;
         }
 
         .signature-item {
@@ -376,9 +377,9 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
 
         .invoice-page {
           text-align: center;
-          font-size: 9px;
+          font-size: 8px;
           color: #666;
-          margin-top: 2mm;
+          margin-top: 1mm;
         }
 
         .print-controls {
@@ -392,12 +393,14 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
         @media print {
           @page {
             size: 241mm 140mm;
-            margin: 6mm 8mm;
+            margin: 0;
           }
 
           body {
             background: white !important;
             font-size: 12px !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
 
           .no-print {
@@ -407,10 +410,11 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
           .print-page {
             border: none;
             margin: 0;
-            padding: 0;
-            width: 100%;
-            min-height: auto;
-            height: 128mm;
+            padding: 4mm 4mm;
+            width: 241mm;
+            height: 140mm;
+            page-break-after: always;
+            overflow: hidden;
           }
 
           .print-invoice-container {
