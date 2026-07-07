@@ -1,9 +1,15 @@
 import { type PurchaseItem } from '@/store/purchaseStore';
 
+interface DepartmentData {
+  name: string;
+  items: PurchaseItem[];
+}
+
 interface PrintInvoiceProps {
   date: string;
-  departmentName: string;
-  items: PurchaseItem[];
+  departmentName?: string;
+  items?: PurchaseItem[];
+  departments?: DepartmentData[];
   showPrintButton?: boolean;
 }
 
@@ -67,105 +73,130 @@ const toChineseMoney = (amount: number): string => {
   return chineseStr;
 };
 
-export default function PurchaseInvoicePrint({ date, departmentName, items, showPrintButton = true }: PrintInvoiceProps) {
+const InvoicePage = ({ date, departmentName, items, pageIndex, totalPages }: {
+  date: string;
+  departmentName: string;
+  items: PurchaseItem[];
+  pageIndex: number;
+  totalPages: number;
+}) => {
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
   const totalItems = items.length;
-  const pages = Math.ceil(items.length / PAGE_ROWS);
 
-  const getPageItems = (pageIndex: number) => {
-    const start = pageIndex * PAGE_ROWS;
+  const getPageItems = (idx: number) => {
+    const start = idx * PAGE_ROWS;
     const end = start + PAGE_ROWS;
     return items.slice(start, end);
   };
 
+  const pageItems = getPageItems(pageIndex);
+
   return (
-    <div className="print-invoice-container">
-      {Array.from({ length: pages }).map((_, pageIndex) => (
-        <div key={pageIndex} className="print-page">
-          <div className="invoice-header">
-            <h1 className="invoice-title">华医食材采购入库单{pageIndex > 0 ? '（续）' : ''}</h1>
-            <div className="invoice-info">
-              <div className="info-left">
-                <span className="label">日期：</span><span className="value">{date}</span>
-              </div>
-              <div className="info-right">
-                <span className="label">部门：</span><span className="value">{departmentName}</span>
-              </div>
-            </div>
-            <div className="invoice-info">
-              <div className="info-left">
-                <span className="label">单据编号：</span><span className="value">RK-{date.replace(/-/g, '')}-001</span>
-              </div>
-            </div>
+    <div key={`${departmentName}-${pageIndex}`} className="print-page">
+      <div className="invoice-header">
+        <h1 className="invoice-title">华医食材采购入库单{pageIndex > 0 ? '（续）' : ''}</h1>
+        <div className="invoice-info">
+          <div className="info-left">
+            <span className="label">日期：</span><span className="value">{date}</span>
           </div>
-
-          <table className="invoice-table">
-            <thead>
-              <tr>
-                <th>序号</th>
-                <th>食材名称</th>
-                <th>分类</th>
-                <th>单位</th>
-                <th>数量</th>
-                <th>金额</th>
-              </tr>
-            </thead>
-            <tbody>
-              {getPageItems(pageIndex).map((item, idx) => (
-                <tr key={item.id}>
-                  <td>{pageIndex * PAGE_ROWS + idx + 1}</td>
-                  <td>{item.ingredientName}</td>
-                  <td>{item.categoryName}</td>
-                  <td>{item.purchaseUnit}</td>
-                  <td>{item.purchaseQuantity}</td>
-                  <td>{formatCurrency(item.amount)}</td>
-                </tr>
-              ))}
-              {getPageItems(pageIndex).length < PAGE_ROWS && Array.from({ length: PAGE_ROWS - getPageItems(pageIndex).length }).map((_, idx) => (
-                <tr key={`empty-${idx}`} className="empty-row">
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="invoice-total">
-            <div className="total-left">
-              <span className="label">合计：共</span><span className="value">{totalItems}</span><span className="label">项</span>
-            </div>
-            <div className="total-right">
-              <span className="label">金额合计：</span><span className="value">¥{formatCurrency(totalAmount)}</span>
-            </div>
-          </div>
-          <div className="invoice-uppercase">
-            <span className="label">大写金额：</span><span className="value">{toChineseMoney(totalAmount)}</span>
-          </div>
-
-          <div className="invoice-signature">
-            <div className="signature-item">
-              <span className="label">验收人签字：</span>
-              <span className="line"></span>
-            </div>
-            <div className="signature-item">
-              <span className="label">部门负责人签字：</span>
-              <span className="line"></span>
-            </div>
-            <div className="signature-item">
-              <span className="label">备注：</span>
-              <span className="line"></span>
-            </div>
-          </div>
-
-          <div className="invoice-page">
-            第 {pageIndex + 1} 页 / 共 {pages} 页
+          <div className="info-right">
+            <span className="label">部门：</span><span className="value">{departmentName}</span>
           </div>
         </div>
-      ))}
+        <div className="invoice-info">
+          <div className="info-left">
+            <span className="label">单据编号：</span><span className="value">RK-{date.replace(/-/g, '')}-001</span>
+          </div>
+        </div>
+      </div>
+
+      <table className="invoice-table">
+        <thead>
+          <tr>
+            <th>序号</th>
+            <th>食材名称</th>
+            <th>分类</th>
+            <th>单位</th>
+            <th>数量</th>
+            <th>金额</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pageItems.map((item, idx) => (
+            <tr key={item.id}>
+              <td>{pageIndex * PAGE_ROWS + idx + 1}</td>
+              <td>{item.ingredientName}</td>
+              <td>{item.categoryName}</td>
+              <td>{item.purchaseUnit}</td>
+              <td>{item.purchaseQuantity}</td>
+              <td>{formatCurrency(item.amount)}</td>
+            </tr>
+          ))}
+          {pageItems.length < PAGE_ROWS && Array.from({ length: PAGE_ROWS - pageItems.length }).map((_, idx) => (
+            <tr key={`empty-${departmentName}-${pageIndex}-${idx}`} className="empty-row">
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+              <td>&nbsp;</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="invoice-total">
+        <div className="total-left">
+          <span className="label">合计：共</span><span className="value">{totalItems}</span><span className="label">项</span>
+        </div>
+        <div className="total-right">
+          <span className="label">金额合计：</span><span className="value">¥{formatCurrency(totalAmount)}</span>
+        </div>
+      </div>
+      <div className="invoice-uppercase">
+        <span className="label">大写金额：</span><span className="value">{toChineseMoney(totalAmount)}</span>
+      </div>
+
+      <div className="invoice-signature">
+        <div className="signature-item">
+          <span className="label">验收人签字：</span>
+          <span className="line"></span>
+        </div>
+        <div className="signature-item">
+          <span className="label">部门负责人签字：</span>
+          <span className="line"></span>
+        </div>
+        <div className="signature-item">
+          <span className="label">备注：</span>
+          <span className="line"></span>
+        </div>
+      </div>
+
+      <div className="invoice-page">
+        第 {pageIndex + 1} 页 / 共 {totalPages} 页
+      </div>
+    </div>
+  );
+};
+
+export default function PurchaseInvoicePrint({ date, departmentName, items, departments, showPrintButton = true }: PrintInvoiceProps) {
+  const deptList: DepartmentData[] = departments || (departmentName && items ? [{ name: departmentName, items }] : []);
+
+  return (
+    <div className="print-invoice-container">
+      {deptList.map((dept) => {
+        const pages = Math.ceil(dept.items.length / PAGE_ROWS);
+        return Array.from({ length: pages }).map((_, pageIndex) => (
+          <InvoicePage
+            key={`${dept.name}-${pageIndex}`}
+            date={date}
+            departmentName={dept.name}
+            items={dept.items}
+            pageIndex={pageIndex}
+            totalPages={pages}
+          />
+        ));
+      })}
 
       {showPrintButton && (
         <div className="no-print print-controls">

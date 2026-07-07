@@ -120,9 +120,16 @@ export default function DailyPurchase() {
       deptGroups[deptId].items.push(item);
     });
 
-    const allItems = Object.values(deptGroups).flatMap(g => g.items);
-    setPrintDepartmentName('全部部门');
-    setPrintDepartmentItems(allItems);
+    const sortedGroups = departments
+      .filter(d => deptGroups[d.id])
+      .map(d => ({ name: d.name, items: deptGroups[d.id].items }));
+
+    const noDept = deptGroups[''];
+    if (noDept) {
+      sortedGroups.push({ name: noDept.name, items: noDept.items });
+    }
+
+    setPrintDepartmentItems(sortedGroups as any);
     setShowInvoicePrint(true);
   };
 
@@ -397,12 +404,20 @@ export default function DailyPurchase() {
               </button>
             </div>
             <div className="p-6">
-              <PurchaseInvoicePrint
-                date={dateKey}
-                departmentName={printDepartmentName}
-                items={printDepartmentItems as any}
-                showPrintButton={true}
-              />
+              {Array.isArray(printDepartmentItems) ? (
+                <PurchaseInvoicePrint
+                  date={dateKey}
+                  departments={printDepartmentItems as any}
+                  showPrintButton={true}
+                />
+              ) : (
+                <PurchaseInvoicePrint
+                  date={dateKey}
+                  departmentName={printDepartmentName}
+                  items={printDepartmentItems as any}
+                  showPrintButton={true}
+                />
+              )}
             </div>
           </div>
         </div>
