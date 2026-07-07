@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil, ClipboardCheck, Building2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Printer, TrendingUp, TrendingDown, Package, DollarSign, FileText, ClipboardList, Pencil, ClipboardCheck, Building2, X } from 'lucide-react';
 import { format, addDays, subDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import type { DailyPurchaseRecord, CategorySummary } from '@/types';
@@ -12,6 +12,7 @@ import { useCategoryStore } from '@/store/categoryStore';
 import { useDepartmentStore } from '@/store/departmentStore';
 import { useAuthStore } from '@/store/authStore';
 import StatCard from '@/components/StatCard';
+import PurchaseInvoicePrint from '@/components/PurchaseInvoicePrint';
 
 const buildDailyRecord = (date: string, items: PurchaseEntryItem[], categories: { id: string; name: string; color: string }[]): DailyPurchaseRecord | null => {
   if (items.length === 0) return null;
@@ -56,6 +57,9 @@ export default function DailyPurchase() {
   });
   const [items, setItems] = useState<PurchaseEntryItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showInvoicePrint, setShowInvoicePrint] = useState(false);
+  const [printDepartmentName, setPrintDepartmentName] = useState('');
+  const [printDepartmentItems, setPrintDepartmentItems] = useState<PurchaseEntryItem[]>([]);
 
   const dateKey = formatDate(selectedDate);
 
@@ -97,6 +101,29 @@ export default function DailyPurchase() {
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handlePrintInvoice = (deptName: string, deptItems: PurchaseEntryItem[]) => {
+    setPrintDepartmentName(deptName);
+    setPrintDepartmentItems(deptItems);
+    setShowInvoicePrint(true);
+  };
+
+  const handlePrintAllInvoices = () => {
+    const deptGroups: Record<string, { name: string; items: PurchaseEntryItem[] }> = {};
+    record?.items.forEach(item => {
+      const deptId = (item as any).departmentId || '';
+      const deptName = (item as any).departmentName || '未分配';
+      if (!deptGroups[deptId]) {
+        deptGroups[deptId] = { name: deptName, items: [] };
+      }
+      deptGroups[deptId].items.push(item);
+    });
+
+    const allItems = Object.values(deptGroups).flatMap(g => g.items);
+    setPrintDepartmentName('全部部门');
+    setPrintDepartmentItems(allItems);
+    setShowInvoicePrint(true);
   };
 
   const dateStr = format(selectedDate, 'yyyy年MM月dd日 EEEE', { locale: zhCN });
@@ -154,9 +181,15 @@ export default function DailyPurchase() {
             </button>
           </div>
           {record && (
-            <button onClick={handlePrint} className="btn-primary flex items-center gap-2">
+            <button onClick={handlePrint} className="btn-secondary flex items-center gap-2">
               <Printer size={18} />
               <span>打印清单</span>
+            </button>
+          )}
+          {record && (
+            <button onClick={handlePrintAllInvoices} className="btn-primary flex items-center gap-2">
+              <FileText size={18} />
+              <span>打印全部入库单</span>
             </button>
           )}
         </div>
@@ -289,7 +322,16 @@ export default function DailyPurchase() {
                         <span className="font-semibold text-gray-800">{group.name}</span>
                         <span className="text-xs text-gray-400">{group.items.length} 项</span>
                       </div>
-                      <span className="font-semibold text-primary-600">{formatCurrency(groupTotal)}</span>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handlePrintInvoice(group.name, group.items)}
+                          className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                        >
+                          <FileText size={14} />
+                          <span>打印入库单</span>
+                        </button>
+                        <span className="font-semibold text-primary-600">{formatCurrency(groupTotal)}</span>
+                      </div>
                     </div>
                     <div className="overflow-x-auto -mx-6 px-6">
                       <table className="data-table min-w-full">
@@ -343,6 +385,27 @@ export default function DailyPurchase() {
             </div>
           </div>
         </>
+      )}
+
+      {showInvoicePrint && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-lg font-semibold">入库单打印预览</h2>
+              <button onClick={() => setShowInvoicePrint(false)} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6">
+              <PurchaseInvoicePrint
+                date={dateKey}
+                departmentName={printDepartmentName}
+                items={printDepartmentItems as any}
+                showPrintButton={true}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
