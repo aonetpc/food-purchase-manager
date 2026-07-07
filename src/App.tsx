@@ -9,6 +9,8 @@ import Login from '@/pages/Login';
 import CategoryManager from '@/pages/CategoryManager';
 import IngredientManager from '@/pages/IngredientManager';
 import DepartmentManager from '@/pages/DepartmentManager';
+import Profile from '@/pages/Profile';
+import UserManager from '@/pages/UserManager';
 import ProtectedRoute from '@/components/ProtectedRoute';
 
 export default function App() {
@@ -40,6 +42,16 @@ export default function App() {
           <Route path="departments" element={
             <ProtectedRoute requiredRole="admin">
               <DepartmentManager />
+            </ProtectedRoute>
+          } />
+          <Route path="profile" element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          } />
+          <Route path="users" element={
+            <ProtectedRoute requiredRole="admin">
+              <UserManager />
             </ProtectedRoute>
           } />
         </Route>

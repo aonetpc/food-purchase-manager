@@ -14,7 +14,9 @@ import {
   Package,
   LogOut,
   ChevronDown,
-  Building2
+  Building2,
+  User,
+  Users
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 
@@ -102,7 +104,24 @@ export default function Layout() {
                   <ChevronDown size={16} className="text-gray-400 hidden sm:block" />
                 </button>
                 {userMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-100 py-1 animate-slide-up">
+                  <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-100 py-1 animate-slide-up">
+                    <button
+                      onClick={() => { setUserMenuOpen(false); navigate('/profile'); }}
+                      className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <User size={16} />
+                      个人中心
+                    </button>
+                    {isAdmin() && (
+                      <button
+                        onClick={() => { setUserMenuOpen(false); navigate('/users'); }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <Users size={16} />
+                        用户管理
+                      </button>
+                    )}
+                    <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={handleLogout}
                       className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"

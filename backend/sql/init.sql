@@ -67,7 +67,7 @@ INSERT IGNORE INTO categories (id, name, icon, color, sort_order) VALUES
 (UUID(), '豆制品', '🫘', '#14b8a6', 7),
 (UUID(), '其他', '📦', '#6b7280', 8);
 
--- 插入默认用户
+-- 插入默认用户 (BCrypt加密密码)
 INSERT IGNORE INTO users (id, username, name, role, password_hash) VALUES
-(UUID(), 'admin', '系统管理员', 'admin', 'admin123'),
-(UUID(), 'viewer', '查看员', 'viewer', 'viewer123');
+(UUID(), 'admin', '系统管理员', 'admin', '$2b$10$bT3iawbnbPCppnZDrEFP/ePbwu6HMCnN84USgf8Htya0IIyBnzGb.'),
+(UUID(), 'viewer', '查看员', 'viewer', '$2b$10$Zd1OWLmmi/BnR9T7i9lDWuXupC5L9GQPffUKbmhmx5IRWBm7tjypy');
