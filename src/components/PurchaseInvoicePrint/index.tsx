@@ -73,12 +73,13 @@ const toChineseMoney = (amount: number): string => {
   return chineseStr;
 };
 
-const InvoicePage = ({ date, departmentName, items, pageIndex, totalPages }: {
+const InvoicePage = ({ date, departmentName, items, pageIndex, totalPages, isLast }: {
   date: string;
   departmentName: string;
   items: PurchaseItem[];
   pageIndex: number;
   totalPages: number;
+  isLast: boolean;
 }) => {
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
   const totalItems = items.length;
@@ -92,7 +93,7 @@ const InvoicePage = ({ date, departmentName, items, pageIndex, totalPages }: {
   const pageItems = getPageItems(pageIndex);
 
   return (
-    <div key={`${departmentName}-${pageIndex}`} className="print-page">
+    <div key={`${departmentName}-${pageIndex}`} className={`print-page ${isLast ? 'last-page' : ''}`}>
       <div className="invoice-header">
         <h1 className="invoice-title">华医食材采购入库单{pageIndex > 0 ? '（续）' : ''}</h1>
         <div className="invoice-info">
@@ -184,8 +185,9 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
 
   return (
     <div className="print-invoice-container">
-      {deptList.map((dept) => {
+      {deptList.map((dept, deptIndex) => {
         const pages = Math.ceil(dept.items.length / PAGE_ROWS);
+        const isLastDept = deptIndex === deptList.length - 1;
         return Array.from({ length: pages }).map((_, pageIndex) => (
           <InvoicePage
             key={`${dept.name}-${pageIndex}`}
@@ -194,6 +196,7 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
             items={dept.items}
             pageIndex={pageIndex}
             totalPages={pages}
+            isLast={isLastDept && pageIndex === pages - 1}
           />
         ));
       })}
@@ -414,6 +417,10 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
             width: 241mm;
             min-height: 140mm;
             page-break-after: always;
+          }
+
+          .print-page.last-page {
+            page-break-after: auto;
           }
 
           .print-invoice-container {
