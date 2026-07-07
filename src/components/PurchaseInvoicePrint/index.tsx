@@ -219,7 +219,6 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
 
         .print-page {
           width: 225mm;
-          min-height: 140mm;
           margin-bottom: 10mm;
           padding: 5mm 5mm;
           border: 1px solid #ccc;
@@ -415,7 +414,6 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
             margin: 0;
             padding: 5mm 5mm;
             width: 241mm;
-            min-height: 140mm;
             page-break-after: always;
           }
 
