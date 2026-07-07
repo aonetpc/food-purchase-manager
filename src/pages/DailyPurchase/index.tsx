@@ -132,13 +132,121 @@ export default function DailyPurchase() {
   };
 
   const handleDoPrint = () => {
-    document.body.classList.add('printing-invoice');
+    const printContent = document.querySelector('.invoice-print-area') as HTMLElement;
+    if (!printContent) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.top = '-9999px';
+    iframe.style.left = '-9999px';
+    iframe.style.width = '241mm';
+    iframe.style.height = '140mm';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      return;
+    }
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>入库单打印</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'SimSun', '宋体', serif; background: white; }
+            .print-invoice-container { width: 241mm; }
+            .print-page {
+              width: 241mm;
+              height: 140mm;
+              padding: 5mm 5mm;
+              page-break-after: always;
+              box-sizing: border-box;
+            }
+            .print-page.last-page { page-break-after: auto; }
+            .invoice-header { text-align: center; margin-bottom: 2mm; }
+            .invoice-title { font-size: 14px; font-weight: bold; margin: 0 0 1.5mm 0; color: #333; }
+            .invoice-info {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 0.8mm;
+              font-size: 8px;
+            }
+            .invoice-info .label { color: #666; }
+            .invoice-info .value { color: #333; margin-left: 1.5mm; }
+            .invoice-table {
+              width: 230mm;
+              border-collapse: collapse;
+              font-size: 8px;
+              margin-bottom: 1.5mm;
+              table-layout: fixed;
+            }
+            .invoice-table th, .invoice-table td {
+              border: 1px solid #999;
+              padding: 0.5mm 1mm;
+              text-align: center;
+              vertical-align: middle;
+              height: 4mm;
+              line-height: 1.2;
+            }
+            .invoice-table th { background-color: #f5f5f5; font-weight: bold; }
+            .invoice-table td:first-child { width: 10%; }
+            .invoice-table td:nth-child(2) { width: 28%; text-align: left; }
+            .invoice-table td:nth-child(3) { width: 15%; text-align: left; }
+            .invoice-table td:nth-child(4) { width: 10%; }
+            .invoice-table td:nth-child(5) { width: 17%; }
+            .invoice-table td:nth-child(6) { width: 20%; }
+            .empty-row td { border-top: 1px solid #999; border-bottom: 1px solid #999; }
+            .invoice-total {
+              width: 230mm;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 2mm;
+              font-size: 9px;
+            }
+            .invoice-total .label { color: #666; }
+            .invoice-total .value { font-weight: bold; color: #333; margin: 0 2mm; }
+            .invoice-uppercase {
+              width: 230mm;
+              margin-bottom: 2mm;
+              font-size: 9px;
+            }
+            .invoice-uppercase .label { color: #666; }
+            .invoice-uppercase .value { font-weight: bold; color: #333; margin-left: 2mm; }
+            .invoice-signature {
+              width: 230mm;
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 2mm;
+              font-size: 9px;
+            }
+            .signature-item { flex: 1; display: flex; align-items: center; justify-content: center; }
+            .signature-item .label { color: #666; white-space: nowrap; }
+            .signature-item .line { flex: 1; border-bottom: 1px solid #333; margin-left: 2mm; max-width: 30mm; }
+            .invoice-page { width: 230mm; text-align: center; font-size: 8px; color: #666; margin-top: 1mm; }
+          </style>
+        </head>
+        <body>
+          ${printContent.innerHTML}
+        </body>
+      </html>
+    `);
+    doc.close();
+
     setTimeout(() => {
-      window.print();
+      const win = iframe.contentWindow as Window;
+      win.focus();
+      win.print();
       setTimeout(() => {
-        document.body.classList.remove('printing-invoice');
-      }, 100);
-    }, 100);
+        document.body.removeChild(iframe);
+      }, 1000);
+    }, 300);
   };
 
   const dateStr = format(selectedDate, 'yyyy年MM月dd日 EEEE', { locale: zhCN });
