@@ -412,9 +412,14 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
           .print-page {
             border: none;
             margin: 0;
-            padding: 5mm 5mm;
+            padding: 0;
             width: 241mm;
+            height: 140mm;
             page-break-after: always;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
           }
 
           .print-page.last-page {
@@ -425,6 +430,76 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
             padding: 0;
             margin: 0;
             max-width: none;
+          }
+
+          .invoice-header {
+            text-align: center;
+            margin-bottom: 2mm;
+            padding-top: 5mm;
+            width: 230mm;
+          }
+
+          .invoice-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin: 0 0 1.5mm 0;
+            color: #333;
+          }
+
+          .invoice-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.8mm;
+            font-size: 8px;
+          }
+
+          .invoice-table {
+            width: 230mm;
+            border-collapse: collapse;
+            font-size: 8px;
+            margin-bottom: 1.5mm;
+            table-layout: fixed;
+          }
+
+          .invoice-table th, .invoice-table td {
+            border: 1px solid #999;
+            padding: 0.5mm 1mm;
+            text-align: center;
+            vertical-align: middle;
+            height: 4mm;
+            line-height: 1.2;
+            box-sizing: border-box;
+          }
+
+          .invoice-total {
+            width: 230mm;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2mm;
+            font-size: 9px;
+          }
+
+          .invoice-uppercase {
+            width: 230mm;
+            margin-bottom: 2mm;
+            font-size: 9px;
+          }
+
+          .invoice-signature {
+            width: 230mm;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2mm;
+            font-size: 9px;
+          }
+
+          .invoice-page {
+            width: 230mm;
+            text-align: center;
+            font-size: 8px;
+            color: #666;
+            margin-top: 1mm;
           }
         }
       `}</style>
