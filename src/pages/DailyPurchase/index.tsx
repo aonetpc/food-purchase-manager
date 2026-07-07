@@ -58,8 +58,7 @@ export default function DailyPurchase() {
   const [items, setItems] = useState<PurchaseEntryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [showInvoicePrint, setShowInvoicePrint] = useState(false);
-  const [printDepartmentName, setPrintDepartmentName] = useState('');
-  const [printDepartmentItems, setPrintDepartmentItems] = useState<PurchaseEntryItem[]>([]);
+  const [printData, setPrintData] = useState<{ type: 'single'; name: string; items: PurchaseEntryItem[] } | { type: 'multiple'; departments: { name: string; items: PurchaseEntryItem[] }[] } | null>(null);
 
   const dateKey = formatDate(selectedDate);
 
@@ -104,8 +103,7 @@ export default function DailyPurchase() {
   };
 
   const handlePrintInvoice = (deptName: string, deptItems: PurchaseEntryItem[]) => {
-    setPrintDepartmentName(deptName);
-    setPrintDepartmentItems(deptItems);
+    setPrintData({ type: 'single', name: deptName, items: deptItems });
     setShowInvoicePrint(true);
   };
 
@@ -129,7 +127,7 @@ export default function DailyPurchase() {
       sortedGroups.push({ name: noDept.name, items: noDept.items });
     }
 
-    setPrintDepartmentItems(sortedGroups as any);
+    setPrintData({ type: 'multiple', departments: sortedGroups });
     setShowInvoicePrint(true);
   };
 
@@ -404,20 +402,20 @@ export default function DailyPurchase() {
               </button>
             </div>
             <div className="p-6">
-              {Array.isArray(printDepartmentItems) ? (
+              {printData?.type === 'single' ? (
                 <PurchaseInvoicePrint
                   date={dateKey}
-                  departments={printDepartmentItems as any}
+                  departmentName={printData.name}
+                  items={printData.items as any}
                   showPrintButton={true}
                 />
-              ) : (
+              ) : printData?.type === 'multiple' ? (
                 <PurchaseInvoicePrint
                   date={dateKey}
-                  departmentName={printDepartmentName}
-                  items={printDepartmentItems as any}
+                  departments={printData.departments as any}
                   showPrintButton={true}
                 />
-              )}
+              ) : null}
             </div>
           </div>
         </div>
