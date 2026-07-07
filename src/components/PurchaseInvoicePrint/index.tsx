@@ -13,7 +13,7 @@ interface PrintInvoiceProps {
   showPrintButton?: boolean;
 }
 
-const PAGE_ROWS = 16;
+const PAGE_ROWS = 12;
 
 const formatCurrency = (amount: number) => {
   return amount.toFixed(2);
@@ -216,31 +216,30 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
 
         .print-page {
           width: 225mm;
-          height: 140mm;
+          min-height: 140mm;
           margin-bottom: 10mm;
-          padding: 4mm 4mm;
+          padding: 5mm 5mm;
           border: 1px solid #ccc;
           box-sizing: border-box;
-          overflow: hidden;
         }
 
         .invoice-header {
           text-align: center;
-          margin-bottom: 3mm;
+          margin-bottom: 2mm;
         }
 
         .invoice-title {
           font-size: 14px;
           font-weight: bold;
-          margin: 0 0 2mm 0;
+          margin: 0 0 1.5mm 0;
           color: #333;
         }
 
         .invoice-info {
           display: flex;
           justify-content: space-between;
-          margin-bottom: 1mm;
-          font-size: 9px;
+          margin-bottom: 0.8mm;
+          font-size: 8px;
         }
 
         .info-left, .info-right {
@@ -255,23 +254,24 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
         .invoice-info .value {
           font-weight: normal;
           color: #333;
-          margin-left: 2mm;
+          margin-left: 1.5mm;
         }
 
         .invoice-table {
           width: 100%;
           border-collapse: collapse;
           font-size: 8px;
-          margin-bottom: 2mm;
+          margin-bottom: 1.5mm;
           table-layout: fixed;
         }
 
         .invoice-table th, .invoice-table td {
           border: 1px solid #999;
-          padding: 0.8mm 1.5mm;
+          padding: 0.5mm 1mm;
           text-align: center;
           vertical-align: middle;
-          height: 4.5mm;
+          height: 4mm;
+          line-height: 1.2;
           box-sizing: border-box;
         }
 
@@ -410,11 +410,10 @@ export default function PurchaseInvoicePrint({ date, departmentName, items, depa
           .print-page {
             border: none;
             margin: 0;
-            padding: 4mm 4mm;
+            padding: 5mm 5mm;
             width: 241mm;
-            height: 140mm;
+            min-height: 140mm;
             page-break-after: always;
-            overflow: hidden;
           }
 
           .print-invoice-container {
