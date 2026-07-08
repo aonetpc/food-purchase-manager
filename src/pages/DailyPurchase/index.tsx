@@ -183,8 +183,8 @@ export default function DailyPurchase() {
         height: 130mm !important;
         padding-top: ${3 + printOffset.vertical}mm !important;
         padding-bottom: ${3 - printOffset.vertical}mm !important;
-        padding-left: ${15 + printOffset.horizontal}mm !important;
-        padding-right: ${15 - printOffset.horizontal}mm !important;
+        padding-left: ${20 + printOffset.horizontal}mm !important;
+        padding-right: ${20 - printOffset.horizontal}mm !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         position: relative !important;
@@ -225,7 +225,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-table {
-        width: 210mm !important;
+        width: 200mm !important;
         border-collapse: collapse !important;
         font-size: 10px !important;
         margin-bottom: 2mm !important;
@@ -237,11 +237,12 @@ export default function DailyPurchase() {
       #temp-print-container .invoice-table th,
       #temp-print-container .invoice-table td {
         border: 1px solid #999 !important;
-        padding: 0.8mm 1.5mm !important;
+        padding: 0.8mm 1mm !important;
         text-align: center !important;
         vertical-align: middle !important;
         height: 4.5mm !important;
         line-height: 1.2 !important;
+        overflow: visible !important;
       }
 
       #temp-print-container .invoice-table th {
@@ -250,11 +251,11 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-table td:first-child { width: 8% !important; }
-      #temp-print-container .invoice-table td:nth-child(2) { width: 30% !important; text-align: left !important; }
+      #temp-print-container .invoice-table td:nth-child(2) { width: 28% !important; text-align: left !important; }
       #temp-print-container .invoice-table td:nth-child(3) { width: 14% !important; text-align: left !important; }
       #temp-print-container .invoice-table td:nth-child(4) { width: 10% !important; }
       #temp-print-container .invoice-table td:nth-child(5) { width: 16% !important; }
-      #temp-print-container .invoice-table td:nth-child(6) { width: 22% !important; }
+      #temp-print-container .invoice-table td:nth-child(6) { width: 24% !important; }
 
       #temp-print-container .empty-row td {
         border-top: 1px solid #999 !important;
@@ -262,7 +263,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-total {
-        width: 210mm !important;
+        width: 200mm !important;
         display: flex !important;
         justify-content: space-between !important;
         align-items: center !important;
@@ -280,7 +281,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-uppercase {
-        width: 210mm !important;
+        width: 200mm !important;
         margin-bottom: 3mm !important;
         font-size: 11px !important;
         margin-left: auto !important;
@@ -295,7 +296,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-signature {
-        width: 210mm !important;
+        width: 200mm !important;
         display: flex !important;
         justify-content: space-between !important;
         margin-bottom: 2mm !important;
@@ -324,7 +325,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-page {
-        width: 210mm !important;
+        width: 200mm !important;
         text-align: center !important;
         font-size: 10px !important;
         color: #666 !important;
