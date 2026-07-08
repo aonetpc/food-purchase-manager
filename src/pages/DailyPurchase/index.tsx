@@ -168,10 +168,14 @@ export default function DailyPurchase() {
               width: 241mm;
               height: 140mm;
               padding: 5mm 5mm;
-              page-break-after: always;
               box-sizing: border-box;
+              overflow: hidden;
+              position: relative;
             }
-            .print-page.last-page { page-break-after: auto; }
+            .print-page + .print-page {
+              page-break-before: always;
+            }
+            .print-page.last-page { page-break-before: auto; }
             .invoice-header { text-align: center; margin-bottom: 2mm; }
             .invoice-title { font-size: 14px; font-weight: bold; margin: 0 0 1.5mm 0; color: #333; }
             .invoice-info {
