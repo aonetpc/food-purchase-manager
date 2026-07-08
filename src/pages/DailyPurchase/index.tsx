@@ -149,8 +149,8 @@ export default function DailyPurchase() {
     styleEl.id = 'temp-print-style';
     styleEl.textContent = `
       @page {
-        size: 241mm 140mm;
-        margin: 0;
+        size: 241mm 140mm !important;
+        margin: 0 !important;
       }
 
       body.printing-invoice-mode > *:not(#temp-print-container) {
@@ -163,152 +163,175 @@ export default function DailyPurchase() {
         background: white !important;
       }
 
+      #temp-print-container {
+        display: block !important;
+      }
+
       #temp-print-container .print-invoice-container {
-        width: 241mm;
-        font-family: 'SimSun', '宋体', serif;
+        width: 241mm !important;
+        font-family: 'SimSun', '宋体', serif !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
 
       #temp-print-container .print-page {
-        width: 241mm;
-        height: 140mm;
-        padding: 5mm 5mm;
-        box-sizing: border-box;
-        overflow: hidden;
-        position: relative;
+        width: 241mm !important;
+        height: 139mm !important;
+        padding: 5mm 5mm !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+        position: relative !important;
+        margin: 0 !important;
+        border: none !important;
+        page-break-after: always !important;
       }
 
-      #temp-print-container .print-page + .print-page {
-        page-break-before: always;
+      #temp-print-container .print-page.last-page {
+        page-break-after: auto !important;
       }
 
       #temp-print-container .invoice-header {
-        text-align: center;
-        margin-bottom: 2mm;
+        text-align: center !important;
+        margin-bottom: 2mm !important;
       }
 
       #temp-print-container .invoice-title {
-        font-size: 14px;
-        font-weight: bold;
-        margin: 0 0 1.5mm 0;
-        color: #333;
+        font-size: 14px !important;
+        font-weight: bold !important;
+        margin: 0 0 1.5mm 0 !important;
+        color: #333 !important;
       }
 
       #temp-print-container .invoice-info {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 0.8mm;
-        font-size: 8px;
+        display: flex !important;
+        justify-content: space-between !important;
+        margin-bottom: 0.8mm !important;
+        font-size: 8px !important;
       }
 
       #temp-print-container .invoice-info .label {
-        color: #666;
+        color: #666 !important;
       }
 
       #temp-print-container .invoice-info .value {
-        color: #333;
-        margin-left: 1.5mm;
+        color: #333 !important;
+        margin-left: 1.5mm !important;
       }
 
       #temp-print-container .invoice-table {
-        width: 230mm;
-        border-collapse: collapse;
-        font-size: 8px;
-        margin-bottom: 1.5mm;
-        table-layout: fixed;
+        width: 230mm !important;
+        border-collapse: collapse !important;
+        font-size: 8px !important;
+        margin-bottom: 1.5mm !important;
+        table-layout: fixed !important;
       }
 
       #temp-print-container .invoice-table th,
       #temp-print-container .invoice-table td {
-        border: 1px solid #999;
-        padding: 0.5mm 1mm;
-        text-align: center;
-        vertical-align: middle;
-        height: 4mm;
-        line-height: 1.2;
+        border: 1px solid #999 !important;
+        padding: 0.5mm 1mm !important;
+        text-align: center !important;
+        vertical-align: middle !important;
+        height: 4mm !important;
+        line-height: 1.2 !important;
       }
 
       #temp-print-container .invoice-table th {
-        background-color: #f5f5f5;
-        font-weight: bold;
+        background-color: #f5f5f5 !important;
+        font-weight: bold !important;
       }
 
-      #temp-print-container .invoice-table td:first-child { width: 10%; }
-      #temp-print-container .invoice-table td:nth-child(2) { width: 28%; text-align: left; }
-      #temp-print-container .invoice-table td:nth-child(3) { width: 15%; text-align: left; }
-      #temp-print-container .invoice-table td:nth-child(4) { width: 10%; }
-      #temp-print-container .invoice-table td:nth-child(5) { width: 17%; }
-      #temp-print-container .invoice-table td:nth-child(6) { width: 20%; }
+      #temp-print-container .invoice-table td:first-child { width: 10% !important; }
+      #temp-print-container .invoice-table td:nth-child(2) { width: 28% !important; text-align: left !important; }
+      #temp-print-container .invoice-table td:nth-child(3) { width: 15% !important; text-align: left !important; }
+      #temp-print-container .invoice-table td:nth-child(4) { width: 10% !important; }
+      #temp-print-container .invoice-table td:nth-child(5) { width: 17% !important; }
+      #temp-print-container .invoice-table td:nth-child(6) { width: 20% !important; }
 
       #temp-print-container .empty-row td {
-        border-top: 1px solid #999;
-        border-bottom: 1px solid #999;
+        border-top: 1px solid #999 !important;
+        border-bottom: 1px solid #999 !important;
       }
 
       #temp-print-container .invoice-total {
-        width: 230mm;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 2mm;
-        font-size: 9px;
+        width: 230mm !important;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        margin-bottom: 2mm !important;
+        font-size: 9px !important;
       }
 
-      #temp-print-container .invoice-total .label { color: #666; }
+      #temp-print-container .invoice-total .label { color: #666 !important; }
       #temp-print-container .invoice-total .value {
-        font-weight: bold;
-        color: #333;
-        margin: 0 2mm;
+        font-weight: bold !important;
+        color: #333 !important;
+        margin: 0 2mm !important;
       }
 
       #temp-print-container .invoice-uppercase {
-        width: 230mm;
-        margin-bottom: 2mm;
-        font-size: 9px;
+        width: 230mm !important;
+        margin-bottom: 2mm !important;
+        font-size: 9px !important;
       }
 
-      #temp-print-container .invoice-uppercase .label { color: #666; }
+      #temp-print-container .invoice-uppercase .label { color: #666 !important; }
       #temp-print-container .invoice-uppercase .value {
-        font-weight: bold;
-        color: #333;
-        margin-left: 2mm;
+        font-weight: bold !important;
+        color: #333 !important;
+        margin-left: 2mm !important;
       }
 
       #temp-print-container .invoice-signature {
-        width: 230mm;
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 2mm;
-        font-size: 9px;
+        width: 230mm !important;
+        display: flex !important;
+        justify-content: space-between !important;
+        margin-bottom: 2mm !important;
+        font-size: 9px !important;
       }
 
       #temp-print-container .signature-item {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        flex: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
       }
 
       #temp-print-container .signature-item .label {
-        color: #666;
-        white-space: nowrap;
+        color: #666 !important;
+        white-space: nowrap !important;
       }
 
       #temp-print-container .signature-item .line {
-        flex: 1;
-        border-bottom: 1px solid #333;
-        margin-left: 2mm;
-        max-width: 30mm;
+        flex: 1 !important;
+        border-bottom: 1px solid #333 !important;
+        margin-left: 2mm !important;
+        max-width: 30mm !important;
       }
 
       #temp-print-container .invoice-page {
-        width: 230mm;
-        text-align: center;
-        font-size: 8px;
-        color: #666;
-        margin-top: 1mm;
+        width: 230mm !important;
+        text-align: center !important;
+        font-size: 8px !important;
+        color: #666 !important;
+        margin-top: 1mm !important;
       }
     `;
     document.head.appendChild(styleEl);
+
+    // 临时禁用其他所有 style 标签，避免冲突
+    const allStyles = document.querySelectorAll('style:not(#temp-print-style)');
+    const disabledStyles: HTMLStyleElement[] = [];
+    allStyles.forEach((s) => {
+      const el = s as HTMLStyleElement;
+      if (el.media !== 'print' && el.textContent?.includes('@media print')) {
+        // 跳过包含 @media print 的 style，后面统一禁用
+      }
+      disabledStyles.push(el);
+      el.disabled = true;
+    });
+    // 重新启用我们的打印样式
+    styleEl.disabled = false;
 
     // 触发打印
     document.body.classList.add('printing-invoice-mode');
@@ -319,6 +342,10 @@ export default function DailyPurchase() {
         document.body.classList.remove('printing-invoice-mode');
         document.body.removeChild(printContainer);
         document.head.removeChild(styleEl);
+        // 恢复被禁用的 style 标签
+        disabledStyles.forEach((el) => {
+          el.disabled = false;
+        });
       }, 100);
     }, 200);
   };
