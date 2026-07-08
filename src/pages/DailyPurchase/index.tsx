@@ -150,6 +150,9 @@ export default function DailyPurchase() {
       return;
     }
 
+    // 去掉组件自带的 <style> 标签，避免 CSS 冲突
+    let cleanHTML = printContent.innerHTML.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+
     doc.open();
     doc.write(`
       <!DOCTYPE html>
@@ -233,7 +236,7 @@ export default function DailyPurchase() {
           </style>
         </head>
         <body>
-          ${printContent.innerHTML}
+          ${cleanHTML}
         </body>
       </html>
     `);
