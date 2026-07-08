@@ -81,6 +81,9 @@ export default function PurchaseEntry() {
     return d;
   });
 
+  const [showMainDatePicker, setShowMainDatePicker] = useState(false);
+  const [mainTempDate, setMainTempDate] = useState(format(selectedDate, 'yyyy-MM-dd'));
+
   const dateStr = formatDate(selectedDate);
   const dateLabel = format(selectedDate, 'yyyy年MM月dd日 EEEE', { locale: zhCN });
 
@@ -180,6 +183,18 @@ export default function PurchaseEntry() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (selectedDate < today) setSelectedDate(prev => addDays(prev, 1));
+  };
+
+  const handleDatePickerOpen = () => {
+    setMainTempDate(format(selectedDate, 'yyyy-MM-dd'));
+    setShowMainDatePicker(true);
+  };
+
+  const handleConfirmDate = () => {
+    const date = new Date(mainTempDate);
+    date.setHours(0, 0, 0, 0);
+    setSelectedDate(date);
+    setShowMainDatePicker(false);
   };
 
   const addIngredientToList = (ing: Ingredient) => {
@@ -326,7 +341,9 @@ export default function PurchaseEntry() {
             <button onClick={handlePrevDay} className="p-2 hover:bg-gray-100 rounded-md transition-colors">
               <ChevronLeft size={18} />
             </button>
-            <div className="px-4 py-1.5 min-w-[180px] text-center font-medium text-sm">{dateLabel}</div>
+            <button onClick={handleDatePickerOpen} className="px-4 py-1.5 min-w-[180px] text-center font-medium text-sm hover:bg-gray-50 rounded-md transition-colors">
+              {dateLabel}
+            </button>
             <button onClick={handleNextDay} className="p-2 hover:bg-gray-100 rounded-md transition-colors">
               <ChevronRight size={18} />
             </button>
@@ -815,6 +832,61 @@ export default function PurchaseEntry() {
         onClose={() => setShowBatchPaste(false)}
         onConfirm={handleBatchImport}
       />
+
+      {showMainDatePicker && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowMainDatePicker(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">选择日期</h3>
+              <button onClick={() => setShowMainDatePicker(false)} className="p-1 hover:bg-gray-100 rounded-md">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <input
+              type="date"
+              value={mainTempDate}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setMainTempDate(e.target.value);
+                }
+              }}
+              max={format(new Date(), 'yyyy-MM-dd')}
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+            />
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <button onClick={() => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                setMainTempDate(format(today, 'yyyy-MM-dd'));
+              }} className="py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                今天
+              </button>
+              <button onClick={() => {
+                const yesterday = subDays(new Date(), 1);
+                yesterday.setHours(0, 0, 0, 0);
+                setMainTempDate(format(yesterday, 'yyyy-MM-dd'));
+              }} className="py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                昨天
+              </button>
+              <button onClick={() => {
+                const sevenDaysAgo = subDays(new Date(), 7);
+                sevenDaysAgo.setHours(0, 0, 0, 0);
+                setMainTempDate(format(sevenDaysAgo, 'yyyy-MM-dd'));
+              }} className="py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                7天前
+              </button>
+            </div>
+            <div className="mt-4 flex gap-3">
+              <button onClick={() => setShowMainDatePicker(false)} className="flex-1 py-2.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+                取消
+              </button>
+              <button onClick={handleConfirmDate} className="flex-1 py-2.5 text-sm bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
