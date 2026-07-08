@@ -176,18 +176,17 @@ export default function DailyPurchase() {
 
       #temp-print-container .print-page {
         width: 241mm !important;
-        min-height: 135mm !important;
+        height: 132mm !important;
         padding: 4mm 10mm !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         position: relative !important;
         margin: 0 !important;
         border: none !important;
-        page-break-after: always !important;
       }
 
-      #temp-print-container .print-page.last-page {
-        page-break-after: auto !important;
+      #temp-print-container .print-page + .print-page {
+        page-break-before: always !important;
       }
 
       #temp-print-container .invoice-header {
@@ -329,14 +328,11 @@ export default function DailyPurchase() {
     `;
     document.head.appendChild(styleEl);
 
-    // 临时禁用其他所有 style 标签，避免冲突
-    const allStyles = document.querySelectorAll('style:not(#temp-print-style)');
-    const disabledStyles: HTMLStyleElement[] = [];
+    // 临时禁用其他所有 style 和 link[rel="stylesheet"] 标签，避免冲突
+    const allStyles = document.querySelectorAll('style:not(#temp-print-style), link[rel="stylesheet"]');
+    const disabledStyles: (HTMLStyleElement | HTMLLinkElement)[] = [];
     allStyles.forEach((s) => {
-      const el = s as HTMLStyleElement;
-      if (el.media !== 'print' && el.textContent?.includes('@media print')) {
-        // 跳过包含 @media print 的 style，后面统一禁用
-      }
+      const el = s as HTMLStyleElement | HTMLLinkElement;
       disabledStyles.push(el);
       el.disabled = true;
     });
@@ -352,7 +348,7 @@ export default function DailyPurchase() {
         document.body.classList.remove('printing-invoice-mode');
         document.body.removeChild(printContainer);
         document.head.removeChild(styleEl);
-        // 恢复被禁用的 style 标签
+        // 恢复被禁用的 style 和 link 标签
         disabledStyles.forEach((el) => {
           el.disabled = false;
         });
