@@ -61,7 +61,7 @@ export default function DailyPurchase() {
   const [printData, setPrintData] = useState<{ type: 'single'; name: string; items: PurchaseEntryItem[] } | { type: 'multiple'; departments: { name: string; items: PurchaseEntryItem[] }[] } | null>(null);
   const [printOffset, setPrintOffset] = useState(() => {
     const saved = localStorage.getItem('printOffset');
-    return saved ? JSON.parse(saved) : { top: 0, left: 0, bottom: 0, right: 0 };
+    return saved ? JSON.parse(saved) : { vertical: 0, horizontal: 0 };
   });
 
   const dateKey = formatDate(selectedDate);
@@ -180,11 +180,11 @@ export default function DailyPurchase() {
 
       #temp-print-container .print-page {
         width: 241mm !important;
-        height: ${130 - printOffset.bottom}mm !important;
-        padding-top: ${3 + printOffset.top}mm !important;
-        padding-bottom: ${3 + printOffset.bottom}mm !important;
-        padding-left: ${15 + printOffset.left}mm !important;
-        padding-right: ${15 - printOffset.right}mm !important;
+        height: 130mm !important;
+        padding-top: ${3 + printOffset.vertical}mm !important;
+        padding-bottom: ${3 - printOffset.vertical}mm !important;
+        padding-left: ${15 + printOffset.horizontal}mm !important;
+        padding-right: ${15 - printOffset.horizontal}mm !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         position: relative !important;
@@ -636,65 +636,39 @@ export default function DailyPurchase() {
               </button>
             </div>
             <div className="no-print px-4 py-2 border-b bg-gray-50 shrink-0">
-              <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
+              <div className="flex items-center gap-4 text-sm text-gray-600">
                 <span className="whitespace-nowrap font-medium">打印偏移(mm):</span>
                 <div className="flex items-center gap-1">
-                  <span className="whitespace-nowrap text-xs">上</span>
+                  <span className="whitespace-nowrap text-xs">上下</span>
                   <input
                     type="number"
-                    value={printOffset.top}
+                    value={printOffset.vertical}
                     onChange={(e) => {
                       const val = parseInt(e.target.value) || 0;
-                      const newOffset = { ...printOffset, top: val };
+                      const newOffset = { ...printOffset, vertical: val };
                       setPrintOffset(newOffset);
                       localStorage.setItem('printOffset', JSON.stringify(newOffset));
                     }}
-                    className="w-14 px-1 py-0.5 border rounded text-center text-xs"
+                    className="w-16 px-2 py-1 border rounded text-center"
+                    placeholder="0"
                   />
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="whitespace-nowrap text-xs">下</span>
+                  <span className="whitespace-nowrap text-xs">左右</span>
                   <input
                     type="number"
-                    value={printOffset.bottom}
+                    value={printOffset.horizontal}
                     onChange={(e) => {
                       const val = parseInt(e.target.value) || 0;
-                      const newOffset = { ...printOffset, bottom: val };
+                      const newOffset = { ...printOffset, horizontal: val };
                       setPrintOffset(newOffset);
                       localStorage.setItem('printOffset', JSON.stringify(newOffset));
                     }}
-                    className="w-14 px-1 py-0.5 border rounded text-center text-xs"
+                    className="w-16 px-2 py-1 border rounded text-center"
+                    placeholder="0"
                   />
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="whitespace-nowrap text-xs">左</span>
-                  <input
-                    type="number"
-                    value={printOffset.left}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      const newOffset = { ...printOffset, left: val };
-                      setPrintOffset(newOffset);
-                      localStorage.setItem('printOffset', JSON.stringify(newOffset));
-                    }}
-                    className="w-14 px-1 py-0.5 border rounded text-center text-xs"
-                  />
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="whitespace-nowrap text-xs">右</span>
-                  <input
-                    type="number"
-                    value={printOffset.right}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      const newOffset = { ...printOffset, right: val };
-                      setPrintOffset(newOffset);
-                      localStorage.setItem('printOffset', JSON.stringify(newOffset));
-                    }}
-                    className="w-14 px-1 py-0.5 border rounded text-center text-xs"
-                  />
-                </div>
-                <span className="text-xs text-gray-400 ml-1">正值增大边距，负值减小边距</span>
+                <span className="text-xs text-gray-400">(负值向上/左偏移)</span>
               </div>
             </div>
             <div className="invoice-print-area p-6 overflow-y-auto flex-1">

@@ -81,13 +81,6 @@ export default function Layout() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={handlePrint}
-              className="btn-secondary flex items-center gap-2"
-            >
-              <Printer size={18} />
-              <span className="hidden sm:inline">打印</span>
-            </button>
             {user ? (
               <div className="relative">
                 <button
