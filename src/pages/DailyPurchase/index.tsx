@@ -176,8 +176,8 @@ export default function DailyPurchase() {
 
       #temp-print-container .print-page {
         width: 241mm !important;
-        height: 132mm !important;
-        padding: 4mm 10mm !important;
+        height: 130mm !important;
+        padding: 3mm 15mm !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         position: relative !important;
@@ -218,7 +218,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-table {
-        width: 220mm !important;
+        width: 210mm !important;
         border-collapse: collapse !important;
         font-size: 10px !important;
         margin-bottom: 2mm !important;
@@ -230,11 +230,11 @@ export default function DailyPurchase() {
       #temp-print-container .invoice-table th,
       #temp-print-container .invoice-table td {
         border: 1px solid #999 !important;
-        padding: 1mm 2mm !important;
+        padding: 0.8mm 1.5mm !important;
         text-align: center !important;
         vertical-align: middle !important;
-        height: 5mm !important;
-        line-height: 1.3 !important;
+        height: 4.5mm !important;
+        line-height: 1.2 !important;
       }
 
       #temp-print-container .invoice-table th {
@@ -255,7 +255,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-total {
-        width: 220mm !important;
+        width: 210mm !important;
         display: flex !important;
         justify-content: space-between !important;
         align-items: center !important;
@@ -273,7 +273,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-uppercase {
-        width: 220mm !important;
+        width: 210mm !important;
         margin-bottom: 3mm !important;
         font-size: 11px !important;
         margin-left: auto !important;
@@ -288,7 +288,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-signature {
-        width: 220mm !important;
+        width: 210mm !important;
         display: flex !important;
         justify-content: space-between !important;
         margin-bottom: 2mm !important;
@@ -317,7 +317,7 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-page {
-        width: 220mm !important;
+        width: 210mm !important;
         text-align: center !important;
         font-size: 10px !important;
         color: #666 !important;
