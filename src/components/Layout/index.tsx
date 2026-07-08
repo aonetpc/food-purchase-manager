@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -8,7 +8,6 @@ import {
   UtensilsCrossed,
   Menu,
   X,
-  Printer,
   ClipboardList,
   Tags,
   Package,
@@ -19,12 +18,40 @@ import {
   Users
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
+import { usePurchaseStore } from '@/store/purchaseStore';
+import { formatCurrency } from '@/utils/format';
+import { formatDate } from '@/utils/date';
 
 export default function Layout() {
   const navigate = useNavigate();
   const { user, isAdmin, logout } = useAuthStore();
+  const { fetchRecords, getItems } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayKey = formatDate(today);
+
+  useEffect(() => {
+    fetchRecords(todayKey);
+  }, [fetchRecords, todayKey]);
+
+  const todayItems = getItems(todayKey);
+  const totalAmount = todayItems.reduce((sum, item) => sum + item.amount, 0);
+  
+  const priceChanges = todayItems.filter(item => item.baseUnitPrice > 0);
+  const maxIncrease = priceChanges.length > 0 
+    ? [...priceChanges].sort((a, b) => (b.baseUnitPrice - b.purchaseUnitPrice) / b.baseUnitPrice - (a.baseUnitPrice - a.purchaseUnitPrice) / a.baseUnitPrice)[0]
+    : null;
+  const maxDecrease = priceChanges.length > 0
+    ? [...priceChanges].sort((a, b) => (a.baseUnitPrice - a.purchaseUnitPrice) / a.baseUnitPrice - (b.baseUnitPrice - b.purchaseUnitPrice) / b.baseUnitPrice)[0]
+    : null;
+
+  const getChangeRate = (item: typeof todayItems[0]) => {
+    if (item.baseUnitPrice <= 0) return 0;
+    return ((item.purchaseUnitPrice - item.baseUnitPrice) / item.baseUnitPrice * 100).toFixed(1);
+  };
 
   const navItems = [
     { path: '/daily', label: '每日采购清单', icon: ShoppingCart },
@@ -156,8 +183,30 @@ export default function Layout() {
 
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-100">
           <div className="bg-primary-50 rounded-xl p-4">
-            <p className="text-sm font-medium text-primary-700">今日提示</p>
-            <p className="text-xs text-primary-600 mt-1">关注价格波动较大的食材，合理安排采购计划。</p>
+            <p className="text-sm font-medium text-primary-700 mb-2">💰 今日采购金额</p>
+            <p className="text-lg font-bold text-primary-600 mb-3">{formatCurrency(totalAmount)}</p>
+            
+            {maxIncrease && (
+              <div className="mb-2">
+                <p className="text-xs font-medium text-red-600">📈 价格上涨提醒</p>
+                <p className="text-sm text-gray-700">{maxIncrease.ingredientName} +{getChangeRate(maxIncrease)}%</p>
+              </div>
+            )}
+            
+            {maxDecrease && (
+              <div>
+                <p className="text-xs font-medium text-green-600">📉 价格下跌提醒</p>
+                <p className="text-sm text-gray-700">{maxDecrease.ingredientName} {getChangeRate(maxDecrease)}%</p>
+              </div>
+            )}
+            
+            {!maxIncrease && !maxDecrease && totalAmount > 0 && (
+              <p className="text-xs text-gray-500">暂无明显价格波动</p>
+            )}
+            
+            {totalAmount === 0 && (
+              <p className="text-xs text-gray-500">今日暂无采购数据</p>
+            )}
           </div>
         </div>
       </aside>

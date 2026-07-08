@@ -74,9 +74,6 @@ jobs:
               PREPARE alterIfNotExists FROM @preparedStatement;
               EXECUTE alterIfNotExists;
               DEALLOCATE PREPARE alterIfNotExists;
-              
-              UPDATE users SET password_hash = '\$2b\$10\$bT3iawbnbPCppnZDrEFP/ePbwu6HMCnN84USgf8Htya0IIyBnzGb.' WHERE username = 'admin';
-              UPDATE users SET password_hash = '\$2b\$10\$Zd1OWLmmi/BnR9T7i9lDWuXupC5L9GQPffUKbmhmx5IRWBm7tjypy' WHERE username = 'viewer';
             " 2>/dev/null || true
             sudo systemctl restart food-purchase-backend
             sleep 3
