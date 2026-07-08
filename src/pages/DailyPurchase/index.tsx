@@ -63,6 +63,7 @@ export default function DailyPurchase() {
     const saved = localStorage.getItem('printOffset');
     return saved ? JSON.parse(saved) : { vertical: 0, horizontal: 0 };
   });
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const dateKey = formatDate(selectedDate);
 
@@ -113,6 +114,13 @@ export default function DailyPurchase() {
     if (selectedDate < today) {
       setSelectedDate(prev => addDays(prev, 1));
     }
+  };
+
+  const handleDateSelect = (dateStr: string) => {
+    const date = new Date(dateStr);
+    date.setHours(0, 0, 0, 0);
+    setSelectedDate(date);
+    setShowDatePicker(false);
   };
 
   const handlePrint = () => {
@@ -425,9 +433,12 @@ export default function DailyPurchase() {
               >
                 <ChevronLeft size={18} />
               </button>
-              <div className="px-4 py-1.5 min-w-[180px] text-center font-medium">
+              <button
+                onClick={() => setShowDatePicker(true)}
+                className="px-4 py-1.5 min-w-[180px] text-center font-medium hover:bg-gray-50 rounded-md transition-colors"
+              >
                 {dateStr}
-              </div>
+              </button>
               <button
                 onClick={handleNextDay}
                 className="p-2 hover:bg-gray-100 rounded-md transition-colors"
@@ -731,6 +742,56 @@ export default function DailyPurchase() {
               </button>
               <button onClick={() => setShowInvoicePrint(false)} className="btn-secondary">
                 关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDatePicker && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowDatePicker(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">选择日期</h3>
+              <button onClick={() => setShowDatePicker(false)} className="p-1 hover:bg-gray-100 rounded-md">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <input
+              type="date"
+              defaultValue={format(selectedDate, 'yyyy-MM-dd')}
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleDateSelect(e.target.value);
+                }
+              }}
+              max={format(new Date(), 'yyyy-MM-dd')}
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+            />
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <button onClick={() => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                setSelectedDate(today);
+                setShowDatePicker(false);
+              }} className="py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                今天
+              </button>
+              <button onClick={() => {
+                const yesterday = subDays(new Date(), 1);
+                yesterday.setHours(0, 0, 0, 0);
+                setSelectedDate(yesterday);
+                setShowDatePicker(false);
+              }} className="py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                昨天
+              </button>
+              <button onClick={() => {
+                const sevenDaysAgo = subDays(new Date(), 7);
+                sevenDaysAgo.setHours(0, 0, 0, 0);
+                setSelectedDate(sevenDaysAgo);
+                setShowDatePicker(false);
+              }} className="py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                7天前
               </button>
             </div>
           </div>
