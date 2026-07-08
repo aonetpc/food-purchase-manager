@@ -327,10 +327,44 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
   getItems: (date) => {
     const records = get().records;
     if (!records[date]) {
-      // 如果本地没有，触发获取
       get().fetchRecords(date);
     }
     return records[date] || [];
+  },
+
+  lastMonthAveragePrices: {},
+
+  fetchLastMonthAveragePrices: async () => {
+    try {
+      const now = new Date();
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const month = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
+      
+      const response = await fetch(`${API_BASE_URL}/purchase/average-price?month=${month}`);
+      if (!response.ok) throw new Error('获取上月均价失败');
+      
+      const prices = await response.json();
+      set({ lastMonthAveragePrices: prices });
+      return prices;
+    } catch (err: any) {
+      set({ error: err.message || '获取上月均价失败' });
+      return {};
+    }
+  },
+
+  getComparePrice: (item: PurchaseRecordItem) => {
+    const prices = get().lastMonthAveragePrices;
+    const avgPrice = prices[item.ingredientId]?.avgPrice;
+    
+    if (avgPrice && avgPrice > 0) {
+      return { price: avgPrice, source: 'lastMonth' as const };
+    }
+    
+    if (item.baseUnitPrice && item.baseUnitPrice > 0) {
+      return { price: item.baseUnitPrice, source: 'base' as const };
+    }
+    
+    return null;
   },
 
   hasRecord: (date) => {

@@ -45,7 +45,7 @@ const buildDailyRecord = (date: string, items: PurchaseEntryItem[], categories: 
 
 export default function DailyPurchase() {
   const navigate = useNavigate();
-  const { fetchRecords, getItems } = usePurchaseStore();
+  const { fetchRecords, getItems, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
   const { departments, fetchDepartments } = useDepartmentStore();
@@ -68,7 +68,8 @@ export default function DailyPurchase() {
 
   useEffect(() => {
     fetchDepartments();
-  }, [fetchDepartments]);
+    fetchLastMonthAveragePrices();
+  }, [fetchDepartments, fetchLastMonthAveragePrices]);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,6 +88,18 @@ export default function DailyPurchase() {
   const record: DailyPurchaseRecord | null = useMemo(() => {
     return buildDailyRecord(dateKey, items, categories);
   }, [dateKey, items, categories]);
+
+  const calculatePriceChange = (item: PurchaseEntryItem) => {
+    const compare = getComparePrice(item);
+    if (!compare) return { rate: 0, source: null, price: 0 };
+    
+    const rate = ((item.purchaseUnitPrice - compare.price) / compare.price * 100);
+    return { 
+      rate: Math.round(rate * 10) / 10, 
+      source: compare.source,
+      price: compare.price 
+    };
+  };
 
   const amountChangeRate = 0;
 
@@ -585,30 +598,50 @@ export default function DailyPurchase() {
                               <th className="whitespace-nowrap text-right">数量</th>
                               <th className="whitespace-nowrap text-right">采购单价</th>
                               <th className="whitespace-nowrap text-right">金额</th>
-                              <th className="whitespace-nowrap text-right">基准单价</th>
+                              <th className="whitespace-nowrap text-right">上月均价</th>
+                              <th className="whitespace-nowrap text-right">涨跌幅</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {group.items.map((item, idx) => (
-                              <tr key={item.id}>
-                                <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
-                                <td>
-                                  <span className="inline-flex items-center gap-1 text-xs text-gray-600">
-                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }} />
-                                    {item.categoryName}
-                                  </span>
-                                </td>
-                                <td className="text-right text-gray-600">{item.purchaseUnit}</td>
-                                <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
-                                <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
-                                <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
-                                <td className="text-right text-gray-700">{formatCurrency(item.baseUnitPrice)}</td>
-                              </tr>
-                            ))}
+                            {group.items.map((item, idx) => {
+                              const priceChange = calculatePriceChange(item);
+                              const changeColor = priceChange.rate > 0 ? 'text-red-500' : priceChange.rate < 0 ? 'text-green-500' : 'text-gray-500';
+                              return (
+                                <tr key={item.id}>
+                                  <td className="font-medium text-gray-800 whitespace-nowrap">{item.ingredientName}</td>
+                                  <td>
+                                    <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: record.categorySummary.find(c => c.categoryId === item.categoryId)?.color || '#999' }} />
+                                      {item.categoryName}
+                                    </span>
+                                  </td>
+                                  <td className="text-right text-gray-600">{item.purchaseUnit}</td>
+                                  <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
+                                  <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>
+                                  <td className="text-right font-semibold text-gray-800">{formatCurrency(item.amount)}</td>
+                                  <td className="text-right text-gray-700">
+                                    {priceChange.price > 0 ? formatCurrency(priceChange.price) : '-'}
+                                    {priceChange.source === 'base' && priceChange.price > 0 && (
+                                      <span className="text-xs text-gray-400 ml-1">(基准)</span>
+                                    )}
+                                  </td>
+                                  <td className={`text-right font-medium ${changeColor}`}>
+                                    {priceChange.source ? (
+                                      <span className="flex items-center justify-end gap-1">
+                                        {priceChange.rate > 0 ? <TrendingUp size={12} /> : priceChange.rate < 0 ? <TrendingDown size={12} /> : null}
+                                        {priceChange.rate > 0 ? '+' : ''}{priceChange.rate.toFixed(1)}%
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-400">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                           <tfoot>
                             <tr className="bg-gray-50 font-semibold">
-                              <td colSpan={5} className="text-right text-gray-600">{group.name} 小计</td>
+                              <td colSpan={6} className="text-right text-gray-600">{group.name} 小计</td>
                               <td className="text-right text-primary-600">{formatCurrency(groupTotal)}</td>
                               <td></td>
                             </tr>

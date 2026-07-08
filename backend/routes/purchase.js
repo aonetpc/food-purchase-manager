@@ -334,4 +334,41 @@ router.delete('/date/:date', async (req, res) => {
   }
 });
 
+router.get('/average-price', async (req, res) => {
+  try {
+    const { month } = req.query;
+    
+    if (!month) {
+      const now = new Date();
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const year = lastMonth.getFullYear();
+      const monthNum = String(lastMonth.getMonth() + 1).padStart(2, '0');
+      month = `${year}-${monthNum}`;
+    }
+
+    const [results] = await pool.query(`
+      SELECT 
+        ingredient_id, 
+        ingredient_name, 
+        AVG(purchase_unit_price) as avg_price
+      FROM purchase_records 
+      WHERE DATE_FORMAT(date, '%Y-%m') = ?
+      GROUP BY ingredient_id, ingredient_name
+    `, [month]);
+
+    const prices = {};
+    results.forEach(row => {
+      prices[row.ingredient_id] = {
+        ingredientName: row.ingredient_name,
+        avgPrice: parseFloat(row.avg_price)
+      };
+    });
+
+    res.json(prices);
+  } catch (err) {
+    console.error('average-price error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

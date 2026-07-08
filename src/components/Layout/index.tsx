@@ -25,7 +25,7 @@ import { formatDate } from '@/utils/date';
 export default function Layout() {
   const navigate = useNavigate();
   const { user, isAdmin, logout } = useAuthStore();
-  const { fetchRecords, records } = usePurchaseStore();
+  const { fetchRecords, records, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
@@ -35,28 +35,36 @@ export default function Layout() {
 
   useEffect(() => {
     fetchRecords(todayKey);
-    // 每分钟刷新一次数据
+    fetchLastMonthAveragePrices();
     const timer = setInterval(() => {
       fetchRecords(todayKey);
     }, 60000);
     return () => clearInterval(timer);
-  }, [fetchRecords, todayKey]);
+  }, [fetchRecords, fetchLastMonthAveragePrices, todayKey]);
 
   const todayItems = records[todayKey] || [];
   const totalAmount = todayItems.reduce((sum, item) => sum + item.amount, 0);
   
-  const priceChanges = todayItems.filter(item => item.baseUnitPrice > 0);
+  const calculateRate = (item: typeof todayItems[0]) => {
+    const compare = getComparePrice(item);
+    if (!compare) return { rate: 0, source: null };
+    return { 
+      rate: ((item.purchaseUnitPrice - compare.price) / compare.price * 100),
+      source: compare.source
+    };
+  };
+
+  const priceChanges = todayItems.map(item => ({ 
+    item, 
+    ...calculateRate(item) 
+  })).filter(r => r.source !== null);
+  
   const maxIncrease = priceChanges.length > 0 
-    ? [...priceChanges].sort((a, b) => (b.purchaseUnitPrice - b.baseUnitPrice) / b.baseUnitPrice - (a.purchaseUnitPrice - a.baseUnitPrice) / a.baseUnitPrice)[0]
+    ? [...priceChanges].sort((a, b) => b.rate - a.rate)[0]
     : null;
   const maxDecrease = priceChanges.length > 0
-    ? [...priceChanges].sort((a, b) => (a.purchaseUnitPrice - a.baseUnitPrice) / a.baseUnitPrice - (b.purchaseUnitPrice - b.baseUnitPrice) / b.baseUnitPrice)[0]
+    ? [...priceChanges].sort((a, b) => a.rate - b.rate)[0]
     : null;
-
-  const getChangeRate = (item: typeof todayItems[0]) => {
-    if (item.baseUnitPrice <= 0) return 0;
-    return ((item.purchaseUnitPrice - item.baseUnitPrice) / item.baseUnitPrice * 100).toFixed(1);
-  };
 
   const navItems = [
     { path: '/daily', label: '每日采购清单', icon: ShoppingCart },
@@ -194,14 +202,24 @@ export default function Layout() {
             {maxIncrease && (
               <div className="mb-2">
                 <p className="text-xs font-medium text-red-600">📈 价格上涨提醒</p>
-                <p className="text-sm text-gray-700">{maxIncrease.ingredientName} +{getChangeRate(maxIncrease)}%</p>
+                <p className="text-sm text-gray-700">
+                  {maxIncrease.item.ingredientName} +{maxIncrease.rate.toFixed(1)}%
+                  <span className="text-xs text-gray-400 ml-1">
+                    ({maxIncrease.source === 'lastMonth' ? '较上月平均' : '较基准价'})
+                  </span>
+                </p>
               </div>
             )}
             
             {maxDecrease && (
               <div>
                 <p className="text-xs font-medium text-green-600">📉 价格下跌提醒</p>
-                <p className="text-sm text-gray-700">{maxDecrease.ingredientName} {getChangeRate(maxDecrease)}%</p>
+                <p className="text-sm text-gray-700">
+                  {maxDecrease.item.ingredientName} {maxDecrease.rate.toFixed(1)}%
+                  <span className="text-xs text-gray-400 ml-1">
+                    ({maxDecrease.source === 'lastMonth' ? '较上月平均' : '较基准价'})
+                  </span>
+                </p>
               </div>
             )}
             
