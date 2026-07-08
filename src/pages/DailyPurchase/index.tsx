@@ -59,6 +59,10 @@ export default function DailyPurchase() {
   const [loading, setLoading] = useState(false);
   const [showInvoicePrint, setShowInvoicePrint] = useState(false);
   const [printData, setPrintData] = useState<{ type: 'single'; name: string; items: PurchaseEntryItem[] } | { type: 'multiple'; departments: { name: string; items: PurchaseEntryItem[] }[] } | null>(null);
+  const [printOffset, setPrintOffset] = useState(() => {
+    const saved = localStorage.getItem('printOffset');
+    return saved ? JSON.parse(saved) : { top: 0, left: 0, bottom: 0, right: 0 };
+  });
 
   const dateKey = formatDate(selectedDate);
 
@@ -176,8 +180,11 @@ export default function DailyPurchase() {
 
       #temp-print-container .print-page {
         width: 241mm !important;
-        height: 130mm !important;
-        padding: 3mm 15mm !important;
+        height: ${130 - printOffset.bottom}mm !important;
+        padding-top: ${3 + printOffset.top}mm !important;
+        padding-bottom: ${3 + printOffset.bottom}mm !important;
+        padding-left: ${15 + printOffset.left}mm !important;
+        padding-right: ${15 - printOffset.right}mm !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         position: relative !important;
@@ -645,6 +652,61 @@ export default function DailyPurchase() {
               ) : null}
             </div>
             <div className="no-print p-4 border-t flex justify-center gap-3">
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span className="whitespace-nowrap">打印偏移:</span>
+                <input
+                  type="number"
+                  value={printOffset.top}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 0;
+                    const newOffset = { ...printOffset, top: val };
+                    setPrintOffset(newOffset);
+                    localStorage.setItem('printOffset', JSON.stringify(newOffset));
+                  }}
+                  className="w-16 px-2 py-1 border rounded text-center"
+                  placeholder="上"
+                />
+                <span className="whitespace-nowrap">上</span>
+                <input
+                  type="number"
+                  value={printOffset.left}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 0;
+                    const newOffset = { ...printOffset, left: val };
+                    setPrintOffset(newOffset);
+                    localStorage.setItem('printOffset', JSON.stringify(newOffset));
+                  }}
+                  className="w-16 px-2 py-1 border rounded text-center"
+                  placeholder="左"
+                />
+                <span className="whitespace-nowrap">左</span>
+                <input
+                  type="number"
+                  value={printOffset.bottom}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 0;
+                    const newOffset = { ...printOffset, bottom: val };
+                    setPrintOffset(newOffset);
+                    localStorage.setItem('printOffset', JSON.stringify(newOffset));
+                  }}
+                  className="w-16 px-2 py-1 border rounded text-center"
+                  placeholder="下"
+                />
+                <span className="whitespace-nowrap">下</span>
+                <input
+                  type="number"
+                  value={printOffset.right}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 0;
+                    const newOffset = { ...printOffset, right: val };
+                    setPrintOffset(newOffset);
+                    localStorage.setItem('printOffset', JSON.stringify(newOffset));
+                  }}
+                  className="w-16 px-2 py-1 border rounded text-center"
+                  placeholder="右"
+                />
+                <span className="whitespace-nowrap">右(mm)</span>
+              </div>
               <button onClick={handleDoPrint} className="btn-primary flex items-center gap-2">
                 <Printer size={18} />
                 <span>打印入库单</span>
