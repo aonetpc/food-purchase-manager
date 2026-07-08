@@ -25,7 +25,7 @@ import { formatDate } from '@/utils/date';
 export default function Layout() {
   const navigate = useNavigate();
   const { user, isAdmin, logout } = useAuthStore();
-  const { fetchRecords, getItems } = usePurchaseStore();
+  const { fetchRecords, records } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
@@ -35,17 +35,22 @@ export default function Layout() {
 
   useEffect(() => {
     fetchRecords(todayKey);
+    // 每分钟刷新一次数据
+    const timer = setInterval(() => {
+      fetchRecords(todayKey);
+    }, 60000);
+    return () => clearInterval(timer);
   }, [fetchRecords, todayKey]);
 
-  const todayItems = getItems(todayKey);
+  const todayItems = records[todayKey] || [];
   const totalAmount = todayItems.reduce((sum, item) => sum + item.amount, 0);
   
   const priceChanges = todayItems.filter(item => item.baseUnitPrice > 0);
   const maxIncrease = priceChanges.length > 0 
-    ? [...priceChanges].sort((a, b) => (b.baseUnitPrice - b.purchaseUnitPrice) / b.baseUnitPrice - (a.baseUnitPrice - a.purchaseUnitPrice) / a.baseUnitPrice)[0]
+    ? [...priceChanges].sort((a, b) => (b.purchaseUnitPrice - b.baseUnitPrice) / b.baseUnitPrice - (a.purchaseUnitPrice - a.baseUnitPrice) / a.baseUnitPrice)[0]
     : null;
   const maxDecrease = priceChanges.length > 0
-    ? [...priceChanges].sort((a, b) => (a.baseUnitPrice - a.purchaseUnitPrice) / a.baseUnitPrice - (b.baseUnitPrice - b.purchaseUnitPrice) / b.baseUnitPrice)[0]
+    ? [...priceChanges].sort((a, b) => (a.purchaseUnitPrice - a.baseUnitPrice) / a.baseUnitPrice - (b.purchaseUnitPrice - b.baseUnitPrice) / b.baseUnitPrice)[0]
     : null;
 
   const getChangeRate = (item: typeof todayItems[0]) => {
