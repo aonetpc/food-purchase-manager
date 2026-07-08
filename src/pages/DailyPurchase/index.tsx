@@ -135,125 +135,192 @@ export default function DailyPurchase() {
     const printContent = document.querySelector('.invoice-print-area') as HTMLElement;
     if (!printContent) return;
 
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.top = '-9999px';
-    iframe.style.left = '-9999px';
-    iframe.style.width = '241mm';
-    iframe.style.height = '140mm';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!doc) {
-      document.body.removeChild(iframe);
-      return;
-    }
-
-    // 去掉组件自带的 <style> 标签，避免 CSS 冲突
+    // 去掉组件自带的 <style> 标签，避免冲突
     let cleanHTML = printContent.innerHTML.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
 
-    doc.open();
-    doc.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>入库单打印</title>
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'SimSun', '宋体', serif; background: white; }
-            .print-invoice-container { width: 241mm; }
-            .print-page {
-              width: 241mm;
-              height: 140mm;
-              padding: 5mm 5mm;
-              box-sizing: border-box;
-              overflow: hidden;
-              position: relative;
-            }
-            .print-page + .print-page {
-              page-break-before: always;
-            }
-            .print-page.last-page { page-break-before: auto; }
-            .invoice-header { text-align: center; margin-bottom: 2mm; }
-            .invoice-title { font-size: 14px; font-weight: bold; margin: 0 0 1.5mm 0; color: #333; }
-            .invoice-info {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 0.8mm;
-              font-size: 8px;
-            }
-            .invoice-info .label { color: #666; }
-            .invoice-info .value { color: #333; margin-left: 1.5mm; }
-            .invoice-table {
-              width: 230mm;
-              border-collapse: collapse;
-              font-size: 8px;
-              margin-bottom: 1.5mm;
-              table-layout: fixed;
-            }
-            .invoice-table th, .invoice-table td {
-              border: 1px solid #999;
-              padding: 0.5mm 1mm;
-              text-align: center;
-              vertical-align: middle;
-              height: 4mm;
-              line-height: 1.2;
-            }
-            .invoice-table th { background-color: #f5f5f5; font-weight: bold; }
-            .invoice-table td:first-child { width: 10%; }
-            .invoice-table td:nth-child(2) { width: 28%; text-align: left; }
-            .invoice-table td:nth-child(3) { width: 15%; text-align: left; }
-            .invoice-table td:nth-child(4) { width: 10%; }
-            .invoice-table td:nth-child(5) { width: 17%; }
-            .invoice-table td:nth-child(6) { width: 20%; }
-            .empty-row td { border-top: 1px solid #999; border-bottom: 1px solid #999; }
-            .invoice-total {
-              width: 230mm;
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              margin-bottom: 2mm;
-              font-size: 9px;
-            }
-            .invoice-total .label { color: #666; }
-            .invoice-total .value { font-weight: bold; color: #333; margin: 0 2mm; }
-            .invoice-uppercase {
-              width: 230mm;
-              margin-bottom: 2mm;
-              font-size: 9px;
-            }
-            .invoice-uppercase .label { color: #666; }
-            .invoice-uppercase .value { font-weight: bold; color: #333; margin-left: 2mm; }
-            .invoice-signature {
-              width: 230mm;
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 2mm;
-              font-size: 9px;
-            }
-            .signature-item { flex: 1; display: flex; align-items: center; justify-content: center; }
-            .signature-item .label { color: #666; white-space: nowrap; }
-            .signature-item .line { flex: 1; border-bottom: 1px solid #333; margin-left: 2mm; max-width: 30mm; }
-            .invoice-page { width: 230mm; text-align: center; font-size: 8px; color: #666; margin-top: 1mm; }
-          </style>
-        </head>
-        <body>
-          ${cleanHTML}
-        </body>
-      </html>
-    `);
-    doc.close();
+    // 创建临时打印容器
+    const printContainer = document.createElement('div');
+    printContainer.id = 'temp-print-container';
+    printContainer.innerHTML = cleanHTML;
+    document.body.appendChild(printContainer);
 
+    // 添加打印样式到主文档（确保 @page size 生效）
+    const styleEl = document.createElement('style');
+    styleEl.id = 'temp-print-style';
+    styleEl.textContent = `
+      @page {
+        size: 241mm 140mm;
+        margin: 0;
+      }
+
+      body.printing-invoice-mode > *:not(#temp-print-container) {
+        display: none !important;
+      }
+
+      body.printing-invoice-mode {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: white !important;
+      }
+
+      #temp-print-container .print-invoice-container {
+        width: 241mm;
+        font-family: 'SimSun', '宋体', serif;
+      }
+
+      #temp-print-container .print-page {
+        width: 241mm;
+        height: 140mm;
+        padding: 5mm 5mm;
+        box-sizing: border-box;
+        overflow: hidden;
+        position: relative;
+      }
+
+      #temp-print-container .print-page + .print-page {
+        page-break-before: always;
+      }
+
+      #temp-print-container .invoice-header {
+        text-align: center;
+        margin-bottom: 2mm;
+      }
+
+      #temp-print-container .invoice-title {
+        font-size: 14px;
+        font-weight: bold;
+        margin: 0 0 1.5mm 0;
+        color: #333;
+      }
+
+      #temp-print-container .invoice-info {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.8mm;
+        font-size: 8px;
+      }
+
+      #temp-print-container .invoice-info .label {
+        color: #666;
+      }
+
+      #temp-print-container .invoice-info .value {
+        color: #333;
+        margin-left: 1.5mm;
+      }
+
+      #temp-print-container .invoice-table {
+        width: 230mm;
+        border-collapse: collapse;
+        font-size: 8px;
+        margin-bottom: 1.5mm;
+        table-layout: fixed;
+      }
+
+      #temp-print-container .invoice-table th,
+      #temp-print-container .invoice-table td {
+        border: 1px solid #999;
+        padding: 0.5mm 1mm;
+        text-align: center;
+        vertical-align: middle;
+        height: 4mm;
+        line-height: 1.2;
+      }
+
+      #temp-print-container .invoice-table th {
+        background-color: #f5f5f5;
+        font-weight: bold;
+      }
+
+      #temp-print-container .invoice-table td:first-child { width: 10%; }
+      #temp-print-container .invoice-table td:nth-child(2) { width: 28%; text-align: left; }
+      #temp-print-container .invoice-table td:nth-child(3) { width: 15%; text-align: left; }
+      #temp-print-container .invoice-table td:nth-child(4) { width: 10%; }
+      #temp-print-container .invoice-table td:nth-child(5) { width: 17%; }
+      #temp-print-container .invoice-table td:nth-child(6) { width: 20%; }
+
+      #temp-print-container .empty-row td {
+        border-top: 1px solid #999;
+        border-bottom: 1px solid #999;
+      }
+
+      #temp-print-container .invoice-total {
+        width: 230mm;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2mm;
+        font-size: 9px;
+      }
+
+      #temp-print-container .invoice-total .label { color: #666; }
+      #temp-print-container .invoice-total .value {
+        font-weight: bold;
+        color: #333;
+        margin: 0 2mm;
+      }
+
+      #temp-print-container .invoice-uppercase {
+        width: 230mm;
+        margin-bottom: 2mm;
+        font-size: 9px;
+      }
+
+      #temp-print-container .invoice-uppercase .label { color: #666; }
+      #temp-print-container .invoice-uppercase .value {
+        font-weight: bold;
+        color: #333;
+        margin-left: 2mm;
+      }
+
+      #temp-print-container .invoice-signature {
+        width: 230mm;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 2mm;
+        font-size: 9px;
+      }
+
+      #temp-print-container .signature-item {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #temp-print-container .signature-item .label {
+        color: #666;
+        white-space: nowrap;
+      }
+
+      #temp-print-container .signature-item .line {
+        flex: 1;
+        border-bottom: 1px solid #333;
+        margin-left: 2mm;
+        max-width: 30mm;
+      }
+
+      #temp-print-container .invoice-page {
+        width: 230mm;
+        text-align: center;
+        font-size: 8px;
+        color: #666;
+        margin-top: 1mm;
+      }
+    `;
+    document.head.appendChild(styleEl);
+
+    // 触发打印
+    document.body.classList.add('printing-invoice-mode');
     setTimeout(() => {
-      const win = iframe.contentWindow as Window;
-      win.focus();
-      win.print();
+      window.print();
+      // 清理
       setTimeout(() => {
-        document.body.removeChild(iframe);
-      }, 1000);
-    }, 300);
+        document.body.classList.remove('printing-invoice-mode');
+        document.body.removeChild(printContainer);
+        document.head.removeChild(styleEl);
+      }, 100);
+    }, 200);
   };
 
   const dateStr = format(selectedDate, 'yyyy年MM月dd日 EEEE', { locale: zhCN });
