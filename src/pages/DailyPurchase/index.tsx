@@ -176,8 +176,8 @@ export default function DailyPurchase() {
 
       #temp-print-container .print-page {
         width: 241mm !important;
-        height: 139mm !important;
-        padding: 5mm 5mm !important;
+        min-height: 135mm !important;
+        padding: 4mm 10mm !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         position: relative !important;
@@ -192,21 +192,21 @@ export default function DailyPurchase() {
 
       #temp-print-container .invoice-header {
         text-align: center !important;
-        margin-bottom: 2mm !important;
+        margin-bottom: 3mm !important;
       }
 
       #temp-print-container .invoice-title {
-        font-size: 14px !important;
+        font-size: 16px !important;
         font-weight: bold !important;
-        margin: 0 0 1.5mm 0 !important;
+        margin: 0 0 2mm 0 !important;
         color: #333 !important;
       }
 
       #temp-print-container .invoice-info {
         display: flex !important;
         justify-content: space-between !important;
-        margin-bottom: 0.8mm !important;
-        font-size: 8px !important;
+        margin-bottom: 1mm !important;
+        font-size: 10px !important;
       }
 
       #temp-print-container .invoice-info .label {
@@ -215,25 +215,27 @@ export default function DailyPurchase() {
 
       #temp-print-container .invoice-info .value {
         color: #333 !important;
-        margin-left: 1.5mm !important;
+        margin-left: 2mm !important;
       }
 
       #temp-print-container .invoice-table {
-        width: 230mm !important;
+        width: 220mm !important;
         border-collapse: collapse !important;
-        font-size: 8px !important;
-        margin-bottom: 1.5mm !important;
+        font-size: 10px !important;
+        margin-bottom: 2mm !important;
         table-layout: fixed !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
 
       #temp-print-container .invoice-table th,
       #temp-print-container .invoice-table td {
         border: 1px solid #999 !important;
-        padding: 0.5mm 1mm !important;
+        padding: 1mm 2mm !important;
         text-align: center !important;
         vertical-align: middle !important;
-        height: 4mm !important;
-        line-height: 1.2 !important;
+        height: 5mm !important;
+        line-height: 1.3 !important;
       }
 
       #temp-print-container .invoice-table th {
@@ -241,12 +243,12 @@ export default function DailyPurchase() {
         font-weight: bold !important;
       }
 
-      #temp-print-container .invoice-table td:first-child { width: 10% !important; }
-      #temp-print-container .invoice-table td:nth-child(2) { width: 28% !important; text-align: left !important; }
-      #temp-print-container .invoice-table td:nth-child(3) { width: 15% !important; text-align: left !important; }
+      #temp-print-container .invoice-table td:first-child { width: 8% !important; }
+      #temp-print-container .invoice-table td:nth-child(2) { width: 30% !important; text-align: left !important; }
+      #temp-print-container .invoice-table td:nth-child(3) { width: 14% !important; text-align: left !important; }
       #temp-print-container .invoice-table td:nth-child(4) { width: 10% !important; }
-      #temp-print-container .invoice-table td:nth-child(5) { width: 17% !important; }
-      #temp-print-container .invoice-table td:nth-child(6) { width: 20% !important; }
+      #temp-print-container .invoice-table td:nth-child(5) { width: 16% !important; }
+      #temp-print-container .invoice-table td:nth-child(6) { width: 22% !important; }
 
       #temp-print-container .empty-row td {
         border-top: 1px solid #999 !important;
@@ -254,12 +256,14 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-total {
-        width: 230mm !important;
+        width: 220mm !important;
         display: flex !important;
         justify-content: space-between !important;
         align-items: center !important;
         margin-bottom: 2mm !important;
-        font-size: 9px !important;
+        font-size: 11px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
 
       #temp-print-container .invoice-total .label { color: #666 !important; }
@@ -270,9 +274,11 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-uppercase {
-        width: 230mm !important;
-        margin-bottom: 2mm !important;
-        font-size: 9px !important;
+        width: 220mm !important;
+        margin-bottom: 3mm !important;
+        font-size: 11px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
 
       #temp-print-container .invoice-uppercase .label { color: #666 !important; }
@@ -283,11 +289,13 @@ export default function DailyPurchase() {
       }
 
       #temp-print-container .invoice-signature {
-        width: 230mm !important;
+        width: 220mm !important;
         display: flex !important;
         justify-content: space-between !important;
         margin-bottom: 2mm !important;
-        font-size: 9px !important;
+        font-size: 10px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
 
       #temp-print-container .signature-item {
@@ -305,16 +313,18 @@ export default function DailyPurchase() {
       #temp-print-container .signature-item .line {
         flex: 1 !important;
         border-bottom: 1px solid #333 !important;
-        margin-left: 2mm !important;
-        max-width: 30mm !important;
+        margin-left: 3mm !important;
+        max-width: 35mm !important;
       }
 
       #temp-print-container .invoice-page {
-        width: 230mm !important;
+        width: 220mm !important;
         text-align: center !important;
-        font-size: 8px !important;
+        font-size: 10px !important;
         color: #666 !important;
-        margin-top: 1mm !important;
+        margin-top: 2mm !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
     `;
     document.head.appendChild(styleEl);
