@@ -135,14 +135,12 @@ jobs:
             " 2>/dev/null || true
 
             # 数据库迁移：批量更新未指定供应商的记录为默认供应商
+            # 如果供应商表为空则不更新，COALESCE确保安全
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @default_supplier_id = (SELECT id FROM suppliers ORDER BY sort_order ASC LIMIT 1);
-              SET @default_supplier_name = (SELECT name FROM suppliers ORDER BY sort_order ASC LIMIT 1);
-              IF (@default_supplier_id IS NOT NULL) THEN
-                UPDATE purchase_records
-                SET supplier_id = @default_supplier_id, supplier_name = @default_supplier_name
-                WHERE (supplier_id IS NULL OR supplier_id = '') AND @default_supplier_id IS NOT NULL;
-              END IF;
+              UPDATE purchase_records
+              SET supplier_id = COALESCE((SELECT id FROM suppliers ORDER BY sort_order ASC LIMIT 1), supplier_id),
+                  supplier_name = COALESCE((SELECT name FROM suppliers ORDER BY sort_order ASC LIMIT 1), supplier_name)
+              WHERE supplier_id IS NULL OR supplier_id = '';
             " 2>/dev/null || true
 
             sudo systemctl restart food-purchase-backend
