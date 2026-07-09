@@ -176,6 +176,7 @@ export default function MonthlyAnalysisPage() {
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
   const { departments, fetchDepartments } = useDepartmentStore();
+  const { suppliers, fetchSuppliers } = useSupplierStore();
   const { fetchMonthRecords, fetchYearRecords } = usePurchaseStore();
   const [currentMonth, setCurrentMonth] = useState<Date>(() => {
     const d = new Date();
