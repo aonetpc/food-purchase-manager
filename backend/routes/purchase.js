@@ -198,6 +198,8 @@ router.post('/batch-save', async (req, res) => {
         const categoryName = item.category_name || item.categoryName;
         const departmentId = item.department_id || item.departmentId || '';
         const departmentName = item.department_name || item.departmentName || '';
+        const supplierId = item.supplier_id || item.supplierId || '';
+        const supplierName = item.supplier_name || item.supplierName || '';
         const purchaseUnit = item.purchase_unit || item.purchaseUnit;
         const purchaseQuantity = item.purchase_quantity ?? item.purchaseQuantity;
         const purchaseUnitPrice = item.purchase_unit_price ?? item.purchaseUnitPrice;
@@ -212,6 +214,7 @@ router.post('/batch-save', async (req, res) => {
               ingredient_id = ?, ingredient_name = ?,
               category_id = ?, category_name = ?,
               department_id = ?, department_name = ?,
+              supplier_id = ?, supplier_name = ?,
               purchase_unit = ?, purchase_quantity = ?, purchase_unit_price = ?,
               base_unit = ?, base_unit_price = ?, base_quantity = ?,
               amount = ?
@@ -220,6 +223,7 @@ router.post('/batch-save', async (req, res) => {
               ingredientId, ingredientName,
               categoryId, categoryName,
               departmentId, departmentName,
+              supplierId, supplierName,
               purchaseUnit, purchaseQuantity, purchaseUnitPrice,
               baseUnit, baseUnitPrice, baseQuantity,
               amount,
@@ -230,13 +234,13 @@ router.post('/batch-save', async (req, res) => {
           await conn.query(
             `INSERT INTO purchase_records 
              (id, date, ingredient_id, ingredient_name, category_id, category_name,
-              department_id, department_name,
+              department_id, department_name, supplier_id, supplier_name,
               purchase_unit, purchase_quantity, purchase_unit_price,
               base_unit, base_unit_price, base_quantity, amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               id, date, ingredientId, ingredientName, categoryId, categoryName,
-              departmentId, departmentName,
+              departmentId, departmentName, supplierId, supplierName,
               purchaseUnit, purchaseQuantity, purchaseUnitPrice,
               baseUnit, baseUnitPrice, baseQuantity, amount
             ]
@@ -253,6 +257,8 @@ router.post('/batch-save', async (req, res) => {
           category_name: categoryName,
           department_id: departmentId,
           department_name: departmentName,
+          supplier_id: supplierId,
+          supplier_name: supplierName,
           purchase_unit: purchaseUnit,
           purchase_quantity: purchaseQuantity,
           purchase_unit_price: purchaseUnitPrice,

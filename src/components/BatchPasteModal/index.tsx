@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { X, CheckCircle, AlertCircle, Plus, Building2, Package, Scale, ClipboardList, RefreshCw } from 'lucide-react';
+import { X, CheckCircle, AlertCircle, Plus, Building2, Package, Scale, ClipboardList, RefreshCw, Truck } from 'lucide-react';
 import { useIngredientStore, type Ingredient, type UnitConversion } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useDepartmentStore, type Department } from '@/store/departmentStore';
@@ -36,13 +36,13 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
   const { ingredients, addIngredient, updateIngredient } = useIngredientStore();
   const { categories } = useCategoryStore();
   const { departments, addDepartment: addDeptStore } = useDepartmentStore();
-  const { suppliers, fetchSuppliers } = useSupplierStore();
+  const { suppliers, fetchSuppliers, addSupplier } = useSupplierStore();
 
   const [pasteText, setPasteText] = useState('');
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [step, setStep] = useState<'paste' | 'preview'>('paste');
   const [resolvingItem, setResolvingItem] = useState<ParsedItem | null>(null);
-  const [resolveType, setResolveType] = useState<'ingredient' | 'unit' | 'department' | null>(null);
+  const [resolveType, setResolveType] = useState<'ingredient' | 'unit' | 'department' | 'supplier' | null>(null);
 
   const [newIngredientName, setNewIngredientName] = useState('');
   const [newIngredientCategory, setNewIngredientCategory] = useState('');
@@ -290,6 +290,42 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
     setResolveType(null);
   };
 
+  const handleResolveSupplier = (item: ParsedItem) => {
+    setResolvingItem(item);
+    setResolveType('supplier');
+  };
+
+  const handleMapSupplier = (supplierId: string) => {
+    if (!resolvingItem) return;
+    const supplier = suppliers.find(s => s.id === supplierId);
+    if (!supplier) return;
+
+    setParsedItems(prev => prev.map(i =>
+      i.id === resolvingItem.id
+        ? { ...i, status: 'matched', matchedSupplier: supplier }
+        : i
+    ));
+
+    setResolvingItem(null);
+    setResolveType(null);
+  };
+
+  const handleAddSupplier = async () => {
+    if (!resolvingItem?.supplier) return;
+
+    const newSupplier = await addSupplier({ name: resolvingItem.supplier });
+    if (newSupplier) {
+      setParsedItems(prev => prev.map(i =>
+        i.id === resolvingItem.id
+          ? { ...i, status: 'matched', matchedSupplier: newSupplier }
+          : i
+      ));
+    }
+
+    setResolvingItem(null);
+    setResolveType(null);
+  };
+
   const handleConfirm = () => {
     const validItems = parsedItems.filter(i => i.status === 'matched' && i.matchedIngredient && i.matchedUnit);
     const result: PurchaseEntryItem[] = validItems.map(item => {
@@ -352,7 +388,7 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
               <textarea
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
-                placeholder={'格式：名称 数量 单价 单位 部门\n例如：\n白菜 2 5 公斤 厨房\n猪肉 1 30 公斤 厨房\n纸巾 10 5 包 房务'}
+                placeholder={'格式：名称 数量 单价 单位 部门 供应商\n例如：\n白菜 2 5 公斤 厨房 永辉超市\n猪肉 1 30 公斤 厨房 永辉超市\n纸巾 10 5 包 房务 京东'}
                 className="w-full h-64 border border-gray-200 rounded-lg px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none"
               />
             </div>
@@ -360,8 +396,8 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
               <p className="text-sm text-amber-800">
                 <strong>格式说明：</strong><br />
                 每行一条记录，用空格、Tab或逗号分隔<br />
-                列顺序：<code className="bg-amber-100 px-1.5 py-0.5 rounded">名称 数量 单价 单位 部门</code><br />
-                单价、单位、部门为可选项，缺少时使用默认值
+                列顺序：<code className="bg-amber-100 px-1.5 py-0.5 rounded">名称 数量 单价 单位 部门 供应商</code><br />
+                单价、单位、部门、供应商为可选项，缺少时使用默认值
               </p>
             </div>
           </div>
@@ -421,6 +457,7 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
                         <div className="text-xs text-gray-500">
                           {item.quantity} {item.unit} · ¥{item.unitPrice}/{item.unit}
                           {item.department && ` · ${item.department}`}
+                          {item.supplier && ` · ${item.supplier}`}
                         </div>
                       </div>
                     </div>
@@ -447,6 +484,14 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
                           className="text-xs bg-blue-500 text-white px-3 py-1.5 rounded-md hover:bg-blue-600 transition-colors"
                         >
                           映射部门
+                        </button>
+                      )}
+                      {item.status === 'supplier_missing' && (
+                        <button
+                          onClick={() => handleResolveSupplier(item)}
+                          className="text-xs bg-cyan-500 text-white px-3 py-1.5 rounded-md hover:bg-cyan-600 transition-colors"
+                        >
+                          映射供应商
                         </button>
                       )}
                       {item.status === 'error' && (
@@ -633,6 +678,40 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
                 >
                   <Plus size={16} />
                   创建新部门「{resolvingItem.department}」
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {resolvingItem && resolveType === 'supplier' && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]" onClick={() => { setResolvingItem(null); setResolveType(null); }}>
+            <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                供应商映射
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                供应商「{resolvingItem.supplier}」未识别，请选择对应供应商
+              </p>
+              <div className="space-y-2 mb-4 max-h-60 overflow-y-auto">
+                {suppliers.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleMapSupplier(s.id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-lg hover:border-primary-400 hover:bg-primary-50 transition-colors text-left"
+                  >
+                    <Truck size={18} className="text-blue-500" />
+                    <span className="font-medium text-gray-800">{s.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-gray-100 pt-4">
+                <button
+                  onClick={handleAddSupplier}
+                  className="w-full btn-secondary text-sm flex items-center justify-center gap-2"
+                >
+                  <Plus size={16} />
+                  创建新供应商「{resolvingItem.supplier}」
                 </button>
               </div>
             </div>

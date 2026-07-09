@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, BarChart3, Layers, FileBarChart, Building2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, BarChart3, Layers, FileBarChart, Building2, Truck } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useDepartmentStore } from '@/store/departmentStore';
+import { useSupplierStore } from '@/store/supplierStore';
 import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import type { MonthlyAnalysis, CategoryMonthlyData, PriceChangeItem, MonthlyTrendPoint } from '@/types';
 import { formatCurrency, formatPercent, getPriceChangeBgColor } from '@/utils/format';
@@ -192,7 +193,8 @@ export default function MonthlyAnalysisPage() {
 
   useEffect(() => {
     fetchDepartments();
-  }, [fetchDepartments]);
+    fetchSuppliers();
+  }, [fetchDepartments, fetchSuppliers]);
 
   useEffect(() => {
     let cancelled = false;
@@ -361,6 +363,55 @@ export default function MonthlyAnalysisPage() {
                         </div>
                         <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                           <div className="h-full bg-primary-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 供应商采购统计 */}
+          {(() => {
+            const supplierMap: Record<string, { name: string; amount: number; count: number; itemCount: number }> = {};
+            monthItems.forEach(item => {
+              const supplierId = (item as any).supplierId || '';
+              const supplierName = (item as any).supplierName || '未指定';
+              if (!supplierMap[supplierId]) {
+                supplierMap[supplierId] = { name: supplierName, amount: 0, count: 0, itemCount: 0 };
+              }
+              supplierMap[supplierId].amount += item.amount;
+              supplierMap[supplierId].count += 1;
+              supplierMap[supplierId].itemCount += 1;
+            });
+
+            const totalAmount = monthItems.reduce((s, i) => s + i.amount, 0);
+            const sortedSuppliers = Object.entries(supplierMap)
+              .map(([id, data]) => ({ id, ...data }))
+              .sort((a, b) => b.amount - a.amount);
+
+            if (sortedSuppliers.length === 0) return null;
+
+            return (
+              <div className="card">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">供应商采购统计</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  {sortedSuppliers.map(supplier => {
+                    const pct = totalAmount > 0 ? Math.round((supplier.amount / totalAmount) * 1000) / 10 : 0;
+                    return (
+                      <div key={supplier.id || 'none'} className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Truck size={14} className="text-blue-500" />
+                          <span className="text-sm font-medium text-gray-700">{supplier.name}</span>
+                        </div>
+                        <p className="text-lg font-bold text-gray-800">{formatCurrency(supplier.amount)}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-gray-500">{supplier.itemCount} 项</span>
+                          <span className="text-xs text-gray-500">{pct}%</span>
+                        </div>
+                        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     );
