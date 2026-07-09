@@ -11,6 +11,8 @@ export interface PurchaseEntryItem {
   categoryName: string;
   departmentId: string;
   departmentName: string;
+  supplierId?: string;
+  supplierName?: string;
   purchaseUnit: string;
   purchaseQuantity: number;
   purchaseUnitPrice: number;
@@ -47,6 +49,8 @@ const dbToFrontend = (row: any): PurchaseEntryItem => ({
   categoryName: row.category_name || '',
   departmentId: row.department_id || '',
   departmentName: row.department_name || '',
+  supplierId: row.supplier_id || '',
+  supplierName: row.supplier_name || '',
   purchaseUnit: row.purchase_unit,
   purchaseQuantity: parseFloat(row.purchase_quantity),
   purchaseUnitPrice: parseFloat(row.purchase_unit_price),
@@ -65,6 +69,8 @@ const frontendToDb = (item: PurchaseEntryItem, date: string) => {
     category_name: item.categoryName,
     department_id: item.departmentId,
     department_name: item.departmentName,
+    supplier_id: item.supplierId,
+    supplier_name: item.supplierName,
     purchase_unit: item.purchaseUnit,
     purchase_quantity: item.purchaseQuantity,
     purchase_unit_price: item.purchaseUnitPrice,
@@ -184,6 +190,8 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
       if (updates.categoryName) updateData.category_name = updates.categoryName;
       if (updates.departmentId) updateData.department_id = updates.departmentId;
       if (updates.departmentName) updateData.department_name = updates.departmentName;
+      if (updates.supplierId) updateData.supplier_id = updates.supplierId;
+      if (updates.supplierName) updateData.supplier_name = updates.supplierName;
       if (updates.purchaseUnit) updateData.purchase_unit = updates.purchaseUnit;
       if (updates.purchaseQuantity) updateData.purchase_quantity = updates.purchaseQuantity;
       if (updates.purchaseUnitPrice) updateData.purchase_unit_price = updates.purchaseUnitPrice;
@@ -262,6 +270,8 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
         categoryName: row.category_name,
         departmentId: row.department_id || '',
         departmentName: row.department_name || '',
+        supplierId: row.supplier_id || '',
+        supplierName: row.supplier_name || '',
         purchaseUnit: row.purchase_unit,
         purchaseQuantity: parseFloat(row.purchase_quantity),
         purchaseUnitPrice: parseFloat(row.purchase_unit_price),
@@ -388,6 +398,8 @@ export const buildDailyRecordFromEntry = (
       categoryName: item.categoryName,
       departmentId: item.departmentId || '',
       departmentName: item.departmentName || '',
+      supplierId: item.supplierId || '',
+      supplierName: item.supplierName || '',
       purchaseUnit: item.purchaseUnit,
       purchaseQuantity: item.purchaseQuantity,
       purchaseUnitPrice: item.purchaseUnitPrice,

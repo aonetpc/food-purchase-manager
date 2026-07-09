@@ -9,6 +9,7 @@ import { zhCN } from 'date-fns/locale';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useDepartmentStore } from '@/store/departmentStore';
+import { useSupplierStore } from '@/store/supplierStore';
 import type { Ingredient, UnitConversion } from '@/types';
 import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import { formatCurrency, formatNumber, generateId } from '@/utils/format';
@@ -23,6 +24,8 @@ interface DraftItem {
   categoryName: string;
   departmentId: string;
   departmentName: string;
+  supplierId: string;
+  supplierName: string;
   purchaseUnit: string;
   factor: number;
   baseUnit: string;
@@ -42,6 +45,8 @@ const toEntryItem = (d: DraftItem): PurchaseEntryItem => {
     categoryName: d.categoryName,
     departmentId: d.departmentId,
     departmentName: d.departmentName,
+    supplierId: d.supplierId,
+    supplierName: d.supplierName,
     purchaseUnit: d.purchaseUnit,
     purchaseQuantity: d.purchaseQuantity,
     purchaseUnitPrice: d.purchaseUnitPrice,
@@ -65,6 +70,7 @@ export default function PurchaseEntry() {
   const { ingredients, addIngredient } = useIngredientStore();
   const { categories } = useCategoryStore();
   const { departments, fetchDepartments, getDefaultDepartment } = useDepartmentStore();
+  const { suppliers, fetchSuppliers, getDefaultSupplier } = useSupplierStore();
 
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -112,7 +118,8 @@ export default function PurchaseEntry() {
 
   useEffect(() => {
     fetchDepartments();
-  }, [fetchDepartments]);
+    fetchSuppliers();
+  }, [fetchDepartments, fetchSuppliers]);
 
   // 加载已有录入数据（异步）
   useEffect(() => {
@@ -131,6 +138,8 @@ export default function PurchaseEntry() {
         categoryName: it.categoryName,
         departmentId: it.departmentId,
         departmentName: it.departmentName,
+        supplierId: it.supplierId || '',
+        supplierName: it.supplierName || '',
         purchaseUnit: it.purchaseUnit,
         factor: it.purchaseUnitPrice > 0 ? (ingredients.find(i => i.id === it.ingredientId)?.units.find(u => u.unit === it.purchaseUnit)?.factor || 1) : 1,
         baseUnit: it.baseUnit,
@@ -201,6 +210,7 @@ export default function PurchaseEntry() {
     const commonUnit = ing.units.find(u => u.isCommon) || ing.units[0];
     const category = categories.find(c => c.id === ing.categoryId);
     const defaultDept = getDefaultDepartment();
+    const defaultSupplier = getDefaultSupplier();
     const newItem: DraftItem = {
       id: Math.random().toString(36).substring(2, 11),
       ingredientId: ing.id,
@@ -209,6 +219,8 @@ export default function PurchaseEntry() {
       categoryName: category?.name || '',
       departmentId: defaultDept?.id || '',
       departmentName: defaultDept?.name || '',
+      supplierId: defaultSupplier?.id || '',
+      supplierName: defaultSupplier?.name || '',
       purchaseUnit: commonUnit.unit,
       factor: commonUnit.factor,
       baseUnit: ing.baseUnit,
@@ -304,6 +316,7 @@ export default function PurchaseEntry() {
   };
 
   const handleBatchImport = (items: PurchaseEntryItem[]) => {
+    const defaultSupplier = getDefaultSupplier();
     const newDraftItems: DraftItem[] = items.map(item => {
       const ing = ingredients.find(i => i.id === item.ingredientId);
       const unitObj = ing?.units.find(u => u.unit === item.purchaseUnit);
@@ -315,6 +328,8 @@ export default function PurchaseEntry() {
         categoryName: item.categoryName,
         departmentId: item.departmentId,
         departmentName: item.departmentName,
+        supplierId: item.supplierId || defaultSupplier?.id || '',
+        supplierName: item.supplierName || defaultSupplier?.name || '',
         purchaseUnit: item.purchaseUnit,
         factor: unitObj?.factor || 1,
         baseUnit: item.baseUnit,
@@ -488,6 +503,7 @@ export default function PurchaseEntry() {
                   <th className="whitespace-nowrap">食材名称</th>
                   <th className="whitespace-nowrap">分类</th>
                   <th className="whitespace-nowrap">部门</th>
+                  <th className="whitespace-nowrap">供应商</th>
                   <th className="whitespace-nowrap text-right">采购单位</th>
                   <th className="whitespace-nowrap text-right">数量</th>
                   <th className="whitespace-nowrap text-right">单价(元)</th>
@@ -522,6 +538,21 @@ export default function PurchaseEntry() {
                         >
                           {departments.map(d => (
                             <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          value={item.supplierId}
+                          onChange={(e) => {
+                            const supplier = suppliers.find(s => s.id === e.target.value);
+                            updateDraftItem(item.id, 'supplierId', e.target.value);
+                            if (supplier) updateDraftItem(item.id, 'supplierName', supplier.name);
+                          }}
+                          className="border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                        >
+                          {suppliers.map(s => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
                           ))}
                         </select>
                       </td>

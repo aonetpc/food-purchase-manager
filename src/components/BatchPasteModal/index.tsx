@@ -3,6 +3,8 @@ import { X, CheckCircle, AlertCircle, Plus, Building2, Package, Scale, Clipboard
 import { useIngredientStore, type Ingredient, type UnitConversion } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useDepartmentStore, type Department } from '@/store/departmentStore';
+import { useSupplierStore } from '@/store/supplierStore';
+import type { Supplier } from '@/types';
 import type { PurchaseEntryItem } from '@/store/purchaseStore';
 import { generateId } from '@/utils/format';
 
@@ -15,10 +17,12 @@ interface ParsedItem {
   unitPrice: number;
   unit: string;
   department: string;
-  status: 'matched' | 'ingredient_missing' | 'unit_missing' | 'department_missing' | 'error';
+  supplier: string;
+  status: 'matched' | 'ingredient_missing' | 'unit_missing' | 'department_missing' | 'supplier_missing' | 'error';
   matchedIngredient?: Ingredient;
   matchedUnit?: UnitConversion;
   matchedDepartment?: Department;
+  matchedSupplier?: Supplier;
   error?: string;
 }
 
@@ -32,6 +36,7 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
   const { ingredients, addIngredient, updateIngredient } = useIngredientStore();
   const { categories } = useCategoryStore();
   const { departments, addDepartment: addDeptStore } = useDepartmentStore();
+  const { suppliers, fetchSuppliers } = useSupplierStore();
 
   const [pasteText, setPasteText] = useState('');
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
@@ -56,8 +61,9 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
       setStep('paste');
       setResolvingItem(null);
       setResolveType(null);
+      fetchSuppliers();
     }
-  }, [open]);
+  }, [open, fetchSuppliers]);
 
   const parseText = () => {
     const lines = pasteText.trim().split('\n').filter(line => line.trim());
@@ -86,6 +92,7 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
       const unitPrice = parts.length >= 3 ? (parseFloat(parts[2]) || 0) : 0;
       const unit = parts.length >= 4 ? parts[3] : '公斤';
       const department = parts.length >= 5 ? parts[4] : '';
+      const supplier = parts.length >= 6 ? parts[5] : '';
 
       let finalQuantity = quantity;
       let finalUnitPrice = unitPrice;
@@ -97,6 +104,7 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
 
       const ingredient = ingredients.find(i => i.name === name);
       const dept = departments.find(d => d.name === department || d.name === deptMap[department]);
+      const supp = suppliers.find(s => s.name === supplier);
 
       let status: ParsedItem['status'] = 'matched';
       let matchedUnit: UnitConversion | undefined;
@@ -114,6 +122,10 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
         if (status === 'matched') status = 'department_missing';
       }
 
+      if (supplier && !supp) {
+        if (status === 'matched' || status === 'department_missing') status = 'supplier_missing';
+      }
+
       items.push({
         id: generateId(),
         rawText: line,
@@ -123,10 +135,12 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
         unitPrice: finalUnitPrice,
         unit,
         department,
+        supplier,
         status,
         matchedIngredient: ingredient,
         matchedUnit,
         matchedDepartment: dept || undefined,
+        matchedSupplier: supp || undefined,
       });
     });
 
@@ -293,6 +307,8 @@ export default function BatchPasteModal({ open, onClose, onConfirm }: BatchPaste
         categoryName: categories.find(c => c.id === ingredient.categoryId)?.name || '',
         departmentId: item.matchedDepartment?.id || departments[0]?.id || '',
         departmentName: item.matchedDepartment?.name || departments[0]?.name || '',
+        supplierId: item.matchedSupplier?.id || suppliers[0]?.id || '',
+        supplierName: item.matchedSupplier?.name || suppliers[0]?.name || '',
         purchaseUnit: item.unit,
         purchaseQuantity: item.quantity,
         purchaseUnitPrice: item.unitPrice,

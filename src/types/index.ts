@@ -5,6 +5,15 @@ export interface Category {
   color: string;
 }
 
+export interface Supplier {
+  id: string;
+  name: string;
+  contact?: string;
+  phone?: string;
+  address?: string;
+  sort_order: number;
+}
+
 export interface UnitConversion {
   unit: string;
   factor: number;
@@ -29,6 +38,8 @@ export interface PurchaseItem {
   categoryName: string;
   departmentId?: string;
   departmentName?: string;
+  supplierId?: string;
+  supplierName?: string;
   purchaseUnit: string;
   purchaseQuantity: number;
   purchaseUnitPrice: number;

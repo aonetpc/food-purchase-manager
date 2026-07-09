@@ -615,6 +615,7 @@ export default function DailyPurchase() {
                             <tr>
                               <th className="whitespace-nowrap">食材名称</th>
                               <th className="whitespace-nowrap">分类</th>
+                              <th className="whitespace-nowrap">供应商</th>
                               <th className="whitespace-nowrap text-right">采购单位</th>
                               <th className="whitespace-nowrap text-right">数量</th>
                               <th className="whitespace-nowrap text-right">采购单价</th>
@@ -636,6 +637,7 @@ export default function DailyPurchase() {
                                       {item.categoryName}
                                     </span>
                                   </td>
+                                  <td className="text-gray-600">{(item as any).supplierName || '-'}</td>
                                   <td className="text-right text-gray-600">{item.purchaseUnit}</td>
                                   <td className="text-right font-medium">{formatNumber(item.purchaseQuantity, 1)}</td>
                                   <td className="text-right text-gray-600">{formatCurrency(item.purchaseUnitPrice)}</td>

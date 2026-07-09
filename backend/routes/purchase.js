@@ -12,6 +12,8 @@ const dbToFrontend = (row) => ({
   category_name: row.category_name || '',
   department_id: row.department_id || '',
   department_name: row.department_name || '',
+  supplier_id: row.supplier_id || '',
+  supplier_name: row.supplier_name || '',
   purchase_unit: row.purchase_unit,
   purchase_quantity: parseFloat(row.purchase_quantity),
   purchase_unit_price: parseFloat(row.purchase_unit_price),
@@ -61,9 +63,10 @@ router.post('/', async (req, res) => {
     await pool.query(
       `INSERT INTO purchase_records 
        (id, date, ingredient_id, ingredient_name, category_id, category_name,
+        department_id, department_name, supplier_id, supplier_name,
         purchase_unit, purchase_quantity, purchase_unit_price,
         base_unit, base_unit_price, base_quantity, amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         item.date,
@@ -71,6 +74,10 @@ router.post('/', async (req, res) => {
         item.ingredient_name,
         item.category_id,
         item.category_name,
+        item.department_id || '',
+        item.department_name || '',
+        item.supplier_id || '',
+        item.supplier_name || '',
         item.purchase_unit,
         item.purchase_quantity,
         item.purchase_unit_price,
@@ -105,6 +112,8 @@ router.put('/:id', async (req, res) => {
       category_name: 'category_name',
       department_id: 'department_id',
       department_name: 'department_name',
+      supplier_id: 'supplier_id',
+      supplier_name: 'supplier_name',
       purchase_unit: 'purchase_unit',
       purchase_quantity: 'purchase_quantity',
       purchase_unit_price: 'purchase_unit_price',
