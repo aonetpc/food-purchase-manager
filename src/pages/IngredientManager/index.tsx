@@ -437,9 +437,23 @@ export default function IngredientManager() {
               )}
             </div>
 
-            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
-              <button onClick={() => setShowModal(false)} className="btn-secondary">取消</button>
-              <button onClick={handleSubmit} className="btn-primary">{editing ? '保存修改' : '确认新增'}</button>
+            <div className="flex justify-between items-center p-5 border-t border-gray-100">
+              {editing && (
+                <button
+                  onClick={() => {
+                    openSyncModal(editing);
+                    setShowModal(false);
+                  }}
+                  className="text-sm text-blue-500 hover:text-blue-600 flex items-center gap-1"
+                >
+                  <RefreshCw size={14} />
+                  同步分类到历史采购
+                </button>
+              )}
+              <div className="flex gap-3 ml-auto">
+                <button onClick={() => setShowModal(false)} className="btn-secondary">取消</button>
+                <button onClick={handleSubmit} className="btn-primary">{editing ? '保存修改' : '确认新增'}</button>
+              </div>
             </div>
           </div>
         </div>
