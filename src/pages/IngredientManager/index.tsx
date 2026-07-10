@@ -21,23 +21,30 @@ interface IngredientForm {
   units: UnitForm[];
 }
 
-const generateImageUrl = (name: string) => {
-  const encoded = encodeURIComponent(`fresh ${name} ingredient food photography white background`);
+// 生成AI图片URL
+const generateImageUrl = (name: string, variant?: string) => {
+  const suffix = variant ? ` ${variant}` : '';
+  const encoded = encodeURIComponent(`fresh ${name}${suffix} ingredient food photography white background`);
   return `https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=${encoded}&image_size=square`;
 };
 
-// 生成多张候选图片，通过不同的描述词变体区分
-const generateCandidateUrls = (name: string, categoryName?: string) => {
-  const category = categoryName || '';
-  const variants = [
-    `fresh ${name} ${category} ingredient top view food photography white background`,
-    `fresh ${name} ${category} ingredient close-up shot food photography white background`,
-    `fresh ${name} ${category} ingredient natural lighting food photography white background`,
-    `fresh ${name} ${category} ingredient professional studio food photography white background`,
-  ];
-  return variants.map(prompt => {
-    const encoded = encodeURIComponent(prompt);
-    return `https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=${encoded}&image_size=square`;
+// 等待图片加载完成
+const waitForImageLoad = (url: string, timeout = 30000): Promise<boolean> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const timer = setTimeout(() => {
+      img.src = '';
+      resolve(false);
+    }, timeout);
+    img.onload = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    img.src = url;
   });
 };
 
@@ -55,12 +62,13 @@ export default function IngredientManager() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [syncingIngredient, setSyncingIngredient] = useState<Ingredient | null>(null);
   const [syncResult, setSyncResult] = useState<{ count: number; message: string } | null>(null);
-  const [imageCandidates, setImageCandidates] = useState<string[]>([]);
-  const [generatingImages, setGeneratingImages] = useState(false);
+  const [currentCandidate, setCurrentCandidate] = useState<string | null>(null);
+  const [generatingImage, setGeneratingImage] = useState(false);
   const [showManualUrl, setShowManualUrl] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [batchMatching, setBatchMatching] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentName: string; message?: string } | null>(null);
+  const candidateVariants = ['top view', 'close-up shot', 'natural lighting', 'professional studio'];
 
   const [form, setForm] = useState<IngredientForm>({
     name: '',
@@ -88,7 +96,7 @@ export default function IngredientManager() {
       units: [{ unit: '公斤', factor: '1', isCommon: true }],
     });
     setError('');
-    setImageCandidates([]);
+    setCurrentCandidate(null);
     setShowManualUrl(false);
     setShowModal(true);
   };
@@ -105,37 +113,53 @@ export default function IngredientManager() {
       units: ing.units.map(u => ({ unit: u.unit, factor: u.factor.toString(), isCommon: u.isCommon || false })),
     });
     setError('');
-    setImageCandidates([]);
+    setCurrentCandidate(null);
     setShowManualUrl(false);
     setShowModal(true);
   };
 
-  // 智能匹配图片：生成4张候选图
-  const handleSmartMatch = () => {
+  // 生成一张图片并等待其加载完成
+  const generateAndWait = async (name: string, variant?: string): Promise<string | null> => {
+    const imageUrl = generateImageUrl(name, variant);
+    const loaded = await waitForImageLoad(imageUrl, 35000);
+    return loaded ? imageUrl : null;
+  };
+
+  // 智能匹配图片：单张顺序生成，等待加载完成
+  const handleSmartMatch = async (variant?: string) => {
     if (!form.name.trim()) {
       setError('请先输入食材名称');
       return;
     }
-    const categoryName = categories.find(c => c.id === form.categoryId)?.name;
-    setGeneratingImages(true);
-    setImageCandidates([]);
-    // 延迟一下让loading状态显示
-    setTimeout(() => {
-      const candidates = generateCandidateUrls(form.name.trim(), categoryName);
-      setImageCandidates(candidates);
-      setGeneratingImages(false);
-    }, 300);
+    setGeneratingImage(true);
+    setCurrentCandidate(null);
+    setError('');
+    const imageUrl = await generateAndWait(form.name.trim(), variant);
+    if (imageUrl) {
+      setCurrentCandidate(imageUrl);
+    } else {
+      setError('图片生成超时或失败，请稍后重试或手动输入图片URL');
+    }
+    setGeneratingImage(false);
   };
 
-  // 选择候选图片
-  const handleSelectCandidate = (url: string) => {
-    setForm({ ...form, image: url });
-    setImageCandidates([]);
-  };
-
-  // 重新生成候选图片
+  // 重新生成一张新的候选图片
   const handleRegenerate = () => {
-    handleSmartMatch();
+    // 按序号循环切换变体，增加图片多样性
+    const currentVariant = currentCandidate
+      ? candidateVariants.find(v => currentCandidate.includes(encodeURIComponent(v).replace(/%20/g, ' ')))
+      : undefined;
+    const currentIndex = currentVariant ? candidateVariants.indexOf(currentVariant) : -1;
+    const nextVariant = candidateVariants[(currentIndex + 1) % candidateVariants.length];
+    handleSmartMatch(nextVariant);
+  };
+
+  // 采用当前候选图片
+  const handleAdoptCandidate = () => {
+    if (currentCandidate) {
+      setForm({ ...form, image: currentCandidate });
+      setCurrentCandidate(null);
+    }
   };
 
   // 批量匹配图片
@@ -148,19 +172,28 @@ export default function IngredientManager() {
     }
     setBatchMatching(true);
     setBatchProgress({ current: 0, total: ingredientsToUpdate.length, currentName: ingredientsToUpdate[0].name });
+    let successCount = 0;
     for (let i = 0; i < ingredientsToUpdate.length; i++) {
       const ing = ingredientsToUpdate[i];
-      setBatchProgress({ current: i, total: ingredientsToUpdate.length, currentName: ing.name });
-      const imageUrl = generateImageUrl(ing.name);
-      try {
-        await updateIngredient(ing.id, { image: imageUrl });
-      } catch {
-        // 跳过失败的
+      setBatchProgress({ current: i + 1, total: ingredientsToUpdate.length, currentName: ing.name });
+      const imageUrl = await generateAndWait(ing.name);
+      if (imageUrl) {
+        try {
+          await updateIngredient(ing.id, { image: imageUrl });
+          successCount++;
+        } catch {
+          // 跳过失败的
+        }
       }
     }
-    setBatchProgress({ current: ingredientsToUpdate.length, total: ingredientsToUpdate.length, currentName: '完成' });
+    setBatchProgress({
+      current: ingredientsToUpdate.length,
+      total: ingredientsToUpdate.length,
+      currentName: '完成',
+      message: `成功匹配 ${successCount} / ${ingredientsToUpdate.length} 个食材`,
+    });
     setBatchMatching(false);
-    setTimeout(() => setBatchProgress(null), 2000);
+    setTimeout(() => setBatchProgress(null), 3000);
   };
 
   const handleSubmit = async () => {
@@ -487,11 +520,11 @@ export default function IngredientManager() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={handleSmartMatch}
-                            disabled={generatingImages || !form.name.trim()}
+                            onClick={() => handleSmartMatch()}
+                            disabled={generatingImage || !form.name.trim()}
                             className="inline-flex items-center gap-1.5 px-3 py-2 bg-primary-50 text-primary-600 rounded-lg text-sm font-medium hover:bg-primary-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {generatingImages ? (
+                            {generatingImage ? (
                               <>
                                 <Loader2 size={15} className="animate-spin" />
                                 生成中...
@@ -523,7 +556,11 @@ export default function IngredientManager() {
                           </button>
                         </div>
                         <p className="text-xs text-gray-400 mt-1.5">
-                          {form.image ? '点击图片可放大预览' : '点击"智能匹配"根据食材名称自动生成图片'}
+                          {generatingImage
+                            ? '正在生成图片并等待加载完成，请稍候...'
+                            : form.image
+                            ? '点击图片可放大预览'
+                            : '点击"智能匹配"根据食材名称自动生成图片'}
                         </p>
                       </div>
                     </div>
@@ -539,51 +576,56 @@ export default function IngredientManager() {
                       />
                     )}
 
-                    {/* 候选图片网格 */}
-                    {imageCandidates.length > 0 && (
+                    {/* 候选图片预览 */}
+                    {currentCandidate && (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <p className="text-xs text-gray-500 flex items-center gap-1">
                             <Sparkles size={12} className="text-primary-500" />
-                            选择一张候选图片
+                            候选图片预览
                           </p>
                           <button
                             type="button"
                             onClick={handleRegenerate}
-                            disabled={generatingImages}
+                            disabled={generatingImage}
                             className="text-xs text-primary-600 hover:text-primary-700 flex items-center gap-1"
                           >
                             <RefreshCw size={12} />
-                            换一批
+                            换一张
                           </button>
                         </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {imageCandidates.map((url, idx) => (
-                            <div
-                              key={idx}
-                              className={`relative group rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
-                                form.image === url
-                                  ? 'border-primary-500 ring-2 ring-primary-200'
-                                  : 'border-gray-200 hover:border-primary-300'
-                              }`}
-                              onClick={() => handleSelectCandidate(url)}
+                        <div className="flex items-center gap-4">
+                          <div
+                            className="w-32 h-32 rounded-xl border-2 border-primary-500 ring-2 ring-primary-200 overflow-hidden cursor-pointer flex-shrink-0"
+                            onClick={() => setPreviewImage(currentCandidate)}
+                          >
+                            <img
+                              src={currentCandidate}
+                              alt="候选图片"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={handleAdoptCandidate}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-medium hover:bg-primary-600 transition-colors"
                             >
-                              <img
-                                src={url}
-                                alt={`候选${idx + 1}`}
-                                className="w-full aspect-square object-cover"
-                                loading="lazy"
-                              />
-                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
-                              {form.image === url && (
-                                <div className="absolute top-1 right-1 w-5 h-5 bg-primary-500 rounded-full flex items-center justify-center">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                                    <polyline points="20 6 9 17 4 12" />
-                                  </svg>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                              采用此图片
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCurrentCandidate(null)}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+                            >
+                              <X size={14} />
+                              取消
+                            </button>
+                            <p className="text-xs text-gray-400">点击左侧图片可放大预览</p>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -793,6 +835,9 @@ export default function IngredientManager() {
           )}
           {batchProgress.total === 0 && (
             <p className="text-xs text-gray-500">{batchProgress.currentName}</p>
+          )}
+          {batchProgress.message && (
+            <p className="text-xs text-green-600 mt-1">{batchProgress.message}</p>
           )}
         </div>
       )}
