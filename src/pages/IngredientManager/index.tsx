@@ -28,23 +28,54 @@ const generateImageUrl = (name: string, variant?: string) => {
   return `https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=${encoded}&image_size=square`;
 };
 
-// 等待图片加载完成
-const waitForImageLoad = (url: string, timeout = 30000): Promise<boolean> => {
+// 等待图片加载完成（带重试机制，应对AI生成的占位图）
+const waitForImageLoad = (url: string, timeout = 45000): Promise<boolean> => {
   return new Promise((resolve) => {
-    const img = new Image();
-    const timer = setTimeout(() => {
-      img.src = '';
-      resolve(false);
-    }, timeout);
-    img.onload = () => {
-      clearTimeout(timer);
-      resolve(true);
+    const startTime = Date.now();
+    const maxRetries = 15;
+    let retryCount = 0;
+    let lastDataUrl = '';
+
+    const attemptLoad = () => {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= timeout || retryCount >= maxRetries) {
+        resolve(false);
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const currentDataUrl = canvas.toDataURL();
+          
+          if (img.width > 100 && img.height > 100 && currentDataUrl !== lastDataUrl) {
+            lastDataUrl = currentDataUrl;
+            retryCount++;
+            setTimeout(attemptLoad, 3000);
+          } else if (img.width > 100 && img.height > 100 && currentDataUrl === lastDataUrl) {
+            resolve(true);
+          } else {
+            retryCount++;
+            setTimeout(attemptLoad, 2000);
+          }
+        } else {
+          retryCount++;
+          setTimeout(attemptLoad, 2000);
+        }
+      };
+      img.onerror = () => {
+        retryCount++;
+        setTimeout(attemptLoad, 2000);
+      };
+      img.src = url + '&t=' + Date.now();
     };
-    img.onerror = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    img.src = url;
+
+    setTimeout(attemptLoad, 3000);
   });
 };
 
