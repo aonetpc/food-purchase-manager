@@ -151,6 +151,11 @@ export default function IngredientManager() {
     }
   };
 
+  const openSyncModal = (ing: Ingredient) => {
+    setSyncingIngredient(ing);
+    setSyncResult(null);
+  };
+
   const handleDelete = (id: string) => {
     deleteIngredient(id);
     setDeleteConfirm(null);
@@ -264,12 +269,21 @@ export default function IngredientManager() {
                         <button
                           onClick={() => openEdit(ing)}
                           className="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-md transition-colors"
+                          title="编辑"
                         >
                           <Pencil size={16} />
                         </button>
                         <button
+                          onClick={() => openSyncModal(ing)}
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                          title="同步分类到历史采购"
+                        >
+                          <RefreshCw size={16} />
+                        </button>
+                        <button
                           onClick={() => setDeleteConfirm(ing.id)}
                           className="p-1.5 text-gray-400 hover:text-danger-600 hover:bg-danger-50 rounded-md transition-colors"
+                          title="删除"
                         >
                           <Trash2 size={16} />
                         </button>
