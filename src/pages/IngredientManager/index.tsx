@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, X, Search, AlertCircle, Settings, Package, RefreshCw } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Search, AlertCircle, Settings, Package, RefreshCw, ImageIcon, Wand2, Loader2, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useIngredientStore } from '@/store/ingredientStore';
 import type { Ingredient, UnitConversion } from '@/types';
@@ -26,6 +26,21 @@ const generateImageUrl = (name: string) => {
   return `https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=${encoded}&image_size=square`;
 };
 
+// 生成多张候选图片，通过不同的描述词变体区分
+const generateCandidateUrls = (name: string, categoryName?: string) => {
+  const category = categoryName || '';
+  const variants = [
+    `fresh ${name} ${category} ingredient top view food photography white background`,
+    `fresh ${name} ${category} ingredient close-up shot food photography white background`,
+    `fresh ${name} ${category} ingredient natural lighting food photography white background`,
+    `fresh ${name} ${category} ingredient professional studio food photography white background`,
+  ];
+  return variants.map(prompt => {
+    const encoded = encodeURIComponent(prompt);
+    return `https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=${encoded}&image_size=square`;
+  });
+};
+
 export default function IngredientManager() {
   const { categories } = useCategoryStore();
   const { ingredients, addIngredient, updateIngredient, deleteIngredient, syncCategory } = useIngredientStore();
@@ -40,6 +55,12 @@ export default function IngredientManager() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [syncingIngredient, setSyncingIngredient] = useState<Ingredient | null>(null);
   const [syncResult, setSyncResult] = useState<{ count: number; message: string } | null>(null);
+  const [imageCandidates, setImageCandidates] = useState<string[]>([]);
+  const [generatingImages, setGeneratingImages] = useState(false);
+  const [showManualUrl, setShowManualUrl] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [batchMatching, setBatchMatching] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentName: string } | null>(null);
 
   const [form, setForm] = useState<IngredientForm>({
     name: '',
@@ -67,6 +88,8 @@ export default function IngredientManager() {
       units: [{ unit: '公斤', factor: '1', isCommon: true }],
     });
     setError('');
+    setImageCandidates([]);
+    setShowManualUrl(false);
     setShowModal(true);
   };
 
@@ -82,7 +105,62 @@ export default function IngredientManager() {
       units: ing.units.map(u => ({ unit: u.unit, factor: u.factor.toString(), isCommon: u.isCommon || false })),
     });
     setError('');
+    setImageCandidates([]);
+    setShowManualUrl(false);
     setShowModal(true);
+  };
+
+  // 智能匹配图片：生成4张候选图
+  const handleSmartMatch = () => {
+    if (!form.name.trim()) {
+      setError('请先输入食材名称');
+      return;
+    }
+    const categoryName = categories.find(c => c.id === form.categoryId)?.name;
+    setGeneratingImages(true);
+    setImageCandidates([]);
+    // 延迟一下让loading状态显示
+    setTimeout(() => {
+      const candidates = generateCandidateUrls(form.name.trim(), categoryName);
+      setImageCandidates(candidates);
+      setGeneratingImages(false);
+    }, 300);
+  };
+
+  // 选择候选图片
+  const handleSelectCandidate = (url: string) => {
+    setForm({ ...form, image: url });
+    setImageCandidates([]);
+  };
+
+  // 重新生成候选图片
+  const handleRegenerate = () => {
+    handleSmartMatch();
+  };
+
+  // 批量匹配图片
+  const handleBatchMatch = async () => {
+    const ingredientsToUpdate = ingredients.filter(ing => !ing.image || ing.image.trim() === '');
+    if (ingredientsToUpdate.length === 0) {
+      setBatchProgress({ current: 0, total: 0, currentName: '所有食材已有图片，无需匹配' });
+      setTimeout(() => setBatchProgress(null), 2000);
+      return;
+    }
+    setBatchMatching(true);
+    setBatchProgress({ current: 0, total: ingredientsToUpdate.length, currentName: ingredientsToUpdate[0].name });
+    for (let i = 0; i < ingredientsToUpdate.length; i++) {
+      const ing = ingredientsToUpdate[i];
+      setBatchProgress({ current: i, total: ingredientsToUpdate.length, currentName: ing.name });
+      const imageUrl = generateImageUrl(ing.name);
+      try {
+        await updateIngredient(ing.id, { image: imageUrl });
+      } catch {
+        // 跳过失败的
+      }
+    }
+    setBatchProgress({ current: ingredientsToUpdate.length, total: ingredientsToUpdate.length, currentName: '完成' });
+    setBatchMatching(false);
+    setTimeout(() => setBatchProgress(null), 2000);
   };
 
   const handleSubmit = async () => {
@@ -189,10 +267,20 @@ export default function IngredientManager() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">食材管理</h1>
           <p className="text-gray-500 mt-1">管理食材信息，包括分类、单位换算和价格</p>
         </div>
-        <button onClick={openAdd} className="btn-primary flex items-center gap-2">
-          <Plus size={18} />
-          <span>新增食材</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleBatchMatch}
+            disabled={batchMatching}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {batchMatching ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+            <span>批量匹配图片</span>
+          </button>
+          <button onClick={openAdd} className="btn-primary flex items-center gap-2">
+            <Plus size={18} />
+            <span>新增食材</span>
+          </button>
+        </div>
       </div>
 
       <div className="card">
@@ -381,14 +469,125 @@ export default function IngredientManager() {
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">图片URL（可选）</label>
-                  <input
-                    type="text"
-                    value={form.image}
-                    onChange={(e) => setForm({ ...form, image: e.target.value })}
-                    placeholder="留空则自动生成"
-                    className="input-field text-sm"
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-2">食材图片</label>
+                  <div className="space-y-3">
+                    {/* 当前图片预览 */}
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="w-20 h-20 rounded-xl bg-gray-100 border border-gray-200 overflow-hidden flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-primary-300 transition-all flex-shrink-0"
+                        onClick={() => form.image && setPreviewImage(form.image)}
+                      >
+                        {form.image ? (
+                          <img src={form.image} alt="预览" className="w-full h-full object-cover" />
+                        ) : (
+                          <ImageIcon className="text-gray-300" size={28} />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={handleSmartMatch}
+                            disabled={generatingImages || !form.name.trim()}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-primary-50 text-primary-600 rounded-lg text-sm font-medium hover:bg-primary-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {generatingImages ? (
+                              <>
+                                <Loader2 size={15} className="animate-spin" />
+                                生成中...
+                              </>
+                            ) : (
+                              <>
+                                <Wand2 size={15} />
+                                智能匹配
+                              </>
+                            )}
+                          </button>
+                          {form.image && (
+                            <button
+                              type="button"
+                              onClick={() => setForm({ ...form, image: '' })}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
+                            >
+                              <X size={15} />
+                              清除
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setShowManualUrl(!showManualUrl)}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
+                          >
+                            {showManualUrl ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                            手动输入URL
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1.5">
+                          {form.image ? '点击图片可放大预览' : '点击"智能匹配"根据食材名称自动生成图片'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 手动输入URL */}
+                    {showManualUrl && (
+                      <input
+                        type="text"
+                        value={form.image}
+                        onChange={(e) => setForm({ ...form, image: e.target.value })}
+                        placeholder="输入图片URL..."
+                        className="input-field text-sm"
+                      />
+                    )}
+
+                    {/* 候选图片网格 */}
+                    {imageCandidates.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-gray-500 flex items-center gap-1">
+                            <Sparkles size={12} className="text-primary-500" />
+                            选择一张候选图片
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleRegenerate}
+                            disabled={generatingImages}
+                            className="text-xs text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                          >
+                            <RefreshCw size={12} />
+                            换一批
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {imageCandidates.map((url, idx) => (
+                            <div
+                              key={idx}
+                              className={`relative group rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
+                                form.image === url
+                                  ? 'border-primary-500 ring-2 ring-primary-200'
+                                  : 'border-gray-200 hover:border-primary-300'
+                              }`}
+                              onClick={() => handleSelectCandidate(url)}
+                            >
+                              <img
+                                src={url}
+                                alt={`候选${idx + 1}`}
+                                className="w-full aspect-square object-cover"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                              {form.image === url && (
+                                <div className="absolute top-1 right-1 w-5 h-5 bg-primary-500 rounded-full flex items-center justify-center">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                                    <polyline points="20 6 9 17 4 12" />
+                                  </svg>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -541,6 +740,60 @@ export default function IngredientManager() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 图片放大预览 */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-8"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-md max-h-[80vh]" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={previewImage}
+              alt="放大预览"
+              className="rounded-xl shadow-2xl max-w-full max-h-[80vh] object-contain"
+            />
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute -top-3 -right-3 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-gray-100"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 批量匹配进度 */}
+      {batchProgress && (
+        <div className="fixed bottom-6 right-6 z-50 bg-white rounded-xl shadow-xl border border-gray-100 p-4 w-72 animate-slide-up">
+          <div className="flex items-center gap-3 mb-2">
+            {batchMatching ? (
+              <Loader2 size={18} className="animate-spin text-primary-500" />
+            ) : (
+              <Sparkles size={18} className="text-green-500" />
+            )}
+            <span className="text-sm font-medium text-gray-700">
+              {batchMatching ? '批量匹配图片中...' : '批量匹配完成'}
+            </span>
+          </div>
+          {batchProgress.total > 0 && (
+            <>
+              <div className="w-full bg-gray-100 rounded-full h-2 mb-2">
+                <div
+                  className="bg-primary-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                {batchProgress.current} / {batchProgress.total} - {batchProgress.currentName}
+              </p>
+            </>
+          )}
+          {batchProgress.total === 0 && (
+            <p className="text-xs text-gray-500">{batchProgress.currentName}</p>
+          )}
         </div>
       )}
     </div>
