@@ -196,21 +196,30 @@ export default function IngredientManager() {
       </div>
 
       <div className="card">
-        <div className="flex flex-col sm:flex-row gap-4 mb-5">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+        <div className="space-y-3 mb-5">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input
               type="text"
               placeholder="搜索食材名称..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="input-field pl-10"
+              className="w-full pl-11 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 focus:bg-white transition-all"
             />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+                title="清除"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setFilterCategory(null)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${!filterCategory ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${!filterCategory ? 'bg-primary-500 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
             >
               全部
             </button>
@@ -218,7 +227,7 @@ export default function IngredientManager() {
               <button
                 key={cat.id}
                 onClick={() => setFilterCategory(filterCategory === cat.id ? null : cat.id)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${filterCategory === cat.id ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${filterCategory === cat.id ? 'bg-primary-500 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
               >
                 <span>{cat.icon}</span>
                 <span>{cat.name}</span>
@@ -226,6 +235,12 @@ export default function IngredientManager() {
             ))}
           </div>
         </div>
+
+        {(searchTerm || filterCategory) && (
+          <div className="text-xs text-gray-500 mb-3 px-1">
+            找到 <span className="font-semibold text-primary-600">{filteredIngredients.length}</span> 个匹配的食材
+          </div>
+        )}
 
         <div className="overflow-x-auto -mx-6 px-6">
           <table className="data-table min-w-full">

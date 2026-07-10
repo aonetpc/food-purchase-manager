@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Search, TrendingUp, TrendingDown, Calendar, BarChart3, Minus } from 'lucide-react';
+import { Search, TrendingUp, TrendingDown, Calendar, BarChart3, Minus, X } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useIngredientStore } from '@/store/ingredientStore';
 import { useCategoryStore } from '@/store/categoryStore';
@@ -139,23 +139,32 @@ export default function YearlyPrice() {
       </div>
 
       <div className="card">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input
               type="text"
               placeholder="搜索食材名称..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="input-field pl-10"
+              className="w-full pl-11 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 focus:bg-white transition-all"
             />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+                title="清除"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setSelectedCategory(null)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 !selectedCategory
-                  ? 'bg-primary-500 text-white'
+                  ? 'bg-primary-500 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
@@ -165,9 +174,9 @@ export default function YearlyPrice() {
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(selectedCategory === cat.id ? null : cat.id)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
                   selectedCategory === cat.id
-                    ? 'bg-primary-500 text-white'
+                    ? 'bg-primary-500 text-white shadow-sm'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
