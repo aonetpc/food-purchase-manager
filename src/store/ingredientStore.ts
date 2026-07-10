@@ -20,6 +20,7 @@ interface IngredientStore {
   }) => Promise<Ingredient | null>;
   updateIngredient: (id: string, data: Partial<Ingredient>) => Promise<boolean>;
   deleteIngredient: (id: string) => Promise<boolean>;
+  syncCategory: (id: string) => Promise<{ success: boolean; updatedCount: number; message: string }>;
   getIngredientById: (id: string) => Ingredient | undefined;
   getIngredientsByCategory: (categoryId: string) => Ingredient[];
 }
@@ -127,6 +128,17 @@ export const useIngredientStore = create<IngredientStore>()((set, get) => ({
     } catch (err: any) {
       set({ error: err.message || '删除食材失败' });
       return false;
+    }
+  },
+
+  syncCategory: async (id) => {
+    try {
+      const result = await api.post<{ success: boolean; updatedCount: number; message: string }>(`/ingredients/${id}/sync-category`);
+      set({ error: null });
+      return result;
+    } catch (err: any) {
+      set({ error: err.message || '同步失败' });
+      return { success: false, updatedCount: 0, message: err.message || '同步失败' };
     }
   },
 

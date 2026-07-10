@@ -155,4 +155,38 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// 同步历史采购记录的分类信息
+router.post('/:id/sync-category', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 获取食材当前的分类信息
+    const [ingredientRows] = await pool.query(
+      'SELECT i.id, i.name, i.category_id, c.name as category_name FROM ingredients i LEFT JOIN categories c ON i.category_id = c.id WHERE i.id = ?',
+      [id]
+    );
+
+    if (ingredientRows.length === 0) {
+      return res.status(404).json({ error: '食材不存在' });
+    }
+
+    const ingredient = ingredientRows[0];
+
+    // 更新所有该食材的历史采购记录
+    const [result] = await pool.query(
+      'UPDATE purchase_records SET category_id = ?, category_name = ? WHERE ingredient_id = ?',
+      [ingredient.category_id, ingredient.category_name, id]
+    );
+
+    res.json({
+      success: true,
+      updatedCount: result.affectedRows,
+      message: `已同步 ${result.affectedRows} 条采购记录的分类信息`
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, X, Search, AlertCircle, Settings, Package } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Search, AlertCircle, Settings, Package, RefreshCw } from 'lucide-react';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useIngredientStore } from '@/store/ingredientStore';
 import type { Ingredient, UnitConversion } from '@/types';
@@ -28,7 +28,7 @@ const generateImageUrl = (name: string) => {
 
 export default function IngredientManager() {
   const { categories } = useCategoryStore();
-  const { ingredients, addIngredient, updateIngredient, deleteIngredient } = useIngredientStore();
+  const { ingredients, addIngredient, updateIngredient, deleteIngredient, syncCategory } = useIngredientStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
@@ -38,6 +38,8 @@ export default function IngredientManager() {
   const [unitEditingIngredient, setUnitEditingIngredient] = useState<Ingredient | null>(null);
   const [error, setError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [syncingIngredient, setSyncingIngredient] = useState<Ingredient | null>(null);
+  const [syncResult, setSyncResult] = useState<{ count: number; message: string } | null>(null);
 
   const [form, setForm] = useState<IngredientForm>({
     name: '',
@@ -107,6 +109,7 @@ export default function IngredientManager() {
 
     try {
       if (editing) {
+        const categoryChanged = editing.categoryId !== form.categoryId;
         await updateIngredient(editing.id, {
           name: form.name.trim(),
           categoryId: form.categoryId,
@@ -115,6 +118,15 @@ export default function IngredientManager() {
           image,
           units,
         });
+        setShowModal(false);
+        // 如果分类变更，提示同步历史数据
+        if (categoryChanged) {
+          setSyncingIngredient({
+            ...editing,
+            categoryId: form.categoryId,
+          });
+          setSyncResult(null);
+        }
       } else {
         await addIngredient({
           name: form.name.trim(),
@@ -124,10 +136,18 @@ export default function IngredientManager() {
           image,
           units,
         });
+        setShowModal(false);
       }
-      setShowModal(false);
     } catch (err: any) {
       setError(err.message || '操作失败');
+    }
+  };
+
+  const handleSyncCategory = async () => {
+    if (!syncingIngredient) return;
+    const result = await syncCategory(syncingIngredient.id);
+    if (result.success) {
+      setSyncResult({ count: result.updatedCount, message: result.message });
     }
   };
 
@@ -433,6 +453,49 @@ export default function IngredientManager() {
               >
                 确认删除
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 同步分类提示 */}
+      {syncingIngredient && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => setSyncingIngredient(null)}>
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-md animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                  <RefreshCw className="text-primary-500" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-800">同步历史采购数据</h3>
+                  <p className="text-sm text-gray-500">食材「{syncingIngredient.name}」的分类已修改</p>
+                </div>
+              </div>
+              {syncResult ? (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                  <p className="text-green-700 text-sm">{syncResult.message}</p>
+                  <p className="text-green-600 text-xs mt-1">已更新 {syncResult.count} 条采购记录</p>
+                </div>
+              ) : (
+                <p className="text-gray-600 text-sm mb-4">
+                  是否将历史采购记录的分类同步更新为新分类？此操作会影响该食材的所有历史采购数据。
+                </p>
+              )}
+              <div className="flex justify-center gap-3 pt-4 border-t border-gray-100">
+                <button onClick={() => setSyncingIngredient(null)} className="btn-secondary">
+                  {syncResult ? '关闭' : '暂不同步'}
+                </button>
+                {!syncResult && (
+                  <button onClick={handleSyncCategory} className="btn-primary flex items-center gap-2">
+                    <RefreshCw size={16} />
+                    立即同步
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
