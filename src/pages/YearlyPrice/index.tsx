@@ -147,7 +147,7 @@ export default function YearlyPrice() {
               placeholder="搜索食材名称..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-11 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 focus:bg-white transition-all"
+              className="search-input"
             />
             {searchTerm && (
               <button
