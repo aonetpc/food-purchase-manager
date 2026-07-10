@@ -37,6 +37,9 @@ interface PurchaseStore {
   movePurchaseDate: (itemId: string, oldDate: string, newDate: string) => Promise<boolean>;
   getItems: (date: string) => PurchaseEntryItem[];
   hasRecord: (date: string) => boolean;
+  lastMonthAveragePrices: Record<string, { ingredientName: string; avgPrice: number }>;
+  fetchLastMonthAveragePrices: (date?: string) => Promise<void>;
+  getComparePrice: (item: PurchaseEntryItem) => { price: number; source: 'lastMonth' | 'base' } | null;
 }
 
 // 辅助函数：将数据库记录转换为前端格式
@@ -344,25 +347,20 @@ export const usePurchaseStore = create<PurchaseStore>()((set, get) => ({
 
   lastMonthAveragePrices: {},
 
-  fetchLastMonthAveragePrices: async () => {
+  fetchLastMonthAveragePrices: async (date?: string) => {
     try {
-      const now = new Date();
-      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const targetDate = date ? new Date(date) : new Date();
+      const lastMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() - 1, 1);
       const month = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
       
-      const response = await fetch(`${API_BASE_URL}/purchase/average-price?month=${month}`);
-      if (!response.ok) throw new Error('获取上月均价失败');
-      
-      const prices = await response.json();
+      const prices = await api.get<Record<string, { ingredientName: string; avgPrice: number }>>(`/purchase/average-price?month=${month}`);
       set({ lastMonthAveragePrices: prices });
-      return prices;
     } catch (err: any) {
       set({ error: err.message || '获取上月均价失败' });
-      return {};
     }
   },
 
-  getComparePrice: (item: PurchaseRecordItem) => {
+  getComparePrice: (item: PurchaseEntryItem) => {
     const prices = get().lastMonthAveragePrices;
     const avgPrice = prices[item.ingredientId]?.avgPrice;
     

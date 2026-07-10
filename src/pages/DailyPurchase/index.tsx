@@ -70,14 +70,16 @@ export default function DailyPurchase() {
 
   useEffect(() => {
     fetchDepartments();
-    fetchLastMonthAveragePrices();
-  }, [fetchDepartments, fetchLastMonthAveragePrices]);
+  }, [fetchDepartments]);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       setLoading(true);
-      await fetchRecords(dateKey);
+      await Promise.all([
+        fetchRecords(dateKey),
+        fetchLastMonthAveragePrices(dateKey),
+      ]);
       if (!cancelled) {
         setItems(getItems(dateKey));
         setLoading(false);
@@ -85,7 +87,7 @@ export default function DailyPurchase() {
     };
     load();
     return () => { cancelled = true; };
-  }, [dateKey, fetchRecords, getItems]);
+  }, [dateKey, fetchRecords, getItems, fetchLastMonthAveragePrices]);
 
   const record: DailyPurchaseRecord | null = useMemo(() => {
     return buildDailyRecord(dateKey, items, categories);
