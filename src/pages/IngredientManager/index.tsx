@@ -214,7 +214,7 @@ export default function IngredientManager() {
             >
               全部
             </button>
-            {categories.slice(0, 6).map(cat => (
+            {categories.map(cat => (
               <button
                 key={cat.id}
                 onClick={() => setFilterCategory(filterCategory === cat.id ? null : cat.id)}
