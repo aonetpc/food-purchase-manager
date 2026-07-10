@@ -143,6 +143,24 @@ jobs:
               WHERE supplier_id IS NULL OR supplier_id = '';
             " 2>/dev/null || true
 
+            # 数据库迁移：移除可能存在的唯一约束，允许同一食材同一天多条记录
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'purchase_records';
+              SET @idx_uniq_date_ing = 'idx_unique_date_ingredient';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND index_name = @idx_uniq_date_ing) > 0,
+                CONCAT('ALTER TABLE ', @tablename, ' DROP INDEX ', @idx_uniq_date_ing),
+                'SELECT 1'
+              ));
+              PREPARE dropIfExists FROM @preparedStatement;
+              EXECUTE dropIfExists;
+              DEALLOCATE PREPARE dropIfExists;
+            " 2>/dev/null || true
+
             sudo systemctl restart food-purchase-backend
             sleep 3
             curl -s http://127.0.0.1:3001/api/health || exit 1

@@ -685,30 +685,21 @@ export default function PurchaseEntry() {
 
             <div className="flex-1 overflow-y-auto p-5">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {filteredIngredients.map(ing => {
-                  const added = draftItems.some(d => d.ingredientId === ing.id);
-                  return (
-                    <button
-                      key={ing.id}
-                      onClick={() => addIngredientToList(ing)}
-                      disabled={added}
-                      className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
-                        added
-                          ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
-                          : 'border-gray-100 hover:border-primary-300 hover:bg-primary-50 cursor-pointer'
-                      }`}
-                    >
-                      <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
-                        <img src={ing.image} alt={ing.name} className="w-full h-full object-cover" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-800 text-sm truncate">{ing.name}</p>
-                        <p className="text-xs text-gray-500">{formatCurrency(ing.basePrice)}/{ing.baseUnit}</p>
-                      </div>
-                      {added && <CheckCircle2 size={16} className="text-gray-300 ml-auto" />}
-                    </button>
-                  );
-                })}
+                {filteredIngredients.map(ing => (
+                  <button
+                    key={ing.id}
+                    onClick={() => addIngredientToList(ing)}
+                    className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-primary-300 hover:bg-primary-50 cursor-pointer text-left transition-all"
+                  >
+                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
+                      <img src={ing.image} alt={ing.name} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-800 text-sm truncate">{ing.name}</p>
+                      <p className="text-xs text-gray-500">{formatCurrency(ing.basePrice)}/{ing.baseUnit}</p>
+                    </div>
+                  </button>
+                ))}
               </div>
               {filteredIngredients.length === 0 && (
                 <div className="text-center py-12 text-gray-400">
