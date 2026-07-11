@@ -8,6 +8,8 @@ const purchaseRouter = require('./routes/purchase');
 const authRouter = require('./routes/auth');
 const departmentsRouter = require('./routes/departments');
 const suppliersRouter = require('./routes/suppliers');
+const wecomRouter = require('./routes/wecom');
+const purchaseConfirmationsRouter = require('./routes/purchase-confirmations');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,6 +23,8 @@ app.use('/api/purchase', purchaseRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/suppliers', suppliersRouter);
+app.use('/api/wecom', wecomRouter);
+app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });

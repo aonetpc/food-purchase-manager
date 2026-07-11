@@ -1,0 +1,533 @@
+import { useState, useEffect } from 'react';
+import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save } from 'lucide-react';
+import { api } from '@/lib/api';
+
+interface WecomConfig {
+  corp_id?: string;
+  app_secret?: string;
+  agent_id?: string;
+  chat_id?: string;
+  approval_template_id?: string;
+  applicant_userid?: string;
+  payment_options?: Array<{ label: string; key: string }>;
+  default_payment_key?: string;
+  payee_name?: string;
+  bank_name?: string;
+  bank_account?: string;
+  payment_reason_template?: string;
+  callback_token?: string;
+  callback_aes_key?: string;
+}
+
+export default function WecomManager() {
+  const [config, setConfig] = useState<WecomConfig>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // 敏感字段显示状态
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  // 敏感字段实际值
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+
+  // 各区块保存状态
+  const [sectionStatus, setSectionStatus] = useState<Record<string, '' | 'saving' | 'saved'>>({});
+
+  useEffect(() => {
+    fetchConfig();
+  }, []);
+
+  const fetchConfig = async () => {
+    setLoading(true);
+    try {
+      const data = await api.get<WecomConfig>('/wecom/config');
+      setConfig(data);
+    } catch (err: any) {
+      setError(err.message || '获取配置失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleSecret = async (field: string) => {
+    if (!showSecrets[field]) {
+      // 获取实际值
+      try {
+        const data = await api.get<{ value: string }>(`/wecom/config/secret/${field}`);
+        setSecretValues(prev => ({ ...prev, [field]: data.value }));
+        setShowSecrets(prev => ({ ...prev, [field]: true }));
+      } catch (err: any) {
+        setError(err.message);
+      }
+    } else {
+      setShowSecrets(prev => ({ ...prev, [field]: false }));
+    }
+  };
+
+  const saveSection = async (section: string, updates: Partial<WecomConfig>) => {
+    setSectionStatus(prev => ({ ...prev, [section]: 'saving' }));
+    setError('');
+    setSuccess('');
+    try {
+      const data = await api.put<WecomConfig>('/wecom/config', updates);
+      setConfig(data);
+      setSecretValues({});
+      setShowSecrets({});
+      setSectionStatus(prev => ({ ...prev, [section]: 'saved' }));
+      setSuccess(`${section}配置已保存`);
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err: any) {
+      setError(err.message || '保存失败');
+      setSectionStatus(prev => ({ ...prev, [section]: '' }));
+    }
+  };
+
+  const handleTestMessage = async () => {
+    setError('');
+    setSuccess('');
+    try {
+      const data = await api.post<{ success: boolean; message: string; error?: string }>('/wecom/test-message');
+      if (data.success) {
+        setSuccess('测试消息已发送，请检查企业微信群');
+        setTimeout(() => setSuccess(''), 5000);
+      } else {
+        setError(data.error || '发送失败');
+      }
+    } catch (err: any) {
+      setError(err.message || '发送失败');
+    }
+  };
+
+  const handleFetchTemplate = async () => {
+    if (!config.approval_template_id) {
+      setError('请先填写审批模板ID');
+      return;
+    }
+    setError('');
+    try {
+      const data = await api.get<any>(`/wecom/approval-template/${config.approval_template_id}`);
+      // 尝试从模板中提取付款方式选项
+      const controls = data.template?.controls || data.controls || [];
+      const paymentOptions: Array<{ label: string; key: string }> = [];
+      for (const ctrl of controls) {
+        if (ctrl.control === 'Selector' && ctrl.value && ctrl.value.options) {
+          for (const opt of ctrl.value.options) {
+            paymentOptions.push({ label: opt.text || opt.value, key: opt.key });
+          }
+        }
+      }
+      if (paymentOptions.length > 0) {
+        setConfig(prev => ({ ...prev, payment_options: paymentOptions }));
+        setSuccess(`已拉取模板，找到${paymentOptions.length}个付款方式选项`);
+        setTimeout(() => setSuccess(''), 5000);
+      } else {
+        setSuccess('模板已拉取，但未找到单选选项，请手动添加');
+        setTimeout(() => setSuccess(''), 5000);
+      }
+    } catch (err: any) {
+      setError(err.message || '拉取模板失败');
+    }
+  };
+
+  const getFieldValue = (field: string) => {
+    if (showSecrets[field]) {
+      return secretValues[field] || '';
+    }
+    return (config as any)[field] || '';
+  };
+
+  const setFieldValue = (field: string, value: string) => {
+    setConfig(prev => ({ ...prev, [field]: value }));
+    if (showSecrets[field]) {
+      setSecretValues(prev => ({ ...prev, [field]: value }));
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-10 text-gray-500">加载中...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-serif font-bold text-gray-800">企业微信管理</h1>
+        <p className="text-gray-500 mt-1">配置企业微信应用、群聊、报销模板等参数</p>
+      </div>
+
+      {error && (
+        <div className="bg-danger-50 border border-danger-200 rounded-lg p-4 flex items-center gap-3">
+          <AlertCircle size={20} className="text-danger-500 flex-shrink-0" />
+          <span className="text-danger-700">{error}</span>
+        </div>
+      )}
+
+      {success && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+          <CheckCircle2 size={20} className="text-green-500 flex-shrink-0" />
+          <span className="text-green-700">{success}</span>
+        </div>
+      )}
+
+      {/* 区块1：应用配置 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <Settings size={20} className="text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-800">企业微信应用配置</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">企业ID（CorpID）</label>
+            <input
+              type="text"
+              value={getFieldValue('corp_id')}
+              onChange={(e) => setFieldValue('corp_id', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="ww..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">应用Secret</label>
+            <div className="relative">
+              <input
+                type={showSecrets.app_secret ? 'text' : 'password'}
+                value={getFieldValue('app_secret')}
+                onChange={(e) => setFieldValue('app_secret', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                placeholder="应用的Secret"
+              />
+              <button
+                type="button"
+                onClick={() => toggleSecret('app_secret')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showSecrets.app_secret ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">应用AgentID</label>
+            <input
+              type="text"
+              value={getFieldValue('agent_id')}
+              onChange={(e) => setFieldValue('agent_id', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="1000002"
+            />
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
+            <p>📌 获取方式：企微管理后台 → 应用管理 → 自建应用</p>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={() => saveSection('应用配置', {
+                corp_id: getFieldValue('corp_id'),
+                app_secret: getFieldValue('app_secret'),
+                agent_id: getFieldValue('agent_id'),
+              })}
+              disabled={sectionStatus['应用配置'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['应用配置'] === 'saving' ? '保存中...' : sectionStatus['应用配置'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['应用配置'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 区块2：群聊配置 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <MessageSquare size={20} className="text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-800">群聊配置</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">内部群聊ID（ChatID）</label>
+            <input
+              type="text"
+              value={getFieldValue('chat_id')}
+              onChange={(e) => setFieldValue('chat_id', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="群聊ID"
+            />
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
+            <p>📌 获取方式：将自建应用加入内部群，通过API获取群聊ID</p>
+          </div>
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleTestMessage}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Send size={16} />
+              测试发送消息
+            </button>
+            <button
+              onClick={() => saveSection('群聊配置', { chat_id: getFieldValue('chat_id') })}
+              disabled={sectionStatus['群聊配置'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['群聊配置'] === 'saving' ? '保存中...' : sectionStatus['群聊配置'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['群聊配置'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 区块3：费用报销模板配置 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText size={20} className="text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-800">费用报销模板配置</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">审批模板ID</label>
+            <input
+              type="text"
+              value={getFieldValue('approval_template_id')}
+              onChange={(e) => setFieldValue('approval_template_id', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="模板ID"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">申请人UserID</label>
+            <input
+              type="text"
+              value={getFieldValue('applicant_userid')}
+              onChange={(e) => setFieldValue('applicant_userid', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="你的企微userid"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">付款方式选项</label>
+            <div className="space-y-2">
+              {(config.payment_options || []).map((opt, idx) => (
+                <div key={idx} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={opt.label}
+                    onChange={(e) => {
+                      const newOpts = [...(config.payment_options || [])];
+                      newOpts[idx] = { ...opt, label: e.target.value };
+                      setConfig(prev => ({ ...prev, payment_options: newOpts }));
+                    }}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="显示名称"
+                  />
+                  <input
+                    type="text"
+                    value={opt.key}
+                    onChange={(e) => {
+                      const newOpts = [...(config.payment_options || [])];
+                      newOpts[idx] = { ...opt, key: e.target.value };
+                      setConfig(prev => ({ ...prev, payment_options: newOpts }));
+                    }}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="选项key"
+                  />
+                  <button
+                    onClick={() => {
+                      const newOpts = (config.payment_options || []).filter((_, i) => i !== idx);
+                      setConfig(prev => ({ ...prev, payment_options: newOpts }));
+                    }}
+                    className="px-3 text-gray-400 hover:text-danger-500"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => {
+                  const newOpts = [...(config.payment_options || []), { label: '', key: '' }];
+                  setConfig(prev => ({ ...prev, payment_options: newOpts }));
+                }}
+                className="text-sm text-primary-500 hover:text-primary-600"
+              >
+                + 添加选项
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">默认付款方式</label>
+            <select
+              value={config.default_payment_key || ''}
+              onChange={(e) => setConfig(prev => ({ ...prev, default_payment_key: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+            >
+              <option value="">请选择</option>
+              {(config.payment_options || []).map((opt, idx) => (
+                <option key={idx} value={opt.key}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleFetchTemplate}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw size={16} />
+              拉取模板结构
+            </button>
+            <button
+              onClick={() => saveSection('报销模板', {
+                approval_template_id: getFieldValue('approval_template_id'),
+                applicant_userid: getFieldValue('applicant_userid'),
+                payment_options: config.payment_options,
+                default_payment_key: config.default_payment_key,
+              })}
+              disabled={sectionStatus['报销模板'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['报销模板'] === 'saving' ? '保存中...' : sectionStatus['报销模板'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['报销模板'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 区块4：固定报销信息 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <DollarSign size={20} className="text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-800">固定报销信息</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">收款人</label>
+            <input
+              type="text"
+              value={getFieldValue('payee_name')}
+              onChange={(e) => setFieldValue('payee_name', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="收款人姓名"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">开户行</label>
+            <input
+              type="text"
+              value={getFieldValue('bank_name')}
+              onChange={(e) => setFieldValue('bank_name', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="如：中国工商银行XX支行"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">银行账号</label>
+            <div className="relative">
+              <input
+                type={showSecrets.bank_account ? 'text' : 'password'}
+                value={getFieldValue('bank_account')}
+                onChange={(e) => setFieldValue('bank_account', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                placeholder="银行账号"
+              />
+              <button
+                type="button"
+                onClick={() => toggleSecret('bank_account')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showSecrets.bank_account ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">付款事由模板</label>
+            <input
+              type="text"
+              value={getFieldValue('payment_reason_template')}
+              onChange={(e) => setFieldValue('payment_reason_template', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="{date}食材采购费用"
+            />
+            <p className="text-xs text-gray-500 mt-1">{'{date}会自动替换为采购日期，如：2026-07-10食材采购费用'}</p>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={() => saveSection('报销信息', {
+                payee_name: getFieldValue('payee_name'),
+                bank_name: getFieldValue('bank_name'),
+                bank_account: getFieldValue('bank_account'),
+                payment_reason_template: getFieldValue('payment_reason_template'),
+              })}
+              disabled={sectionStatus['报销信息'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['报销信息'] === 'saving' ? '保存中...' : sectionStatus['报销信息'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['报销信息'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 区块5：回调配置 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <RefreshCw size={20} className="text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-800">回调配置</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">回调Token</label>
+            <input
+              type="text"
+              value={getFieldValue('callback_token')}
+              onChange={(e) => setFieldValue('callback_token', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="自定义Token"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">EncodingAESKey</label>
+            <div className="relative">
+              <input
+                type={showSecrets.callback_aes_key ? 'text' : 'password'}
+                value={getFieldValue('callback_aes_key')}
+                onChange={(e) => setFieldValue('callback_aes_key', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                placeholder="EncodingAESKey"
+              />
+              <button
+                type="button"
+                onClick={() => toggleSecret('callback_aes_key')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showSecrets.callback_aes_key ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">回调URL（只读）</label>
+            <input
+              type="text"
+              value={`${window.location.origin}/api/wecom/callback`}
+              readOnly
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm bg-gray-50 text-gray-500"
+            />
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
+            <p>📌 配置方式：企微管理后台 → 应用管理 → 你的应用 → 接收消息 → 设置API接收</p>
+            <p>→ 填入上方URL、Token、EncodingAESKey</p>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={() => saveSection('回调配置', {
+                callback_token: getFieldValue('callback_token'),
+                callback_aes_key: getFieldValue('callback_aes_key'),
+              })}
+              disabled={sectionStatus['回调配置'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['回调配置'] === 'saving' ? '保存中...' : sectionStatus['回调配置'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['回调配置'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

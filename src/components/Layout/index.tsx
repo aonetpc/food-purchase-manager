@@ -15,7 +15,9 @@ import {
   ChevronDown,
   Building2,
   User,
-  Users
+  Users,
+  Receipt,
+  Settings
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
@@ -78,6 +80,8 @@ export default function Layout() {
     { path: '/departments', label: '部门管理', icon: Building2 },
     { path: '/categories', label: '食材分类管理', icon: Tags },
     { path: '/ingredient-manager', label: '食材信息管理', icon: Package },
+    { path: '/reimbursement', label: '报销管理', icon: Receipt },
+    { path: '/wecom', label: '企业微信管理', icon: Settings },
   ];
 
   const visibleNavItems = [

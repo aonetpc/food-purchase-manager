@@ -12,6 +12,9 @@ import DepartmentManager from '@/pages/DepartmentManager';
 import Profile from '@/pages/Profile';
 import UserManager from '@/pages/UserManager';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import ReimbursementManager from '@/pages/ReimbursementManager';
+import WecomManager from '@/pages/WecomManager';
+import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
 
 export default function App() {
   return (
@@ -54,6 +57,17 @@ export default function App() {
               <UserManager />
             </ProtectedRoute>
           } />
+          <Route path="reimbursement" element={
+            <ProtectedRoute requiredRole="admin">
+              <ReimbursementManager />
+            </ProtectedRoute>
+          } />
+          <Route path="wecom" element={
+            <ProtectedRoute requiredRole="admin">
+              <WecomManager />
+            </ProtectedRoute>
+          } />
+          <Route path="confirm/:id" element={<PurchaseConfirmPage />} />
         </Route>
       </Routes>
     </Router>

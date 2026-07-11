@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Search,
-  Calendar, ShoppingCart, CheckCircle2, X, Package, Settings, AlertCircle, Cloud, ClipboardList, Save
+  Calendar, ShoppingCart, CheckCircle2, X, Package, Settings, AlertCircle, Cloud, ClipboardList, Save, Send
 } from 'lucide-react';
 import { format, subDays, addDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -15,6 +15,7 @@ import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore'
 import { formatCurrency, formatNumber, generateId } from '@/utils/format';
 import { formatDate } from '@/utils/date';
 import BatchPasteModal from '@/components/BatchPasteModal';
+import { api } from '@/lib/api';
 
 interface DraftItem {
   id: string;
@@ -115,6 +116,7 @@ export default function PurchaseEntry() {
   const [showDatePicker, setShowDatePicker] = useState<string | null>(null);
   const [movingItem, setMovingItem] = useState<DraftItem | null>(null);
   const [showBatchPaste, setShowBatchPaste] = useState(false);
+  const [sendingWecom, setSendingWecom] = useState(false);
 
   useEffect(() => {
     fetchDepartments();
@@ -285,6 +287,69 @@ export default function PurchaseEntry() {
       setSaveError(err.message || '保存失败');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSendToWecom = async () => {
+    if (draftItems.length === 0) {
+      setSaveError('请先添加采购食材');
+      return;
+    }
+
+    const hasUnsaved = hasUnsavedChanges;
+    if (hasUnsaved) {
+      // 先保存
+      setIsSaving(true);
+      try {
+        const entryItems = draftItems.map(toEntryItem);
+        const savedItems = await saveDateItems(dateStr, entryItems);
+        if (!savedItems) {
+          setSaveError('保存失败，无法发送');
+          return;
+        }
+        setHasUnsavedChanges(false);
+      } catch (err: any) {
+        setSaveError(err.message || '保存失败');
+        return;
+      } finally {
+        setIsSaving(false);
+      }
+    }
+
+    setSendingWecom(true);
+    setSaveError('');
+    try {
+      const entryItems = draftItems.map(toEntryItem);
+      const totalAmount = entryItems.reduce((sum, item) => sum + item.amount, 0);
+
+      // 按部门分组
+      const deptMap: Record<string, { id: string; name: string }> = {};
+      for (const item of entryItems) {
+        if (item.departmentId && !deptMap[item.departmentId]) {
+          deptMap[item.departmentId] = { id: item.departmentId, name: item.departmentName || '' };
+        }
+      }
+      const departments = Object.values(deptMap);
+
+      await api.post('/purchase-confirmations', {
+        purchase_date: dateStr,
+        total_amount: totalAmount,
+        departments,
+        purchase_items: entryItems.map(item => ({
+          ingredient_name: item.ingredientName,
+          purchase_unit: item.purchaseUnit,
+          purchase_quantity: item.purchaseQuantity,
+          purchase_unit_price: item.purchaseUnitPrice,
+          amount: item.amount,
+          department_name: item.departmentName || '',
+        })),
+      });
+
+      alert('已发送到企业微信群，等待厨房确认');
+    } catch (err: any) {
+      setSaveError(err.message || '发送失败');
+    } finally {
+      setSendingWecom(false);
     }
   };
 
@@ -459,6 +524,14 @@ export default function PurchaseEntry() {
           >
             <Save size={18} />
             <span>{isSaving ? '保存中...' : '保存'}</span>
+          </button>
+          <button
+            onClick={handleSendToWecom}
+            disabled={sendingWecom || isSaving}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 bg-green-600 hover:bg-green-700"
+          >
+            <Send size={18} />
+            <span>{sendingWecom ? '发送中...' : '提交并发送到企微'}</span>
           </button>
         </div>
       </div>

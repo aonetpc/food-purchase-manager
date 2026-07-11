@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Building2, Truck, Plus, Pencil, Trash2, ChevronUp, ChevronDown, AlertCircle, X
 } from 'lucide-react';
+import { api } from '@/lib/api';
 import { useDepartmentStore, type Department } from '@/store/departmentStore';
 import { useSupplierStore } from '@/store/supplierStore';
 import type { Supplier } from '@/types';
@@ -31,6 +32,7 @@ export default function DepartmentManager() {
   const [editDeptId, setEditDeptId] = useState<string | null>(null);
   const [editDeptName, setEditDeptName] = useState('');
   const [editDeptError, setEditDeptError] = useState('');
+  const [editDeptConfirmer, setEditDeptConfirmer] = useState('');
 
   const [hoveredDeptId, setHoveredDeptId] = useState<string | null>(null);
 
@@ -82,6 +84,7 @@ export default function DepartmentManager() {
   const handleEditDept = async (dept: Department) => {
     setEditDeptId(dept.id);
     setEditDeptName(dept.name);
+    setEditDeptConfirmer((dept as any).confirmer_userid || '');
     setEditDeptError('');
   };
 
@@ -92,6 +95,12 @@ export default function DepartmentManager() {
       return;
     }
 
+    // 先保存确认人
+    try {
+      await api.put(`/departments/${editDeptId}`, { confirmer_userid: editDeptConfirmer.trim() || null });
+    } catch (e) {
+      // 忽略错误，继续保存名称
+    }
     const success = await updateDepartment(editDeptId!, editDeptName.trim());
     if (success) {
       setEditDeptId(null);
@@ -254,6 +263,14 @@ export default function DepartmentManager() {
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                       autoFocus
                     />
+                    <input
+                      type="text"
+                      value={editDeptConfirmer}
+                      onChange={(e) => setEditDeptConfirmer(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                      placeholder="确认人企微UserID"
+                    />
+                    <p className="text-xs text-gray-400 -mt-1">确认人企微UserID（用于采购确认）</p>
                     {editDeptError && (
                       <p className="text-danger-500 text-xs mt-2">{editDeptError}</p>
                     )}
@@ -275,9 +292,14 @@ export default function DepartmentManager() {
                       </div>
                       <div>
                         <h3 className="font-medium text-gray-800">{dept.name}</h3>
-                        {idx === 0 && (
-                          <span className="text-xs text-primary-500">默认部门</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {idx === 0 && (
+                            <span className="text-xs text-primary-500">默认部门</span>
+                          )}
+                          {(dept as any).confirmer_userid && (
+                            <span className="text-xs text-gray-400">确认人: {(dept as any).confirmer_userid}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     {hoveredDeptId === dept.id && (
