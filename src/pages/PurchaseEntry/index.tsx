@@ -117,6 +117,7 @@ export default function PurchaseEntry() {
   const [movingItem, setMovingItem] = useState<DraftItem | null>(null);
   const [showBatchPaste, setShowBatchPaste] = useState(false);
   const [sendingWecom, setSendingWecom] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
 
   useEffect(() => {
     fetchDepartments();
@@ -345,7 +346,8 @@ export default function PurchaseEntry() {
         })),
       });
 
-      alert('已发送到企业微信群，等待厨房确认');
+      setSendSuccess(true);
+      setTimeout(() => setSendSuccess(false), 5000);
     } catch (err: any) {
       setSaveError(err.message || '发送失败');
     } finally {
@@ -415,6 +417,12 @@ export default function PurchaseEntry() {
         <div>
           <h1 className="text-2xl font-serif font-bold text-gray-800">采买清单录入</h1>
           <p className="text-gray-500 mt-1">录入每日实际采买明细，点击保存按钮保存数据</p>
+          {sendSuccess && (
+            <div className="mt-3 bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700 flex items-center gap-2">
+              <CheckCircle2 size={16} />
+              已发送到企业微信群，等待厨房确认
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center bg-white rounded-lg border border-gray-200 p-1">

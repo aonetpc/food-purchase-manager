@@ -98,6 +98,13 @@ export default function PurchaseConfirmPage() {
   if (!data) return null;
 
   const allConfirmed = data.departments.every(d => d.confirmed);
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr.substring(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
   const groupedItems: Record<string, PurchaseItem[]> = {};
   for (const item of data.purchase_items) {
     const deptName = item.department_name || '未分类';
@@ -129,7 +136,7 @@ export default function PurchaseConfirmPage() {
           <div className="flex justify-between items-start mb-3">
             <div>
               <p className="text-sm text-gray-500">采购日期</p>
-              <p className="font-medium text-gray-800">{data.purchase_date}</p>
+              <p className="font-medium text-gray-800">{formatDate(data.purchase_date)}</p>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-500">总金额</p>

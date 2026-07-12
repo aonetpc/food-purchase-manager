@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Receipt, CheckCircle2, Clock, XCircle, FileText, ExternalLink, RefreshCw, X } from 'lucide-react';
+import { Receipt, CheckCircle2, Clock, XCircle, FileText, ExternalLink, RefreshCw, X, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
 
@@ -118,6 +118,27 @@ export default function ReimbursementManager() {
     }
   };
 
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr.substring(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('确定删除该确认单吗？删除后不可恢复。')) return;
+    try {
+      await api.delete(`/purchase-confirmations/${id}`);
+      setConfirmations(prev => prev.filter(c => c.id !== id));
+      if (detailId === id) {
+        setDetailId(null);
+        setDetailData(null);
+      }
+    } catch (err: any) {
+      setError(err.message || '删除失败');
+    }
+  };
+
   // 月份选择
   const months: string[] = [];
   const now = new Date();
@@ -215,8 +236,8 @@ export default function ReimbursementManager() {
                   const totalDepts = c.departments?.length || 0;
                   return (
                     <tr key={c.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-gray-700">{c.purchase_date}</td>
-                      <td className="px-4 py-3 text-gray-700">{c.purchase_date}食材采购费用</td>
+                      <td className="px-4 py-3 text-gray-700">{formatDate(c.purchase_date)}</td>
+                      <td className="px-4 py-3 text-gray-700">{formatDate(c.purchase_date)}食材采购费用</td>
                       <td className="px-4 py-3 text-right font-medium text-gray-800">{formatCurrency(parseFloat(c.total_amount))}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(c.reimbursement_status)}`}>
@@ -228,13 +249,22 @@ export default function ReimbursementManager() {
                         {confirmedDepts}/{totalDepts} 已确认
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => showDetail(c.id)}
-                          className="text-primary-500 hover:text-primary-600 text-sm flex items-center gap-1 mx-auto"
-                        >
-                          <FileText size={14} />
-                          详情
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => showDetail(c.id)}
+                            className="text-primary-500 hover:text-primary-600 text-sm flex items-center gap-1"
+                          >
+                            <FileText size={14} />
+                            详情
+                          </button>
+                          <button
+                            onClick={() => handleDelete(c.id)}
+                            className="text-gray-400 hover:text-red-500 transition-colors"
+                            title="删除"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -259,7 +289,7 @@ export default function ReimbursementManager() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-500">日期</p>
-                  <p className="font-medium text-gray-800">{detailConfirmation.purchase_date}</p>
+                  <p className="font-medium text-gray-800">{formatDate(detailConfirmation.purchase_date)}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">付款金额</p>
@@ -338,16 +368,25 @@ export default function ReimbursementManager() {
               )}
 
               {/* 操作按钮 */}
-              <div className="flex gap-3 pt-2">
-                {detailConfirmation.reimbursement_status === 'rejected' && (
-                  <button
-                    onClick={() => handleResubmit(detailConfirmation.id)}
-                    className="btn-primary flex items-center gap-2"
-                  >
-                    <RefreshCw size={16} />
-                    重新发起
-                  </button>
-                )}
+              <div className="flex gap-3 pt-2 justify-between">
+                <div className="flex gap-3">
+                  {detailConfirmation.reimbursement_status === 'rejected' && (
+                    <button
+                      onClick={() => handleResubmit(detailConfirmation.id)}
+                      className="btn-primary flex items-center gap-2"
+                    >
+                      <RefreshCw size={16} />
+                      重新发起
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleDelete(detailConfirmation.id)}
+                  className="btn-secondary flex items-center gap-2 text-red-500 hover:bg-red-50"
+                >
+                  <Trash2 size={16} />
+                  删除
+                </button>
               </div>
             </div>
           </div>

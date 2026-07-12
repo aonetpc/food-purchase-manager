@@ -65,66 +65,78 @@ router.post('/', async (req, res) => {
     const id = uuidv4();
     const [configRows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
 
+    if (configRows.length === 0 || !configRows[0].corp_id || !configRows[0].app_secret || !configRows[0].chat_id) {
+      return res.status(400).json({ error: '请先在企业微信管理页面完成应用配置和群聊配置' });
+    }
+
+    const config = configRows[0];
+
+    // 构建消息内容
+    const deptNames = departments.map(d => d.name).join('、');
+    const displayDate = purchase_date.substring(0, 10);
+    let content = `📋 采购确认通知\n\n📅 日期：${displayDate}\n🏢 涉及部门：${deptNames}\n💰 总金额：¥${Number(total_amount).toFixed(2)}\n`;
+
+    // 按部门分组显示明细
+    const groupedItems = {};
+    for (const item of purchase_items) {
+      const deptName = item.department_name || '未分类';
+      if (!groupedItems[deptName]) groupedItems[deptName] = [];
+      groupedItems[deptName].push(item);
+    }
+
+    for (const [deptName, items] of Object.entries(groupedItems)) {
+      content += `\n【${deptName}】\n`;
+      let subtotal = 0;
+      for (const item of items) {
+        content += `  ${item.ingredient_name}  ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${Number(item.amount).toFixed(2)}\n`;
+        subtotal += Number(item.amount);
+      }
+      content += `  小计：¥${subtotal.toFixed(2)}\n`;
+    }
+
+    // 构建确认链接
+    const baseUrl = req.headers.origin || req.protocol + '://' + req.get('host');
+    const confirmUrl = `${baseUrl}/confirm/${id}`;
+    content += `\n请各部门点击确认采购入库\n🔗 ${confirmUrl}`;
+
+    // 获取 access_token
+    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+    const tokenData = await tokenRes.json();
+
     let wecomMsgId = null;
+    let sendError = null;
 
-    if (configRows.length > 0 && configRows[0].corp_id && configRows[0].app_secret && configRows[0].chat_id) {
-      const config = configRows[0];
-
-      // 构建消息内容
-      const deptNames = departments.map(d => d.name).join('、');
-      let content = `📋 采购确认通知\n\n📅 日期：${purchase_date}\n🏢 涉及部门：${deptNames}\n💰 总金额：¥${total_amount.toFixed(2)}\n`;
-
-      // 按部门分组显示明细
-      const groupedItems = {};
-      for (const item of purchase_items) {
-        const deptName = item.department_name || '未分类';
-        if (!groupedItems[deptName]) groupedItems[deptName] = [];
-        groupedItems[deptName].push(item);
+    if (tokenData.errcode === 0) {
+      // 发送消息到内部群
+      const msgRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${tokenData.access_token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatid: config.chat_id,
+          msgtype: 'text',
+          text: { content },
+          safe: 0
+        })
+      });
+      const msgData = await msgRes.json();
+      if (msgData.errcode === 0) {
+        wecomMsgId = msgData.msgid || 'sent';
+      } else {
+        sendError = msgData.errmsg || '发送失败';
       }
+    } else {
+      sendError = tokenData.errmsg || '获取access_token失败';
+    }
 
-      for (const [deptName, items] of Object.entries(groupedItems)) {
-        content += `\n【${deptName}】\n`;
-        let subtotal = 0;
-        for (const item of items) {
-          content += `  ${item.ingredient_name}  ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
-          subtotal += item.amount;
-        }
-        content += `  小计：¥${subtotal.toFixed(2)}\n`;
-      }
-
-      // 构建确认链接
-      const baseUrl = req.headers.origin || req.protocol + '://' + req.get('host');
-      const confirmUrl = `${baseUrl}/confirm/${id}`;
-      content += `\n请各部门点击确认采购入库\n🔗 ${confirmUrl}`;
-
-      // 获取 access_token
-      const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-      const tokenData = await tokenRes.json();
-
-      if (tokenData.errcode === 0) {
-        // 发送消息到内部群
-        const msgRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${tokenData.access_token}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chatid: config.chat_id,
-            msgtype: 'text',
-            text: { content },
-            safe: 0
-          })
-        });
-        const msgData = await msgRes.json();
-        if (msgData.errcode === 0) {
-          wecomMsgId = msgData.msgid || 'sent';
-        }
-      }
+    if (!wecomMsgId) {
+      return res.status(400).json({ error: `企业微信消息发送失败：${sendError}` });
     }
 
     // 保存确认单
     await pool.query(
       `INSERT INTO purchase_confirmations (id, purchase_date, total_amount, departments, purchase_items, status, wecom_msg_id)
        VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-      [id, purchase_date, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items), wecomMsgId]
+      [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items), wecomMsgId]
     );
 
     const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
@@ -252,6 +264,24 @@ router.post('/:id/resubmit', async (req, res) => {
 
     // TODO: 实际调用企微审批API重新发起
     res.json({ success: true, message: '已重新发起报销' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 删除确认单
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await pool.query('SELECT id FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+
+    await pool.query('DELETE FROM purchase_confirmations WHERE id = ?', [id]);
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
