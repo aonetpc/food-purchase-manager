@@ -471,7 +471,7 @@ export default function PurchaseEntry() {
                 {isSaving ? (
                   <><Cloud className="text-primary-500 animate-pulse" size={20} /><span className="text-primary-600">保存中...</span></>
                 ) : saveError ? (
-                  <><AlertCircle className="text-danger-500" size={20} /><span className="text-danger-600">保存失败</span></>
+                  <><AlertCircle className="text-danger-500" size={20} /><span className="text-danger-600">{saveError}</span></>
                 ) : hasUnsavedChanges ? (
                   <><Settings className="text-warning-500" size={20} /><span className="text-warning-600">未保存</span></>
                 ) : draftItems.length > 0 ? (
