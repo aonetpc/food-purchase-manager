@@ -28,6 +28,7 @@ interface PurchaseConfirmation {
   purchase_items: ConfirmationItem[];
   status: string;
   reimbursement_no?: string;
+  reimbursement_sp_no?: string;
   reimbursement_status: string;
   rejection_reason?: string;
   created_at: string;
@@ -77,6 +78,18 @@ export default function ReimbursementManager() {
       await api.post(`/purchase-confirmations/${id}/resubmit`);
       showDetail(id);
       fetchConfirmations();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleRefreshStatus = async (id: string) => {
+    try {
+      const data = await api.post<PurchaseConfirmation>(`/purchase-confirmations/${id}/refresh-status`);
+      setConfirmations(prev => prev.map(c => c.id === id ? data : c));
+      if (detailId === id) {
+        setDetailData(data);
+      }
     } catch (err: any) {
       setError(err.message);
     }
@@ -257,6 +270,15 @@ export default function ReimbursementManager() {
                             <FileText size={14} />
                             详情
                           </button>
+                          {c.reimbursement_sp_no && (
+                            <button
+                              onClick={() => handleRefreshStatus(c.id)}
+                              className="text-gray-400 hover:text-primary-500 transition-colors"
+                              title="刷新审批状态"
+                            >
+                              <RefreshCw size={14} />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDelete(c.id)}
                             className="text-gray-400 hover:text-red-500 transition-colors"
@@ -304,7 +326,7 @@ export default function ReimbursementManager() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">报销单号</p>
-                  <p className="font-medium text-gray-800 text-sm">{detailConfirmation.reimbursement_no || '未生成'}</p>
+                  <p className="font-medium text-gray-800 text-sm">{detailConfirmation.reimbursement_sp_no || detailConfirmation.reimbursement_no || '未生成'}</p>
                 </div>
               </div>
 
@@ -370,6 +392,15 @@ export default function ReimbursementManager() {
               {/* 操作按钮 */}
               <div className="flex gap-3 pt-2 justify-between">
                 <div className="flex gap-3">
+                  {detailConfirmation.reimbursement_sp_no && (
+                    <button
+                      onClick={() => handleRefreshStatus(detailConfirmation.id)}
+                      className="btn-secondary flex items-center gap-2"
+                    >
+                      <RefreshCw size={16} />
+                      刷新状态
+                    </button>
+                  )}
                   {detailConfirmation.reimbursement_status === 'rejected' && (
                     <button
                       onClick={() => handleResubmit(detailConfirmation.id)}

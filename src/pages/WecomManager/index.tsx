@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save } from 'lucide-react';
+import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save, Link2 } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface WecomConfig {
@@ -17,7 +17,27 @@ interface WecomConfig {
   payment_reason_template?: string;
   callback_token?: string;
   callback_aes_key?: string;
+  approval_field_mapping?: Record<string, string>;
 }
+
+interface TemplateControl {
+  control: string;
+  id: string;
+  label: string;
+  value?: any;
+}
+
+const FIELD_MAPPING_OPTIONS = [
+  { key: 'date', label: '采购日期', control: 'Date' },
+  { key: 'amount', label: '报销金额', control: 'Money' },
+  { key: 'reason', label: '付款事由', control: 'Text' },
+  { key: 'department', label: '涉及部门', control: 'Text' },
+  { key: 'payee_name', label: '收款人姓名', control: 'Text' },
+  { key: 'bank_name', label: '开户银行', control: 'Text' },
+  { key: 'bank_account', label: '银行账号', control: 'Text' },
+  { key: 'payment_method', label: '付款方式', control: 'Select' },
+  { key: 'details', label: '采购明细', control: 'Textarea' },
+];
 
 export default function WecomManager() {
   const [config, setConfig] = useState<WecomConfig>({});
@@ -33,6 +53,9 @@ export default function WecomManager() {
 
   // 各区块保存状态
   const [sectionStatus, setSectionStatus] = useState<Record<string, '' | 'saving' | 'saved'>>({});
+
+  // 模板控件列表
+  const [templateControls, setTemplateControls] = useState<TemplateControl[]>([]);
 
   useEffect(() => {
     fetchConfig();
@@ -107,8 +130,20 @@ export default function WecomManager() {
     setError('');
     try {
       const data = await api.get<any>(`/wecom/approval-template/${config.approval_template_id}`);
-      // 尝试从模板中提取付款方式选项
+      // 尝试从模板中提取控件列表
       const controls = data.template?.controls || data.controls || [];
+      const controlList: TemplateControl[] = [];
+      for (const ctrl of controls) {
+        controlList.push({
+          control: ctrl.control,
+          id: ctrl.id,
+          label: ctrl.title?.find((t: any) => t.lang === 'zh_CN')?.text || ctrl.property?.control || ctrl.id,
+          value: ctrl.value
+        });
+      }
+      setTemplateControls(controlList);
+
+      // 提取付款方式选项
       const paymentOptions: Array<{ label: string; key: string }> = [];
       for (const ctrl of controls) {
         if (ctrl.control === 'Selector' && ctrl.value && ctrl.value.options) {
@@ -119,12 +154,10 @@ export default function WecomManager() {
       }
       if (paymentOptions.length > 0) {
         setConfig(prev => ({ ...prev, payment_options: paymentOptions }));
-        setSuccess(`已拉取模板，找到${paymentOptions.length}个付款方式选项`);
-        setTimeout(() => setSuccess(''), 5000);
-      } else {
-        setSuccess('模板已拉取，但未找到单选选项，请手动添加');
-        setTimeout(() => setSuccess(''), 5000);
       }
+
+      setSuccess(`已拉取模板，共${controlList.length}个字段${paymentOptions.length > 0 ? `，${paymentOptions.length}个付款方式选项` : ''}`);
+      setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
       setError(err.message || '拉取模板失败');
     }
@@ -364,6 +397,46 @@ export default function WecomManager() {
               ))}
             </select>
           </div>
+
+          {templateControls.length > 0 && (
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Link2 size={16} className="text-primary-500" />
+                <label className="text-sm font-medium text-gray-700">模板字段映射</label>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">将系统字段映射到审批模板中的对应控件，配置完成后自动发起报销时会自动填充</p>
+              <div className="space-y-2">
+                {FIELD_MAPPING_OPTIONS.map(field => (
+                  <div key={field.key} className="flex items-center gap-3">
+                    <div className="w-28 text-xs text-gray-600 flex-shrink-0">
+                      {field.label}
+                      <span className="text-gray-400 ml-1">({field.control})</span>
+                    </div>
+                    <select
+                      value={config.approval_field_mapping?.[field.key] || ''}
+                      onChange={(e) => {
+                        const newMapping = { ...(config.approval_field_mapping || {}), [field.key]: e.target.value || '' };
+                        if (!e.target.value) delete newMapping[field.key];
+                        setConfig(prev => ({ ...prev, approval_field_mapping: newMapping }));
+                      }}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    >
+                      <option value="">-- 请选择对应字段 --</option>
+                      {templateControls.map(ctrl => (
+                        <option key={ctrl.id} value={ctrl.id}>
+                          {ctrl.label} ({ctrl.control})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-600">
+                <p>💡 提示：至少配置"报销金额"和"付款事由"字段，其他字段可选</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between items-center">
             <button
               onClick={handleFetchTemplate}
@@ -378,6 +451,7 @@ export default function WecomManager() {
                 applicant_userid: getFieldValue('applicant_userid'),
                 payment_options: config.payment_options,
                 default_payment_key: config.default_payment_key,
+                approval_field_mapping: config.approval_field_mapping,
               })}
               disabled={sectionStatus['报销模板'] === 'saving'}
               className="btn-primary flex items-center gap-2 disabled:opacity-50"

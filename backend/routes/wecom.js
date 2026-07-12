@@ -2,6 +2,71 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
+async function getWecomConfig() {
+  const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
+  return rows.length > 0 ? rows[0] : null;
+}
+
+async function getAccessToken(config) {
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '获取access_token失败');
+  return data.access_token;
+}
+
+async function sendWecomMessage(config, content) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chatid: config.chat_id,
+      msgtype: 'text',
+      text: { content },
+      safe: 0
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '发送消息失败');
+  return data.msgid || 'sent';
+}
+
+async function getApprovalTemplateDetail(config, templateId) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_id: templateId })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '获取模板详情失败');
+  return data;
+}
+
+async function submitApproval(config, applyData) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/applyevent?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(applyData)
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '提交审批失败');
+  return data.sp_no;
+}
+
+async function getApprovalDetail(config, spNo) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/getapprovaldetail?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sp_no: spNo })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '查询审批详情失败');
+  return data;
+}
+
 // 获取配置
 router.get('/config', async (req, res) => {
   try {
@@ -52,7 +117,7 @@ router.put('/config', async (req, res) => {
       approval_template_id, applicant_userid,
       payment_options, default_payment_key,
       payee_name, bank_name, bank_account,
-      payment_reason_template,
+      payment_reason_template, approval_field_mapping,
       callback_token, callback_aes_key
     } = req.body;
 
@@ -74,6 +139,7 @@ router.put('/config', async (req, res) => {
     if (bank_name !== undefined) { fields.push('bank_name = ?'); values.push(bank_name || null); }
     if (bank_account !== undefined && bank_account !== '****') { fields.push('bank_account = ?'); values.push(bank_account || null); }
     if (payment_reason_template !== undefined) { fields.push('payment_reason_template = ?'); values.push(payment_reason_template || null); }
+    if (approval_field_mapping !== undefined) { fields.push('approval_field_mapping = ?'); values.push(JSON.stringify(approval_field_mapping)); }
     if (callback_token !== undefined) { fields.push('callback_token = ?'); values.push(callback_token || null); }
     if (callback_aes_key !== undefined && callback_aes_key !== '****') { fields.push('callback_aes_key = ?'); values.push(callback_aes_key || null); }
 
@@ -99,39 +165,15 @@ router.put('/config', async (req, res) => {
 // 测试发送消息到群
 router.post('/test-message', async (req, res) => {
   try {
-    const [configRows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
-    if (configRows.length === 0 || !configRows[0].corp_id || !configRows[0].app_secret) {
-      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret || !config.chat_id) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置和群聊配置' });
     }
-    const config = configRows[0];
-
-    // 获取 access_token
-    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-    const tokenData = await tokenRes.json();
-    if (tokenData.errcode !== 0) {
-      return res.status(400).json({ error: `获取access_token失败: ${tokenData.errmsg}` });
-    }
-
-    // 发送测试消息
-    const msgRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${tokenData.access_token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chatid: config.chat_id,
-        msgtype: 'text',
-        text: { content: '【测试消息】企业微信配置成功！此消息来自食材采购管理系统。' },
-        safe: 0
-      })
-    });
-    const msgData = await msgRes.json();
-    if (msgData.errcode !== 0) {
-      return res.status(400).json({ error: `发送消息失败: ${msgData.errmsg}` });
-    }
-
+    await sendWecomMessage(config, '【测试消息】企业微信配置成功！此消息来自食材采购管理系统。');
     res.json({ success: true, message: '测试消息已发送' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -139,32 +181,31 @@ router.post('/test-message', async (req, res) => {
 router.get('/approval-template/:templateId', async (req, res) => {
   try {
     const { templateId } = req.params;
-    const [configRows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
-    if (configRows.length === 0 || !configRows[0].corp_id || !configRows[0].app_secret) {
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
       return res.status(400).json({ error: '请先完成企业微信应用配置' });
     }
-    const config = configRows[0];
-
-    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-    const tokenData = await tokenRes.json();
-    if (tokenData.errcode !== 0) {
-      return res.status(400).json({ error: `获取access_token失败: ${tokenData.errmsg}` });
-    }
-
-    const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_id: templateId })
-    });
-    const tplData = await tplRes.json();
-    if (tplData.errcode !== 0) {
-      return res.status(400).json({ error: `获取模板详情失败: ${tplData.errmsg}` });
-    }
-
+    const tplData = await getApprovalTemplateDetail(config, templateId);
     res.json(tplData);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 查询审批单详情（主动查询）
+router.get('/approval/:spNo', async (req, res) => {
+  try {
+    const { spNo } = req.params;
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+    const detail = await getApprovalDetail(config, spNo);
+    res.json(detail);
+  } catch (err) {
+    console.error(err);
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -182,3 +223,8 @@ router.post('/callback', (req, res) => {
 });
 
 module.exports = router;
+module.exports.getWecomConfig = getWecomConfig;
+module.exports.sendWecomMessage = sendWecomMessage;
+module.exports.getApprovalTemplateDetail = getApprovalTemplateDetail;
+module.exports.submitApproval = submitApproval;
+module.exports.getApprovalDetail = getApprovalDetail;

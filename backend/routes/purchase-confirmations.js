@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
+const { getWecomConfig, sendWecomMessage, submitApproval, getApprovalDetail } = require('./wecom');
 
 // 获取确认单列表
 router.get('/', async (req, res) => {
@@ -59,21 +60,22 @@ router.get('/:id', async (req, res) => {
 
 // 创建确认单并发送到企微
 router.post('/', async (req, res) => {
+  const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
     const { purchase_date, total_amount, departments, purchase_items } = req.body;
 
     const id = uuidv4();
-    const [configRows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
+    const config = await getWecomConfig();
 
-    if (configRows.length === 0 || !configRows[0].corp_id || !configRows[0].app_secret || !configRows[0].chat_id) {
+    if (!config || !config.corp_id || !config.app_secret || !config.chat_id) {
       return res.status(400).json({ error: '请先在企业微信管理页面完成应用配置和群聊配置' });
     }
 
-    const config = configRows[0];
+    const displayDate = purchase_date.substring(0, 10);
 
     // 构建消息内容
     const deptNames = departments.map(d => d.name).join('、');
-    const displayDate = purchase_date.substring(0, 10);
     let content = `📋 采购确认通知\n\n📅 日期：${displayDate}\n🏢 涉及部门：${deptNames}\n💰 总金额：¥${Number(total_amount).toFixed(2)}\n`;
 
     // 按部门分组显示明细
@@ -99,45 +101,30 @@ router.post('/', async (req, res) => {
     const confirmUrl = `${baseUrl}/confirm/${id}`;
     content += `\n请各部门点击确认采购入库\n🔗 ${confirmUrl}`;
 
-    // 获取 access_token
-    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-    const tokenData = await tokenRes.json();
-
-    let wecomMsgId = null;
-    let sendError = null;
-
-    if (tokenData.errcode === 0) {
-      // 发送消息到内部群
-      const msgRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${tokenData.access_token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatid: config.chat_id,
-          msgtype: 'text',
-          text: { content },
-          safe: 0
-        })
-      });
-      const msgData = await msgRes.json();
-      if (msgData.errcode === 0) {
-        wecomMsgId = msgData.msgid || 'sent';
-      } else {
-        sendError = msgData.errmsg || '发送失败';
-      }
-    } else {
-      sendError = tokenData.errmsg || '获取access_token失败';
-    }
-
-    if (!wecomMsgId) {
-      return res.status(400).json({ error: `企业微信消息发送失败：${sendError}` });
-    }
-
-    // 保存确认单
-    await pool.query(
-      `INSERT INTO purchase_confirmations (id, purchase_date, total_amount, departments, purchase_items, status, wecom_msg_id)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-      [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items), wecomMsgId]
+    // 保存确认单（先保存，发送失败可以删除，或者让用户重试）
+    await connection.query(
+      `INSERT INTO purchase_confirmations (id, purchase_date, total_amount, departments, purchase_items, status)
+       VALUES (?, ?, ?, ?, ?, 'pending')`,
+      [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items)]
     );
+
+    // 发送企微消息
+    let wecomMsgId = null;
+    try {
+      wecomMsgId = await sendWecomMessage(config, content);
+    } catch (sendErr) {
+      // 发送失败，回滚
+      await connection.rollback();
+      return res.status(400).json({ error: `企业微信消息发送失败：${sendErr.message}` });
+    }
+
+    // 更新消息ID
+    await connection.query(
+      'UPDATE purchase_confirmations SET wecom_msg_id = ? WHERE id = ?',
+      [wecomMsgId, id]
+    );
+
+    await connection.commit();
 
     const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
     const row = rows[0];
@@ -147,8 +134,11 @@ router.post('/', async (req, res) => {
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
     });
   } catch (err) {
+    await connection.rollback();
     console.error(err);
     res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
   }
 });
 
@@ -166,7 +156,6 @@ router.post('/:id/confirm', async (req, res) => {
     const row = rows[0];
     const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
 
-    // 更新对应部门的确认状态
     const dept = departments.find(d => d.id === department_id);
     if (!dept) {
       return res.status(400).json({ error: '部门不存在于本确认单' });
@@ -176,73 +165,178 @@ router.post('/:id/confirm', async (req, res) => {
     dept.confirmed_by = confirmed_by;
     dept.confirmed_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
-    // 检查是否所有部门都已确认
     const allConfirmed = departments.every(d => d.confirmed);
-
     let newStatus = allConfirmed ? 'confirmed' : 'pending';
-    let reimbursementResult = null;
+    let reimbursementInitiated = false;
+    let reimbursementSpNo = null;
 
-    // 如果全部确认，自动发起报销
     if (allConfirmed) {
-      const [configRows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
-      if (configRows.length > 0 && configRows[0].corp_id && configRows[0].app_secret && configRows[0].approval_template_id) {
-        const config = configRows[0];
-
-        // 获取 access_token
-        const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-        const tokenData = await tokenRes.json();
-
-        if (tokenData.errcode === 0) {
-          // 构建审批表单数据
+      const config = await getWecomConfig();
+      if (config && config.corp_id && config.app_secret && config.approval_template_id && config.applicant_userid) {
+        try {
           const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
-          const deptNames = departments.map(d => d.name).join('、');
           const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
           const reason = reasonTemplate.replace('{date}', row.purchase_date);
 
-          // 构建审批内容
+          const fieldMapping = config.approval_field_mapping ? JSON.parse(config.approval_field_mapping) : {};
+
+          const contents = [];
+          if (fieldMapping.date) {
+            contents.push({ control: 'Date', id: fieldMapping.date, value: row.purchase_date });
+          }
+          if (fieldMapping.amount) {
+            contents.push({ control: 'Money', id: fieldMapping.amount, value: row.total_amount });
+          }
+          if (fieldMapping.reason) {
+            contents.push({ control: 'Text', id: fieldMapping.reason, value: reason });
+          }
+          if (fieldMapping.department) {
+            const deptNames = departments.map(d => d.name).join('、');
+            contents.push({ control: 'Text', id: fieldMapping.department, value: deptNames });
+          }
+          if (fieldMapping.payee_name && config.payee_name) {
+            contents.push({ control: 'Text', id: fieldMapping.payee_name, value: config.payee_name });
+          }
+          if (fieldMapping.bank_name && config.bank_name) {
+            contents.push({ control: 'Text', id: fieldMapping.bank_name, value: config.bank_name });
+          }
+          if (fieldMapping.bank_account && config.bank_account) {
+            contents.push({ control: 'Text', id: fieldMapping.bank_account, value: config.bank_account });
+          }
+          if (fieldMapping.payment_method && config.default_payment_key) {
+            const paymentOptions = config.payment_options ? JSON.parse(config.payment_options) : {};
+            const paymentLabel = paymentOptions[config.default_payment_key] || config.default_payment_key;
+            contents.push({ control: 'Select', id: fieldMapping.payment_method, value: [paymentLabel] });
+          }
+          if (fieldMapping.details) {
+            let detailText = '';
+            const grouped = {};
+            for (const item of purchaseItems) {
+              const dn = item.department_name || '未分类';
+              if (!grouped[dn]) grouped[dn] = [];
+              grouped[dn].push(item);
+            }
+            for (const [dn, items] of Object.entries(grouped)) {
+              detailText += `【${dn}】\n`;
+              for (const item of items) {
+                detailText += `${item.ingredient_name} ${item.purchase_unit_price}/${item.purchase_unit} ×${item.purchase_quantity} = ¥${Number(item.amount).toFixed(2)}\n`;
+              }
+            }
+            contents.push({ control: 'Textarea', id: fieldMapping.details, value: detailText });
+          }
+
+          const summary_list = [
+            { text: reason, lang: 'zh_CN' },
+            { text: `金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }
+          ];
+
           const applyData = {
             creator_userid: config.applicant_userid,
             template_id: config.approval_template_id,
-            use_template_approver: 0,
-            apply_data: {
-              contents: []
-            },
-            summary_list: []
+            use_template_approver: 1,
+            apply_data: { contents },
+            summary_list
           };
 
-          // 这里需要根据实际模板字段配置来填充
-          // 由于模板字段ID需要从API获取，这里先用通用方式
-          res.json({
-            success: true,
-            all_confirmed: true,
-            reimbursement_initiated: false,
-            message: '全部部门已确认，报销功能待配置模板字段后自动发起',
-            departments
-          });
-
-          await pool.query(
-            'UPDATE purchase_confirmations SET departments = ?, status = ? WHERE id = ?',
-            [JSON.stringify(departments), 'confirmed', id]
-          );
-          return;
+          reimbursementSpNo = await submitApproval(config, applyData);
+          reimbursementInitiated = true;
+          newStatus = 'reimbursing';
+        } catch (approvalErr) {
+          console.error('自动发起报销失败:', approvalErr);
         }
       }
     }
 
-    await pool.query(
-      'UPDATE purchase_confirmations SET departments = ?, status = ? WHERE id = ?',
-      [JSON.stringify(departments), newStatus, id]
-    );
+    const updateFields = ['departments = ?', 'status = ?'];
+    const updateValues = [JSON.stringify(departments), newStatus];
+
+    if (reimbursementInitiated && reimbursementSpNo) {
+      updateFields.push('reimbursement_status = ?');
+      updateValues.push('pending');
+      updateFields.push('reimbursement_sp_no = ?');
+      updateValues.push(reimbursementSpNo);
+    }
+
+    updateValues.push(id);
+    await pool.query(`UPDATE purchase_confirmations SET ${updateFields.join(', ')} WHERE id = ?`, updateValues);
 
     res.json({
       success: true,
       all_confirmed: allConfirmed,
-      reimbursement_initiated: false,
+      reimbursement_initiated: reimbursementInitiated,
+      reimbursement_sp_no: reimbursementSpNo,
       departments
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 主动刷新审批状态
+router.post('/:id/refresh-status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+    const row = rows[0];
+
+    if (!row.reimbursement_sp_no) {
+      return res.status(400).json({ error: '该确认单尚未发起报销审批' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+
+    const detail = await getApprovalDetail(config, row.reimbursement_sp_no);
+    const info = detail.info || {};
+    const spStatus = info.sp_status;
+    const spRecord = info.sp_record || [];
+
+    let newReimburseStatus = row.reimbursement_status;
+    let newStatus = row.status;
+
+    if (spStatus === 2) {
+      newReimburseStatus = 'approved';
+      newStatus = 'reimbursed';
+    } else if (spStatus === 1) {
+      newReimburseStatus = 'processing';
+    } else if (spStatus === 3) {
+      newReimburseStatus = 'rejected';
+    }
+
+    let latestApprover = null;
+    let latestApproveTime = null;
+    if (spRecord.length > 0) {
+      const lastRecord = spRecord[spRecord.length - 1];
+      if (lastRecord.approver && lastRecord.approver.length > 0) {
+        latestApprover = lastRecord.approver[0].name || lastRecord.approver[0].userid;
+      }
+      if (lastRecord.speech) {
+        latestApproveTime = lastRecord.speech;
+      }
+    }
+
+    await pool.query(
+      'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ?, approval_detail = ? WHERE id = ?',
+      [newReimburseStatus, newStatus, JSON.stringify(detail), id]
+    );
+
+    const [updatedRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    const updated = updatedRows[0];
+
+    res.json({
+      ...updated,
+      departments: typeof updated.departments === 'string' ? JSON.parse(updated.departments) : updated.departments,
+      purchase_items: typeof updated.purchase_items === 'string' ? JSON.parse(updated.purchase_items) : updated.purchase_items,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(400).json({ error: err.message });
   }
 });
 
