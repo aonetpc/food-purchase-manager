@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS purchase_confirmations (
   INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 3. 部门表增加确认人字段（如果不存在）
--- 注意：如果departments表不存在，请先执行主初始化脚本
--- ALTER TABLE departments ADD COLUMN IF NOT EXISTS confirm_by VARCHAR(100);
+-- 3. 企微回调日志表（方便查找群ID）
+CREATE TABLE IF NOT EXISTS wecom_callback_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  chat_id VARCHAR(100),
+  from_user VARCHAR(100),
+  msg_type VARCHAR(50),
+  event VARCHAR(100),
+  content TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_chat_id (chat_id),
+  INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

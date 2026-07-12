@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save, Link2 } from 'lucide-react';
+import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save, Link2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface WecomConfig {
@@ -56,6 +56,10 @@ export default function WecomManager() {
 
   // 模板控件列表
   const [templateControls, setTemplateControls] = useState<TemplateControl[]>([]);
+
+  // 回调日志
+  const [callbackLogs, setCallbackLogs] = useState<any[]>([]);
+  const [showCallbackLogs, setShowCallbackLogs] = useState(false);
 
   useEffect(() => {
     fetchConfig();
@@ -161,6 +165,22 @@ export default function WecomManager() {
     } catch (err: any) {
       setError(err.message || '拉取模板失败');
     }
+  };
+
+  const fetchCallbackLogs = async () => {
+    try {
+      const data = await api.get<any[]>('/wecom/callback-logs');
+      setCallbackLogs(data);
+      setShowCallbackLogs(true);
+    } catch (err: any) {
+      setError(err.message || '获取日志失败');
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setSuccess('已复制到剪贴板');
+    setTimeout(() => setSuccess(''), 2000);
   };
 
   const getFieldValue = (field: string) => {
@@ -289,13 +309,22 @@ export default function WecomManager() {
             <p>📌 获取方式：将自建应用加入内部群，通过API获取群聊ID</p>
           </div>
           <div className="flex justify-between items-center">
-            <button
-              onClick={handleTestMessage}
-              className="btn-secondary flex items-center gap-2"
-            >
-              <Send size={16} />
-              测试发送消息
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleTestMessage}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <Send size={16} />
+                测试发送消息
+              </button>
+              <button
+                onClick={fetchCallbackLogs}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <RefreshCw size={16} />
+                查看群聊ID
+              </button>
+            </div>
             <button
               onClick={() => saveSection('群聊配置', { chat_id: getFieldValue('chat_id') })}
               disabled={sectionStatus['群聊配置'] === 'saving'}
@@ -602,6 +631,76 @@ export default function WecomManager() {
           </div>
         </div>
       </div>
+
+      {/* 回调日志弹窗 */}
+      {showCallbackLogs && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCallbackLogs(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[70vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-800">最近回调消息（可查看群ID）</h3>
+              <button onClick={() => setShowCallbackLogs(false)} className="p-1 hover:bg-gray-100 rounded-md">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <div className="p-6 space-y-3">
+              {callbackLogs.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <MessageSquare size={40} className="mx-auto mb-2 opacity-30" />
+                  <p>暂无回调消息</p>
+                  <p className="text-xs mt-1">请先配置好回调URL，然后在群里发一条消息</p>
+                </div>
+              ) : (
+                callbackLogs.map(log => (
+                  <div key={log.id} className="border border-gray-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-500">
+                        {new Date(log.created_at).toLocaleString()}
+                      </span>
+                      {log.chat_id && (
+                        <button
+                          onClick={() => {
+                            setFieldValue('chat_id', log.chat_id);
+                            setShowCallbackLogs(false);
+                          }}
+                          className="text-xs text-primary-500 hover:text-primary-600 flex items-center gap-1"
+                        >
+                          使用此群ID
+                        </button>
+                      )}
+                    </div>
+                    {log.chat_id && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs text-gray-400">群ID:</span>
+                        <code className="bg-gray-100 px-2 py-0.5 rounded text-xs font-mono flex-1">{log.chat_id}</code>
+                        <button onClick={() => copyToClipboard(log.chat_id)} className="text-xs text-gray-500 hover:text-primary-500">复制</button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
+                      <div>类型: {log.msg_type || '-'}</div>
+                      <div>发送者: {log.from_user || '-'}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100 flex justify-between">
+              <button
+                onClick={fetchCallbackLogs}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <RefreshCw size={16} />
+                刷新
+              </button>
+              <button
+                onClick={() => setShowCallbackLogs(false)}
+                className="btn-primary"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

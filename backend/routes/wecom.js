@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const pool = require('../db');
 
 async function getWecomConfig() {
@@ -65,6 +66,42 @@ async function getApprovalDetail(config, spNo) {
   const data = await res.json();
   if (data.errcode !== 0) throw new Error(data.errmsg || '查询审批详情失败');
   return data;
+}
+
+function sha1(str) {
+  return crypto.createHash('sha1').update(str).digest('hex');
+}
+
+function verifySignature(token, timestamp, nonce, msgEncrypt, msgSignature) {
+  const arr = [token, timestamp, nonce, msgEncrypt].sort();
+  const str = arr.join('');
+  const signature = sha1(str);
+  return signature === msgSignature;
+}
+
+function decryptMsg(encodingAESKey, msgEncrypt, corpid) {
+  const aesKey = Buffer.from(encodingAESKey + '=', 'base64');
+  const iv = aesKey.slice(0, 16);
+  const encrypted = Buffer.from(msgEncrypt, 'base64');
+
+  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+  decipher.setAutoPadding(false);
+  let decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+
+  // 去掉PKCS7填充
+  const pad = decrypted[decrypted.length - 1];
+  decrypted = decrypted.slice(0, decrypted.length - pad);
+
+  // 16字节随机串 + 4字节消息长度 + 消息内容 + corpid
+  const msgLen = decrypted.readUInt32BE(16);
+  const msgContent = decrypted.slice(20, 20 + msgLen).toString('utf8');
+  const fromCorpid = decrypted.slice(20 + msgLen).toString('utf8');
+
+  if (fromCorpid !== corpid) {
+    throw new Error('corpid不匹配');
+  }
+
+  return msgContent;
 }
 
 // 获取配置
@@ -209,17 +246,121 @@ router.get('/approval/:spNo', async (req, res) => {
   }
 });
 
-// 企微回调处理
-router.get('/callback', (req, res) => {
-  // 企微验证URL有效性
-  const { msg_signature, timestamp, nonce, echostr } = req.query;
-  // TODO: 验证签名
-  res.send(echostr);
+// 获取最近的回调日志（方便找群ID）
+router.get('/callback-logs', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM wecom_callback_logs ORDER BY id DESC LIMIT 20'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.post('/callback', (req, res) => {
-  // 处理企微回调事件（审批状态变更等）
-  res.send('success');
+// 企微回调处理 - URL验证
+router.get('/callback', async (req, res) => {
+  try {
+    const { msg_signature, timestamp, nonce, echostr } = req.query;
+    const config = await getWecomConfig();
+
+    if (!config || !config.callback_token || !config.callback_aes_key) {
+      return res.status(400).send('回调未配置');
+    }
+
+    const isValid = verifySignature(config.callback_token, timestamp, nonce, echostr, msg_signature);
+    if (!isValid) {
+      return res.status(403).send('签名验证失败');
+    }
+
+    const decrypted = decryptMsg(config.callback_aes_key, echostr, config.corp_id);
+    res.send(decrypted);
+  } catch (err) {
+    console.error('回调验证失败:', err);
+    res.status(500).send('验证失败');
+  }
+});
+
+// 企微回调处理 - 接收消息
+router.post('/callback', async (req, res) => {
+  try {
+    const { msg_signature, timestamp, nonce } = req.query;
+    const config = await getWecomConfig();
+
+    if (!config || !config.callback_token || !config.callback_aes_key) {
+      return res.send('success');
+    }
+
+    const { Encrypt } = req.body;
+    const isValid = verifySignature(config.callback_token, timestamp, nonce, Encrypt, msg_signature);
+    if (!isValid) {
+      return res.status(403).send('签名验证失败');
+    }
+
+    const xmlContent = decryptMsg(config.callback_aes_key, Encrypt, config.corp_id);
+    console.log('收到企微回调:', xmlContent.substring(0, 500));
+
+    // 解析XML
+    const fromUserMatch = xmlContent.match(/<FromUserName><!\[CDATA\[(.+?)\]\]><\/FromUserName>/);
+    const toUserMatch = xmlContent.match(/<ToUserName><!\[CDATA\[(.+?)\]\]><\/ToUserName>/);
+    const msgTypeMatch = xmlContent.match(/<MsgType><!\[CDATA\[(.+?)\]\]><\/MsgType>/);
+    const chatIdMatch = xmlContent.match(/<ChatId><!\[CDATA\[(.+?)\]\]><\/ChatId>/);
+    const eventMatch = xmlContent.match(/<Event><!\[CDATA\[(.+?)\]\]><\/Event>/);
+    const spNoMatch = xmlContent.match(/<SpNo><!\[CDATA\[(.+?)\]\]><\/SpNo>/);
+    const spStatusMatch = xmlContent.match(/<SpStatus>(\d+)<\/SpStatus>/);
+
+    const fromUser = fromUserMatch ? fromUserMatch[1] : '';
+    const toUser = toUserMatch ? toUserMatch[1] : '';
+    const msgType = msgTypeMatch ? msgTypeMatch[1] : '';
+    const chatId = chatIdMatch ? chatIdMatch[1] : '';
+    const event = eventMatch ? eventMatch[1] : '';
+    const spNo = spNoMatch ? spNoMatch[1] : '';
+    const spStatus = spStatusMatch ? parseInt(spStatusMatch[1]) : null;
+
+    // 审批状态变更事件
+    if (msgType === 'event' && event === 'open_approval_change' && spNo) {
+      try {
+        const [rows] = await pool.query(
+          'SELECT id FROM purchase_confirmations WHERE reimbursement_sp_no = ?',
+          [spNo]
+        );
+        if (rows.length > 0) {
+          let reimburseStatus = 'processing';
+          let status = 'reimbursing';
+          if (spStatus === 2) {
+            reimburseStatus = 'approved';
+            status = 'reimbursed';
+          } else if (spStatus === 3) {
+            reimburseStatus = 'rejected';
+          }
+          await pool.query(
+            'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ? WHERE reimbursement_sp_no = ?',
+            [reimburseStatus, status, spNo]
+          );
+        }
+      } catch (dbErr) {
+        console.error('更新审批状态失败:', dbErr);
+      }
+    }
+
+    // 群聊消息 - 记录到数据库方便查看群ID
+    if (chatId) {
+      try {
+        await pool.query(
+          'INSERT INTO wecom_callback_logs (chat_id, from_user, msg_type, event, content) VALUES (?, ?, ?, ?, ?)',
+          [chatId, fromUser, msgType, event, xmlContent.substring(0, 1000)]
+        );
+      } catch (dbErr) {
+        // 忽略日志保存失败
+      }
+    }
+
+    res.send('success');
+  } catch (err) {
+    console.error('回调处理失败:', err);
+    res.send('success');
+  }
 });
 
 module.exports = router;
