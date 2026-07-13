@@ -32,6 +32,23 @@ async function sendWecomMessage(config, content) {
   return data.msgid || 'sent';
 }
 
+async function createGroupChat(config, name, members) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/create?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: name || '食材采购群',
+      owner: members[0] || '',
+      userlist: members || [],
+      chat_id: ''
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '创建群聊失败');
+  return data.chat_id;
+}
+
 async function getApprovalTemplateDetail(config, templateId) {
   const accessToken = await getAccessToken(config);
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`, {
@@ -208,6 +225,28 @@ router.post('/test-message', async (req, res) => {
     }
     await sendWecomMessage(config, '【测试消息】企业微信配置成功！此消息来自食材采购管理系统。');
     res.json({ success: true, message: '测试消息已发送' });
+  } catch (err) {
+    console.error(err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 创建群聊
+router.post('/create-group', async (req, res) => {
+  try {
+    const { name, members } = req.body;
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+    if (!members || members.length === 0) {
+      return res.status(400).json({ error: '请至少指定一个群成员' });
+    }
+    const chatId = await createGroupChat(config, name, members);
+    
+    await pool.query('UPDATE wecom_config SET chat_id = ? WHERE id = 1', [chatId]);
+    
+    res.json({ success: true, chat_id: chatId, message: '群聊创建成功' });
   } catch (err) {
     console.error(err);
     res.status(400).json({ error: err.message });
