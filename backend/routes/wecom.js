@@ -32,6 +32,34 @@ async function sendWecomMessage(config, content) {
   return data.msgid || 'sent';
 }
 
+async function sendViaWebhook(webhookUrl, content) {
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      msgtype: 'text',
+      text: { content }
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || 'Webhook发送失败');
+  return 'sent';
+}
+
+async function sendMarkdownViaWebhook(webhookUrl, content) {
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      msgtype: 'markdown',
+      markdown: { content }
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || 'Webhook发送失败');
+  return 'sent';
+}
+
 async function createGroupChat(config, name, members) {
   const accessToken = await getAccessToken(config);
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/create?access_token=${accessToken}`, {
@@ -167,7 +195,7 @@ router.get('/config/secret/:field', async (req, res) => {
 router.put('/config', async (req, res) => {
   try {
     const {
-      corp_id, app_secret, agent_id, chat_id,
+      corp_id, app_secret, agent_id, chat_id, webhook_url,
       approval_template_id, applicant_userid,
       payment_options, default_payment_key,
       payee_name, bank_name, bank_account,
@@ -185,6 +213,7 @@ router.put('/config', async (req, res) => {
     if (app_secret !== undefined && app_secret !== '****') { fields.push('app_secret = ?'); values.push(app_secret || null); }
     if (agent_id !== undefined) { fields.push('agent_id = ?'); values.push(agent_id || null); }
     if (chat_id !== undefined) { fields.push('chat_id = ?'); values.push(chat_id || null); }
+    if (webhook_url !== undefined) { fields.push('webhook_url = ?'); values.push(webhook_url || null); }
     if (approval_template_id !== undefined) { fields.push('approval_template_id = ?'); values.push(approval_template_id || null); }
     if (applicant_userid !== undefined) { fields.push('applicant_userid = ?'); values.push(applicant_userid || null); }
     if (payment_options !== undefined) { fields.push('payment_options = ?'); values.push(JSON.stringify(payment_options)); }
@@ -220,8 +249,21 @@ router.put('/config', async (req, res) => {
 router.post('/test-message', async (req, res) => {
   try {
     const config = await getWecomConfig();
-    if (!config || !config.corp_id || !config.app_secret || !config.chat_id) {
-      return res.status(400).json({ error: '请先完成企业微信应用配置和群聊配置' });
+    if (!config) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+    
+    // 优先使用 Webhook
+    if (config.webhook_url) {
+      await sendMarkdownViaWebhook(config.webhook_url, 
+        '**【测试消息】**\n\n企业微信配置成功！此消息来自食材采购管理系统。\n\n> 发送时间：' + new Date().toLocaleString('zh-CN')
+      );
+      return res.json({ success: true, message: '测试消息已通过Webhook发送，请检查企业微信群' });
+    }
+    
+    // 回退到 API 方式
+    if (!config.corp_id || !config.app_secret || !config.chat_id) {
+      return res.status(400).json({ error: '请先配置Webhook URL或完成企业微信应用配置和群聊配置' });
     }
     await sendWecomMessage(config, '【测试消息】企业微信配置成功！此消息来自食材采购管理系统。');
     res.json({ success: true, message: '测试消息已发送' });

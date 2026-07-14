@@ -7,6 +7,7 @@ interface WecomConfig {
   app_secret?: string;
   agent_id?: string;
   chat_id?: string;
+  webhook_url?: string;
   approval_template_id?: string;
   applicant_userid?: string;
   payment_options?: Array<{ label: string; key: string }>;
@@ -60,12 +61,6 @@ export default function WecomManager() {
   // 回调日志
   const [callbackLogs, setCallbackLogs] = useState<any[]>([]);
   const [showCallbackLogs, setShowCallbackLogs] = useState(false);
-
-  // 创建群聊状态
-  const [showCreateGroup, setShowCreateGroup] = useState(false);
-  const [groupName, setGroupName] = useState('');
-  const [groupMembers, setGroupMembers] = useState<string[]>(['']);
-  const [creatingGroup, setCreatingGroup] = useState(false);
 
   useEffect(() => {
     fetchConfig();
@@ -180,37 +175,6 @@ export default function WecomManager() {
       setShowCallbackLogs(true);
     } catch (err: any) {
       setError(err.message || '获取日志失败');
-    }
-  };
-
-  const handleCreateGroup = async () => {
-    setCreatingGroup(true);
-    setError('');
-    try {
-      const validMembers = groupMembers.filter(m => m.trim());
-      if (validMembers.length === 0) {
-        setError('请至少输入一个群成员');
-        setCreatingGroup(false);
-        return;
-      }
-      const data = await api.post<{ success: boolean; chat_id: string; message: string }>('/wecom/create-group', {
-        name: groupName || '食材采购群',
-        members: validMembers
-      });
-      if (data.success) {
-        setSuccess(data.message);
-        setFieldValue('chat_id', data.chat_id);
-        setShowCreateGroup(false);
-        setGroupName('');
-        setGroupMembers(['']);
-        setTimeout(() => setSuccess(''), 5000);
-      } else {
-        setError(data.message || '创建群聊失败');
-      }
-    } catch (err: any) {
-      setError(err.message || '创建群聊失败');
-    } finally {
-      setCreatingGroup(false);
     }
   };
 
@@ -333,17 +297,39 @@ export default function WecomManager() {
         </div>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">内部群聊ID（ChatID）</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              群机器人 Webhook URL
+              <span className="text-xs text-primary-500 ml-2">（推荐方式）</span>
+            </label>
             <input
               type="text"
-              value={getFieldValue('chat_id')}
-              onChange={(e) => setFieldValue('chat_id', e.target.value)}
+              value={getFieldValue('webhook_url')}
+              onChange={(e) => setFieldValue('webhook_url', e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-              placeholder="群聊ID"
+              placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
             />
+            <p className="text-xs text-gray-500 mt-1">
+              📌 获取方式：群聊 → 右上角「...」→ 群机器人 → 添加机器人 → 复制 Webhook 地址
+            </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
-            <p>📌 获取方式：将自建应用加入内部群，通过API获取群聊ID</p>
+          <div className="border-t border-gray-100 pt-4">
+            <details className="text-sm text-gray-500">
+              <summary className="cursor-pointer text-primary-500 hover:text-primary-600">
+                高级配置：内部群聊ID（API方式，无需配置）
+              </summary>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">内部群聊ID（ChatID）</label>
+                  <input
+                    type="text"
+                    value={getFieldValue('chat_id')}
+                    onChange={(e) => setFieldValue('chat_id', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="群聊ID（可选）"
+                  />
+                </div>
+              </div>
+            </details>
           </div>
           <div className="flex justify-between items-center">
               <div className="flex gap-2">
@@ -359,24 +345,22 @@ export default function WecomManager() {
                   className="btn-secondary flex items-center gap-2"
                 >
                   <RefreshCw size={16} />
-                  查看群聊ID
-                </button>
-                <button
-                  onClick={() => setShowCreateGroup(true)}
-                  className="btn-primary flex items-center gap-2"
-                >
-                  <MessageSquare size={16} />
-                  创建群聊
+                  查看回调日志
                 </button>
               </div>
-              <button
-                onClick={() => saveSection('群聊配置', { chat_id: getFieldValue('chat_id') })}
-                disabled={sectionStatus['群聊配置'] === 'saving'}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50"
-              >
-                {sectionStatus['群聊配置'] === 'saving' ? '保存中...' : sectionStatus['群聊配置'] === 'saved' ? '已保存' : '保存配置'}
-                {sectionStatus['群聊配置'] !== 'saving' && <Save size={16} />}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => saveSection('群聊配置', {
+                    webhook_url: getFieldValue('webhook_url'),
+                    chat_id: getFieldValue('chat_id')
+                  })}
+                  disabled={sectionStatus['群聊配置'] === 'saving'}
+                  className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                >
+                  {sectionStatus['群聊配置'] === 'saving' ? '保存中...' : sectionStatus['群聊配置'] === 'saved' ? '已保存' : '保存配置'}
+                  {sectionStatus['群聊配置'] !== 'saving' && <Save size={16} />}
+                </button>
+              </div>
             </div>
         </div>
       </div>
@@ -675,85 +659,6 @@ export default function WecomManager() {
           </div>
         </div>
       </div>
-
-      {/* 创建群聊弹窗 */}
-      {showCreateGroup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCreateGroup(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h3 className="text-lg font-semibold text-gray-800">创建企业微信群聊</h3>
-              <button onClick={() => setShowCreateGroup(false)} className="p-1 hover:bg-gray-100 rounded-md">
-                <X size={20} className="text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">群名称</label>
-                <input
-                  type="text"
-                  value={groupName}
-                  onChange={(e) => setGroupName(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                  placeholder="食材采购群"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">群成员（企业微信账号）</label>
-                <div className="space-y-2">
-                  {groupMembers.map((member, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <input
-                        type="text"
-                        value={member}
-                        onChange={(e) => {
-                          const newMembers = [...groupMembers];
-                          newMembers[idx] = e.target.value;
-                          setGroupMembers(newMembers);
-                        }}
-                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                        placeholder="请输入企微账号（如：zhangsan）"
-                      />
-                      <button
-                        onClick={() => {
-                          if (groupMembers.length > 1) {
-                            setGroupMembers(groupMembers.filter((_, i) => i !== idx));
-                          }
-                        }}
-                        className="px-3 text-gray-400 hover:text-danger-500"
-                        disabled={groupMembers.length === 1}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => setGroupMembers([...groupMembers, ''])}
-                    className="text-sm text-primary-500 hover:text-primary-600"
-                  >
-                    + 添加成员
-                  </button>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">群成员必须是企业微信中的账号，第一位成员将成为群主</p>
-              </div>
-            </div>
-            <div className="p-4 border-t border-gray-100 flex justify-end gap-3">
-              <button
-                onClick={() => setShowCreateGroup(false)}
-                className="btn-secondary"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleCreateGroup}
-                disabled={creatingGroup}
-                className="btn-primary disabled:opacity-50"
-              >
-                {creatingGroup ? '创建中...' : '创建群聊'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 回调日志弹窗 */}
       {showCallbackLogs && (
