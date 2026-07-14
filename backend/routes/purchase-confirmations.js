@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
-const { getWecomConfig, sendWecomMessage, submitApproval, getApprovalDetail } = require('./wecom');
+const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, submitApproval, getApprovalDetail } = require('./wecom');
 
 // 获取确认单列表
 router.get('/', async (req, res) => {
@@ -68,15 +68,26 @@ router.post('/', async (req, res) => {
     const id = uuidv4();
     const config = await getWecomConfig();
 
-    if (!config || !config.corp_id || !config.app_secret || !config.chat_id) {
-      return res.status(400).json({ error: '请先在企业微信管理页面完成应用配置和群聊配置' });
+    // 检查配置：Webhook URL 或 API 配置至少有一个
+    const hasWebhook = config && config.webhook_url;
+    const hasApiConfig = config && config.corp_id && config.app_secret && config.chat_id;
+    if (!hasWebhook && !hasApiConfig) {
+      return res.status(400).json({ error: '请先在企业微信管理页面完成群聊配置（Webhook URL 或应用配置）' });
     }
 
     const displayDate = purchase_date.substring(0, 10);
 
-    // 构建消息内容
+    // 构建确认链接
+    const baseUrl = req.headers.origin || req.protocol + '://' + req.get('host');
+    const confirmUrl = `${baseUrl}/confirm/${id}`;
+
+    // 构建 Markdown 消息内容
     const deptNames = departments.map(d => d.name).join('、');
-    let content = `📋 采购确认通知\n\n📅 日期：${displayDate}\n🏢 涉及部门：${deptNames}\n💰 总金额：¥${Number(total_amount).toFixed(2)}\n`;
+    let mdContent = `**📋 食材采购确认通知**\n\n`;
+    mdContent += `📅 **采购日期**：${displayDate}\n`;
+    mdContent += `🏢 **涉及部门**：${deptNames}\n`;
+    mdContent += `💰 **总金额**：¥${Number(total_amount).toFixed(2)}\n\n`;
+    mdContent += `---\n\n`;
 
     // 按部门分组显示明细
     const groupedItems = {};
@@ -87,19 +98,17 @@ router.post('/', async (req, res) => {
     }
 
     for (const [deptName, items] of Object.entries(groupedItems)) {
-      content += `\n【${deptName}】\n`;
-      let subtotal = 0;
+      mdContent += `**【${deptName}】**\n`;
       for (const item of items) {
-        content += `  ${item.ingredient_name}  ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${Number(item.amount).toFixed(2)}\n`;
-        subtotal += Number(item.amount);
+        mdContent += `> ${item.ingredient_name}  ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${Number(item.amount).toFixed(2)}\n`;
       }
-      content += `  小计：¥${subtotal.toFixed(2)}\n`;
+      const subtotal = items.reduce((s, i) => s + Number(i.amount), 0);
+      mdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
     }
 
-    // 构建确认链接
-    const baseUrl = req.headers.origin || req.protocol + '://' + req.get('host');
-    const confirmUrl = `${baseUrl}/confirm/${id}`;
-    content += `\n请各部门点击确认采购入库\n🔗 ${confirmUrl}`;
+    mdContent += `---\n\n`;
+    mdContent += `👉 **[点击此处进入确认页面](${confirmUrl})**\n`;
+    mdContent += `> 各部门负责人请进入确认页面，核对清单并手写签名确认。`;
 
     // 保存确认单（先保存，发送失败可以删除，或者让用户重试）
     await connection.query(
@@ -108,10 +117,17 @@ router.post('/', async (req, res) => {
       [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items)]
     );
 
-    // 发送企微消息
+    // 发送企微消息（优先使用 Webhook）
     let wecomMsgId = null;
     try {
-      wecomMsgId = await sendWecomMessage(config, content);
+      if (hasWebhook) {
+        await sendMarkdownViaWebhook(config.webhook_url, mdContent);
+        wecomMsgId = 'webhook';
+      } else {
+        // 回退到 API 方式
+        const plainContent = mdContent.replace(/\*\*/g, '').replace(/> /g, '');
+        wecomMsgId = await sendWecomMessage(config, plainContent);
+      }
     } catch (sendErr) {
       // 发送失败，回滚
       await connection.rollback();
@@ -146,7 +162,7 @@ router.post('/', async (req, res) => {
 router.post('/:id/confirm', async (req, res) => {
   try {
     const { id } = req.params;
-    const { department_id, confirmed_by } = req.body;
+    const { department_id, confirmed_by, signature_data } = req.body;
 
     const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
     if (rows.length === 0) {
@@ -164,6 +180,16 @@ router.post('/:id/confirm', async (req, res) => {
     dept.confirmed = true;
     dept.confirmed_by = confirmed_by;
     dept.confirmed_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    // 保存签名数据
+    let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
+    if (signature_data) {
+      signatures[department_id] = {
+        name: confirmed_by,
+        data: signature_data,
+        timestamp: dept.confirmed_at
+      };
+    }
 
     const allConfirmed = departments.every(d => d.confirmed);
     let newStatus = allConfirmed ? 'confirmed' : 'pending';
@@ -247,8 +273,8 @@ router.post('/:id/confirm', async (req, res) => {
       }
     }
 
-    const updateFields = ['departments = ?', 'status = ?'];
-    const updateValues = [JSON.stringify(departments), newStatus];
+    const updateFields = ['departments = ?', 'status = ?', 'confirmed_signatures = ?'];
+    const updateValues = [JSON.stringify(departments), newStatus, JSON.stringify(signatures)];
 
     if (reimbursementInitiated && reimbursementSpNo) {
       updateFields.push('reimbursement_status = ?');

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, Clock, Package, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, Clock, Package, ArrowLeft, Pen } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
 
@@ -30,6 +30,112 @@ interface Confirmation {
   status: string;
 }
 
+function SignatureCanvas({ onSignatureChange }: { onSignatureChange: (data: string | null) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasSignature, setHasSignature] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }, []);
+
+  const getPos = (e: React.TouchEvent | React.MouseEvent) => {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    if ('touches' in e) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top };
+  };
+
+  const startDraw = (e: React.TouchEvent | React.MouseEvent) => {
+    e.preventDefault();
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    setIsDrawing(true);
+  };
+
+  const draw = (e: React.TouchEvent | React.MouseEvent) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    const pos = getPos(e);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    setHasSignature(true);
+  };
+
+  const stopDraw = () => {
+    if (isDrawing && hasSignature) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        onSignatureChange(canvas.toDataURL('image/png'));
+      }
+    }
+    setIsDrawing(false);
+  };
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    setHasSignature(false);
+    onSignatureChange(null);
+  };
+
+  return (
+    <div>
+      <div className="border-2 border-dashed border-gray-300 rounded-lg overflow-hidden bg-white relative">
+        <canvas
+          ref={canvasRef}
+          className="w-full touch-none"
+          style={{ height: '120px' }}
+          onMouseDown={startDraw}
+          onMouseMove={draw}
+          onMouseUp={stopDraw}
+          onMouseLeave={stopDraw}
+          onTouchStart={startDraw}
+          onTouchMove={draw}
+          onTouchEnd={stopDraw}
+        />
+        {!hasSignature && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="text-gray-300 text-sm">请在此处手写签名</span>
+          </div>
+        )}
+      </div>
+      {hasSignature && (
+        <button
+          onClick={clearSignature}
+          className="mt-1 text-xs text-gray-400 hover:text-gray-600"
+        >
+          清除签名
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function PurchaseConfirmPage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<Confirmation | null>(null);
@@ -37,6 +143,8 @@ export default function PurchaseConfirmPage() {
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [userName, setUserName] = useState('');
+  const [signatureData, setSignatureData] = useState<string | null>(null);
+  const [activeDeptId, setActiveDeptId] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) fetchData(id);
@@ -65,7 +173,10 @@ export default function PurchaseConfirmPage() {
       await api.post(`/purchase-confirmations/${id}/confirm`, {
         department_id: deptId,
         confirmed_by: userName.trim(),
+        signature_data: signatureData,
       });
+      setSignatureData(null);
+      setActiveDeptId(null);
       if (id) fetchData(id);
     } catch (err: any) {
       setError(err.message || '确认失败');
@@ -105,6 +216,7 @@ export default function PurchaseConfirmPage() {
     if (isNaN(d.getTime())) return dateStr.substring(0, 10);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
+
   const groupedItems: Record<string, PurchaseItem[]> = {};
   for (const item of data.purchase_items) {
     const deptName = item.department_name || '未分类';
@@ -168,33 +280,56 @@ export default function PurchaseConfirmPage() {
         {/* 部门确认状态 */}
         <div className="bg-white rounded-xl shadow-sm p-4">
           <h2 className="font-medium text-gray-800 mb-3">部门确认</h2>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {data.departments.map(dept => (
-              <div key={dept.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  {dept.confirmed ? (
-                    <CheckCircle2 size={18} className="text-green-500" />
-                  ) : (
-                    <Clock size={18} className="text-gray-400" />
-                  )}
-                  <span className="text-sm font-medium text-gray-700">{dept.name}</span>
+              <div key={dept.id} className="bg-gray-50 rounded-lg px-3 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {dept.confirmed ? (
+                      <CheckCircle2 size={18} className="text-green-500" />
+                    ) : (
+                      <Clock size={18} className="text-gray-400" />
+                    )}
+                    <span className="text-sm font-medium text-gray-700">{dept.name}</span>
+                  </div>
+                  <div className="text-right">
+                    {dept.confirmed ? (
+                      <div className="text-xs text-gray-500">
+                        <p>{dept.confirmed_by}</p>
+                        <p>{dept.confirmed_at}</p>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setActiveDeptId(activeDeptId === dept.id ? null : dept.id)}
+                        disabled={!userName.trim()}
+                        className="px-3 py-1.5 bg-primary-500 text-white text-xs rounded-lg hover:bg-primary-600 disabled:opacity-50 transition-colors flex items-center gap-1"
+                      >
+                        <Pen size={12} />
+                        {activeDeptId === dept.id ? '收起' : '签名确认'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  {dept.confirmed ? (
-                    <div className="text-xs text-gray-500">
-                      <p>{dept.confirmed_by}</p>
-                      <p>{dept.confirmed_at}</p>
-                    </div>
-                  ) : (
+                {/* 签名区域 */}
+                {activeDeptId === dept.id && !dept.confirmed && (
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <Pen size={14} className="inline mr-1" />
+                      手写签名
+                    </label>
+                    <SignatureCanvas onSignatureChange={setSignatureData} />
                     <button
                       onClick={() => handleConfirm(dept.id)}
-                      disabled={confirming || !userName.trim()}
-                      className="px-3 py-1.5 bg-primary-500 text-white text-xs rounded-lg hover:bg-primary-600 disabled:opacity-50 transition-colors"
+                      disabled={confirming || !userName.trim() || !signatureData}
+                      className="w-full mt-3 py-2.5 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:bg-gray-300 transition-colors"
                     >
                       {confirming ? '确认中...' : '确认采购入库'}
                     </button>
-                  )}
-                </div>
+                    {!signatureData && (
+                      <p className="text-xs text-gray-400 mt-1 text-center">请先手写签名后再确认</p>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
