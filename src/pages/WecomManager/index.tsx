@@ -135,25 +135,33 @@ export default function WecomManager() {
     setError('');
     try {
       const data = await api.get<any>(`/wecom/approval-template/${config.approval_template_id}`);
-      // 尝试从模板中提取控件列表
-      const controls = data.template?.controls || data.controls || [];
+      // 企微API返回的结构: data.template.template_content.controls
+      const controls = data.template?.template_content?.controls || data.template?.controls || data.controls || [];
       const controlList: TemplateControl[] = [];
       for (const ctrl of controls) {
+        const property = ctrl.property || ctrl;
+        const titleArr = property.title || [];
+        const title = titleArr.find((t: any) => t.lang === 'zh_CN')?.text
+          || titleArr.find((t: any) => t.text)?.text
+          || property.control
+          || property.id;
         controlList.push({
-          control: ctrl.control,
-          id: ctrl.id,
-          label: ctrl.title?.find((t: any) => t.lang === 'zh_CN')?.text || ctrl.property?.control || ctrl.id,
-          value: ctrl.value
+          control: property.control,
+          id: property.id,
+          label: title,
+          value: ctrl.value || property.value
         });
       }
       setTemplateControls(controlList);
 
-      // 提取付款方式选项
+      // 提取付款方式选项 (Selector控件)
       const paymentOptions: Array<{ label: string; key: string }> = [];
       for (const ctrl of controls) {
-        if (ctrl.control === 'Selector' && ctrl.value && ctrl.value.options) {
-          for (const opt of ctrl.value.options) {
-            paymentOptions.push({ label: opt.text || opt.value, key: opt.key });
+        const property = ctrl.property || ctrl;
+        const selector = ctrl.config?.selector || ctrl.value?.selector;
+        if (property.control === 'Selector' && selector && selector.options) {
+          for (const opt of selector.options) {
+            paymentOptions.push({ label: opt.value?.find((t: any) => t.lang === 'zh_CN')?.text || opt.key, key: opt.key });
           }
         }
       }
