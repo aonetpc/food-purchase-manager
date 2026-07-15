@@ -507,52 +507,47 @@ async function generateConfirmationPDF(confirmationId) {
   doc.fontSize(14).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
   doc.moveDown(0.5);
 
-  // 按部门分组
-  const groupedItems = {};
-  for (const item of purchaseItems) {
-    const deptName = item.department_name || '未分类';
-    if (!groupedItems[deptName]) groupedItems[deptName] = [];
-    groupedItems[deptName].push(item);
-  }
-
-  // 表头
   const tableTop = doc.y;
-  const colWidths = [150, 80, 60, 60, 80];
+  const colWidths = [140, 90, 60, 60, 80];
   const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
 
   doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
-  let x = doc.x;
+  let x = doc.page.margins.left;
   headers.forEach((h, i) => {
-    doc.text(h, x, tableTop, { width: colWidths[i], align: 'left' });
+    doc.text(h, x, tableTop, { width: colWidths[i], align: 'center' });
     x += colWidths[i];
   });
+
+  doc.moveTo(doc.page.margins.left, tableTop + 15).lineTo(doc.page.width - doc.page.margins.right, tableTop + 15).stroke();
   doc.moveDown();
 
-  // 表格内容
   doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   let grandTotal = 0;
   for (const [deptName, items] of Object.entries(groupedItems)) {
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, { continued: false });
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`);
     doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
 
     let subtotal = 0;
     for (const item of items) {
       const y = doc.y;
-      x = doc.x;
-      doc.text(item.ingredient_name, x, y, { width: colWidths[0] });
+      x = doc.page.margins.left;
+      doc.text(item.ingredient_name, x, y, { width: colWidths[0], align: 'left' });
       x += colWidths[0];
-      doc.text(`${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`, x, y, { width: colWidths[1] });
+      doc.text(`${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`, x, y, { width: colWidths[1], align: 'center' });
       x += colWidths[1];
-      doc.text(String(item.purchase_quantity), x, y, { width: colWidths[2] });
+      doc.text(String(item.purchase_quantity), x, y, { width: colWidths[2], align: 'center' });
       x += colWidths[2];
-      doc.text(item.purchase_unit, x, y, { width: colWidths[3] });
+      doc.text(item.purchase_unit, x, y, { width: colWidths[3], align: 'center' });
       x += colWidths[3];
-      doc.text(`¥${toNum(item.amount).toFixed(2)}`, x, y, { width: colWidths[4] });
+      doc.text(`¥${toNum(item.amount).toFixed(2)}`, x, y, { width: colWidths[4], align: 'right' });
       subtotal += toNum(item.amount);
+      doc.moveDown();
     }
-    doc.fontSize(10).text(`小计：¥${subtotal.toFixed(2)}`, { align: 'right' });
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, { align: 'right' });
     grandTotal += subtotal;
+    doc.moveDown();
   }
+  doc.moveTo(doc.page.margins.left, doc.y - 5).lineTo(doc.page.width - doc.page.margins.right, doc.y - 5).stroke();
   doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, { align: 'right' });
   doc.moveDown(2);
   doc.x = doc.page.margins.left;
