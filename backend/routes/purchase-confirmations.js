@@ -525,7 +525,7 @@ async function generateConfirmationPDF(confirmationId) {
   doc.moveDown(0.5);
 
   for (const dept of departments) {
-    doc.fontSize(11).font('Helvetica-Bold').text(`${dept.name}：`, { continued: true });
+    doc.fontSize(11).font('Helvetica-Bold').text(`${dept.name}：`);
 
     if (dept.confirmed) {
       doc.font('Helvetica').text(`已确认 - ${dept.confirmed_by} (${dept.confirmed_at || ''})`);
@@ -536,7 +536,9 @@ async function generateConfirmationPDF(confirmationId) {
         try {
           const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
           const buffer = Buffer.from(base64Data, 'base64');
-          doc.image(buffer, doc.x, doc.y, { width: 100, height: 40 });
+          const imgX = doc.x;
+          const imgY = doc.y;
+          doc.image(buffer, imgX, imgY, { width: 100, height: 40 });
           doc.moveDown(2);
         } catch (e) {
           doc.moveDown();
