@@ -24,12 +24,14 @@ jobs:
             done
             npm ci
             npm run build
-            rm -rf /var/www/food-purchase/*
-            cp -r dist/* /var/www/food-purchase/
-            cp backend/package.json /opt/food-purchase/backend/
-            cp backend/package-lock.json /opt/food-purchase/backend/
-            cp backend/server.js /opt/food-purchase/backend/
-            cp -r backend/routes/* /opt/food-purchase/backend/routes/
+            sudo rm -rf /var/www/food-purchase/*
+            sudo cp -r dist/* /var/www/food-purchase/
+            sudo chown -R ubuntu:ubuntu /var/www/food-purchase
+            sudo cp backend/package.json /opt/food-purchase/backend/
+            sudo cp backend/package-lock.json /opt/food-purchase/backend/
+            sudo cp backend/server.js /opt/food-purchase/backend/
+            sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
+            sudo chown -R ubuntu:ubuntu /opt/food-purchase/backend
             cd /opt/food-purchase/backend
             npm ci --production
             # 数据库迁移：创建suppliers表（如果不存在）
