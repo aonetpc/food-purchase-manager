@@ -17,16 +17,27 @@ if (!fs.existsSync(PDF_DIR)) {
 
 function findChineseFont() {
   const paths = [
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Regular.otf'),
+    path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Regular.otf'),
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
     '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
-    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.ttf',
-    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Bold.ttf',
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.ttf'
   ];
   for (const p of paths) {
-    if (fs.existsSync(p)) return p;
+    if (fs.existsSync(p) && !p.endsWith('.ttc')) return p;
+  }
+  return null;
+}
+
+function findChineseBoldFont() {
+  const paths = [
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Bold.otf'),
+    path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Bold.otf'),
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Bold.ttf'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p) && !p.endsWith('.ttc')) return p;
   }
   return null;
 }
@@ -465,10 +476,11 @@ async function generateConfirmationPDF(confirmationId) {
 
   // 注册中文字体
   const chineseFont = findChineseFont();
-  const hasChineseFont = chineseFont && !chineseFont.endsWith('.ttc');
+  const chineseBoldFont = findChineseBoldFont();
+  const hasChineseFont = !!chineseFont;
   if (hasChineseFont) {
     doc.registerFont('Chinese-Regular', chineseFont);
-    doc.registerFont('Chinese-Bold', chineseFont);
+    doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
   }
 
   // 标题
