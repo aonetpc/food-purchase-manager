@@ -273,7 +273,8 @@ router.post('/:id/confirm', async (req, res) => {
             contents.push({ control: 'Date', id: fieldMapping.date, value: row.purchase_date });
           }
           if (fieldMapping.amount) {
-            contents.push({ control: 'Money', id: fieldMapping.amount, value: row.total_amount });
+            const amountVal = toNum(row.total_amount);
+            contents.push({ control: 'Money', id: fieldMapping.amount, value: amountVal });
           }
           if (fieldMapping.reason) {
             contents.push({ control: 'Text', id: fieldMapping.reason, value: reason });
@@ -283,13 +284,13 @@ router.post('/:id/confirm', async (req, res) => {
             contents.push({ control: 'Text', id: fieldMapping.department, value: deptNames });
           }
           if (fieldMapping.payee_name && config.payee_name) {
-            contents.push({ control: 'Text', id: fieldMapping.payee_name, value: config.payee_name });
+            contents.push({ control: 'Text', id: fieldMapping.payee_name, value: String(config.payee_name) });
           }
           if (fieldMapping.bank_name && config.bank_name) {
-            contents.push({ control: 'Text', id: fieldMapping.bank_name, value: config.bank_name });
+            contents.push({ control: 'Text', id: fieldMapping.bank_name, value: String(config.bank_name) });
           }
           if (fieldMapping.bank_account && config.bank_account) {
-            contents.push({ control: 'Text', id: fieldMapping.bank_account, value: config.bank_account });
+            contents.push({ control: 'Text', id: fieldMapping.bank_account, value: String(config.bank_account) });
           }
           if (fieldMapping.payment_method && config.default_payment_key) {
             const paymentOptions = config.payment_options ? JSON.parse(config.payment_options) : {};
@@ -307,7 +308,10 @@ router.post('/:id/confirm', async (req, res) => {
             for (const [dn, items] of Object.entries(grouped)) {
               detailText += `【${dn}】\n`;
               for (const item of items) {
-                detailText += `${item.ingredient_name} ${item.purchase_unit_price}/${item.purchase_unit} ×${item.purchase_quantity} = ¥${Number(item.amount).toFixed(2)}\n`;
+                const price = toNum(item.purchase_unit_price);
+                const qty = toNum(item.purchase_quantity);
+                const amt = toNum(item.amount);
+                detailText += `${item.ingredient_name} ${price}/${item.purchase_unit} ×${qty} = ¥${amt.toFixed(2)}\n`;
               }
             }
             contents.push({ control: 'Textarea', id: fieldMapping.details, value: detailText });
@@ -462,7 +466,8 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: 'Date', id: fieldMapping.date, value: row.purchase_date });
     }
     if (fieldMapping.amount) {
-      contents.push({ control: 'Money', id: fieldMapping.amount, value: row.total_amount });
+      const amountVal = toNum(row.total_amount);
+      contents.push({ control: 'Money', id: fieldMapping.amount, value: amountVal });
     }
     if (fieldMapping.reason) {
       contents.push({ control: 'Text', id: fieldMapping.reason, value: reason });
@@ -472,13 +477,13 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: 'Text', id: fieldMapping.department, value: deptNames });
     }
     if (fieldMapping.payee_name && config.payee_name) {
-      contents.push({ control: 'Text', id: fieldMapping.payee_name, value: config.payee_name });
+      contents.push({ control: 'Text', id: fieldMapping.payee_name, value: String(config.payee_name) });
     }
     if (fieldMapping.bank_name && config.bank_name) {
-      contents.push({ control: 'Text', id: fieldMapping.bank_name, value: config.bank_name });
+      contents.push({ control: 'Text', id: fieldMapping.bank_name, value: String(config.bank_name) });
     }
     if (fieldMapping.bank_account && config.bank_account) {
-      contents.push({ control: 'Text', id: fieldMapping.bank_account, value: config.bank_account });
+      contents.push({ control: 'Text', id: fieldMapping.bank_account, value: String(config.bank_account) });
     }
     if (fieldMapping.payment_method && config.default_payment_key) {
       const paymentOptions = config.payment_options ? JSON.parse(config.payment_options) : {};
@@ -496,7 +501,10 @@ router.post('/:id/resubmit', async (req, res) => {
       for (const [dn, items] of Object.entries(grouped)) {
         detailText += `【${dn}】\n`;
         for (const item of items) {
-          detailText += `${item.ingredient_name} ${item.purchase_unit_price}/${item.purchase_unit} ×${item.purchase_quantity} = ¥${Number(item.amount).toFixed(2)}\n`;
+          const price = toNum(item.purchase_unit_price);
+          const qty = toNum(item.purchase_quantity);
+          const amt = toNum(item.amount);
+          detailText += `${item.ingredient_name} ${price}/${item.purchase_unit} ×${qty} = ¥${amt.toFixed(2)}\n`;
         }
       }
       contents.push({ control: 'Textarea', id: fieldMapping.details, value: detailText });
