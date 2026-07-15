@@ -519,6 +519,7 @@ async function generateConfirmationPDF(confirmationId) {
   }
   doc.fontSize(12).font('Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, { align: 'right' });
   doc.moveDown(2);
+  doc.x = doc.page.margins.left;
 
   // 部门确认签名区域
   doc.fontSize(14).font('Helvetica-Bold').text('部门确认签名', { underline: true });

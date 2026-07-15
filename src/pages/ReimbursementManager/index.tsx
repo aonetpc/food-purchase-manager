@@ -420,9 +420,9 @@ export default function ReimbursementManager() {
                           <tr key={idx}>
                             <td className="px-3 py-2 text-gray-700">{item.ingredient_name}</td>
                             <td className="px-3 py-2 text-gray-500">{item.department_name}</td>
-                            <td className="px-3 py-2 text-right text-gray-700">{item.purchase_unit_price.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right text-gray-700">{safeParseFloat(item.purchase_unit_price).toFixed(2)}</td>
                             <td className="px-3 py-2 text-right text-gray-700">{item.purchase_quantity}</td>
-                            <td className="px-3 py-2 text-right font-medium text-gray-800">{item.amount.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium text-gray-800">{safeParseFloat(item.amount).toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
