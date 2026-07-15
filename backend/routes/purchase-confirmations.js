@@ -507,6 +507,13 @@ async function generateConfirmationPDF(confirmationId) {
   doc.fontSize(14).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
   doc.moveDown(0.5);
 
+  const groupedItems = {};
+  for (const item of purchaseItems) {
+    const deptName = item.department_name || '未分类';
+    if (!groupedItems[deptName]) groupedItems[deptName] = [];
+    groupedItems[deptName].push(item);
+  }
+
   const tableTop = doc.y;
   const colWidths = [140, 90, 60, 60, 80];
   const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
