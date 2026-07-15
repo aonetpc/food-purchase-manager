@@ -15,6 +15,12 @@ if (!fs.existsSync(PDF_DIR)) {
   fs.mkdirSync(PDF_DIR, { recursive: true });
 }
 
+// 中文字体路径
+const FONT_PATH = {
+  regular: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' || '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+  bold: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' || '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+};
+
 // 安全数值转换（兼容mysql2 decimal对象）
 function toNum(val) {
   if (val === null || val === undefined) return 0;
@@ -447,12 +453,19 @@ async function generateConfirmationPDF(confirmationId) {
   const writeStream = fs.createWriteStream(pdfPath);
   doc.pipe(writeStream);
 
+  // 注册中文字体
+  const hasChineseFont = fs.existsSync(FONT_PATH.regular);
+  if (hasChineseFont) {
+    doc.registerFont('Chinese-Regular', FONT_PATH.regular);
+    doc.registerFont('Chinese-Bold', FONT_PATH.bold);
+  }
+
   // 标题
-  doc.fontSize(22).font('Helvetica-Bold').text('食材采购确认单', { align: 'center' });
+  doc.fontSize(22).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('食材采购确认单', { align: 'center' });
   doc.moveDown();
 
   // 基本信息
-  doc.fontSize(12).font('Helvetica');
+  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   // 兼容不同格式的日期
   let purchaseDateStr = '';
   if (row.purchase_date instanceof Date) {
@@ -468,7 +481,7 @@ async function generateConfirmationPDF(confirmationId) {
   doc.moveDown();
 
   // 采购明细表格
-  doc.fontSize(14).font('Helvetica-Bold').text('采购明细', { underline: true });
+  doc.fontSize(14).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
   doc.moveDown(0.5);
 
   // 按部门分组
@@ -484,7 +497,7 @@ async function generateConfirmationPDF(confirmationId) {
   const colWidths = [150, 80, 60, 60, 80];
   const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
 
-  doc.fontSize(10).font('Helvetica-Bold');
+  doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
   let x = doc.x;
   headers.forEach((h, i) => {
     doc.text(h, x, tableTop, { width: colWidths[i], align: 'left' });
@@ -493,11 +506,11 @@ async function generateConfirmationPDF(confirmationId) {
   doc.moveDown();
 
   // 表格内容
-  doc.font('Helvetica');
+  doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   let grandTotal = 0;
   for (const [deptName, items] of Object.entries(groupedItems)) {
-    doc.fontSize(10).font('Helvetica-Bold').text(`【${deptName}】`, { continued: false });
-    doc.font('Helvetica');
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, { continued: false });
+    doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
 
     let subtotal = 0;
     for (const item of items) {
@@ -517,19 +530,19 @@ async function generateConfirmationPDF(confirmationId) {
     doc.fontSize(10).text(`小计：¥${subtotal.toFixed(2)}`, { align: 'right' });
     grandTotal += subtotal;
   }
-  doc.fontSize(12).font('Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, { align: 'right' });
+  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, { align: 'right' });
   doc.moveDown(2);
   doc.x = doc.page.margins.left;
 
   // 部门确认签名区域
-  doc.fontSize(14).font('Helvetica-Bold').text('部门确认签名', { underline: true });
+  doc.fontSize(14).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('部门确认签名', { underline: true });
   doc.moveDown(0.5);
 
   for (const dept of departments) {
-    doc.fontSize(11).font('Helvetica-Bold').text(`${dept.name}：`);
+    doc.fontSize(11).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`${dept.name}：`);
 
     if (dept.confirmed) {
-      doc.font('Helvetica').text(`已确认 - ${dept.confirmed_by} (${dept.confirmed_at || ''})`);
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`已确认 - ${dept.confirmed_by} (${dept.confirmed_at || ''})`);
 
       // 如果有签名图片，添加到PDF
       const sigData = signatures[dept.id];
@@ -548,13 +561,13 @@ async function generateConfirmationPDF(confirmationId) {
         doc.moveDown();
       }
     } else {
-      doc.font('Helvetica').text('待确认');
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text('待确认');
     }
   }
 
   // 生成时间
   doc.moveDown(2);
-  doc.fontSize(10).font('Helvetica').text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
+  doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
 
   doc.end();
 
