@@ -31,6 +31,7 @@ jobs:
             sudo cp backend/package-lock.json /opt/food-purchase/backend/
             sudo cp backend/server.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
+            sudo cp -r backend/fonts /opt/food-purchase/backend/
             sudo chown -R ubuntu:ubuntu /opt/food-purchase/backend
             cd /opt/food-purchase/backend
             npm ci --production

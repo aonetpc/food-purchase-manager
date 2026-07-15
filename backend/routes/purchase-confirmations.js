@@ -17,8 +17,8 @@ if (!fs.existsSync(PDF_DIR)) {
 
 function findChineseFont() {
   const paths = [
-    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Regular.otf'),
     path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Regular.otf'),
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Regular.otf'),
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
     '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf',
     '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.ttf'
@@ -31,8 +31,8 @@ function findChineseFont() {
 
 function findChineseBoldFont() {
   const paths = [
-    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Bold.otf'),
     path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Bold.otf'),
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Bold.otf'),
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
     '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Bold.ttf'
   ];
