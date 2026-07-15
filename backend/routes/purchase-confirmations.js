@@ -264,9 +264,16 @@ router.post('/:id/confirm', async (req, res) => {
         try {
           const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
           const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
-          const reason = reasonTemplate.replace('{date}', row.purchase_date);
+          const reason = reasonTemplate.replace('{date}', String(row.purchase_date));
 
-          const fieldMapping = config.approval_field_mapping ? JSON.parse(config.approval_field_mapping) : {};
+          let fieldMapping = {};
+          if (config.approval_field_mapping) {
+            if (typeof config.approval_field_mapping === 'string') {
+              try { fieldMapping = JSON.parse(config.approval_field_mapping); } catch (e) { fieldMapping = {}; }
+            } else if (typeof config.approval_field_mapping === 'object') {
+              fieldMapping = config.approval_field_mapping;
+            }
+          }
 
           const contents = [];
           if (fieldMapping.date) {
@@ -476,7 +483,18 @@ router.post('/:id/resubmit', async (req, res) => {
     const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
     const reason = reasonTemplate.replace('{date}', String(row.purchase_date));
 
-    const fieldMapping = config.approval_field_mapping ? JSON.parse(config.approval_field_mapping) : {};
+    let fieldMapping = {};
+    if (config.approval_field_mapping) {
+      if (typeof config.approval_field_mapping === 'string') {
+        try {
+          fieldMapping = JSON.parse(config.approval_field_mapping);
+        } catch (e) {
+          fieldMapping = {};
+        }
+      } else if (typeof config.approval_field_mapping === 'object') {
+        fieldMapping = config.approval_field_mapping;
+      }
+    }
 
     const contents = [];
     if (fieldMapping.date) {
