@@ -111,7 +111,13 @@ export default function ReimbursementManager() {
 
   // 统计数据
   const safeParseFloat = (val: any): number => {
-    const n = parseFloat(val);
+    if (val === null || val === undefined) return 0;
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    if (typeof val === 'object' && val !== null) {
+      // mysql2 有时返回 { String: '2239.08' } 对象
+      val = val.String || val.string || JSON.stringify(val);
+    }
+    const n = parseFloat(String(val));
     return isNaN(n) ? 0 : n;
   };
 

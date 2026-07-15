@@ -447,7 +447,11 @@ async function generateConfirmationPDF(confirmationId) {
     purchaseDateStr = String(row.purchase_date).substring(0, 10);
   }
   doc.text(`采购日期：${purchaseDateStr}`);
-  doc.text(`总金额：¥${Number(row.total_amount).toFixed(2)}`);
+  // 兼容 mysql2 decimal 类型
+  const totalAmt = typeof row.total_amount === 'object' && row.total_amount !== null
+    ? (row.total_amount.String || row.total_amount.string || '0')
+    : String(row.total_amount || '0');
+  doc.text(`总金额：¥${parseFloat(totalAmt).toFixed(2)}`);
   doc.text(`状态：${row.status === 'confirmed' ? '已确认' : row.status === 'completed' ? '已完成' : row.status}`);
   doc.moveDown();
 
