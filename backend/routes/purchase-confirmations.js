@@ -1,8 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
+const PDFDocument = require('pdfkit');
 const pool = require('../db');
 const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, submitApproval, getApprovalDetail } = require('./wecom');
+
+// PDF存储目录
+const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
+
+// 确保PDF目录存在
+if (!fs.existsSync(PDF_DIR)) {
+  fs.mkdirSync(PDF_DIR, { recursive: true });
+}
 
 // 获取确认单列表
 router.get('/', async (req, res) => {
@@ -195,8 +206,17 @@ router.post('/:id/confirm', async (req, res) => {
     let newStatus = allConfirmed ? 'confirmed' : 'pending';
     let reimbursementInitiated = false;
     let reimbursementSpNo = null;
+    let pdfUrl = row.pdf_url;
 
     if (allConfirmed) {
+      // 自动生成PDF
+      try {
+        const pdfPath = await generateConfirmationPDF(id);
+        pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
+      } catch (pdfErr) {
+        console.error('PDF生成失败:', pdfErr);
+      }
+
       const config = await getWecomConfig();
       if (config && config.corp_id && config.app_secret && config.approval_template_id && config.applicant_userid) {
         try {
@@ -275,6 +295,11 @@ router.post('/:id/confirm', async (req, res) => {
 
     const updateFields = ['departments = ?', 'status = ?', 'confirmed_signatures = ?'];
     const updateValues = [JSON.stringify(departments), newStatus, JSON.stringify(signatures)];
+
+    if (pdfUrl) {
+      updateFields.push('pdf_url = ?');
+      updateValues.push(pdfUrl);
+    }
 
     if (reimbursementInitiated && reimbursementSpNo) {
       updateFields.push('reimbursement_status = ?');
@@ -387,6 +412,163 @@ router.post('/:id/resubmit', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 生成PDF确认单
+async function generateConfirmationPDF(confirmationId) {
+  const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [confirmationId]);
+  if (rows.length === 0) throw new Error('确认单不存在');
+
+  const row = rows[0];
+  const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+  const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
+  const signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
+
+  // 创建PDF
+  const doc = new PDFDocument({ size: 'A4', margin: 50 });
+  const pdfPath = path.join(PDF_DIR, `${confirmationId}.pdf`);
+  const writeStream = fs.createWriteStream(pdfPath);
+  doc.pipe(writeStream);
+
+  // 标题
+  doc.fontSize(22).font('Helvetica-Bold').text('食材采购确认单', { align: 'center' });
+  doc.moveDown();
+
+  // 基本信息
+  doc.fontSize(12).font('Helvetica');
+  doc.text(`采购日期：${row.purchase_date.toISOString ? row.purchase_date.toISOString().substring(0, 10) : String(row.purchase_date).substring(0, 10)}`);
+  doc.text(`总金额：¥${Number(row.total_amount).toFixed(2)}`);
+  doc.text(`状态：${row.status === 'confirmed' ? '已确认' : row.status === 'completed' ? '已完成' : row.status}`);
+  doc.moveDown();
+
+  // 采购明细表格
+  doc.fontSize(14).font('Helvetica-Bold').text('采购明细', { underline: true });
+  doc.moveDown(0.5);
+
+  // 按部门分组
+  const groupedItems = {};
+  for (const item of purchaseItems) {
+    const deptName = item.department_name || '未分类';
+    if (!groupedItems[deptName]) groupedItems[deptName] = [];
+    groupedItems[deptName].push(item);
+  }
+
+  // 表头
+  const tableTop = doc.y;
+  const colWidths = [150, 80, 60, 60, 80];
+  const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
+
+  doc.fontSize(10).font('Helvetica-Bold');
+  let x = doc.x;
+  headers.forEach((h, i) => {
+    doc.text(h, x, tableTop, { width: colWidths[i], align: 'left' });
+    x += colWidths[i];
+  });
+  doc.moveDown();
+
+  // 表格内容
+  doc.font('Helvetica');
+  let grandTotal = 0;
+  for (const [deptName, items] of Object.entries(groupedItems)) {
+    doc.fontSize(10).font('Helvetica-Bold').text(`【${deptName}】`, { continued: false });
+    doc.font('Helvetica');
+
+    let subtotal = 0;
+    for (const item of items) {
+      const y = doc.y;
+      x = doc.x;
+      doc.text(item.ingredient_name, x, y, { width: colWidths[0] });
+      x += colWidths[0];
+      doc.text(`${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`, x, y, { width: colWidths[1] });
+      x += colWidths[1];
+      doc.text(String(item.purchase_quantity), x, y, { width: colWidths[2] });
+      x += colWidths[2];
+      doc.text(item.purchase_unit, x, y, { width: colWidths[3] });
+      x += colWidths[3];
+      doc.text(`¥${Number(item.amount).toFixed(2)}`, x, y, { width: colWidths[4] });
+      subtotal += Number(item.amount);
+    }
+    doc.fontSize(10).text(`小计：¥${subtotal.toFixed(2)}`, { align: 'right' });
+    grandTotal += subtotal;
+  }
+  doc.fontSize(12).font('Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, { align: 'right' });
+  doc.moveDown(2);
+
+  // 部门确认签名区域
+  doc.fontSize(14).font('Helvetica-Bold').text('部门确认签名', { underline: true });
+  doc.moveDown(0.5);
+
+  for (const dept of departments) {
+    doc.fontSize(11).font('Helvetica-Bold').text(`${dept.name}：`, { continued: true });
+
+    if (dept.confirmed) {
+      doc.font('Helvetica').text(`已确认 - ${dept.confirmed_by} (${dept.confirmed_at || ''})`);
+
+      // 如果有签名图片，添加到PDF
+      const sigData = signatures[dept.id];
+      if (sigData && sigData.data) {
+        try {
+          const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          doc.image(buffer, doc.x, doc.y, { width: 100, height: 40 });
+          doc.moveDown(2);
+        } catch (e) {
+          doc.moveDown();
+        }
+      } else {
+        doc.moveDown();
+      }
+    } else {
+      doc.font('Helvetica').text('待确认');
+    }
+  }
+
+  // 生成时间
+  doc.moveDown(2);
+  doc.fontSize(10).font('Helvetica').text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
+
+  doc.end();
+
+  return new Promise((resolve, reject) => {
+    writeStream.on('finish', () => resolve(pdfPath));
+    writeStream.on('error', reject);
+  });
+}
+
+// 手动生成PDF
+router.post('/:id/generate-pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const pdfPath = await generateConfirmationPDF(id);
+    const pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
+
+    // 更新数据库
+    await pool.query('UPDATE purchase_confirmations SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+
+    res.json({ success: true, pdf_url: pdfUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 下载PDF
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
+
+    if (!fs.existsSync(pdfPath)) {
+      // 如果PDF不存在，尝试生成
+      await generateConfirmationPDF(id);
+    }
+
+    res.download(pdfPath, `采购确认单_${id}.pdf`);
+  } catch (err) {
+    console.error(err);
+    res.status(404).json({ error: 'PDF文件不存在' });
   }
 });
 

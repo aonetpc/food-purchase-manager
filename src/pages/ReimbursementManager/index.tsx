@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Receipt, CheckCircle2, Clock, XCircle, FileText, ExternalLink, RefreshCw, X, Trash2 } from 'lucide-react';
+import { Receipt, CheckCircle2, Clock, XCircle, FileText, ExternalLink, RefreshCw, X, Trash2, Download, FileDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
 
@@ -31,6 +31,7 @@ interface PurchaseConfirmation {
   reimbursement_sp_no?: string;
   reimbursement_status: string;
   rejection_reason?: string;
+  pdf_url?: string;
   created_at: string;
 }
 
@@ -93,6 +94,19 @@ export default function ReimbursementManager() {
     } catch (err: any) {
       setError(err.message);
     }
+  };
+
+  const handleGeneratePDF = async (id: string) => {
+    try {
+      await api.post(`/purchase-confirmations/${id}/generate-pdf`);
+      fetchConfirmations();
+    } catch (err: any) {
+      setError(err.message || 'PDF生成失败');
+    }
+  };
+
+  const handleDownloadPDF = (id: string) => {
+    window.open(`${api.getBaseUrl()}/purchase-confirmations/${id}/pdf`, '_blank');
   };
 
   // 统计数据
@@ -270,6 +284,23 @@ export default function ReimbursementManager() {
                             <FileText size={14} />
                             详情
                           </button>
+                          {c.pdf_url ? (
+                            <button
+                              onClick={() => handleDownloadPDF(c.id)}
+                              className="text-green-500 hover:text-green-600 transition-colors"
+                              title="下载PDF"
+                            >
+                              <Download size={14} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleGeneratePDF(c.id)}
+                              className="text-gray-400 hover:text-green-500 transition-colors"
+                              title="生成PDF"
+                            >
+                              <FileDown size={14} />
+                            </button>
+                          )}
                           {c.reimbursement_sp_no && (
                             <button
                               onClick={() => handleRefreshStatus(c.id)}
@@ -391,7 +422,24 @@ export default function ReimbursementManager() {
 
               {/* 操作按钮 */}
               <div className="flex gap-3 pt-2 justify-between">
-                <div className="flex gap-3">
+                <div className="flex gap-3 flex-wrap">
+                  {detailConfirmation.pdf_url ? (
+                    <button
+                      onClick={() => handleDownloadPDF(detailConfirmation.id)}
+                      className="btn-primary flex items-center gap-2 bg-green-500 hover:bg-green-600"
+                    >
+                      <Download size={16} />
+                      下载PDF
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleGeneratePDF(detailConfirmation.id)}
+                      className="btn-secondary flex items-center gap-2"
+                    >
+                      <FileDown size={16} />
+                      生成PDF
+                    </button>
+                  )}
                   {detailConfirmation.reimbursement_sp_no && (
                     <button
                       onClick={() => handleRefreshStatus(detailConfirmation.id)}

@@ -270,6 +270,28 @@ jobs:
               DEALLOCATE PREPARE alterIfNotExists;
             " 2>/dev/null || true
 
+            # 数据库迁移：给 purchase_confirmations 表添加 pdf_url 字段（如果不存在）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'purchase_confirmations';
+              SET @columnname = 'pdf_url';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(255)')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 创建PDF存储目录
+            mkdir -p /opt/food-purchase/backend/uploads/pdfs
+            chmod 755 /opt/food-purchase/backend/uploads/pdfs
+
             sudo systemctl restart food-purchase-backend
             sleep 3
             curl -s http://127.0.0.1:3001/api/health || exit 1
