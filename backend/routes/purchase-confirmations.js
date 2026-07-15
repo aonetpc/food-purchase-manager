@@ -15,6 +15,19 @@ if (!fs.existsSync(PDF_DIR)) {
   fs.mkdirSync(PDF_DIR, { recursive: true });
 }
 
+// 安全数值转换（兼容mysql2 decimal对象）
+function toNum(val) {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val === 'object') {
+    const str = val.String || val.string || val.val || JSON.stringify(val);
+    const n = parseFloat(String(str));
+    return isNaN(n) ? 0 : n;
+  }
+  const n = parseFloat(String(val));
+  return isNaN(n) ? 0 : n;
+}
+
 // 获取确认单列表
 router.get('/', async (req, res) => {
   try {
@@ -40,6 +53,7 @@ router.get('/', async (req, res) => {
     const [rows] = await pool.query(sql, params);
     res.json(rows.map(row => ({
       ...row,
+      total_amount: toNum(row.total_amount),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
     })));
@@ -60,6 +74,7 @@ router.get('/:id', async (req, res) => {
     const row = rows[0];
     res.json({
       ...row,
+      total_amount: toNum(row.total_amount),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
     });
@@ -382,6 +397,7 @@ router.post('/:id/refresh-status', async (req, res) => {
 
     res.json({
       ...updated,
+      total_amount: toNum(updated.total_amount),
       departments: typeof updated.departments === 'string' ? JSON.parse(updated.departments) : updated.departments,
       purchase_items: typeof updated.purchase_items === 'string' ? JSON.parse(updated.purchase_items) : updated.purchase_items,
     });
@@ -447,11 +463,7 @@ async function generateConfirmationPDF(confirmationId) {
     purchaseDateStr = String(row.purchase_date).substring(0, 10);
   }
   doc.text(`采购日期：${purchaseDateStr}`);
-  // 兼容 mysql2 decimal 类型
-  const totalAmt = typeof row.total_amount === 'object' && row.total_amount !== null
-    ? (row.total_amount.String || row.total_amount.string || '0')
-    : String(row.total_amount || '0');
-  doc.text(`总金额：¥${parseFloat(totalAmt).toFixed(2)}`);
+  doc.text(`总金额：¥${toNum(row.total_amount).toFixed(2)}`);
   doc.text(`状态：${row.status === 'confirmed' ? '已确认' : row.status === 'completed' ? '已完成' : row.status}`);
   doc.moveDown();
 
@@ -493,14 +505,14 @@ async function generateConfirmationPDF(confirmationId) {
       x = doc.x;
       doc.text(item.ingredient_name, x, y, { width: colWidths[0] });
       x += colWidths[0];
-      doc.text(`${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`, x, y, { width: colWidths[1] });
+      doc.text(`${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`, x, y, { width: colWidths[1] });
       x += colWidths[1];
       doc.text(String(item.purchase_quantity), x, y, { width: colWidths[2] });
       x += colWidths[2];
       doc.text(item.purchase_unit, x, y, { width: colWidths[3] });
       x += colWidths[3];
-      doc.text(`¥${Number(item.amount).toFixed(2)}`, x, y, { width: colWidths[4] });
-      subtotal += Number(item.amount);
+      doc.text(`¥${toNum(item.amount).toFixed(2)}`, x, y, { width: colWidths[4] });
+      subtotal += toNum(item.amount);
     }
     doc.fontSize(10).text(`小计：¥${subtotal.toFixed(2)}`, { align: 'right' });
     grandTotal += subtotal;
