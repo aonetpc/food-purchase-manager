@@ -84,6 +84,17 @@ export default function ReimbursementManager() {
     }
   };
 
+  const handleInitiateReimbursement = async (id: string) => {
+    if (!window.confirm('确定发起费用报销申请吗？')) return;
+    try {
+      await api.post(`/purchase-confirmations/${id}/resubmit`);
+      showDetail(id);
+      fetchConfirmations();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const handleRefreshStatus = async (id: string) => {
     try {
       const data = await api.post<PurchaseConfirmation>(`/purchase-confirmations/${id}/refresh-status`);
@@ -467,6 +478,15 @@ export default function ReimbursementManager() {
                     >
                       <RefreshCw size={16} />
                       重新发起
+                    </button>
+                  )}
+                  {!detailConfirmation.reimbursement_sp_no && detailConfirmation.status === 'confirmed' && (
+                    <button
+                      onClick={() => handleInitiateReimbursement(detailConfirmation.id)}
+                      className="btn-primary flex items-center gap-2"
+                    >
+                      <ExternalLink size={16} />
+                      发起报销
                     </button>
                   )}
                 </div>

@@ -434,7 +434,7 @@ router.post('/:id/refresh-status', async (req, res) => {
   }
 });
 
-// 重新发起报销
+// 重新发起报销（实际调用企微审批API）
 router.post('/:id/resubmit', async (req, res) => {
   try {
     const { id } = req.params;
@@ -444,14 +444,93 @@ router.post('/:id/resubmit', async (req, res) => {
     }
     const row = rows[0];
 
-    // 更新报销状态为pending
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret || !config.approval_template_id || !config.applicant_userid) {
+      return res.status(400).json({ error: '请先完成企业微信审批配置（审批模板ID和申请人用户ID）' });
+    }
+
+    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+    const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
+
+    const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
+    const reason = reasonTemplate.replace('{date}', row.purchase_date);
+
+    const fieldMapping = config.approval_field_mapping ? JSON.parse(config.approval_field_mapping) : {};
+
+    const contents = [];
+    if (fieldMapping.date) {
+      contents.push({ control: 'Date', id: fieldMapping.date, value: row.purchase_date });
+    }
+    if (fieldMapping.amount) {
+      contents.push({ control: 'Money', id: fieldMapping.amount, value: row.total_amount });
+    }
+    if (fieldMapping.reason) {
+      contents.push({ control: 'Text', id: fieldMapping.reason, value: reason });
+    }
+    if (fieldMapping.department) {
+      const deptNames = departments.map(d => d.name).join('、');
+      contents.push({ control: 'Text', id: fieldMapping.department, value: deptNames });
+    }
+    if (fieldMapping.payee_name && config.payee_name) {
+      contents.push({ control: 'Text', id: fieldMapping.payee_name, value: config.payee_name });
+    }
+    if (fieldMapping.bank_name && config.bank_name) {
+      contents.push({ control: 'Text', id: fieldMapping.bank_name, value: config.bank_name });
+    }
+    if (fieldMapping.bank_account && config.bank_account) {
+      contents.push({ control: 'Text', id: fieldMapping.bank_account, value: config.bank_account });
+    }
+    if (fieldMapping.payment_method && config.default_payment_key) {
+      const paymentOptions = config.payment_options ? JSON.parse(config.payment_options) : {};
+      const paymentLabel = paymentOptions[config.default_payment_key] || config.default_payment_key;
+      contents.push({ control: 'Select', id: fieldMapping.payment_method, value: [paymentLabel] });
+    }
+    if (fieldMapping.details) {
+      let detailText = '';
+      const grouped = {};
+      for (const item of purchaseItems) {
+        const dn = item.department_name || '未分类';
+        if (!grouped[dn]) grouped[dn] = [];
+        grouped[dn].push(item);
+      }
+      for (const [dn, items] of Object.entries(grouped)) {
+        detailText += `【${dn}】\n`;
+        for (const item of items) {
+          detailText += `${item.ingredient_name} ${item.purchase_unit_price}/${item.purchase_unit} ×${item.purchase_quantity} = ¥${Number(item.amount).toFixed(2)}\n`;
+        }
+      }
+      contents.push({ control: 'Textarea', id: fieldMapping.details, value: detailText });
+    }
+
+    const summary_list = [
+      { text: reason, lang: 'zh_CN' },
+      { text: `金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }
+    ];
+
+    const applyData = {
+      creator_userid: config.applicant_userid,
+      template_id: config.approval_template_id,
+      use_template_approver: 1,
+      apply_data: { contents },
+      summary_list
+    };
+
+    const spNo = await submitApproval(config, applyData);
+
     await pool.query(
-      'UPDATE purchase_confirmations SET reimbursement_status = ? WHERE id = ?',
-      ['pending', id]
+      'UPDATE purchase_confirmations SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',
+      ['pending', spNo, 'reimbursing', id]
     );
 
-    // TODO: 实际调用企微审批API重新发起
-    res.json({ success: true, message: '已重新发起报销' });
+    const [updatedRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    const updated = updatedRows[0];
+
+    res.json({
+      ...updated,
+      total_amount: toNum(updated.total_amount),
+      departments: typeof updated.departments === 'string' ? JSON.parse(updated.departments) : updated.departments,
+      purchase_items: typeof updated.purchase_items === 'string' ? JSON.parse(updated.purchase_items) : updated.purchase_items,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
