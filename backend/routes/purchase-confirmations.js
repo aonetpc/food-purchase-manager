@@ -15,11 +15,21 @@ if (!fs.existsSync(PDF_DIR)) {
   fs.mkdirSync(PDF_DIR, { recursive: true });
 }
 
-// 中文字体路径
-const FONT_PATH = {
-  regular: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' || '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-  bold: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' || '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-};
+function findChineseFont() {
+  const paths = [
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf',
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Bold.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
 
 // 安全数值转换（兼容mysql2 decimal对象）
 function toNum(val) {
@@ -454,10 +464,11 @@ async function generateConfirmationPDF(confirmationId) {
   doc.pipe(writeStream);
 
   // 注册中文字体
-  const hasChineseFont = fs.existsSync(FONT_PATH.regular);
+  const chineseFont = findChineseFont();
+  const hasChineseFont = chineseFont && !chineseFont.endsWith('.ttc');
   if (hasChineseFont) {
-    doc.registerFont('Chinese-Regular', FONT_PATH.regular);
-    doc.registerFont('Chinese-Bold', FONT_PATH.bold);
+    doc.registerFont('Chinese-Regular', chineseFont);
+    doc.registerFont('Chinese-Bold', chineseFont);
   }
 
   // 标题
