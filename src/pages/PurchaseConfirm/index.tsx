@@ -252,7 +252,7 @@ export default function PurchaseConfirmPage() {
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-500">总金额</p>
-              <p className="font-bold text-primary-600 text-lg">{formatCurrency(parseFloat(data.total_amount))}</p>
+              <p className="font-bold text-primary-600 text-lg">{formatCurrency(Number(data.total_amount) || 0)}</p>
             </div>
           </div>
           {allConfirmed && (

@@ -110,9 +110,14 @@ export default function ReimbursementManager() {
   };
 
   // 统计数据
+  const safeParseFloat = (val: any): number => {
+    const n = parseFloat(val);
+    return isNaN(n) ? 0 : n;
+  };
+
   const stats = {
     total: confirmations.length,
-    totalAmount: confirmations.reduce((sum, c) => sum + parseFloat(c.total_amount), 0),
+    totalAmount: confirmations.reduce((sum, c) => sum + safeParseFloat(c.total_amount), 0),
     approved: confirmations.filter(c => c.reimbursement_status === 'approved'),
     pending: confirmations.filter(c => c.reimbursement_status === 'pending'),
     rejected: confirmations.filter(c => c.reimbursement_status === 'rejected'),
@@ -214,7 +219,7 @@ export default function ReimbursementManager() {
             <p className="text-sm text-gray-500">已通过</p>
           </div>
           <p className="text-2xl font-bold text-green-600">{stats.approved.length}</p>
-          <p className="text-xs text-gray-400 mt-1">{formatCurrency(stats.approved.reduce((s, c) => s + parseFloat(c.total_amount), 0))}</p>
+          <p className="text-xs text-gray-400 mt-1">{formatCurrency(stats.approved.reduce((s, c) => s + safeParseFloat(c.total_amount), 0))}</p>
         </div>
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-1">
@@ -222,7 +227,7 @@ export default function ReimbursementManager() {
             <p className="text-sm text-gray-500">待审批</p>
           </div>
           <p className="text-2xl font-bold text-yellow-600">{stats.pending.length}</p>
-          <p className="text-xs text-gray-400 mt-1">{formatCurrency(stats.pending.reduce((s, c) => s + parseFloat(c.total_amount), 0))}</p>
+          <p className="text-xs text-gray-400 mt-1">{formatCurrency(stats.pending.reduce((s, c) => s + safeParseFloat(c.total_amount), 0))}</p>
         </div>
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-1">
@@ -230,7 +235,7 @@ export default function ReimbursementManager() {
             <p className="text-sm text-gray-500">已拒绝</p>
           </div>
           <p className="text-2xl font-bold text-red-600">{stats.rejected.length}</p>
-          <p className="text-xs text-gray-400 mt-1">{formatCurrency(stats.rejected.reduce((s, c) => s + parseFloat(c.total_amount), 0))}</p>
+          <p className="text-xs text-gray-400 mt-1">{formatCurrency(stats.rejected.reduce((s, c) => s + safeParseFloat(c.total_amount), 0))}</p>
         </div>
       </div>
 
@@ -265,7 +270,7 @@ export default function ReimbursementManager() {
                     <tr key={c.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 text-gray-700">{formatDate(c.purchase_date)}</td>
                       <td className="px-4 py-3 text-gray-700">{formatDate(c.purchase_date)}食材采购费用</td>
-                      <td className="px-4 py-3 text-right font-medium text-gray-800">{formatCurrency(parseFloat(c.total_amount))}</td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-800">{formatCurrency(safeParseFloat(c.total_amount))}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(c.reimbursement_status)}`}>
                           {getStatusIcon(c.reimbursement_status)}
@@ -346,7 +351,7 @@ export default function ReimbursementManager() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">付款金额</p>
-                  <p className="font-medium text-primary-600">{formatCurrency(parseFloat(detailConfirmation.total_amount))}</p>
+                  <p className="font-medium text-primary-600">{formatCurrency(safeParseFloat(detailConfirmation.total_amount))}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">状态</p>

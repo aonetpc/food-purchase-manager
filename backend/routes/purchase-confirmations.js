@@ -437,7 +437,16 @@ async function generateConfirmationPDF(confirmationId) {
 
   // 基本信息
   doc.fontSize(12).font('Helvetica');
-  doc.text(`采购日期：${row.purchase_date.toISOString ? row.purchase_date.toISOString().substring(0, 10) : String(row.purchase_date).substring(0, 10)}`);
+  // 兼容不同格式的日期
+  let purchaseDateStr = '';
+  if (row.purchase_date instanceof Date) {
+    purchaseDateStr = row.purchase_date.toISOString().substring(0, 10);
+  } else if (typeof row.purchase_date === 'string') {
+    purchaseDateStr = row.purchase_date.substring(0, 10);
+  } else {
+    purchaseDateStr = String(row.purchase_date).substring(0, 10);
+  }
+  doc.text(`采购日期：${purchaseDateStr}`);
   doc.text(`总金额：¥${Number(row.total_amount).toFixed(2)}`);
   doc.text(`状态：${row.status === 'confirmed' ? '已确认' : row.status === 'completed' ? '已完成' : row.status}`);
   doc.moveDown();
@@ -541,6 +550,18 @@ router.post('/:id/generate-pdf', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // 先检查所有部门是否已确认
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+    const row = rows[0];
+    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+    const allConfirmed = departments.every(d => d.confirmed);
+    if (!allConfirmed) {
+      return res.status(400).json({ error: '请等待所有部门确认完成后再生成PDF' });
+    }
+
     const pdfPath = await generateConfirmationPDF(id);
     const pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
 
@@ -549,8 +570,8 @@ router.post('/:id/generate-pdf', async (req, res) => {
 
     res.json({ success: true, pdf_url: pdfUrl });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+    console.error('PDF生成失败:', err);
+    res.status(500).json({ error: err.message || 'PDF生成失败' });
   }
 });
 
