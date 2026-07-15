@@ -135,8 +135,8 @@ export default function WecomManager() {
     setError('');
     try {
       const data = await api.get<any>(`/wecom/approval-template/${config.approval_template_id}`);
-      // 企微API返回的结构: data.template.template_content.controls
-      const controls = data.template?.template_content?.controls || data.template?.controls || data.controls || [];
+      // 企微API返回的结构: data.template_content.controls
+      const controls = data.template_content?.controls || data.controls || [];
       const controlList: TemplateControl[] = [];
       for (const ctrl of controls) {
         const property = ctrl.property || ctrl;
