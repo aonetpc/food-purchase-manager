@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to server
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -308,6 +308,52 @@ jobs:
               PREPARE alterIfNotExists FROM @preparedStatement;
               EXECUTE alterIfNotExists;
               DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：给 purchase_confirmations 表添加 reimbursement_sp_no 字段（如果不存在）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'purchase_confirmations';
+              SET @columnname = 'reimbursement_sp_no';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100)')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：给 purchase_confirmations 表添加 approval_detail 字段（如果不存在）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'purchase_confirmations';
+              SET @columnname = 'approval_detail';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：更新 status 字段添加 'reimbursing' 值
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              ALTER TABLE purchase_confirmations MODIFY COLUMN status ENUM('pending','confirmed','rejected','completed','reimbursed','reimbursing') DEFAULT 'pending';
+            " 2>/dev/null || true
+
+            # 数据库迁移：更新 reimbursement_status 字段添加 'processing' 值
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              ALTER TABLE purchase_confirmations MODIFY COLUMN reimbursement_status ENUM('pending','approved','rejected','processing','null') DEFAULT 'pending';
             " 2>/dev/null || true
 
             # 创建PDF存储目录
