@@ -116,13 +116,29 @@ async function getApprovalDetail(config, spNo) {
 async function uploadMedia(config, filePath, fileName) {
   const accessToken = await getAccessToken(config);
   const fs = require('fs');
-  const formData = new FormData();
   const fileBuffer = fs.readFileSync(filePath);
-  formData.append('media', new Blob([fileBuffer]), fileName);
+  
+  const boundary = '----WeComBoundary' + Date.now();
+  const crlf = '\r\n';
+  
+  const parts = [];
+  parts.push(`--${boundary}`);
+  parts.push(`Content-Disposition: form-data; name="media"; filename="${fileName}"`);
+  parts.push('Content-Type: application/octet-stream');
+  parts.push('');
+  parts.push(fileBuffer);
+  parts.push(`--${boundary}--`);
+  parts.push('');
+  
+  const body = Buffer.concat(parts.map(p => typeof p === 'string' ? Buffer.from(p + crlf) : p));
   
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token=${accessToken}&type=file`, {
     method: 'POST',
-    body: formData
+    headers: {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': body.length
+    },
+    body: body
   });
   const data = await res.json();
   if (data.errcode !== 0) throw new Error(data.errmsg || '上传文件失败');

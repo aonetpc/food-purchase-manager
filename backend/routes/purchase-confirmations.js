@@ -392,13 +392,11 @@ router.post('/:id/confirm', async (req, res) => {
             creator_userid: config.applicant_userid,
             template_id: config.approval_template_id,
             use_template_approver: 1,
-            apply_data: {
-              contents,
-              summary_list: [
-                { text: reason, lang: 'zh_CN' },
-                { text: `金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }
-              ]
-            }
+            apply_data: { contents },
+            summary_list: [
+              { text: reason, lang: 'zh_CN' },
+              { text: `金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }
+            ]
           };
 
           reimbursementSpNo = await submitApproval(config, applyData);
@@ -460,10 +458,18 @@ router.post('/:id/refresh-status', async (req, res) => {
       return res.status(400).json({ error: '请先完成企业微信应用配置' });
     }
 
-    const detail = await getApprovalDetail(config, row.reimbursement_sp_no);
-    const info = detail.info || {};
-    const spStatus = info.sp_status;
-    const spRecord = info.sp_record || [];
+    let detail = null;
+    let spStatus = null;
+    let spRecord = [];
+    try {
+      detail = await getApprovalDetail(config, row.reimbursement_sp_no);
+      const info = detail.info || {};
+      spStatus = info.sp_status;
+      spRecord = info.sp_record || [];
+    } catch (detailErr) {
+      console.error('查询审批详情失败:', detailErr);
+      return res.status(400).json({ error: `查询审批状态失败：${detailErr.message}。请在企业微信管理后台为应用开启"审批"权限。` });
+    }
 
     let newReimburseStatus = row.reimbursement_status;
     let newStatus = row.status;
@@ -696,13 +702,11 @@ router.post('/:id/resubmit', async (req, res) => {
       creator_userid: String(config.applicant_userid),
       template_id: String(config.approval_template_id),
       use_template_approver: 1,
-      apply_data: {
-        contents,
-        summary_list: [
-          { text: String(reason), lang: 'zh_CN' },
-          { text: `金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }
-        ]
-      }
+      apply_data: { contents },
+      summary_list: [
+        { text: String(reason), lang: 'zh_CN' },
+        { text: `金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }
+      ]
     };
 
     console.log('发起报销 applyData:', JSON.stringify(applyData));
