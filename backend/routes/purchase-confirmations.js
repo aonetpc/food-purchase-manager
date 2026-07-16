@@ -302,11 +302,13 @@ router.post('/:id/confirm', async (req, res) => {
 
           const contents = [];
           if (fieldMapping.date) {
-            contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
+            const purchaseDate = new Date(row.purchase_date);
+            const sTimestamp = Math.floor(purchaseDate.getTime() / 1000);
+            contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(sTimestamp) } } });
           }
           if (fieldMapping.amount) {
             const amountVal = toNum(row.total_amount);
-            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: String(Math.round(amountVal * 100)), currency: 'CNY' } });
+            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: String(Math.round(amountVal * 100)) } });
           }
           if (fieldMapping.reason) {
             contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
@@ -334,7 +336,7 @@ router.post('/:id/confirm', async (req, res) => {
               }
             }
             const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
-            contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { key: String(config.default_payment_key), value: [{ text: paymentLabel }] } });
+            contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
           }
           if (fieldMapping.details) {
             let detailText = '';
@@ -584,10 +586,12 @@ router.post('/:id/resubmit', async (req, res) => {
     }
 
     if (fieldMapping.date) {
-      contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
+      const purchaseDate = new Date(row.purchase_date);
+      const sTimestamp = Math.floor(purchaseDate.getTime() / 1000);
+      contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(sTimestamp) } } });
     }
     if (fieldMapping.amount) {
-      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: String(Math.round(totalAmount * 100)), currency: 'CNY' } });
+      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: String(Math.round(totalAmount * 100)) } });
     }
     if (fieldMapping.reason) {
       contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
@@ -615,7 +619,7 @@ router.post('/:id/resubmit', async (req, res) => {
         }
       }
       const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
-      contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { key: String(config.default_payment_key), value: [{ text: paymentLabel }] } });
+      contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
     }
     if (fieldMapping.details) {
       let detailText = '';
