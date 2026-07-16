@@ -395,9 +395,9 @@ router.post('/:id/confirm', async (req, res) => {
             use_template_approver: 1,
             apply_data: { contents },
             summary_list: [
-              { text: `付款事由：${reason}`, lang: 'zh_CN' },
-              { text: `付款金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' },
-              { text: `付款方式：${paymentLabel || '转账'}`, lang: 'zh_CN' }
+              { summary_info: [{ text: `付款事由：${reason}`, lang: 'zh_CN' }] },
+              { summary_info: [{ text: `付款金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }] },
+              { summary_info: [{ text: `付款方式：${paymentLabel || '转账'}`, lang: 'zh_CN' }] }
             ]
           };
 
@@ -724,9 +724,9 @@ router.post('/:id/resubmit', async (req, res) => {
       use_template_approver: 1,
       apply_data: { contents },
       summary_list: [
-        { text: `付款事由：${reason}`, lang: 'zh_CN' },
-        { text: `付款金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' },
-        { text: `付款方式：${paymentLabel || '转账'}`, lang: 'zh_CN' }
+        { summary_info: [{ text: `付款事由：${reason}`, lang: 'zh_CN' }] },
+        { summary_info: [{ text: `付款金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }] },
+        { summary_info: [{ text: `付款方式：${paymentLabel || '转账'}`, lang: 'zh_CN' }] }
       ]
     };
 
