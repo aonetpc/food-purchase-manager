@@ -366,26 +366,25 @@ router.post('/:id/confirm', async (req, res) => {
             contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
           }
 
-          // 上传PDF附件
-          if (fieldMapping.attachment && pdfUrl) {
-            try {
-              const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
-              if (fs.existsSync(pdfPath)) {
-                const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
-                contents.push({
-                  control: getControlType('attachment', 'Attachment'),
-                  id: fieldMapping.attachment,
-                  value: {
-                    files: [{
-                      file_id: mediaId,
-                      filename: `采购确认单_${id}.pdf`
-                    }]
-                  }
-                });
-              }
-            } catch (uploadErr) {
-              console.error('上传PDF附件失败:', uploadErr);
+          // 上传PDF附件（自动查找File类型控件）
+          try {
+            const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
+            const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([cid, ctype]) => ctype === 'File')?.[0];
+            if (fileControlId && fs.existsSync(pdfPath)) {
+              const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
+              contents.push({
+                control: controlTypeMap[fileControlId] || 'File',
+                id: fileControlId,
+                value: {
+                  files: [{
+                    file_id: mediaId,
+                    filename: `采购确认单_${id}.pdf`
+                  }]
+                }
+              });
             }
+          } catch (uploadErr) {
+            console.error('上传PDF附件失败:', uploadErr);
           }
 
           const applyData = {
@@ -687,26 +686,25 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
     }
 
-    // 上传PDF附件
-    if (fieldMapping.attachment) {
-      try {
-        const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
-        if (fs.existsSync(pdfPath)) {
-          const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
-          contents.push({
-            control: getControlType('attachment', 'Attachment'),
-            id: fieldMapping.attachment,
-            value: {
-              files: [{
-                file_id: mediaId,
-                filename: `采购确认单_${id}.pdf`
-              }]
-            }
-          });
-        }
-      } catch (uploadErr) {
-        console.error('上传PDF附件失败:', uploadErr);
+    // 上传PDF附件（自动查找File类型控件）
+    try {
+      const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
+      const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([cid, ctype]) => ctype === 'File')?.[0];
+      if (fileControlId && fs.existsSync(pdfPath)) {
+        const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
+        contents.push({
+          control: controlTypeMap[fileControlId] || 'File',
+          id: fileControlId,
+          value: {
+            files: [{
+              file_id: mediaId,
+              filename: `采购确认单_${id}.pdf`
+            }]
+          }
+        });
       }
+    } catch (uploadErr) {
+      console.error('上传PDF附件失败:', uploadErr);
     }
 
     const applyData = {
@@ -721,8 +719,6 @@ router.post('/:id/resubmit', async (req, res) => {
     };
 
     console.log('发起报销 applyData:', JSON.stringify(applyData));
-    console.log('字段映射:', JSON.stringify(fieldMapping));
-    console.log('PDF路径:', path.join(PDF_DIR, `${id}.pdf`), '存在:', fs.existsSync(path.join(PDF_DIR, `${id}.pdf`)));
 
     const spNo = await submitApproval(config, applyData);
 

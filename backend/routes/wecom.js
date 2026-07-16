@@ -116,21 +116,25 @@ async function getApprovalDetail(config, spNo) {
 async function uploadMedia(config, filePath, fileName) {
   const accessToken = await getAccessToken(config);
   const fs = require('fs');
+  const path = require('path');
   const fileBuffer = fs.readFileSync(filePath);
+  const ext = path.extname(fileName).toLowerCase();
+  const mimeType = ext === '.pdf' ? 'application/pdf' : 'application/octet-stream';
   
   const boundary = '----WeComBoundary' + Date.now();
   const crlf = '\r\n';
   
-  const parts = [];
-  parts.push(`--${boundary}`);
-  parts.push(`Content-Disposition: form-data; name="media"; filename="${fileName}"`);
-  parts.push('Content-Type: application/octet-stream');
-  parts.push('');
-  parts.push(fileBuffer);
-  parts.push(`--${boundary}--`);
-  parts.push('');
+  const prefix = Buffer.from([
+    `--${boundary}`,
+    `Content-Disposition: form-data; name="media"; filename="${fileName}"`,
+    `Content-Type: ${mimeType}`,
+    '',
+    ''
+  ].join(crlf));
   
-  const body = Buffer.concat(parts.map(p => typeof p === 'string' ? Buffer.from(p + crlf) : p));
+  const suffix = Buffer.from(crlf + `--${boundary}--` + crlf);
+  
+  const body = Buffer.concat([prefix, fileBuffer, suffix]);
   
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token=${accessToken}&type=file`, {
     method: 'POST',
@@ -141,6 +145,7 @@ async function uploadMedia(config, filePath, fileName) {
     body: body
   });
   const data = await res.json();
+  console.log('上传文件响应:', JSON.stringify(data));
   if (data.errcode !== 0) throw new Error(data.errmsg || '上传文件失败');
   return data.media_id;
 }
