@@ -546,11 +546,23 @@ router.post('/:id/resubmit', async (req, res) => {
     const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
     let displayDate = '';
     if (row.purchase_date instanceof Date) {
-      displayDate = row.purchase_date.toISOString().substring(0, 10);
+      const d = row.purchase_date;
+      displayDate = `${(d.getMonth() + 1).toString().padStart(2, '0')}月${d.getDate().toString().padStart(2, '0')}日`;
     } else if (typeof row.purchase_date === 'string') {
-      displayDate = row.purchase_date.substring(0, 10);
+      const parts = row.purchase_date.substring(0, 10).split('-');
+      if (parts.length === 3) {
+        displayDate = `${parts[1]}月${parts[2]}日`;
+      } else {
+        displayDate = row.purchase_date.substring(0, 10);
+      }
     } else {
-      displayDate = String(row.purchase_date).substring(0, 10);
+      const str = String(row.purchase_date).substring(0, 10);
+      const parts = str.split('-');
+      if (parts.length === 3) {
+        displayDate = `${parts[1]}月${parts[2]}日`;
+      } else {
+        displayDate = str;
+      }
     }
     const reason = reasonTemplate.replace('{date}', displayDate);
 
@@ -674,7 +686,7 @@ router.post('/:id/resubmit', async (req, res) => {
           paymentOptions = config.payment_options;
         }
       }
-      paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
+      paymentLabel = String(paymentOptions[config.default_payment_key] || '转账');
       contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
     }
     if (fieldMapping.details) {
