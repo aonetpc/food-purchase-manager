@@ -264,7 +264,15 @@ router.post('/:id/confirm', async (req, res) => {
         try {
           const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
           const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
-          const reason = reasonTemplate.replace('{date}', String(row.purchase_date));
+          let displayDate = '';
+          if (row.purchase_date instanceof Date) {
+            displayDate = row.purchase_date.toISOString().substring(0, 10);
+          } else if (typeof row.purchase_date === 'string') {
+            displayDate = row.purchase_date.substring(0, 10);
+          } else {
+            displayDate = String(row.purchase_date).substring(0, 10);
+          }
+          const reason = reasonTemplate.replace('{date}', displayDate);
 
           let fieldMapping = {};
           if (config.approval_field_mapping) {
@@ -499,7 +507,15 @@ router.post('/:id/resubmit', async (req, res) => {
 
     const totalAmount = toNum(row.total_amount);
     const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
-    const reason = reasonTemplate.replace('{date}', String(row.purchase_date));
+    let displayDate = '';
+    if (row.purchase_date instanceof Date) {
+      displayDate = row.purchase_date.toISOString().substring(0, 10);
+    } else if (typeof row.purchase_date === 'string') {
+      displayDate = row.purchase_date.substring(0, 10);
+    } else {
+      displayDate = String(row.purchase_date).substring(0, 10);
+    }
+    const reason = reasonTemplate.replace('{date}', displayDate);
 
     let fieldMapping = {};
     if (config.approval_field_mapping) {
