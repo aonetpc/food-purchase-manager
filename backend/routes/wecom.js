@@ -113,6 +113,22 @@ async function getApprovalDetail(config, spNo) {
   return data;
 }
 
+async function uploadMedia(config, filePath, fileName) {
+  const accessToken = await getAccessToken(config);
+  const fs = require('fs');
+  const formData = new FormData();
+  const fileBuffer = fs.readFileSync(filePath);
+  formData.append('media', new Blob([fileBuffer]), fileName);
+  
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token=${accessToken}&type=file`, {
+    method: 'POST',
+    body: formData
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '上传文件失败');
+  return data.media_id;
+}
+
 function sha1(str) {
   return crypto.createHash('sha1').update(str).digest('hex');
 }
@@ -452,3 +468,4 @@ module.exports.sendViaWebhook = sendViaWebhook;
 module.exports.getApprovalTemplateDetail = getApprovalTemplateDetail;
 module.exports.submitApproval = submitApproval;
 module.exports.getApprovalDetail = getApprovalDetail;
+module.exports.uploadMedia = uploadMedia;

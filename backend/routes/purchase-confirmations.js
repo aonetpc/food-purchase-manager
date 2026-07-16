@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const pool = require('../db');
-const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, submitApproval, getApprovalDetail } = require('./wecom');
+const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, submitApproval, getApprovalDetail, uploadMedia } = require('./wecom');
 
 // PDF存储目录
 const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
@@ -316,7 +316,7 @@ router.post('/:id/confirm', async (req, res) => {
           }
           if (fieldMapping.amount) {
             const amountVal = toNum(row.total_amount);
-            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: String(Math.round(amountVal * 100)) } });
+            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: amountVal.toFixed(2) } });
           }
           if (fieldMapping.reason) {
             contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
@@ -366,17 +366,39 @@ router.post('/:id/confirm', async (req, res) => {
             contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
           }
 
-          const summary_list = [
-            { text: reason, lang: 'zh_CN' },
-            { text: `金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }
-          ];
+          // 上传PDF附件
+          if (fieldMapping.attachment && pdfUrl) {
+            try {
+              const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
+              if (fs.existsSync(pdfPath)) {
+                const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
+                contents.push({
+                  control: getControlType('attachment', 'Attachment'),
+                  id: fieldMapping.attachment,
+                  value: {
+                    files: [{
+                      file_id: mediaId,
+                      filename: `采购确认单_${id}.pdf`
+                    }]
+                  }
+                });
+              }
+            } catch (uploadErr) {
+              console.error('上传PDF附件失败:', uploadErr);
+            }
+          }
 
           const applyData = {
             creator_userid: config.applicant_userid,
             template_id: config.approval_template_id,
             use_template_approver: 1,
-            apply_data: { contents },
-            summary_list
+            apply_data: {
+              contents,
+              summary_list: [
+                { text: reason, lang: 'zh_CN' },
+                { text: `金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }
+              ]
+            }
           };
 
           reimbursementSpNo = await submitApproval(config, applyData);
@@ -585,15 +607,6 @@ router.post('/:id/resubmit', async (req, res) => {
       }
     }
 
-    // 调试：打印金额控件的完整配置
-    if (tplData.template_content && tplData.template_content.controls) {
-      for (const ctrl of tplData.template_content.controls) {
-        if (ctrl.property && ctrl.property.id === fieldMapping.amount) {
-          console.log('金额控件完整配置:', JSON.stringify(ctrl.property));
-        }
-      }
-    }
-
     const contents = [];
 
     function getControlType(fieldKey, fallback) {
@@ -607,7 +620,7 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(sTimestamp) } } });
     }
     if (fieldMapping.amount) {
-      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: String(Math.round(totalAmount * 100)) } });
+      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: totalAmount.toFixed(2) } });
     }
     if (fieldMapping.reason) {
       contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
@@ -657,17 +670,39 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
     }
 
-    const summary_list = [
-      { text: String(reason), lang: 'zh_CN' },
-      { text: `金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }
-    ];
+    // 上传PDF附件
+    if (fieldMapping.attachment) {
+      try {
+        const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
+        if (fs.existsSync(pdfPath)) {
+          const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
+          contents.push({
+            control: getControlType('attachment', 'Attachment'),
+            id: fieldMapping.attachment,
+            value: {
+              files: [{
+                file_id: mediaId,
+                filename: `采购确认单_${id}.pdf`
+              }]
+            }
+          });
+        }
+      } catch (uploadErr) {
+        console.error('上传PDF附件失败:', uploadErr);
+      }
+    }
 
     const applyData = {
       creator_userid: String(config.applicant_userid),
       template_id: String(config.approval_template_id),
       use_template_approver: 1,
-      apply_data: { contents },
-      summary_list
+      apply_data: {
+        contents,
+        summary_list: [
+          { text: String(reason), lang: 'zh_CN' },
+          { text: `金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }
+        ]
+      }
     };
 
     console.log('发起报销 applyData:', JSON.stringify(applyData));
