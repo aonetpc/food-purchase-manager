@@ -275,29 +275,54 @@ router.post('/:id/confirm', async (req, res) => {
             }
           }
 
+          // 获取模板详情以确定控件实际类型
+          const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+          const tokenData = await tokenRes.json();
+          let controlTypeMap = {};
+          if (tokenData.access_token) {
+            const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ template_id: config.approval_template_id })
+            });
+            const tplData = await tplRes.json();
+            if (tplData.errcode === 0 && tplData.template_content && tplData.template_content.controls) {
+              for (const ctrl of tplData.template_content.controls) {
+                if (ctrl.property && ctrl.property.id && ctrl.property.control) {
+                  controlTypeMap[ctrl.property.id] = ctrl.property.control;
+                }
+              }
+            }
+          }
+
+          function getControlType(fieldKey, fallback) {
+            const mappedId = fieldMapping[fieldKey];
+            return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
+          }
+
           const contents = [];
           if (fieldMapping.date) {
-            contents.push({ control: 'Date', id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
+            contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
           }
           if (fieldMapping.amount) {
             const amountVal = toNum(row.total_amount);
-            contents.push({ control: 'Money', id: fieldMapping.amount, value: { amount: Math.round(amountVal * 100), currency: 'CNY' } });
+            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: Math.round(amountVal * 100), currency: 'CNY' } });
           }
           if (fieldMapping.reason) {
-            contents.push({ control: 'Text', id: fieldMapping.reason, value: { value: String(reason) } });
+            contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { value: String(reason) } });
           }
           if (fieldMapping.department) {
             const deptNames = departments.map(d => String(d.name)).join('、');
-            contents.push({ control: 'Text', id: fieldMapping.department, value: { value: deptNames } });
+            contents.push({ control: getControlType('department', 'Text'), id: fieldMapping.department, value: { value: deptNames } });
           }
           if (fieldMapping.payee_name && config.payee_name) {
-            contents.push({ control: 'Text', id: fieldMapping.payee_name, value: { value: String(config.payee_name) } });
+            contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { value: String(config.payee_name) } });
           }
           if (fieldMapping.bank_name && config.bank_name) {
-            contents.push({ control: 'Text', id: fieldMapping.bank_name, value: { value: String(config.bank_name) } });
+            contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { value: String(config.bank_name) } });
           }
           if (fieldMapping.bank_account && config.bank_account) {
-            contents.push({ control: 'Text', id: fieldMapping.bank_account, value: { value: String(config.bank_account) } });
+            contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { value: String(config.bank_account) } });
           }
           if (fieldMapping.payment_method && config.default_payment_key) {
             let paymentOptions = {};
@@ -309,7 +334,7 @@ router.post('/:id/confirm', async (req, res) => {
               }
             }
             const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
-            contents.push({ control: 'Select', id: fieldMapping.payment_method, value: { key: String(config.default_payment_key), value: [paymentLabel] } });
+            contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { key: String(config.default_payment_key), value: [paymentLabel] } });
           }
           if (fieldMapping.details) {
             let detailText = '';
@@ -328,7 +353,7 @@ router.post('/:id/confirm', async (req, res) => {
                 detailText += `${item.ingredient_name} ${price}/${item.purchase_unit} ×${qty} = ¥${amt.toFixed(2)}\n`;
               }
             }
-            contents.push({ control: 'Textarea', id: fieldMapping.details, value: { value: detailText } });
+            contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { value: detailText } });
           }
 
           const summary_list = [
@@ -532,28 +557,44 @@ router.post('/:id/resubmit', async (req, res) => {
       return res.status(400).json({ error: `审批模板存在必填字段未配置映射：${missingNames}，请在企业微信管理页面配置` });
     }
 
+    // 构建控件ID到实际类型的映射
+    const controlTypeMap = {};
+    if (tplData.template_content && tplData.template_content.controls) {
+      for (const ctrl of tplData.template_content.controls) {
+        if (ctrl.property && ctrl.property.id && ctrl.property.control) {
+          controlTypeMap[ctrl.property.id] = ctrl.property.control;
+        }
+      }
+    }
+
     const contents = [];
+
+    function getControlType(fieldKey, fallback) {
+      const mappedId = fieldMapping[fieldKey];
+      return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
+    }
+
     if (fieldMapping.date) {
-      contents.push({ control: 'Date', id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
+      contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
     }
     if (fieldMapping.amount) {
-      contents.push({ control: 'Money', id: fieldMapping.amount, value: { amount: Math.round(totalAmount * 100), currency: 'CNY' } });
+      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: Math.round(totalAmount * 100), currency: 'CNY' } });
     }
     if (fieldMapping.reason) {
-      contents.push({ control: 'Text', id: fieldMapping.reason, value: { value: String(reason) } });
+      contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { value: String(reason) } });
     }
     if (fieldMapping.department) {
       const deptNames = departments.map(d => String(d.name)).join('、');
-      contents.push({ control: 'Text', id: fieldMapping.department, value: { value: deptNames } });
+      contents.push({ control: getControlType('department', 'Text'), id: fieldMapping.department, value: { value: deptNames } });
     }
     if (fieldMapping.payee_name && config.payee_name) {
-      contents.push({ control: 'Text', id: fieldMapping.payee_name, value: { value: String(config.payee_name) } });
+      contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { value: String(config.payee_name) } });
     }
     if (fieldMapping.bank_name && config.bank_name) {
-      contents.push({ control: 'Text', id: fieldMapping.bank_name, value: { value: String(config.bank_name) } });
+      contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { value: String(config.bank_name) } });
     }
     if (fieldMapping.bank_account && config.bank_account) {
-      contents.push({ control: 'Text', id: fieldMapping.bank_account, value: { value: String(config.bank_account) } });
+      contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { value: String(config.bank_account) } });
     }
     if (fieldMapping.payment_method && config.default_payment_key) {
       let paymentOptions = {};
@@ -565,7 +606,7 @@ router.post('/:id/resubmit', async (req, res) => {
         }
       }
       const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
-      contents.push({ control: 'Select', id: fieldMapping.payment_method, value: { key: String(config.default_payment_key), value: [paymentLabel] } });
+      contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { key: String(config.default_payment_key), value: [paymentLabel] } });
     }
     if (fieldMapping.details) {
       let detailText = '';
@@ -584,7 +625,7 @@ router.post('/:id/resubmit', async (req, res) => {
           detailText += `${String(item.ingredient_name)} ${price}/${String(item.purchase_unit)} ×${qty} = ¥${amt.toFixed(2)}\n`;
         }
       }
-      contents.push({ control: 'Textarea', id: fieldMapping.details, value: { value: detailText } });
+      contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { value: detailText } });
     }
 
     const summary_list = [
