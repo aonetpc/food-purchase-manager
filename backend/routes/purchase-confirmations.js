@@ -300,8 +300,15 @@ router.post('/:id/confirm', async (req, res) => {
             contents.push({ control: 'Text', id: fieldMapping.bank_account, value: String(config.bank_account) });
           }
           if (fieldMapping.payment_method && config.default_payment_key) {
-            const paymentOptions = config.payment_options ? JSON.parse(config.payment_options) : {};
-            const paymentLabel = paymentOptions[config.default_payment_key] || config.default_payment_key;
+            let paymentOptions = {};
+            if (config.payment_options) {
+              if (typeof config.payment_options === 'string') {
+                try { paymentOptions = JSON.parse(config.payment_options); } catch (e) { paymentOptions = {}; }
+              } else if (typeof config.payment_options === 'object') {
+                paymentOptions = config.payment_options;
+              }
+            }
+            const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
             contents.push({ control: 'Select', id: fieldMapping.payment_method, value: [paymentLabel] });
           }
           if (fieldMapping.details) {
@@ -520,7 +527,14 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: 'Text', id: fieldMapping.bank_account, value: String(config.bank_account) });
     }
     if (fieldMapping.payment_method && config.default_payment_key) {
-      const paymentOptions = config.payment_options ? JSON.parse(config.payment_options) : {};
+      let paymentOptions = {};
+      if (config.payment_options) {
+        if (typeof config.payment_options === 'string') {
+          try { paymentOptions = JSON.parse(config.payment_options); } catch (e) { paymentOptions = {}; }
+        } else if (typeof config.payment_options === 'object') {
+          paymentOptions = config.payment_options;
+        }
+      }
       const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
       contents.push({ control: 'Select', id: fieldMapping.payment_method, value: [paymentLabel] });
     }
