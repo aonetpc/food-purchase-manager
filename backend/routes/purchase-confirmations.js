@@ -574,6 +574,17 @@ router.post('/:id/resubmit', async (req, res) => {
       return res.status(400).json({ error: '获取模板详情失败: ' + tplData.errmsg });
     }
 
+    // 调试：打印模板控件列表
+    if (tplData.template_content && tplData.template_content.controls) {
+      const controlList = tplData.template_content.controls.map(ctrl => ({
+        id: ctrl.property?.id,
+        control: ctrl.property?.control,
+        title: ctrl.property?.title?.[0]?.text || '',
+        require: ctrl.property?.require
+      }));
+      console.log('模板控件列表:', JSON.stringify(controlList));
+    }
+
     const requiredControls = [];
     if (tplData.template_content && tplData.template_content.controls) {
       for (const ctrl of tplData.template_content.controls) {
@@ -710,6 +721,8 @@ router.post('/:id/resubmit', async (req, res) => {
     };
 
     console.log('发起报销 applyData:', JSON.stringify(applyData));
+    console.log('字段映射:', JSON.stringify(fieldMapping));
+    console.log('PDF路径:', path.join(PDF_DIR, `${id}.pdf`), '存在:', fs.existsSync(path.join(PDF_DIR, `${id}.pdf`)));
 
     const spNo = await submitApproval(config, applyData);
 
