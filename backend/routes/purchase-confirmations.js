@@ -470,22 +470,6 @@ router.post('/:id/resubmit', async (req, res) => {
     const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
     const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
 
-    // 递归清理所有 Decimal 对象
-    function cleanValue(v) {
-      if (v === null || v === undefined) return v;
-      if (typeof v === 'number') return isNaN(v) ? 0 : v;
-      if (typeof v === 'object') {
-        if (v.String !== undefined || v.string !== undefined) {
-          return parseFloat(String(v.String || v.string)) || 0;
-        }
-        if (v.toString && v.toString !== Object.prototype.toString) {
-          return v.toString();
-        }
-        return JSON.stringify(v);
-      }
-      return v;
-    }
-
     const totalAmount = toNum(row.total_amount);
     const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
     const reason = reasonTemplate.replace('{date}', String(row.purchase_date));
@@ -501,6 +485,51 @@ router.post('/:id/resubmit', async (req, res) => {
       } else if (typeof config.approval_field_mapping === 'object') {
         fieldMapping = config.approval_field_mapping;
       }
+    }
+
+    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) {
+      return res.status(400).json({ error: '获取企微Token失败: ' + tokenData.errmsg });
+    }
+
+    const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: config.approval_template_id })
+    });
+    const tplData = await tplRes.json();
+    if (tplData.errcode !== 0) {
+      return res.status(400).json({ error: '获取模板详情失败: ' + tplData.errmsg });
+    }
+
+    const requiredControls = [];
+    if (tplData.template_content && tplData.template_content.controls) {
+      for (const ctrl of tplData.template_content.controls) {
+        if (ctrl.property && ctrl.property.require === 1) {
+          const title = ctrl.property.title ? (ctrl.property.title[0] ? ctrl.property.title[0].text : '') : '';
+          requiredControls.push({ id: ctrl.property.id, title });
+        }
+      }
+    }
+
+    const missingRequired = [];
+    for (const req of requiredControls) {
+      let found = false;
+      for (const [key, mappedId] of Object.entries(fieldMapping)) {
+        if (mappedId === req.id) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        missingRequired.push(req);
+      }
+    }
+
+    if (missingRequired.length > 0) {
+      const missingNames = missingRequired.map(m => `${m.title || m.id}(${m.id})`).join('、');
+      return res.status(400).json({ error: `审批模板存在必填字段未配置映射：${missingNames}，请在企业微信管理页面配置` });
     }
 
     const contents = [];
