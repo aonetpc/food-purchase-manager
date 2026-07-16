@@ -266,7 +266,8 @@ router.post('/:id/confirm', async (req, res) => {
           const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
           let displayDate = '';
           if (row.purchase_date instanceof Date) {
-            displayDate = row.purchase_date.toISOString().substring(0, 10);
+            const d = row.purchase_date;
+            displayDate = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
           } else if (typeof row.purchase_date === 'string') {
             displayDate = row.purchase_date.substring(0, 10);
           } else {
@@ -310,7 +311,16 @@ router.post('/:id/confirm', async (req, res) => {
 
           const contents = [];
           if (fieldMapping.date) {
-            const purchaseDate = new Date(row.purchase_date);
+            let purchaseDate;
+            if (row.purchase_date instanceof Date) {
+              purchaseDate = row.purchase_date;
+            } else if (typeof row.purchase_date === 'string') {
+              const parts = row.purchase_date.substring(0, 10).split('-');
+              purchaseDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            } else {
+              purchaseDate = new Date(row.purchase_date);
+            }
+            purchaseDate.setHours(0, 0, 0, 0);
             const sTimestamp = Math.floor(purchaseDate.getTime() / 1000);
             contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(sTimestamp) } } });
           }
@@ -653,7 +663,16 @@ router.post('/:id/resubmit', async (req, res) => {
     }
 
     if (fieldMapping.date) {
-      const purchaseDate = new Date(row.purchase_date);
+      let purchaseDate;
+      if (row.purchase_date instanceof Date) {
+        purchaseDate = row.purchase_date;
+      } else if (typeof row.purchase_date === 'string') {
+        const parts = row.purchase_date.substring(0, 10).split('-');
+        purchaseDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      } else {
+        purchaseDate = new Date(row.purchase_date);
+      }
+      purchaseDate.setHours(0, 0, 0, 0);
       const sTimestamp = Math.floor(purchaseDate.getTime() / 1000);
       contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(sTimestamp) } } });
     }
@@ -800,7 +819,8 @@ async function generateConfirmationPDF(confirmationId) {
   // 兼容不同格式的日期
   let purchaseDateStr = '';
   if (row.purchase_date instanceof Date) {
-    purchaseDateStr = row.purchase_date.toISOString().substring(0, 10);
+    const d = row.purchase_date;
+    purchaseDateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
   } else if (typeof row.purchase_date === 'string') {
     purchaseDateStr = row.purchase_date.substring(0, 10);
   } else {
