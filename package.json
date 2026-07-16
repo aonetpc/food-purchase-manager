@@ -11,6 +11,7 @@
     "check": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@fontpkg/source-han-sans-sc": "^2.5.3",
     "@supabase/supabase-js": "^2.110.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

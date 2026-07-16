@@ -306,7 +306,7 @@ router.post('/:id/confirm', async (req, res) => {
           }
           if (fieldMapping.amount) {
             const amountVal = toNum(row.total_amount);
-            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: Math.round(amountVal * 100), currency: 'CNY' } });
+            contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: String(Math.round(amountVal * 100)), currency: 'CNY' } });
           }
           if (fieldMapping.reason) {
             contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
@@ -567,6 +567,15 @@ router.post('/:id/resubmit', async (req, res) => {
       }
     }
 
+    // 调试：打印金额控件的完整配置
+    if (tplData.template_content && tplData.template_content.controls) {
+      for (const ctrl of tplData.template_content.controls) {
+        if (ctrl.property && ctrl.property.id === fieldMapping.amount) {
+          console.log('金额控件完整配置:', JSON.stringify(ctrl.property));
+        }
+      }
+    }
+
     const contents = [];
 
     function getControlType(fieldKey, fallback) {
@@ -578,7 +587,7 @@ router.post('/:id/resubmit', async (req, res) => {
       contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { type: 0, value: String(row.purchase_date) } });
     }
     if (fieldMapping.amount) {
-      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: Math.round(totalAmount * 100), currency: 'CNY' } });
+      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { amount: String(Math.round(totalAmount * 100)), currency: 'CNY' } });
     }
     if (fieldMapping.reason) {
       contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
