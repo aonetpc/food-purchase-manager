@@ -532,6 +532,9 @@ router.post('/:id/resubmit', async (req, res) => {
     const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
     const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
 
+    console.log('部门确认信息:', JSON.stringify(departments));
+    console.log('签名数据:', row.confirmed_signatures);
+
     const totalAmount = toNum(row.total_amount);
     const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
     let displayDate = '';
@@ -654,6 +657,7 @@ router.post('/:id/resubmit', async (req, res) => {
     if (fieldMapping.bank_account && config.bank_account) {
       contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
     }
+    let paymentLabel = '转账';
     if (fieldMapping.payment_method && config.default_payment_key) {
       let paymentOptions = {};
       if (config.payment_options) {
@@ -663,7 +667,7 @@ router.post('/:id/resubmit', async (req, res) => {
           paymentOptions = config.payment_options;
         }
       }
-      const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
+      paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
       contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
     }
     if (fieldMapping.details) {
@@ -711,11 +715,14 @@ router.post('/:id/resubmit', async (req, res) => {
       creator_userid: String(config.applicant_userid),
       template_id: String(config.approval_template_id),
       use_template_approver: 1,
-      apply_data: { contents },
-      summary_list: [
-        { text: String(reason), lang: 'zh_CN' },
-        { text: `金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }
-      ]
+      apply_data: { 
+        contents,
+        summary_list: [
+          { text: `付款事由：${reason}`, lang: 'zh_CN' },
+          { text: `付款金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' },
+          { text: `付款方式：${paymentLabel || '转账'}`, lang: 'zh_CN' }
+        ]
+      }
     };
 
     console.log('发起报销 applyData:', JSON.stringify(applyData));
@@ -799,7 +806,8 @@ async function generateConfirmationPDF(confirmationId) {
   }
 
   const tableTop = doc.y;
-  const colWidths = [140, 90, 60, 60, 80];
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const colWidths = [pageWidth * 0.30, pageWidth * 0.22, pageWidth * 0.12, pageWidth * 0.12, pageWidth * 0.24];
   const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
 
   doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
