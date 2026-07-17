@@ -830,7 +830,6 @@ async function generateConfirmationPDF(confirmationId) {
   doc.moveDown(0.5);
 
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const pageHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom;
   const leftColumnWidth = pageWidth * 0.6;
   const rightColumnWidth = pageWidth * 0.35;
   const leftX = doc.page.margins.left;
@@ -845,33 +844,34 @@ async function generateConfirmationPDF(confirmationId) {
 
   const leftHeaders = ['食材名称', '单价/单位', '数量', '单位', '金额'];
   const leftColWidths = [leftColumnWidth * 0.32, leftColumnWidth * 0.20, leftColumnWidth * 0.12, leftColumnWidth * 0.10, leftColumnWidth * 0.26];
-  const rowHeight = 12;
+  const minRowHeight = 11;
 
   function drawLeftTableRow(y, cells, isHeader = false) {
     const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
     const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
     doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
+    const lineHeight = doc.currentLineHeight();
     let x = leftX;
     let maxLines = 1;
     const cellTexts = [];
     for (let i = 0; i < cells.length; i++) {
       const text = String(cells[i]);
-      const textOpts = { width: leftColWidths[i] - 2, align: i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center') };
+      const textOpts = { width: leftColWidths[i] - 4, align: i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center') };
       const lines = doc.heightOfString(text, textOpts);
-      const lineCount = Math.ceil(lines / doc.currentLineHeight());
+      const lineCount = Math.ceil(lines / lineHeight);
       if (lineCount > maxLines) maxLines = lineCount;
       cellTexts.push({ text, opts: textOpts });
     }
-    const actualRowHeight = Math.max(rowHeight, maxLines * doc.currentLineHeight() + 2);
+    const actualRowHeight = Math.max(minRowHeight, maxLines * lineHeight);
     for (let i = 0; i < cells.length; i++) {
       const align = cellTexts[i].opts.align;
-      let textY = y + 1;
+      let textY = y + (actualRowHeight - lineHeight) / 2;
       if (align === 'right') {
-        doc.text(cellTexts[i].text, x + 1, textY, { width: leftColWidths[i] - 2, align: 'right' });
+        doc.text(cellTexts[i].text, x + 2, textY, { width: leftColWidths[i] - 4, align: 'right' });
       } else if (align === 'center') {
-        doc.text(cellTexts[i].text, x + 1, textY, { width: leftColWidths[i] - 2, align: 'center' });
+        doc.text(cellTexts[i].text, x + 2, textY, { width: leftColWidths[i] - 4, align: 'center' });
       } else {
-        doc.text(cellTexts[i].text, x + 1, textY, { width: leftColWidths[i] - 2, align: 'left' });
+        doc.text(cellTexts[i].text, x + 2, textY, { width: leftColWidths[i] - 4, align: 'left' });
       }
       x += leftColWidths[i];
     }
@@ -879,7 +879,7 @@ async function generateConfirmationPDF(confirmationId) {
   }
 
   function drawSignatureBlock(y, dept) {
-    const blockHeight = 45;
+    const blockHeight = 50;
     const pageBottom = doc.page.height - doc.page.margins.bottom;
     if (y + blockHeight > pageBottom) {
       doc.addPage();
@@ -891,22 +891,26 @@ async function generateConfirmationPDF(confirmationId) {
 
     doc.save();
     doc.rect(rightX, y, rightColumnWidth, blockHeight).stroke();
-    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`${dept.name}确认`, rightX + 5, y + 8);
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`${dept.name}确认`, rightX + 5, y + 5);
 
     if (dept.confirmed) {
-      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7).text(`状态：已确认`, rightX + 5, y + 20);
-      doc.text(`确认人：${dept.confirmed_by}`, rightX + 5, y + 28);
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(6.5);
+      doc.text(`状态：已确认`, rightX + 5, y + 16);
+      doc.text(`确认人：${dept.confirmed_by || '-'}`, rightX + 5, y + 23);
+      doc.text(`确认时间：${dept.confirmed_at || '-'}`, rightX + 5, y + 30);
+
       const sigData = signatures[dept.id];
       if (sigData && sigData.data) {
         try {
           const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
           const buffer = Buffer.from(base64Data, 'base64');
-          const sigSize = Math.min(rightColumnWidth - 10, 60);
-          doc.image(buffer, rightX + 5, y + 28, { width: sigSize, height: 16, fit: [sigSize, 16] });
+          const sigWidth = rightColumnWidth - 10;
+          const sigHeight = 22;
+          doc.image(buffer, rightX + 5, y + 35, { width: sigWidth, height: sigHeight, fit: [sigWidth, sigHeight] });
         } catch (e) {}
       }
     } else {
-      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7).text(`状态：待确认`, rightX + 5, y + 20);
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(6.5).text(`状态：待确认`, rightX + 5, y + 16);
     }
 
     doc.restore();
@@ -931,13 +935,12 @@ async function generateConfirmationPDF(confirmationId) {
 
   for (const [deptName, items] of Object.entries(groupedItems)) {
     doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, leftX, currentY + 1);
-    currentY = doc.y + 1;
-    doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+    currentY += minRowHeight;
 
     let subtotal = 0;
     for (const item of items) {
       const pageBottom = doc.page.height - doc.page.margins.bottom;
-      if (currentY + rowHeight > pageBottom) {
+      if (currentY + minRowHeight > pageBottom) {
         doc.addPage();
         currentY = doc.page.margins.top;
         currentY += drawLeftTableRow(currentY, leftHeaders, true);
@@ -956,7 +959,7 @@ async function generateConfirmationPDF(confirmationId) {
     grandTotal += subtotal;
 
     doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, leftX, currentY, { width: leftColumnWidth, align: 'right' });
-    currentY += 10;
+    currentY += 8;
 
     const dept = departments.find(d => d.name === deptName);
     if (dept) {
@@ -987,33 +990,56 @@ async function generateConfirmationPDF(confirmationId) {
   });
 }
 
-// 手动生成PDF
+// 手动生成PDF（可随时重新生成）
 router.post('/:id/generate-pdf', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 先检查所有部门是否已确认
     const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: '确认单不存在' });
-    }
-    const row = rows[0];
-    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
-    const allConfirmed = departments.every(d => d.confirmed);
-    if (!allConfirmed) {
-      return res.status(400).json({ error: '请等待所有部门确认完成后再生成PDF' });
     }
 
     const pdfPath = await generateConfirmationPDF(id);
     const pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
 
-    // 更新数据库
     await pool.query('UPDATE purchase_confirmations SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
 
     res.json({ success: true, pdf_url: pdfUrl });
   } catch (err) {
     console.error('PDF生成失败:', err);
     res.status(500).json({ error: err.message || 'PDF生成失败' });
+  }
+});
+
+// 清除确认状态（重新签字）
+router.post('/:id/reset-confirmations', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+
+    const row = rows[0];
+    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+
+    departments.forEach(d => {
+      d.confirmed = false;
+      d.confirmed_by = null;
+      d.confirmed_at = null;
+    });
+
+    await pool.query(
+      'UPDATE purchase_confirmations SET departments = ?, confirmed_signatures = ?, status = ? WHERE id = ?',
+      [JSON.stringify(departments), JSON.stringify({}), 'pending', id]
+    );
+
+    res.json({ success: true, message: '已清除所有部门确认状态，可重新确认' });
+  } catch (err) {
+    console.error('重置确认失败:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
