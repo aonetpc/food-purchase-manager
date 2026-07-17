@@ -561,7 +561,7 @@ router.get('/summary', async (req, res) => {
   }
 });
 
-// 导出Excel（生成数据供前端下载）
+// 导出Excel（生成汇总数据供前端下载，与页面采购汇总Tab一致）
 router.get('/export', async (req, res) => {
   try {
     const { month } = req.query;
@@ -570,64 +570,138 @@ router.get('/export', async (req, res) => {
       return res.status(400).json({ error: '请提供月份参数' });
     }
 
+    // 复用summary接口的逻辑生成汇总数据
     const [year, monthNum] = month.split('-').map(Number);
     const lastMonth = new Date(year, monthNum - 2, 1);
     const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
 
-    // 查询本月详细记录
-    const [rows] = await pool.query(`
+    const [monthRows] = await pool.query(`
       SELECT
+        ingredient_id,
         ingredient_name,
+        category_id,
         category_name,
+        purchase_unit,
         purchase_unit_price,
         purchase_quantity,
-        purchase_unit,
         amount,
         date,
         department_name,
         supplier_name
       FROM purchase_records
       WHERE DATE_FORMAT(date, '%Y-%m') = ?
-      ORDER BY ingredient_name, date
+      ORDER BY date ASC
     `, [month]);
 
-    // 查询上月均价
     const [lastMonthRows] = await pool.query(`
       SELECT
         ingredient_id,
         ingredient_name,
-        AVG(purchase_unit_price) as avg_price
+        AVG(purchase_unit_price) as avg_price,
+        SUM(purchase_quantity) as total_qty
       FROM purchase_records
       WHERE DATE_FORMAT(date, '%Y-%m') = ?
       GROUP BY ingredient_id, ingredient_name
     `, [lastMonthStr]);
 
+    const threeMonthsAgo = new Date(year, monthNum - 4, 1);
+    const threeMonthsAgoStr = `${threeMonthsAgo.getFullYear()}-${String(threeMonthsAgo.getMonth() + 1).padStart(2, '0')}`;
+    const [historyRows] = await pool.query(`
+      SELECT
+        ingredient_id,
+        ingredient_name,
+        AVG(purchase_unit_price) as avg_price,
+        SUM(purchase_quantity) as total_qty,
+        MAX(date) as last_purchase_date
+      FROM purchase_records
+      WHERE DATE_FORMAT(date, '%Y-%m') >= ? AND DATE_FORMAT(date, '%Y-%m') < ?
+      GROUP BY ingredient_id, ingredient_name
+    `, [threeMonthsAgoStr, month]);
+
     const lastMonthMap = {};
     lastMonthRows.forEach(row => {
-      lastMonthMap[row.ingredient_name] = parseFloat(row.avg_price);
-    });
-
-    // 构建导出数据
-    const exportData = rows.map(row => {
-      const lastAvg = lastMonthMap[row.ingredient_name];
-      const changeRate = lastAvg ? Math.round(((row.purchase_unit_price - lastAvg) / lastAvg) * 1000) / 10 : null;
-
-      return {
-        食材名称: row.ingredient_name,
-        分类: row.category_name || '未分类',
-        采购日期: row.date,
-        单价: parseFloat(row.purchase_unit_price),
-        数量: parseFloat(row.purchase_quantity),
-        单位: row.purchase_unit,
-        金额: parseFloat(row.amount),
-        部门: row.department_name || '',
-        供应商: row.supplier_name || '',
-        上月均价: lastAvg || null,
-        涨跌幅: changeRate
+      lastMonthMap[row.ingredient_id] = {
+        avgPrice: parseFloat(row.avg_price),
+        totalQty: parseFloat(row.total_qty)
       };
     });
 
-    res.json({ data: exportData, month });
+    const historyMap = {};
+    historyRows.forEach(row => {
+      historyMap[row.ingredient_id] = {
+        avgPrice: parseFloat(row.avg_price),
+        totalQty: parseFloat(row.total_qty),
+        lastPurchaseDate: row.last_purchase_date
+      };
+    });
+
+    const ingredientMap = {};
+    monthRows.forEach(row => {
+      const id = row.ingredient_id;
+      if (!ingredientMap[id]) {
+        ingredientMap[id] = {
+          ingredientId: id,
+          ingredientName: row.ingredient_name,
+          categoryName: row.category_name || '未分类',
+          purchaseUnit: row.purchase_unit,
+          records: [],
+          totalPrice: 0,
+          totalQty: 0,
+          totalAmount: 0,
+          purchaseCount: 0,
+          departments: new Set(),
+          suppliers: new Set()
+        };
+      }
+      const item = ingredientMap[id];
+      item.records.push(row);
+      item.totalPrice += parseFloat(row.purchase_unit_price);
+      item.totalQty += parseFloat(row.purchase_quantity);
+      item.totalAmount += parseFloat(row.amount);
+      item.purchaseCount++;
+      if (row.department_name) item.departments.add(row.department_name);
+      if (row.supplier_name) item.suppliers.add(row.supplier_name);
+    });
+
+    const summary = Object.values(ingredientMap).map(item => {
+      const avgPrice = item.totalPrice / item.purchaseCount;
+
+      let compareSource = 'new';
+      let comparePrice = null;
+      let changeRate = null;
+      let compareLabel = '新增';
+
+      if (lastMonthMap[item.ingredientId]) {
+        compareSource = 'lastMonth';
+        comparePrice = lastMonthMap[item.ingredientId].avgPrice;
+        changeRate = ((avgPrice - comparePrice) / comparePrice) * 100;
+        compareLabel = '上月均价';
+      } else if (historyMap[item.ingredientId]) {
+        compareSource = 'history';
+        comparePrice = historyMap[item.ingredientId].avgPrice;
+        changeRate = ((avgPrice - comparePrice) / comparePrice) * 100;
+        compareLabel = '历史均价';
+      }
+
+      return {
+        食材名称: item.ingredientName,
+        分类: item.categoryName,
+        采购次数: item.purchaseCount,
+        总数量: `${Math.round(item.totalQty * 100) / 100}${item.purchaseUnit}`,
+        本月均价: Math.round(avgPrice * 100) / 100,
+        对比价格: comparePrice ? Math.round(comparePrice * 100) / 100 : '',
+        对比来源: compareLabel,
+        涨跌幅: changeRate !== null ? `${changeRate >= 0 ? '+' : ''}${Math.round(changeRate * 10) / 10}%` : '',
+        总金额: Math.round(item.totalAmount * 100) / 100,
+        部门: Array.from(item.departments).join('、'),
+        供应商: Array.from(item.suppliers).join('、')
+      };
+    });
+
+    // 按总金额排序
+    summary.sort((a, b) => b.总金额 - a.总金额);
+
+    res.json({ data: summary, month, lastMonth: lastMonthStr });
   } catch (err) {
     console.error('export error:', err);
     res.status(500).json({ error: err.message });
