@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, BarChart3, Layers, FileBarChart, Building2, Truck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, BarChart3, Layers, FileBarChart, Building2, Truck, Download, Search, Filter, AlertTriangle, CheckCircle, Clock, X } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
@@ -12,6 +12,7 @@ import type { MonthlyAnalysis, CategoryMonthlyData, PriceChangeItem, MonthlyTren
 import { formatCurrency, formatPercent, getPriceChangeBgColor } from '@/utils/format';
 import { getPastMonths, getMonthLabel } from '@/utils/date';
 import StatCard from '@/components/StatCard';
+import * as XLSX from 'xlsx';
 
 const buildMonthlyAnalysis = (
   yearMonth: string,
@@ -172,6 +173,206 @@ const buildMonthlyAnalysis = (
   };
 };
 
+// 采购汇总Tab组件
+function PurchaseSummaryTab({ month }: { month: string }) {
+  const [summaryData, setSummaryData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const { categories } = useCategoryStore();
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/purchase/summary?month=${month}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setSummaryData(data);
+        }
+      } catch (err) {
+        console.error('加载汇总数据失败:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const filteredSummary = useMemo(() => {
+    if (!summaryData?.summary) return [];
+    return summaryData.summary.filter((item: any) => {
+      const matchSearch = !searchTerm || item.ingredientName.includes(searchTerm);
+      const matchCategory = !categoryFilter || item.categoryId === categoryFilter;
+      return matchSearch && matchCategory;
+    });
+  }, [summaryData, searchTerm, categoryFilter]);
+
+  const handleExport = async () => {
+    try {
+      const res = await fetch(`/api/purchase/export?month=${month}`);
+      const data = await res.json();
+      if (data.data) {
+        const ws = XLSX.utils.json_to_sheet(data.data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '采购明细');
+        XLSX.writeFile(wb, `采购汇总_${month}.xlsx`);
+      }
+    } catch (err) {
+      console.error('导出失败:', err);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="card flex items-center justify-center py-16">
+        <p className="text-gray-500">加载中...</p>
+      </div>
+    );
+  }
+
+  if (!summaryData || !summaryData.summary?.length) {
+    return (
+      <div className="card flex flex-col items-center justify-center py-20">
+        <FileBarChart size={64} className="text-gray-300 mb-4" />
+        <h3 className="text-lg font-medium text-gray-600 mb-2">暂无采购数据</h3>
+        <p className="text-gray-400 text-sm">本月没有采购录入数据</p>
+      </div>
+    );
+  }
+
+  const { overview } = summaryData;
+
+  return (
+    <div className="space-y-6">
+      {/* 统计概览 */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="card p-4">
+          <p className="text-sm text-gray-500 mb-1">采购总额</p>
+          <p className="text-xl font-bold text-primary-600">{formatCurrency(overview.totalAmount)}</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm text-gray-500 mb-1">食材种类</p>
+          <p className="text-xl font-bold text-accent-600">{overview.totalItems} 种</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm text-gray-500 mb-1">采购次数</p>
+          <p className="text-xl font-bold text-blue-600">{overview.totalPurchaseCount} 次</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-sm text-gray-500 mb-1">新增食材</p>
+          <p className="text-xl font-bold text-purple-600">{overview.newItems} 种</p>
+        </div>
+        <div className="card p-4">
+          <div className="flex items-center gap-1 mb-1">
+            <TrendingUp size={14} className="text-red-500" />
+            <p className="text-sm text-gray-500">价格上涨</p>
+          </div>
+          <p className="text-xl font-bold text-red-600">{overview.priceUpItems} 种</p>
+        </div>
+        <div className="card p-4">
+          <div className="flex items-center gap-1 mb-1">
+            <TrendingDown size={14} className="text-green-500" />
+            <p className="text-sm text-gray-500">价格下跌</p>
+          </div>
+          <p className="text-xl font-bold text-green-600">{overview.priceDownItems} 种</p>
+        </div>
+      </div>
+
+      {/* 筛选和导出 */}
+      <div className="card">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="搜索食材..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+            </div>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">全部分类</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleExport}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Download size={18} />
+            导出Excel
+          </button>
+        </div>
+
+        {/* 表格 */}
+        <div className="overflow-x-auto -mx-6">
+          <table className="data-table min-w-full">
+            <thead>
+              <tr>
+                <th>食材名称</th>
+                <th>分类</th>
+                <th className="text-right">采购次数</th>
+                <th className="text-right">总数量</th>
+                <th className="text-right">本月均价</th>
+                <th className="text-right">对比价格</th>
+                <th className="text-right">涨跌幅</th>
+                <th className="text-right">总金额</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredSummary.map((item: any) => (
+                <tr key={item.ingredientId}>
+                  <td className="font-medium">{item.ingredientName}</td>
+                  <td>
+                    <span className="px-2 py-1 bg-gray-100 rounded text-xs">{item.categoryName}</span>
+                  </td>
+                  <td className="text-right">{item.purchaseCount}</td>
+                  <td className="text-right">{item.totalQty}{item.purchaseUnit}</td>
+                  <td className="text-right font-semibold">{formatCurrency(item.avgPrice)}</td>
+                  <td className="text-right">
+                    {item.compareSource === 'new' ? (
+                      <span className="text-gray-400">新增</span>
+                    ) : item.compareSource === 'lastMonth' ? (
+                      <span>{formatCurrency(item.comparePrice)}</span>
+                    ) : (
+                      <div className="flex flex-col items-end">
+                        <span>{formatCurrency(item.comparePrice)}</span>
+                        <span className="text-xs text-gray-400">历史均价</span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="text-right">
+                    {item.changeRate !== null ? (
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${getPriceChangeBgColor(item.changeRate)}`}>
+                        {item.changeRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                        {formatPercent(item.changeRate)}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">--</span>
+                    )}
+                  </td>
+                  <td className="text-right font-bold">{formatCurrency(item.totalAmount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MonthlyAnalysisPage() {
   const { ingredients } = useIngredientStore();
   const { categories } = useCategoryStore();
@@ -187,6 +388,7 @@ export default function MonthlyAnalysisPage() {
   const [lastMonthItems, setLastMonthItems] = useState<PurchaseEntryItem[]>([]);
   const [yearItems, setYearItems] = useState<PurchaseEntryItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'analysis' | 'summary'>('analysis');
 
   const yearMonth = format(currentMonth, 'yyyy-MM');
   const lastYearMonth = format(subMonths(currentMonth, 1), 'yyyy-MM');
@@ -273,351 +475,381 @@ export default function MonthlyAnalysisPage() {
         </div>
       </div>
 
-      {loading && (
-        <div className="card flex items-center justify-center py-16">
-          <p className="text-gray-500">加载中...</p>
-        </div>
-      )}
+      {/* Tab切换 */}
+      <div className="no-print flex gap-2">
+        <button
+          onClick={() => setActiveTab('analysis')}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+            activeTab === 'analysis'
+              ? 'bg-primary-500 text-white'
+              : 'bg-white text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          价格分析
+        </button>
+        <button
+          onClick={() => setActiveTab('summary')}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+            activeTab === 'summary'
+              ? 'bg-primary-500 text-white'
+              : 'bg-white text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          采购汇总
+        </button>
+      </div>
 
-      {!loading && !analysis && (
-        <div className="card flex flex-col items-center justify-center py-20">
-          <FileBarChart size={64} className="text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-600 mb-2">暂无月度数据</h3>
-          <p className="text-gray-400 text-sm">本月没有采购录入数据，请先在「采买清单录入」中录入数据</p>
-        </div>
-      )}
-
-      {!loading && analysis && (
+      {activeTab === 'summary' ? (
+        <PurchaseSummaryTab month={yearMonth} />
+      ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard
-              title="月度采购总额"
-              value={analysis.totalAmount}
-              prefix="¥"
-              changeRate={analysis.amountChangeRate}
-              changeLabel="较上月"
-              icon={<DollarSign size={24} />}
-              iconBg="bg-primary-100"
-            />
-            <StatCard
-              title="采购品类数"
-              value={analysis.itemCount}
-              suffix=" 种"
-              icon={<Package size={24} />}
-              iconBg="bg-accent-100"
-              valueColor="text-accent-600"
-            />
-            <StatCard
-              title="平均单价"
-              value={analysis.avgPrice}
-              prefix="¥"
-              changeRate={analysis.priceChangeRate}
-              changeLabel="环比"
-              icon={<BarChart3 size={24} />}
-              iconBg="bg-blue-100"
-              valueColor="text-blue-600"
-            />
-            <StatCard
-              title="上月总额"
-              value={analysis.lastMonthTotalAmount}
-              prefix="¥"
-              icon={<Layers size={24} />}
-              iconBg="bg-purple-100"
-              valueColor="text-purple-600"
-            />
-          </div>
-
-          {/* 部门采购拆分 */}
-          {(() => {
-            const deptMap: Record<string, { name: string; amount: number; count: number }> = {};
-            monthItems.forEach(item => {
-              const deptId = (item as any).departmentId || '';
-              const deptName = (item as any).departmentName || '未分配';
-              if (!deptMap[deptId]) deptMap[deptId] = { name: deptName, amount: 0, count: 0 };
-              deptMap[deptId].amount += item.amount;
-              deptMap[deptId].count += 1;
-            });
-
-            const totalAmount = monthItems.reduce((s, i) => s + i.amount, 0);
-            const sortedDepts = departments
-              .filter(d => deptMap[d.id])
-              .map(d => ({ id: d.id, ...deptMap[d.id] }));
-
-            if (sortedDepts.length <= 1) return null;
-
-            return (
-              <div className="card">
-                <h2 className="text-lg font-semibold text-gray-800 mb-4">部门采购拆分</h2>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {sortedDepts.map(dept => {
-                    const pct = totalAmount > 0 ? Math.round((dept.amount / totalAmount) * 1000) / 10 : 0;
-                    return (
-                      <div key={dept.id} className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Building2 size={14} className="text-primary-500" />
-                          <span className="text-sm font-medium text-gray-700">{dept.name}</span>
-                        </div>
-                        <p className="text-lg font-bold text-gray-800">{formatCurrency(dept.amount)}</p>
-                        <div className="flex items-center justify-between mt-1">
-                          <span className="text-xs text-gray-500">{dept.count} 项</span>
-                          <span className="text-xs text-gray-500">{pct}%</span>
-                        </div>
-                        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-primary-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* 供应商采购统计 */}
-          {(() => {
-            const supplierMap: Record<string, { name: string; amount: number; count: number; itemCount: number }> = {};
-            monthItems.forEach(item => {
-              const supplierId = (item as any).supplierId || '';
-              const supplierName = (item as any).supplierName || '未指定';
-              if (!supplierMap[supplierId]) {
-                supplierMap[supplierId] = { name: supplierName, amount: 0, count: 0, itemCount: 0 };
-              }
-              supplierMap[supplierId].amount += item.amount;
-              supplierMap[supplierId].count += 1;
-              supplierMap[supplierId].itemCount += 1;
-            });
-
-            const totalAmount = monthItems.reduce((s, i) => s + i.amount, 0);
-            const sortedSuppliers = Object.entries(supplierMap)
-              .map(([id, data]) => ({ id, ...data }))
-              .sort((a, b) => b.amount - a.amount);
-
-            if (sortedSuppliers.length === 0) return null;
-
-            return (
-              <div className="card">
-                <h2 className="text-lg font-semibold text-gray-800 mb-4">供应商采购统计</h2>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {sortedSuppliers.map(supplier => {
-                    const pct = totalAmount > 0 ? Math.round((supplier.amount / totalAmount) * 1000) / 10 : 0;
-                    return (
-                      <div key={supplier.id || 'none'} className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Truck size={14} className="text-blue-500" />
-                          <span className="text-sm font-medium text-gray-700">{supplier.name}</span>
-                        </div>
-                        <p className="text-lg font-bold text-gray-800">{formatCurrency(supplier.amount)}</p>
-                        <div className="flex items-center justify-between mt-1">
-                          <span className="text-xs text-gray-500">{supplier.itemCount} 项</span>
-                          <span className="text-xs text-gray-500">{pct}%</span>
-                        </div>
-                        <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="card lg:col-span-2">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">月度采购金额趋势</h2>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={analysis.monthlyTrend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#1a5c3a" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#1a5c3a" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="#9ca3af" />
-                    <YAxis tick={{ fontSize: 12 }} stroke="#9ca3af" tickFormatter={(v) => `¥${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), '采购金额']}
-                      contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="totalAmount"
-                      stroke="#1a5c3a"
-                      strokeWidth={2}
-                      fillOpacity={1}
-                      fill="url(#colorAmount)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+          {loading && (
+            <div className="card flex items-center justify-center py-16">
+              <p className="text-gray-500">加载中...</p>
             </div>
+          )}
 
-            <div className="card">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">分类占比</h2>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      dataKey="value"
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), '金额']}
-                      contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
-                    />
-                    <Legend
-                      layout="vertical"
-                      verticalAlign="middle"
-                      align="right"
-                      iconType="circle"
-                      iconSize={8}
-                      wrapperStyle={{ fontSize: '12px' }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+          {!loading && !analysis && (
+            <div className="card flex flex-col items-center justify-center py-20">
+              <FileBarChart size={64} className="text-gray-300 mb-4" />
+              <h3 className="text-lg font-medium text-gray-600 mb-2">暂无月度数据</h3>
+              <p className="text-gray-400 text-sm">本月没有采购录入数据，请先在「采买清单录入」中录入数据</p>
             </div>
-          </div>
+          )}
 
-          <div className="card">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">分类明细</h2>
-            <div className="overflow-x-auto -mx-6 px-6">
-              <table className="data-table min-w-full">
-                <thead>
-                  <tr>
-                    <th>分类</th>
-                    <th className="text-right">采购金额</th>
-                    <th className="text-right">金额占比</th>
-                    <th className="text-right">平均单价</th>
-                    <th className="text-right">上月均价</th>
-                    <th className="text-right">环比变动</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {analysis.categoryBreakdown.map(cat => (
-                    <tr key={cat.categoryId}>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: cat.color }}
-                          />
-                          <span className="font-medium">{cat.categoryName}</span>
-                        </div>
-                      </td>
-                      <td className="text-right font-semibold">{formatCurrency(cat.totalAmount)}</td>
-                      <td className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full"
-                              style={{ width: `${cat.amountPercentage}%`, backgroundColor: cat.color }}
-                            />
+          {!loading && analysis && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard
+                  title="月度采购总额"
+                  value={analysis.totalAmount}
+                  prefix="¥"
+                  changeRate={analysis.amountChangeRate}
+                  changeLabel="较上月"
+                  icon={<DollarSign size={24} />}
+                  iconBg="bg-primary-100"
+                />
+                <StatCard
+                  title="采购品类数"
+                  value={analysis.itemCount}
+                  suffix=" 种"
+                  icon={<Package size={24} />}
+                  iconBg="bg-accent-100"
+                  valueColor="text-accent-600"
+                />
+                <StatCard
+                  title="平均单价"
+                  value={analysis.avgPrice}
+                  prefix="¥"
+                  changeRate={analysis.priceChangeRate}
+                  changeLabel="环比"
+                  icon={<BarChart3 size={24} />}
+                  iconBg="bg-blue-100"
+                  valueColor="text-blue-600"
+                />
+                <StatCard
+                  title="上月总额"
+                  value={analysis.lastMonthTotalAmount}
+                  prefix="¥"
+                  icon={<Layers size={24} />}
+                  iconBg="bg-purple-100"
+                  valueColor="text-purple-600"
+                />
+              </div>
+
+              {/* 部门采购拆分 */}
+              {(() => {
+                const deptMap: Record<string, { name: string; amount: number; count: number }> = {};
+                monthItems.forEach(item => {
+                  const deptId = (item as any).departmentId || '';
+                  const deptName = (item as any).departmentName || '未分配';
+                  if (!deptMap[deptId]) deptMap[deptId] = { name: deptName, amount: 0, count: 0 };
+                  deptMap[deptId].amount += item.amount;
+                  deptMap[deptId].count += 1;
+                });
+
+                const totalAmount = monthItems.reduce((s, i) => s + i.amount, 0);
+                const sortedDepts = departments
+                  .filter(d => deptMap[d.id])
+                  .map(d => ({ id: d.id, ...deptMap[d.id] }));
+
+                if (sortedDepts.length <= 1) return null;
+
+                return (
+                  <div className="card">
+                    <h2 className="text-lg font-semibold text-gray-800 mb-4">部门采购拆分</h2>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {sortedDepts.map(dept => {
+                        const pct = totalAmount > 0 ? Math.round((dept.amount / totalAmount) * 1000) / 10 : 0;
+                        return (
+                          <div key={dept.id} className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Building2 size={14} className="text-primary-500" />
+                              <span className="text-sm font-medium text-gray-700">{dept.name}</span>
+                            </div>
+                            <p className="text-lg font-bold text-gray-800">{formatCurrency(dept.amount)}</p>
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-xs text-gray-500">{dept.count} 项</span>
+                              <span className="text-xs text-gray-500">{pct}%</span>
+                            </div>
+                            <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-primary-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                            </div>
                           </div>
-                          <span className="text-sm text-gray-600 w-12 text-right">{cat.amountPercentage}%</span>
-                        </div>
-                      </td>
-                      <td className="text-right">{formatCurrency(cat.avgPrice)}</td>
-                      <td className="text-right text-gray-500">{formatCurrency(cat.lastMonthAvgPrice)}</td>
-                      <td className="text-right">
-                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${getPriceChangeBgColor(cat.priceChangeRate)}`}>
-                          {cat.priceChangeRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                          {formatPercent(cat.priceChangeRate)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="card">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-danger-100 rounded-lg flex items-center justify-center">
-                  <TrendingUp className="text-danger-500" size={18} />
-                </div>
-                <h2 className="text-lg font-semibold text-gray-800">价格涨幅榜 Top 5</h2>
-              </div>
-              {analysis.topGainers.length === 0 ? (
-                <p className="text-gray-400 text-sm py-8 text-center">本月无上涨食材</p>
-              ) : (
-                <div className="space-y-3">
-                  {analysis.topGainers.map((item, idx) => (
-                    <div key={item.ingredientId} className="flex items-center justify-between p-3 bg-danger-50/50 rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                          idx === 0 ? 'bg-danger-500 text-white' :
-                          idx === 1 ? 'bg-danger-400 text-white' :
-                          idx === 2 ? 'bg-danger-300 text-white' :
-                          'bg-danger-200 text-danger-700'
-                        }`}>
-                          {idx + 1}
-                        </span>
-                        <div>
-                          <p className="font-medium text-gray-800 text-sm">{item.ingredientName}</p>
-                          <p className="text-xs text-gray-500">{item.categoryName}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold text-gray-800">{formatCurrency(item.currentPrice)}/{item.baseUnit}</p>
-                        <p className="text-xs text-danger-600 font-medium">+{formatPercent(item.changeRate)}</p>
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  </div>
+                );
+              })()}
 
-            <div className="card">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-success-100 rounded-lg flex items-center justify-center">
-                  <TrendingDown className="text-success-500" size={18} />
-                </div>
-                <h2 className="text-lg font-semibold text-gray-800">价格跌幅榜 Top 5</h2>
-              </div>
-              {analysis.topLosers.length === 0 ? (
-                <p className="text-gray-400 text-sm py-8 text-center">本月无下跌食材</p>
-              ) : (
-                <div className="space-y-3">
-                  {analysis.topLosers.map((item, idx) => (
-                    <div key={item.ingredientId} className="flex items-center justify-between p-3 bg-success-50/50 rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                          idx === 0 ? 'bg-success-500 text-white' :
-                          idx === 1 ? 'bg-success-400 text-white' :
-                          idx === 2 ? 'bg-success-300 text-white' :
-                          'bg-success-200 text-success-700'
-                        }`}>
-                          {idx + 1}
-                        </span>
-                        <div>
-                          <p className="font-medium text-gray-800 text-sm">{item.ingredientName}</p>
-                          <p className="text-xs text-gray-500">{item.categoryName}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold text-gray-800">{formatCurrency(item.currentPrice)}/{item.baseUnit}</p>
-                        <p className="text-xs text-success-600 font-medium">{formatPercent(item.changeRate)}</p>
-                      </div>
+              {/* 供应商采购统计 */}
+              {(() => {
+                const supplierMap: Record<string, { name: string; amount: number; count: number; itemCount: number }> = {};
+                monthItems.forEach(item => {
+                  const supplierId = (item as any).supplierId || '';
+                  const supplierName = (item as any).supplierName || '未指定';
+                  if (!supplierMap[supplierId]) {
+                    supplierMap[supplierId] = { name: supplierName, amount: 0, count: 0, itemCount: 0 };
+                  }
+                  supplierMap[supplierId].amount += item.amount;
+                  supplierMap[supplierId].count += 1;
+                  supplierMap[supplierId].itemCount += 1;
+                });
+
+                const totalAmount = monthItems.reduce((s, i) => s + i.amount, 0);
+                const sortedSuppliers = Object.entries(supplierMap)
+                  .map(([id, data]) => ({ id, ...data }))
+                  .sort((a, b) => b.amount - a.amount);
+
+                if (sortedSuppliers.length === 0) return null;
+
+                return (
+                  <div className="card">
+                    <h2 className="text-lg font-semibold text-gray-800 mb-4">供应商采购统计</h2>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {sortedSuppliers.map(supplier => {
+                        const pct = totalAmount > 0 ? Math.round((supplier.amount / totalAmount) * 1000) / 10 : 0;
+                        return (
+                          <div key={supplier.id || 'none'} className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-all hover:shadow-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Truck size={14} className="text-blue-500" />
+                              <span className="text-sm font-medium text-gray-700">{supplier.name}</span>
+                            </div>
+                            <p className="text-lg font-bold text-gray-800">{formatCurrency(supplier.amount)}</p>
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-xs text-gray-500">{supplier.itemCount} 项</span>
+                              <span className="text-xs text-gray-500">{pct}%</span>
+                            </div>
+                            <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
+                  </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="card lg:col-span-2">
+                  <h2 className="text-lg font-semibold text-gray-800 mb-4">月度采购金额趋势</h2>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analysis.monthlyTrend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#1a5c3a" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#1a5c3a" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="#9ca3af" />
+                        <YAxis tick={{ fontSize: 12 }} stroke="#9ca3af" tickFormatter={(v) => `¥${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip
+                          formatter={(value: number) => [formatCurrency(value), '采购金额']}
+                          contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="totalAmount"
+                          stroke="#1a5c3a"
+                          strokeWidth={2}
+                          fillOpacity={1}
+                          fill="url(#colorAmount)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
-              )}
-            </div>
-          </div>
+
+                <div className="card">
+                  <h2 className="text-lg font-semibold text-gray-800 mb-4">分类占比</h2>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={pieData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={50}
+                          outerRadius={80}
+                          paddingAngle={2}
+                          dataKey="value"
+                        >
+                          {pieData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(value: number) => [formatCurrency(value), '金额']}
+                          contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
+                        />
+                        <Legend
+                          layout="vertical"
+                          verticalAlign="middle"
+                          align="right"
+                          iconType="circle"
+                          iconSize={8}
+                          wrapperStyle={{ fontSize: '12px' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">分类明细</h2>
+                <div className="overflow-x-auto -mx-6 px-6">
+                  <table className="data-table min-w-full">
+                    <thead>
+                      <tr>
+                        <th>分类</th>
+                        <th className="text-right">采购金额</th>
+                        <th className="text-right">金额占比</th>
+                        <th className="text-right">平均单价</th>
+                        <th className="text-right">上月均价</th>
+                        <th className="text-right">环比变动</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.categoryBreakdown.map(cat => (
+                        <tr key={cat.categoryId}>
+                          <td>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: cat.color }}
+                              />
+                              <span className="font-medium">{cat.categoryName}</span>
+                            </div>
+                          </td>
+                          <td className="text-right font-semibold">{formatCurrency(cat.totalAmount)}</td>
+                          <td className="text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{ width: `${cat.amountPercentage}%`, backgroundColor: cat.color }}
+                                />
+                              </div>
+                              <span className="text-sm text-gray-600 w-12 text-right">{cat.amountPercentage}%</span>
+                            </div>
+                          </td>
+                          <td className="text-right">{formatCurrency(cat.avgPrice)}</td>
+                          <td className="text-right text-gray-500">{formatCurrency(cat.lastMonthAvgPrice)}</td>
+                          <td className="text-right">
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${getPriceChangeBgColor(cat.priceChangeRate)}`}>
+                              {cat.priceChangeRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                              {formatPercent(cat.priceChangeRate)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="card">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 bg-danger-100 rounded-lg flex items-center justify-center">
+                      <TrendingUp className="text-danger-500" size={18} />
+                    </div>
+                    <h2 className="text-lg font-semibold text-gray-800">价格涨幅榜 Top 5</h2>
+                  </div>
+                  {analysis.topGainers.length === 0 ? (
+                    <p className="text-gray-400 text-sm py-8 text-center">本月无上涨食材</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {analysis.topGainers.map((item, idx) => (
+                        <div key={item.ingredientId} className="flex items-center justify-between p-3 bg-danger-50/50 rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                              idx === 0 ? 'bg-danger-500 text-white' :
+                              idx === 1 ? 'bg-danger-400 text-white' :
+                              idx === 2 ? 'bg-danger-300 text-white' :
+                              'bg-danger-200 text-danger-700'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <div>
+                              <p className="font-medium text-gray-800 text-sm">{item.ingredientName}</p>
+                              <p className="text-xs text-gray-500">{item.categoryName}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-semibold text-gray-800">{formatCurrency(item.currentPrice)}/{item.baseUnit}</p>
+                            <p className="text-xs text-danger-600 font-medium">+{formatPercent(item.changeRate)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="card">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 bg-success-100 rounded-lg flex items-center justify-center">
+                      <TrendingDown className="text-success-500" size={18} />
+                    </div>
+                    <h2 className="text-lg font-semibold text-gray-800">价格跌幅榜 Top 5</h2>
+                  </div>
+                  {analysis.topLosers.length === 0 ? (
+                    <p className="text-gray-400 text-sm py-8 text-center">本月无下跌食材</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {analysis.topLosers.map((item, idx) => (
+                        <div key={item.ingredientId} className="flex items-center justify-between p-3 bg-success-50/50 rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                              idx === 0 ? 'bg-success-500 text-white' :
+                              idx === 1 ? 'bg-success-400 text-white' :
+                              idx === 2 ? 'bg-success-300 text-white' :
+                              'bg-success-200 text-success-700'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <div>
+                              <p className="font-medium text-gray-800 text-sm">{item.ingredientName}</p>
+                              <p className="text-xs text-gray-500">{item.categoryName}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-semibold text-gray-800">{formatCurrency(item.currentPrice)}/{item.baseUnit}</p>
+                            <p className="text-xs text-success-600 font-medium">{formatPercent(item.changeRate)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>

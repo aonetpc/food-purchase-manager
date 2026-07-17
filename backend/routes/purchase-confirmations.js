@@ -134,7 +134,7 @@ router.post('/', async (req, res) => {
     const domain = config && config.app_domain ? config.app_domain : (req.headers.origin || req.protocol + '://' + req.get('host'));
     const confirmUrl = `${domain}/confirm/${id}`;
 
-    // 构建 Markdown 消息内容（表格形式）
+    // 构建 Markdown 消息内容（引用格式）
     const deptNames = departments.map(d => d.name).join('、');
     let mdContent = `**📋 食材采购确认通知**\n\n`;
     mdContent += `📅 **采购日期**：${displayDate}\n`;
@@ -142,7 +142,7 @@ router.post('/', async (req, res) => {
     mdContent += `💰 **总金额**：¥${Number(total_amount).toFixed(2)}\n\n`;
     mdContent += `---\n\n`;
 
-    // 按部门分组显示明细（表格形式）
+    // 按部门分组显示明细（引用格式）
     const groupedItems = {};
     for (const item of purchase_items) {
       const deptName = item.department_name || '未分类';
@@ -151,14 +151,12 @@ router.post('/', async (req, res) => {
     }
 
     for (const [deptName, items] of Object.entries(groupedItems)) {
-      mdContent += `**【${deptName}】**\n\n`;
-      mdContent += `| 食材名称 | 单价 | 数量 | 金额 |\n`;
-      mdContent += `|---------|------|------|------|\n`;
+      mdContent += `**【${deptName}】**\n`;
       for (const item of items) {
-        mdContent += `| ${item.ingredient_name} | ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} | ${item.purchase_quantity}${item.purchase_unit} | ¥${Number(item.amount).toFixed(2)} |\n`;
+        mdContent += `> ${item.ingredient_name}  ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${Number(item.amount).toFixed(2)}\n`;
       }
       const subtotal = items.reduce((s, i) => s + Number(i.amount), 0);
-      mdContent += `| **小计** | | | **¥${subtotal.toFixed(2)}** |\n\n`;
+      mdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
     }
 
     mdContent += `---\n\n`;
@@ -801,13 +799,11 @@ async function generateConfirmationPDF(confirmationId) {
   const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
   const signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
 
-  // 创建PDF，减小边距
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
   const pdfPath = path.join(PDF_DIR, `${confirmationId}.pdf`);
   const writeStream = fs.createWriteStream(pdfPath);
   doc.pipe(writeStream);
 
-  // 注册中文字体
   const chineseFont = findChineseFont();
   const chineseBoldFont = findChineseBoldFont();
   const hasChineseFont = !!chineseFont;
@@ -816,11 +812,9 @@ async function generateConfirmationPDF(confirmationId) {
     doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
   }
 
-  // 标题 - 缩小字体
   doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('食材采购确认单', { align: 'center' });
   doc.moveDown(0.5);
 
-  // 基本信息 - 缩小字体，改为一行显示
   doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   let purchaseDateStr = '';
   if (row.purchase_date instanceof Date) {
@@ -835,9 +829,12 @@ async function generateConfirmationPDF(confirmationId) {
   doc.text(`采购日期：${purchaseDateStr}    总金额：¥${toNum(row.total_amount).toFixed(2)}    状态：${statusLabel}`);
   doc.moveDown(0.5);
 
-  // 采购明细表格 - 缩小标题字体
-  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
-  doc.moveDown(0.3);
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const pageHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom;
+  const leftColumnWidth = pageWidth * 0.6;
+  const rightColumnWidth = pageWidth * 0.35;
+  const leftX = doc.page.margins.left;
+  const rightX = doc.page.margins.left + leftColumnWidth + 10;
 
   const groupedItems = {};
   for (const item of purchaseItems) {
@@ -846,22 +843,20 @@ async function generateConfirmationPDF(confirmationId) {
     groupedItems[deptName].push(item);
   }
 
-  const tableTop = doc.y;
-  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const colWidths = [pageWidth * 0.28, pageWidth * 0.18, pageWidth * 0.11, pageWidth * 0.10, pageWidth * 0.33];
-  const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
+  const leftHeaders = ['食材名称', '单价/单位', '数量', '单位', '金额'];
+  const leftColWidths = [leftColumnWidth * 0.32, leftColumnWidth * 0.20, leftColumnWidth * 0.12, leftColumnWidth * 0.10, leftColumnWidth * 0.26];
   const rowHeight = 12;
 
-  function drawTableRow(y, cells, isHeader = false) {
+  function drawLeftTableRow(y, cells, isHeader = false) {
     const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
     const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
     doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
-    let x = doc.page.margins.left;
+    let x = leftX;
     let maxLines = 1;
     const cellTexts = [];
     for (let i = 0; i < cells.length; i++) {
       const text = String(cells[i]);
-      const textOpts = { width: colWidths[i] - 2, align: i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center') };
+      const textOpts = { width: leftColWidths[i] - 2, align: i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center') };
       const lines = doc.heightOfString(text, textOpts);
       const lineCount = Math.ceil(lines / doc.currentLineHeight());
       if (lineCount > maxLines) maxLines = lineCount;
@@ -872,26 +867,70 @@ async function generateConfirmationPDF(confirmationId) {
       const align = cellTexts[i].opts.align;
       let textY = y + 1;
       if (align === 'right') {
-        doc.text(cellTexts[i].text, x + 1, textY, { width: colWidths[i] - 2, align: 'right' });
+        doc.text(cellTexts[i].text, x + 1, textY, { width: leftColWidths[i] - 2, align: 'right' });
       } else if (align === 'center') {
-        doc.text(cellTexts[i].text, x + 1, textY, { width: colWidths[i] - 2, align: 'center' });
+        doc.text(cellTexts[i].text, x + 1, textY, { width: leftColWidths[i] - 2, align: 'center' });
       } else {
-        doc.text(cellTexts[i].text, x + 1, textY, { width: colWidths[i] - 2, align: 'left' });
+        doc.text(cellTexts[i].text, x + 1, textY, { width: leftColWidths[i] - 2, align: 'left' });
       }
-      x += colWidths[i];
+      x += leftColWidths[i];
     }
     return actualRowHeight;
   }
 
-  let currentY = tableTop;
-  currentY += drawTableRow(currentY, headers, true);
-  doc.moveTo(doc.page.margins.left, currentY - 1).lineTo(doc.page.width - doc.page.margins.right, currentY - 1).stroke();
+  function drawSignatureBlock(y, dept) {
+    const blockHeight = 45;
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+    if (y + blockHeight > pageBottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+      currentY = doc.page.margins.top;
+      currentY += drawLeftTableRow(currentY, leftHeaders, true);
+      doc.moveTo(leftX, currentY - 1).lineTo(leftX + leftColumnWidth, currentY - 1).stroke();
+    }
+
+    doc.save();
+    doc.rect(rightX, y, rightColumnWidth, blockHeight).stroke();
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`${dept.name}确认`, rightX + 5, y + 8);
+
+    if (dept.confirmed) {
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7).text(`状态：已确认`, rightX + 5, y + 20);
+      doc.text(`确认人：${dept.confirmed_by}`, rightX + 5, y + 28);
+      const sigData = signatures[dept.id];
+      if (sigData && sigData.data) {
+        try {
+          const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          const sigSize = Math.min(rightColumnWidth - 10, 60);
+          doc.image(buffer, rightX + 5, y + 28, { width: sigSize, height: 16, fit: [sigSize, 16] });
+        } catch (e) {}
+      }
+    } else {
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7).text(`状态：待确认`, rightX + 5, y + 20);
+    }
+
+    doc.restore();
+    return y + blockHeight + 5;
+  }
+
+  let currentY = doc.y;
+
+  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
+  doc.moveDown(0.3);
+  currentY = doc.y;
+
+  currentY += drawLeftTableRow(currentY, leftHeaders, true);
+  doc.moveTo(leftX, currentY - 1).lineTo(leftX + leftColumnWidth, currentY - 1).stroke();
 
   doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   let grandTotal = 0;
 
+  let rightY = doc.y;
+  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('部门确认', rightX, rightY);
+  rightY += 15;
+
   for (const [deptName, items] of Object.entries(groupedItems)) {
-    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, doc.page.margins.left, currentY + 1);
+    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, leftX, currentY + 1);
     currentY = doc.y + 1;
     doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
 
@@ -901,8 +940,8 @@ async function generateConfirmationPDF(confirmationId) {
       if (currentY + rowHeight > pageBottom) {
         doc.addPage();
         currentY = doc.page.margins.top;
-        currentY += drawTableRow(currentY, headers, true);
-        doc.moveTo(doc.page.margins.left, currentY - 1).lineTo(doc.page.width - doc.page.margins.right, currentY - 1).stroke();
+        currentY += drawLeftTableRow(currentY, leftHeaders, true);
+        doc.moveTo(leftX, currentY - 1).lineTo(leftX + leftColumnWidth, currentY - 1).stroke();
       }
       const cells = [
         item.ingredient_name,
@@ -911,61 +950,33 @@ async function generateConfirmationPDF(confirmationId) {
         item.purchase_unit,
         `¥${toNum(item.amount).toFixed(2)}`
       ];
-      currentY += drawTableRow(currentY, cells);
+      currentY += drawLeftTableRow(currentY, cells);
       subtotal += toNum(item.amount);
     }
     grandTotal += subtotal;
 
-    // 部门确认和小计在同一行
+    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, leftX, currentY, { width: leftColumnWidth, align: 'right' });
+    currentY += 10;
+
     const dept = departments.find(d => d.name === deptName);
     if (dept) {
-      const pageBottom = doc.page.height - doc.page.margins.bottom;
-      if (currentY + 20 > pageBottom) {
-        doc.addPage();
-        currentY = doc.page.margins.top;
-      }
-
-      // 左边：部门确认
-      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`${dept.name}确认：`, doc.page.margins.left, currentY);
-      let confirmText = '';
-      if (dept.confirmed) {
-        confirmText = `已确认 - ${dept.confirmed_by}`;
-      } else {
-        confirmText = '待确认';
-      }
-      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(confirmText, doc.page.margins.left + 45, currentY);
-
-      // 签名图片在部门确认右侧
-      if (dept.confirmed) {
-        const sigData = signatures[dept.id];
-        if (sigData && sigData.data) {
-          try {
-            const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
-            const buffer = Buffer.from(base64Data, 'base64');
-            const sigX = doc.page.margins.left + pageWidth * 0.45;
-            doc.image(buffer, sigX, currentY - 1, { width: 80, height: 28, fit: [80, 28] });
-          } catch (e) {}
-        }
-      }
-
-      // 右边：小计
-      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, doc.page.margins.left, currentY, { width: pageWidth, align: 'right' });
-      currentY += 14;
-    } else {
-      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, doc.page.margins.left, currentY, { width: pageWidth, align: 'right' });
-      currentY += 12;
+      rightY = drawSignatureBlock(rightY, dept);
     }
-    doc.moveDown(0.1);
-    currentY = doc.y;
   }
 
-  doc.moveTo(doc.page.margins.left, currentY).lineTo(doc.page.width - doc.page.margins.right, currentY).stroke();
-  doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, doc.page.margins.left, currentY + 2, { width: pageWidth, align: 'right' });
-  doc.y = doc.y + 8;
-  doc.x = doc.page.margins.left;
+  const pageBottom = doc.page.height - doc.page.margins.bottom;
+  if (currentY > rightY) {
+    rightY = currentY;
+  }
+  if (rightY + 30 > pageBottom) {
+    doc.addPage();
+    rightY = doc.page.margins.top;
+  }
 
-  // 生成时间
-  doc.moveDown(0.3);
+  doc.moveTo(leftX, rightY).lineTo(leftX + leftColumnWidth, rightY).stroke();
+  doc.fontSize(9).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, leftX, rightY + 3, { width: leftColumnWidth, align: 'right' });
+
+  doc.moveDown(0.5);
   doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
 
   doc.end();
