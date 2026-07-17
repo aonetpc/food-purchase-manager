@@ -908,35 +908,46 @@ async function generateConfirmationPDF(confirmationId) {
       currentY += drawTableRow(currentY, cells);
       subtotal += toNum(item.amount);
     }
-    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, doc.page.margins.left, currentY, { width: pageWidth, align: 'right' });
-    currentY = doc.y + 2;
     grandTotal += subtotal;
 
-    // 独立签名行
+    // 部门确认和小计在同一行
     const dept = departments.find(d => d.name === deptName);
     if (dept) {
       const pageBottom = doc.page.height - doc.page.margins.bottom;
-      if (currentY + 38 > pageBottom) {
+      if (currentY + 20 > pageBottom) {
         doc.addPage();
         currentY = doc.page.margins.top;
       }
+
+      // 左边：部门确认
       doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`${dept.name}确认：`, doc.page.margins.left, currentY);
+      let confirmText = '';
       if (dept.confirmed) {
-        doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`已确认 - ${dept.confirmed_by} (${dept.confirmed_at || ''})`, doc.page.margins.left + 45, currentY);
+        confirmText = `已确认 - ${dept.confirmed_by}`;
+      } else {
+        confirmText = '待确认';
+      }
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(confirmText, doc.page.margins.left + 45, currentY);
+
+      // 签名图片在部门确认右侧
+      if (dept.confirmed) {
         const sigData = signatures[dept.id];
         if (sigData && sigData.data) {
           try {
             const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
             const buffer = Buffer.from(base64Data, 'base64');
-            const sigX = doc.page.margins.left + pageWidth * 0.55;
-            doc.image(buffer, sigX, currentY - 2, { width: 90, height: 36, fit: [90, 36] });
+            const sigX = doc.page.margins.left + pageWidth * 0.45;
+            doc.image(buffer, sigX, currentY - 1, { width: 80, height: 28, fit: [80, 28] });
           } catch (e) {}
         }
-        currentY += 34;
-      } else {
-        doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text('待确认', doc.page.margins.left + 45, currentY);
-        currentY += 10;
       }
+
+      // 右边：小计
+      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, doc.page.margins.left, currentY, { width: pageWidth, align: 'right' });
+      currentY += 14;
+    } else {
+      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, doc.page.margins.left, currentY, { width: pageWidth, align: 'right' });
+      currentY += 12;
     }
     doc.moveDown(0.1);
     currentY = doc.y;
