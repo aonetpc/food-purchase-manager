@@ -130,9 +130,10 @@ router.post('/', async (req, res) => {
 
     const displayDate = purchase_date.substring(0, 10);
 
-    // 构建确认链接
-    const baseUrl = req.headers.origin || req.protocol + '://' + req.get('host');
-    const confirmUrl = `${baseUrl}/confirm/${id}`;
+    // 构建确认链接（优先使用配置的域名，避免IP安全提示）
+    const config = await getWecomConfig();
+    const domain = config && config.app_domain ? config.app_domain : (req.headers.origin || req.protocol + '://' + req.get('host'));
+    const confirmUrl = `${domain}/confirm/${id}`;
 
     // 构建 Markdown 消息内容（表格形式）
     const deptNames = departments.map(d => d.name).join('、');

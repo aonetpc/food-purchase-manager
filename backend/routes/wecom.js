@@ -237,7 +237,7 @@ router.put('/config', async (req, res) => {
       payment_options, default_payment_key,
       payee_name, bank_name, bank_account,
       payment_reason_template, approval_field_mapping,
-      callback_token, callback_aes_key
+      callback_token, callback_aes_key, app_domain
     } = req.body;
 
     // 确保配置行存在
@@ -262,6 +262,7 @@ router.put('/config', async (req, res) => {
     if (approval_field_mapping !== undefined) { fields.push('approval_field_mapping = ?'); values.push(JSON.stringify(approval_field_mapping)); }
     if (callback_token !== undefined) { fields.push('callback_token = ?'); values.push(callback_token || null); }
     if (callback_aes_key !== undefined && callback_aes_key !== '****') { fields.push('callback_aes_key = ?'); values.push(callback_aes_key || null); }
+    if (app_domain !== undefined) { fields.push('app_domain = ?'); values.push(app_domain || null); }
 
     if (fields.length > 0) {
       values.push(1);
