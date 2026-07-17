@@ -480,7 +480,11 @@ router.post('/:id/refresh-status', async (req, res) => {
       spRecord = info.sp_record || [];
     } catch (detailErr) {
       console.error('查询审批详情失败:', detailErr);
-      return res.status(400).json({ error: `查询审批状态失败：${detailErr.message}。请在企业微信管理后台为应用开启"审批"权限。` });
+      const errMsg = detailErr.message || '';
+      if (errMsg.includes('no approval auth')) {
+        return res.status(500).json({ error: '查询审批状态失败：企业微信应用未开启"审批"权限。请在企业微信管理后台 -> 应用管理 -> 自建应用 -> 权限管理中开启"审批"权限。' });
+      }
+      return res.status(500).json({ error: `查询审批状态失败：${detailErr.message}` });
     }
 
     let newReimburseStatus = row.reimbursement_status;
