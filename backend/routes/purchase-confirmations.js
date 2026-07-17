@@ -134,7 +134,7 @@ router.post('/', async (req, res) => {
     const baseUrl = req.headers.origin || req.protocol + '://' + req.get('host');
     const confirmUrl = `${baseUrl}/confirm/${id}`;
 
-    // 构建 Markdown 消息内容
+    // 构建 Markdown 消息内容（表格形式）
     const deptNames = departments.map(d => d.name).join('、');
     let mdContent = `**📋 食材采购确认通知**\n\n`;
     mdContent += `📅 **采购日期**：${displayDate}\n`;
@@ -142,7 +142,7 @@ router.post('/', async (req, res) => {
     mdContent += `💰 **总金额**：¥${Number(total_amount).toFixed(2)}\n\n`;
     mdContent += `---\n\n`;
 
-    // 按部门分组显示明细
+    // 按部门分组显示明细（表格形式）
     const groupedItems = {};
     for (const item of purchase_items) {
       const deptName = item.department_name || '未分类';
@@ -151,12 +151,14 @@ router.post('/', async (req, res) => {
     }
 
     for (const [deptName, items] of Object.entries(groupedItems)) {
-      mdContent += `**【${deptName}】**\n`;
+      mdContent += `**【${deptName}】**\n\n`;
+      mdContent += `| 食材名称 | 单价 | 数量 | 金额 |\n`;
+      mdContent += `|---------|------|------|------|\n`;
       for (const item of items) {
-        mdContent += `> ${item.ingredient_name}  ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${Number(item.amount).toFixed(2)}\n`;
+        mdContent += `| ${item.ingredient_name} | ${Number(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit} | ${item.purchase_quantity}${item.purchase_unit} | ¥${Number(item.amount).toFixed(2)} |\n`;
       }
       const subtotal = items.reduce((s, i) => s + Number(i.amount), 0);
-      mdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
+      mdContent += `| **小计** | | | **¥${subtotal.toFixed(2)}** |\n\n`;
     }
 
     mdContent += `---\n\n`;
