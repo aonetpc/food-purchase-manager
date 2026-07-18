@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>采购确认单 - 手机端预览</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    }
+    .phone-frame {
+      max-width: 375px;
+      margin: 20px auto;
+      border-radius: 40px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      overflow: hidden;
+      background: #f3f4f6;
+      position: relative;
+    }
+    .status-bar {
+      height: 44px;
+      background: white;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .notch {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 120px;
+      height: 28px;
+      background: #000;
+      border-radius: 0 0 16px 16px;
+      z-index: 10;
+    }
+    .progress-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #10b981, #059669);
+      transition: width 0.3s ease;
+    }
+    .dept-card {
+      transition: all 0.2s ease;
+    }
+    .dept-card.pending {
+      border: 2px solid #f59e0b;
+      background: #fffbeb;
+    }
+    .dept-card.confirmed {
+      border: 1px solid #e5e7eb;
+      background: white;
+    }
+    .signature-canvas {
+      touch-action: none;
+    }
+    .bottom-safe {
+      height: 34px;
+    }
+    .collapse-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    .collapse-content.open {
+      max-height: 2000px;
+    }
+  </style>
+</head>
+<body class="bg-gray-200 min-h-screen py-8">
+  
+  <div class="text-center mb-6">
+    <h1 class="text-xl font-bold text-gray-700">手机端确认页面预览</h1>
+    <p class="text-sm text-gray-500 mt-1">2026-07-17 采购数据</p>
+  </div>
+
+  <div class="phone-frame">
+    <div class="notch"></div>
+    <div class="status-bar">
+      <span>9:41</span>
+      <span>
+        <i class="fas fa-signal mr-1"></i>
+        <i class="fas fa-wifi mr-1"></i>
+        <i class="fas fa-battery-full"></i>
+      </span>
+    </div>
+
+    <!-- 顶部导航 -->
+    <div class="bg-white border-b border-gray-100 sticky top-0 z-10">
+      <div class="px-4 py-3 flex items-center gap-3">
+        <button class="p-1">
+          <i class="fas fa-chevron-left text-gray-600 text-lg"></i>
+        </button>
+        <h1 class="text-lg font-semibold text-gray-800">采购确认单</h1>
+      </div>
+    </div>
+
+    <div class="p-4 pb-24 space-y-4">
+      
+      <!-- 基本信息卡片 -->
+      <div class="bg-gradient-to-br from-primary-500 to-primary-600 rounded-2xl p-5 text-white shadow-lg">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <p class="text-white/70 text-sm mb-1">采购日期</p>
+            <p class="text-xl font-bold">2026-07-17</p>
+          </div>
+          <div class="text-right">
+            <p class="text-white/70 text-sm mb-1">总金额</p>
+            <p class="text-2xl font-bold">¥3,610.65</p>
+          </div>
+        </div>
+        
+        <!-- 进度条 -->
+        <div class="mb-2">
+          <div class="flex justify-between text-xs mb-1.5">
+            <span class="text-white/80">确认进度</span>
+            <span class="font-semibold">3 / 5 部门已确认</span>
+          </div>
+          <div class="progress-bar bg-white/20">
+            <div class="progress-fill bg-white" style="width: 60%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态提示 -->
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3">
+        <div class="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-clock text-amber-500"></i>
+        </div>
+        <div class="flex-1">
+          <p class="text-sm font-medium text-amber-800">还有 2 个部门待确认</p>
+          <p class="text-xs text-amber-600 mt-0.5">请通知早餐和员工餐部门确认</p>
+        </div>
+      </div>
+
+      <!-- 您的姓名 -->
+      <div class="bg-white rounded-2xl shadow-sm p-4">
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          <i class="fas fa-user text-gray-400 mr-2"></i>您的姓名
+        </label>
+        <input
+          type="text"
+          value="张三"
+          class="w-full border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+          placeholder="请输入您的姓名"
+        />
+      </div>
+
+      <!-- 部门确认列表 -->
+      <div class="space-y-3">
+        <h2 class="text-base font-semibold text-gray-800 px-1">
+          <i class="fas fa-check-circle text-primary-500 mr-2"></i>部门确认
+        </h2>
+
+        <!-- 已确认 - 院办 -->
+        <div class="dept-card confirmed rounded-2xl p-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-check text-green-500"></i>
+              </div>
+              <div>
+                <p class="font-medium text-gray-800">院办</p>
+                <p class="text-xs text-gray-500">钱育健 · 05:56:26</p>
+              </div>
+            </div>
+            <span class="px-2.5 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">已确认</span>
+          </div>
+          <div class="mt-3 pt-3 border-t border-gray-100">
+            <p class="text-xs text-gray-400 mb-2">签名</p>
+            <div class="h-12 bg-gray-50 rounded-lg flex items-center justify-center border border-gray-100">
+              <span class="text-gray-300 text-2xl font-serif italic" style="font-family: cursive;">钱育健</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 已确认 - 厨房 -->
+        <div class="dept-card confirmed rounded-2xl p-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-check text-green-500"></i>
+              </div>
+              <div>
+                <p class="font-medium text-gray-800">厨房</p>
+                <p class="text-xs text-gray-500">邓岳圳 · 05:56:36</p>
+              </div>
+            </div>
+            <span class="px-2.5 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">已确认</span>
+          </div>
+          <div class="mt-3 pt-3 border-t border-gray-100">
+            <p class="text-xs text-gray-400 mb-2">签名</p>
+            <div class="h-12 bg-gray-50 rounded-lg flex items-center justify-center border border-gray-100">
+              <span class="text-gray-300 text-2xl font-serif italic" style="font-family: cursive;">邓岳圳</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 待确认 - 早餐（高亮） -->
+        <div class="dept-card pending rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-pen text-amber-600"></i>
+              </div>
+              <div>
+                <p class="font-medium text-gray-800">早餐</p>
+                <p class="text-xs text-amber-600">等待您确认</p>
+              </div>
+            </div>
+            <span class="px-2.5 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">待确认</span>
+          </div>
+          
+          <!-- 签名区域 -->
+          <div class="pt-3 border-t border-amber-200">
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <i class="fas fa-signature text-amber-500 mr-1"></i>
+              手写签名
+            </label>
+            <div class="border-2 border-dashed border-amber-300 rounded-xl overflow-hidden bg-white">
+              <div class="w-full h-36 flex items-center justify-center text-gray-300 text-sm">
+                <span>👆 请在此处手写签名</span>
+              </div>
+            </div>
+            <button
+              class="w-full mt-3 py-3.5 bg-gradient-to-r from-green-500 to-green-600 text-white text-base font-medium rounded-xl shadow-md shadow-green-500/30 active:scale-95 transition-transform"
+            >
+              <i class="fas fa-check-circle mr-2"></i>确认采购入库
+            </button>
+          </div>
+        </div>
+
+        <!-- 待确认 - 员工餐 -->
+        <div class="dept-card bg-white rounded-2xl p-4 border border-gray-200">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-clock text-gray-400"></i>
+              </div>
+              <div>
+                <p class="font-medium text-gray-800">员工餐</p>
+                <p class="text-xs text-gray-400">等待确认</p>
+              </div>
+            </div>
+            <button class="px-4 py-2 bg-gray-100 text-gray-500 text-sm rounded-xl font-medium">
+              待签字
+            </button>
+          </div>
+        </div>
+
+        <!-- 待确认 - 房务 -->
+        <div class="dept-card bg-white rounded-2xl p-4 border border-gray-200">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-clock text-gray-400"></i>
+              </div>
+              <div>
+                <p class="font-medium text-gray-800">房务</p>
+                <p class="text-xs text-gray-400">等待确认</p>
+              </div>
+            </div>
+            <button class="px-4 py-2 bg-gray-100 text-gray-500 text-sm rounded-xl font-medium">
+              待签字
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 采购明细（可折叠） -->
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <button onclick="toggleDetail()" class="w-full px-4 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-list text-primary-500"></i>
+            <span class="font-medium text-gray-800">采购明细</span>
+            <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">28项</span>
+          </div>
+          <i id="detailArrow" class="fas fa-chevron-down text-gray-400 transition-transform"></i>
+        </button>
+        
+        <div id="detailContent" class="collapse-content">
+          <div class="px-4 pb-4 space-y-4">
+            
+            <!-- 院办 -->
+            <div>
+              <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                <span class="text-sm font-medium text-gray-700">院办</span>
+                <span class="text-sm font-semibold text-primary-600">¥113.20</span>
+              </div>
+              <div class="space-y-2 pl-1">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">草鸭 <span class="text-gray-400 text-xs">28.00/斤 × 3斤</span></span>
+                  <span class="text-gray-800">¥84.00</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">混合蔬菜 <span class="text-gray-400 text-xs">4.00/斤 × 7.3斤</span></span>
+                  <span class="text-gray-800">¥29.20</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 厨房 -->
+            <div>
+              <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                <span class="text-sm font-medium text-gray-700">厨房</span>
+                <span class="text-sm font-semibold text-primary-600">¥1,909.43</span>
+              </div>
+              <div class="space-y-2 pl-1">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">油面筋 <span class="text-gray-400 text-xs">8.00/包 × 1包</span></span>
+                  <span class="text-gray-800">¥8.00</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">大昂刺鱼 <span class="text-gray-400 text-xs">18.00/斤 × 1.2斤</span></span>
+                  <span class="text-gray-800">¥21.60</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">鳊鱼 <span class="text-gray-400 text-xs">14.00/斤 × 5斤</span></span>
+                  <span class="text-gray-800">¥70.00</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">草鸭 <span class="text-gray-400 text-xs">28.00/斤 × 3斤</span></span>
+                  <span class="text-gray-800">¥84.00</span>
+                </div>
+                <div class="text-center">
+                  <button class="text-xs text-primary-500">
+                    展开全部 (24项) <i class="fas fa-chevron-down ml-1"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 早餐 -->
+            <div>
+              <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                <span class="text-sm font-medium text-gray-700">早餐</span>
+                <span class="text-sm font-semibold text-primary-600">¥654.70</span>
+              </div>
+              <div class="space-y-2 pl-1">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">思念油条 <span class="text-gray-400 text-xs">100.00/箱 × 1箱</span></span>
+                  <span class="text-gray-800">¥100.00</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">紫甘蓝 <span class="text-gray-400 text-xs">3.50/斤 × 2.2斤</span></span>
+                  <span class="text-gray-800">¥7.70</span>
+                </div>
+                <div class="text-center">
+                  <button class="text-xs text-primary-500">
+                    展开全部 <i class="fas fa-chevron-down ml-1"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 员工餐 -->
+            <div>
+              <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                <span class="text-sm font-medium text-gray-700">员工餐</span>
+                <span class="text-sm font-semibold text-primary-600">¥888.32</span>
+              </div>
+              <div class="space-y-2 pl-1">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">空心菜 <span class="text-gray-400 text-xs">2.60/斤 × 20斤</span></span>
+                  <span class="text-gray-800">¥52.00</span>
+                </div>
+                <div class="text-center">
+                  <button class="text-xs text-primary-500">
+                    展开全部 <i class="fas fa-chevron-down ml-1"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 房务 -->
+            <div>
+              <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                <span class="text-sm font-medium text-gray-700">房务</span>
+                <span class="text-sm font-semibold text-primary-600">¥45.00</span>
+              </div>
+              <div class="space-y-2 pl-1">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">绿豆 <span class="text-gray-400 text-xs">9.00/斤 × 5斤</span></span>
+                  <span class="text-gray-800">¥45.00</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 底部固定操作栏 -->
+    <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-3 pb-8 z-20" style="max-width: 375px; margin: 0 auto;">
+      <button class="w-full py-3.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white text-base font-semibold rounded-xl shadow-lg shadow-primary-500/30 active:scale-95 transition-transform">
+        <i class="fas fa-signature mr-2"></i>签名确认当前部门
+      </button>
+    </div>
+
+    <div class="bottom-safe"></div>
+  </div>
+
+  <script>
+    function toggleDetail() {
+      const content = document.getElementById('detailContent');
+      const arrow = document.getElementById('detailArrow');
+      content.classList.toggle('open');
+      arrow.style.transform = content.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
+    }
+
+    // 配置主题色
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              300: '#93c5fd',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</body>
+</html>
