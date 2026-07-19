@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
  */
 export default function MobileHome() {
   const navigate = useNavigate();
-  const { user, wecomLogin, login } = useAuthStore();
+  const { user, wecomLogin, login, canViewMonthly, logout } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loginMode, setLoginMode] = useState<'wecom' | 'manual' | null>(null);
@@ -174,8 +174,6 @@ export default function MobileHome() {
   }
 
   // 已登录 - 显示导航首页
-  const { canViewMonthly, logout } = useAuthStore();
-
   const menus = [
     {
       key: 'daily',
