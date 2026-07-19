@@ -38,7 +38,11 @@ export default function App() {
             </ProtectedRoute>
           } />
           <Route path="daily" element={<DailyPurchase />} />
-          <Route path="monthly" element={<MonthlyAnalysis />} />
+          <Route path="monthly" element={
+            <ProtectedRoute requiredRole={['admin', 'finance', 'boss']}>
+              <MonthlyAnalysis />
+            </ProtectedRoute>
+          } />
           <Route path="yearly" element={<YearlyPrice />} />
           <Route path="ingredients" element={<IngredientQuery />} />
           <Route path="categories" element={

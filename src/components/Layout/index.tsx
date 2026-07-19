@@ -26,7 +26,7 @@ import { formatDate } from '@/utils/date';
 
 export default function Layout() {
   const navigate = useNavigate();
-  const { user, isAdmin, logout } = useAuthStore();
+  const { user, isAdmin, canViewMonthly, logout } = useAuthStore();
   const { fetchRecords, records, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -70,7 +70,7 @@ export default function Layout() {
 
   const navItems = [
     { path: '/daily', label: '每日采购清单', icon: ShoppingCart },
-    { path: '/monthly', label: '月度价格分析', icon: TrendingUp },
+    ...(canViewMonthly() ? [{ path: '/monthly', label: '月度价格分析', icon: TrendingUp }] : []),
     { path: '/yearly', label: '年度平均价查询', icon: BarChart3 },
     { path: '/ingredients', label: '食材价格查询', icon: Search },
   ];
@@ -136,7 +136,11 @@ export default function Layout() {
                   </div>
                   <div className="hidden sm:block text-left">
                     <p className="text-sm font-medium text-gray-800">{user.name}</p>
-                    <p className="text-xs text-gray-500">{user.role === 'admin' ? '管理员' : '查看员'}</p>
+                    <p className="text-xs text-gray-500">
+                    {user.role === 'admin' ? '管理员' : 
+                     user.role === 'finance' ? '财务' : 
+                     user.role === 'boss' ? '董事长' : '普通员工'}
+                  </p>
                   </div>
                   <ChevronDown size={16} className="text-gray-400 hidden sm:block" />
                 </button>

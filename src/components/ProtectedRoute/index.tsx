@@ -3,7 +3,7 @@ import { useAuthStore, type UserRole } from '@/store/authStore';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: UserRole;
+  requiredRole?: UserRole | UserRole[];
   requireAuth?: boolean;
 }
 
@@ -12,7 +12,7 @@ export default function ProtectedRoute({
   requiredRole,
   requireAuth = true,
 }: ProtectedRouteProps) {
-  const { user, isAdmin } = useAuthStore();
+  const { user, isAdmin, canViewMonthly } = useAuthStore();
   const location = useLocation();
 
   if (requireAuth && !user) {
@@ -21,6 +21,13 @@ export default function ProtectedRoute({
 
   if (requiredRole === 'admin' && !isAdmin()) {
     return <Navigate to="/daily" replace />;
+  }
+
+  if (Array.isArray(requiredRole)) {
+    const hasAccess = requiredRole.includes(user?.role as UserRole);
+    if (!hasAccess) {
+      return <Navigate to="/daily" replace />;
+    }
   }
 
   return <>{children}</>;

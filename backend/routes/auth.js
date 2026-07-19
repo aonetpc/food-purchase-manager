@@ -14,7 +14,7 @@ router.post('/login', async (req, res) => {
     const { username, password } = req.body;
 
     const [rows] = await pool.query(
-      'SELECT id, username, name, role, password_hash FROM users WHERE username = ?',
+      'SELECT id, username, name, role, password_hash, wecom_userid FROM users WHERE username = ?',
       [username]
     );
 
@@ -34,6 +34,7 @@ router.post('/login', async (req, res) => {
       username: user.username,
       name: user.name,
       role: user.role,
+      wecom_userid: user.wecom_userid,
     });
   } catch (err) {
     console.error(err);

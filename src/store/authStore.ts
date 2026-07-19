@@ -45,6 +45,7 @@ export const useAuthStore = create<AuthStore>()(
             username: data.username,
             name: data.name,
             role: data.role as UserRole,
+            wecomUserId: data.wecom_userid,
           };
 
           set({ user, loading: false, error: null });
