@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save, Link2, X } from 'lucide-react';
+import { Settings, MessageSquare, FileText, DollarSign, RefreshCw, Eye, EyeOff, Send, CheckCircle2, AlertCircle, Save, Link2, X, Smartphone } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface WecomConfig {
   corp_id?: string;
   app_secret?: string;
   agent_id?: string;
+  query_agent_id?: string;
+  query_app_secret?: string;
   chat_id?: string;
   webhook_url?: string;
   approval_template_id?: string;
@@ -247,45 +249,97 @@ export default function WecomManager() {
               className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
               placeholder="ww..."
             />
+            <p className="text-xs text-gray-500 mt-1">📌 两个应用共用同一个CorpID</p>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">应用Secret</label>
-            <div className="relative">
-              <input
-                type={showSecrets.app_secret ? 'text' : 'password'}
-                value={getFieldValue('app_secret')}
-                onChange={(e) => setFieldValue('app_secret', e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                placeholder="应用的Secret"
-              />
-              <button
-                type="button"
-                onClick={() => toggleSecret('app_secret')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                {showSecrets.app_secret ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
+
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
+              <MessageSquare size={16} className="text-primary-500" />
+              采购应用（发送消息、发起审批）
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">应用Secret</label>
+                <div className="relative">
+                  <input
+                    type={showSecrets.app_secret ? 'text' : 'password'}
+                    value={getFieldValue('app_secret')}
+                    onChange={(e) => setFieldValue('app_secret', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="采购应用的Secret"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleSecret('app_secret')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showSecrets.app_secret ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">应用AgentID</label>
+                <input
+                  type="text"
+                  value={getFieldValue('agent_id')}
+                  onChange={(e) => setFieldValue('agent_id', e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="1000002"
+                />
+              </div>
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">应用AgentID</label>
-            <input
-              type="text"
-              value={getFieldValue('agent_id')}
-              onChange={(e) => setFieldValue('agent_id', e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-              placeholder="1000002"
-            />
+
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
+              <Smartphone size={16} className="text-accent-500" />
+              查询应用（手机端免登查询）
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">应用Secret</label>
+                <div className="relative">
+                  <input
+                    type={showSecrets.query_app_secret ? 'text' : 'password'}
+                    value={getFieldValue('query_app_secret')}
+                    onChange={(e) => setFieldValue('query_app_secret', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="查询应用的Secret"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleSecret('query_app_secret')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showSecrets.query_app_secret ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">应用AgentID</label>
+                <input
+                  type="text"
+                  value={getFieldValue('query_agent_id')}
+                  onChange={(e) => setFieldValue('query_agent_id', e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="1000010"
+                />
+              </div>
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+                <p>💡 提示：查询应用的可信域名必须设置为 <strong>food.hywellness.com</strong></p>
+                <p>可信IP需添加：<strong>124.220.25.15</strong></p>
+              </div>
+            </div>
           </div>
-          <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
-            <p>📌 获取方式：企微管理后台 → 应用管理 → 自建应用</p>
-          </div>
+
           <div className="flex justify-end">
             <button
               onClick={() => saveSection('应用配置', {
                 corp_id: getFieldValue('corp_id'),
                 app_secret: getFieldValue('app_secret'),
                 agent_id: getFieldValue('agent_id'),
+                query_app_secret: getFieldValue('query_app_secret'),
+                query_agent_id: getFieldValue('query_agent_id'),
               })}
               disabled={sectionStatus['应用配置'] === 'saving'}
               className="btn-primary flex items-center gap-2 disabled:opacity-50"
