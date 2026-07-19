@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign, Package, Building2, Truck } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { usePurchaseStore, type PurchaseEntryItem } from '@/store/purchaseStore';
 import { useCategoryStore } from '@/store/categoryStore';
+import { useDepartmentStore } from '@/store/departmentStore';
+import { useSupplierStore } from '@/store/supplierStore';
 import { formatCurrency, formatPercent } from '@/utils/format';
 import { getPastMonths, getMonthLabel } from '@/utils/date';
 import type { CategoryMonthlyData, PriceChangeItem, MonthlyTrendPoint } from '@/types';
@@ -161,6 +163,8 @@ export default function MobileMonthly() {
   const navigate = useNavigate();
   const { fetchMonthRecords, fetchYearRecords } = usePurchaseStore();
   const { categories, fetchCategories } = useCategoryStore();
+  const { departments, fetchDepartments } = useDepartmentStore();
+  const { suppliers, fetchSuppliers } = useSupplierStore();
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -169,11 +173,13 @@ export default function MobileMonthly() {
   const [lastMonthItems, setLastMonthItems] = useState<PurchaseEntryItem[]>([]);
   const [yearItems, setYearItems] = useState<PurchaseEntryItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'gainers' | 'losers'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'department' | 'supplier' | 'gainers' | 'losers'>('overview');
 
   useEffect(() => {
     fetchCategories();
-  }, [fetchCategories]);
+    fetchDepartments();
+    fetchSuppliers();
+  }, [fetchCategories, fetchDepartments, fetchSuppliers]);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,6 +224,70 @@ export default function MobileMonthly() {
     : 0;
 
   const validTrend = analysis?.monthlyTrend.filter(m => m.totalAmount > 0) || [];
+
+  // 部门采购拆分
+  const departmentBreakdown = useMemo(() => {
+    const deptMap: Record<string, { name: string; amount: number; count: number }> = {};
+    monthItems.forEach(item => {
+      const deptId = item.departmentId || '';
+      const deptName = item.departmentName || '未分配';
+      if (!deptMap[deptId]) deptMap[deptId] = { name: deptName, amount: 0, count: 0 };
+      deptMap[deptId].amount += item.amount;
+      deptMap[deptId].count += 1;
+    });
+
+    const total = monthItems.reduce((s, i) => s + i.amount, 0);
+    const sortedDepts = departments
+      .filter(d => deptMap[d.id])
+      .map(d => ({
+        id: d.id,
+        name: deptMap[d.id].name,
+        amount: Math.round(deptMap[d.id].amount * 100) / 100,
+        count: deptMap[d.id].count,
+        percentage: total > 0 ? Math.round((deptMap[d.id].amount / total) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // 补上未在部门列表中但有数据的部门
+    Object.entries(deptMap).forEach(([id, data]) => {
+      if (!departments.find(d => d.id === id)) {
+        sortedDepts.push({
+          id,
+          name: data.name,
+          amount: Math.round(data.amount * 100) / 100,
+          count: data.count,
+          percentage: total > 0 ? Math.round((data.amount / total) * 1000) / 10 : 0,
+        });
+      }
+    });
+
+    return sortedDepts.sort((a, b) => b.amount - a.amount);
+  }, [monthItems, departments]);
+
+  // 供应商采购统计
+  const supplierBreakdown = useMemo(() => {
+    const supplierMap: Record<string, { name: string; amount: number; count: number }> = {};
+    monthItems.forEach(item => {
+      const supplierId = item.supplierId || '';
+      const supplierName = item.supplierName || '未指定';
+      if (!supplierMap[supplierId]) {
+        supplierMap[supplierId] = { name: supplierName, amount: 0, count: 0 };
+      }
+      supplierMap[supplierId].amount += item.amount;
+      supplierMap[supplierId].count += 1;
+    });
+
+    const total = monthItems.reduce((s, i) => s + i.amount, 0);
+    return Object.entries(supplierMap)
+      .map(([id, data]) => ({
+        id,
+        name: data.name,
+        amount: Math.round(data.amount * 100) / 100,
+        count: data.count,
+        percentage: total > 0 ? Math.round((data.amount / total) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [monthItems]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -283,18 +353,34 @@ export default function MobileMonthly() {
               </div>
             </div>
 
-            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4">
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4 overflow-x-auto">
               <button
                 onClick={() => setActiveTab('overview')}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                   activeTab === 'overview' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'
                 }`}
               >
                 分类概览
               </button>
               <button
+                onClick={() => setActiveTab('department')}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                  activeTab === 'department' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'
+                }`}
+              >
+                部门拆分
+              </button>
+              <button
+                onClick={() => setActiveTab('supplier')}
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                  activeTab === 'supplier' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'
+                }`}
+              >
+                供应商
+              </button>
+              <button
                 onClick={() => setActiveTab('gainers')}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                   activeTab === 'gainers' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'
                 }`}
               >
@@ -302,7 +388,7 @@ export default function MobileMonthly() {
               </button>
               <button
                 onClick={() => setActiveTab('losers')}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                   activeTab === 'losers' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'
                 }`}
               >
@@ -348,6 +434,94 @@ export default function MobileMonthly() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'department' && (
+              <div className="bg-white rounded-2xl shadow-sm p-4">
+                <h3 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+                  <Building2 className="text-green-500" size={18} />
+                  部门采购拆分
+                </h3>
+                {departmentBreakdown.length === 0 ? (
+                  <p className="text-center text-gray-400 py-8 text-sm">暂无部门数据</p>
+                ) : (
+                  <div className="space-y-3">
+                    {departmentBreakdown.map((dept, idx) => (
+                      <div key={dept.id || idx} className="pb-3 border-b border-gray-50 last:border-0 last:pb-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                              idx === 0 ? 'bg-green-100 text-green-600' :
+                              idx === 1 ? 'bg-emerald-100 text-emerald-600' :
+                              idx === 2 ? 'bg-teal-100 text-teal-600' :
+                              'bg-gray-100 text-gray-500'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <span className="text-sm font-medium text-gray-800">{dept.name}</span>
+                          </div>
+                          <span className="text-sm font-bold text-gray-800">{formatCurrency(dept.amount)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 ml-8">
+                          <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-green-500 rounded-full"
+                              style={{ width: `${dept.percentage}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 whitespace-nowrap">
+                            {dept.count}项 · {dept.percentage}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'supplier' && (
+              <div className="bg-white rounded-2xl shadow-sm p-4">
+                <h3 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+                  <Truck className="text-blue-500" size={18} />
+                  供应商采购统计
+                </h3>
+                {supplierBreakdown.length === 0 ? (
+                  <p className="text-center text-gray-400 py-8 text-sm">暂无供应商数据</p>
+                ) : (
+                  <div className="space-y-3">
+                    {supplierBreakdown.map((supplier, idx) => (
+                      <div key={supplier.id || idx} className="pb-3 border-b border-gray-50 last:border-0 last:pb-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                              idx === 0 ? 'bg-blue-100 text-blue-600' :
+                              idx === 1 ? 'bg-indigo-100 text-indigo-600' :
+                              idx === 2 ? 'bg-cyan-100 text-cyan-600' :
+                              'bg-gray-100 text-gray-500'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <span className="text-sm font-medium text-gray-800">{supplier.name}</span>
+                          </div>
+                          <span className="text-sm font-bold text-gray-800">{formatCurrency(supplier.amount)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 ml-8">
+                          <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 rounded-full"
+                              style={{ width: `${supplier.percentage}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 whitespace-nowrap">
+                            {supplier.count}项 · {supplier.percentage}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
