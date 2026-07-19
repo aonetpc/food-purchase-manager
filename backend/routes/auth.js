@@ -123,7 +123,7 @@ router.post('/reset-password', async (req, res) => {
 // 然后调用此接口用 code 换取用户身份
 // ================================================
 
-// 用 code 换取企微用户 userid
+// 用 code 换取企微用户 userid（使用查询应用的 Secret）
 router.post('/wecom-login', async (req, res) => {
   try {
     const { code } = req.body;
@@ -132,13 +132,15 @@ router.post('/wecom-login', async (req, res) => {
     }
 
     const config = await getWecomConfig();
-    if (!config || !config.corp_id || !config.app_secret) {
+    // 查询应用优先使用 query_app_secret，没有则回退到 app_secret
+    const appSecret = config.query_app_secret || config.app_secret;
+    if (!config || !config.corp_id || !appSecret) {
       return res.status(500).json({ error: '企业微信未配置' });
     }
 
-    // 1. 获取 access_token
+    // 1. 获取 access_token（使用查询应用的Secret）
     const tokenRes = await fetch(
-      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`
+      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${appSecret}`
     );
     const tokenData = await tokenRes.json();
     if (tokenData.errcode !== 0) {
@@ -147,7 +149,6 @@ router.post('/wecom-login', async (req, res) => {
     const accessToken = tokenData.access_token;
 
     // 2. 用 code 获取 userid
-    // 注意：H5应用使用 userinfo 接口
     const userRes = await fetch(
       `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${accessToken}&code=${code}`
     );
@@ -157,7 +158,6 @@ router.post('/wecom-login', async (req, res) => {
       return res.status(401).json({ error: userData.errmsg || 'code无效或已过期' });
     }
 
-    // 优先使用 userid，如果是第三方应用会返回 openid
     const wecomUserId = userData.userid;
     if (!wecomUserId) {
       return res.status(401).json({ error: '未能获取用户身份，请确保在企业微信内打开' });
@@ -170,7 +170,6 @@ router.post('/wecom-login', async (req, res) => {
     );
 
     if (rows.length === 0) {
-      // 用户未绑定，返回需要绑定的标识
       return res.json({
         needBind: true,
         wecomUserId,
@@ -192,7 +191,7 @@ router.post('/wecom-login', async (req, res) => {
   }
 });
 
-// 绑定企微账号（用户首次用账号密码登录后，前端调用此接口绑定）
+// 绑定企微账号（使用查询应用的 Secret）
 router.post('/bind-wecom', async (req, res) => {
   try {
     const { userId, code } = req.body;
@@ -201,13 +200,14 @@ router.post('/bind-wecom', async (req, res) => {
     }
 
     const config = await getWecomConfig();
-    if (!config || !config.corp_id || !config.app_secret) {
+    const appSecret = config.query_app_secret || config.app_secret;
+    if (!config || !config.corp_id || !appSecret) {
       return res.status(500).json({ error: '企业微信未配置' });
     }
 
     // 获取 access_token
     const tokenRes = await fetch(
-      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`
+      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${appSecret}`
     );
     const tokenData = await tokenRes.json();
     if (tokenData.errcode !== 0) {

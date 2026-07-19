@@ -1,5 +1,5 @@
 -- ================================================
--- 用户角色扩展 - 数据库迁移脚本
+-- 用户角色扩展 + 查询应用配置 - 数据库迁移脚本
 -- 执行前请备份数据库
 -- ================================================
 
@@ -11,6 +11,11 @@ ALTER TABLE users
 ALTER TABLE users
   ADD COLUMN wecom_userid VARCHAR(100) DEFAULT NULL COMMENT '企业微信用户ID',
   ADD INDEX idx_wecom_userid (wecom_userid);
+
+-- 3. 在 wecom_config 表添加查询应用配置字段
+ALTER TABLE wecom_config
+  ADD COLUMN query_agent_id VARCHAR(50) DEFAULT NULL COMMENT '查询应用AgentId',
+  ADD COLUMN query_app_secret VARCHAR(200) DEFAULT NULL COMMENT '查询应用Secret';
 
 -- 说明：
 -- admin:   系统管理员（全部权限）

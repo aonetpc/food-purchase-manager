@@ -200,6 +200,7 @@ router.get('/config', async (req, res) => {
     res.json({
       ...config,
       app_secret: config.app_secret ? '****' : '',
+      query_app_secret: config.query_app_secret ? '****' : '',
       bank_account: config.bank_account ? '****' : '',
       callback_aes_key: config.callback_aes_key ? '****' : '',
     });
@@ -213,7 +214,7 @@ router.get('/config', async (req, res) => {
 router.get('/config/secret/:field', async (req, res) => {
   try {
     const { field } = req.params;
-    const allowedFields = ['app_secret', 'bank_account', 'callback_aes_key'];
+    const allowedFields = ['app_secret', 'query_app_secret', 'bank_account', 'callback_aes_key'];
     if (!allowedFields.includes(field)) {
       return res.status(400).json({ error: '不允许的字段' });
     }
@@ -237,7 +238,8 @@ router.put('/config', async (req, res) => {
       payment_options, default_payment_key,
       payee_name, bank_name, bank_account,
       payment_reason_template, approval_field_mapping,
-      callback_token, callback_aes_key, app_domain
+      callback_token, callback_aes_key, app_domain,
+      query_agent_id, query_app_secret
     } = req.body;
 
     // 确保配置行存在
@@ -263,6 +265,9 @@ router.put('/config', async (req, res) => {
     if (callback_token !== undefined) { fields.push('callback_token = ?'); values.push(callback_token || null); }
     if (callback_aes_key !== undefined && callback_aes_key !== '****') { fields.push('callback_aes_key = ?'); values.push(callback_aes_key || null); }
     if (app_domain !== undefined) { fields.push('app_domain = ?'); values.push(app_domain || null); }
+    // 查询应用配置
+    if (query_agent_id !== undefined) { fields.push('query_agent_id = ?'); values.push(query_agent_id || null); }
+    if (query_app_secret !== undefined && query_app_secret !== '****') { fields.push('query_app_secret = ?'); values.push(query_app_secret || null); }
 
     if (fields.length > 0) {
       values.push(1);
@@ -274,6 +279,7 @@ router.put('/config', async (req, res) => {
     res.json({
       ...config,
       app_secret: config.app_secret ? '****' : '',
+      query_app_secret: config.query_app_secret ? '****' : '',
       bank_account: config.bank_account ? '****' : '',
       callback_aes_key: config.callback_aes_key ? '****' : '',
     });
