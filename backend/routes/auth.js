@@ -195,44 +195,71 @@ router.post('/wecom-login', async (req, res) => {
 // 绑定企微账号（使用查询应用的 Secret）
 router.post('/bind-wecom', async (req, res) => {
   try {
-    const { userId, code } = req.body;
-    if (!userId || !code) {
-      return res.status(400).json({ error: '缺少参数' });
+    const { userId, code, wecomUserId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: '缺少用户ID参数' });
     }
 
-    const config = await getWecomConfig();
-    const appSecret = config.query_app_secret || config.app_secret;
-    if (!config || !config.corp_id || !appSecret) {
-      return res.status(500).json({ error: '企业微信未配置' });
+    let targetWecomUserId = wecomUserId;
+
+    if (code && code !== 'manual') {
+      const config = await getWecomConfig();
+      const appSecret = config.query_app_secret || config.app_secret;
+      if (!config || !config.corp_id || !appSecret) {
+        return res.status(500).json({ error: '企业微信未配置' });
+      }
+
+      const tokenRes = await fetch(
+        `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${appSecret}`
+      );
+      const tokenData = await tokenRes.json();
+      if (tokenData.errcode !== 0) {
+        return res.status(500).json({ error: tokenData.errmsg || '获取access_token失败' });
+      }
+
+      const userRes = await fetch(
+        `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${tokenData.access_token}&code=${code}`
+      );
+      const userData = await userRes.json();
+      if (userData.errcode !== 0 || !userData.userid) {
+        return res.status(401).json({ error: userData.errmsg || 'code无效' });
+      }
+
+      targetWecomUserId = userData.userid;
     }
 
-    // 获取 access_token
-    const tokenRes = await fetch(
-      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${appSecret}`
-    );
-    const tokenData = await tokenRes.json();
-    if (tokenData.errcode !== 0) {
-      return res.status(500).json({ error: tokenData.errmsg || '获取access_token失败' });
+    if (!targetWecomUserId) {
+      return res.status(400).json({ error: '缺少企微用户ID' });
     }
 
-    // 用 code 获取 userid
-    const userRes = await fetch(
-      `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${tokenData.access_token}&code=${code}`
-    );
-    const userData = await userRes.json();
-    if (userData.errcode !== 0 || !userData.userid) {
-      return res.status(401).json({ error: userData.errmsg || 'code无效' });
-    }
-
-    // 更新用户的 wecom_userid
     await pool.query(
       'UPDATE users SET wecom_userid = ? WHERE id = ?',
-      [userData.userid, userId]
+      [targetWecomUserId, userId]
     );
 
-    res.json({ success: true, wecomUserId: userData.userid });
+    res.json({ success: true, wecomUserId: targetWecomUserId });
   } catch (err) {
     console.error('bind-wecom error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 解绑企微账号
+router.post('/unbind-wecom', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: '缺少用户ID参数' });
+    }
+
+    await pool.query(
+      'UPDATE users SET wecom_userid = NULL WHERE id = ?',
+      [userId]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('unbind-wecom error:', err);
     res.status(500).json({ error: err.message });
   }
 });

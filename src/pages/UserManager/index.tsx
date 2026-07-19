@@ -57,6 +57,16 @@ export default function UserManager() {
     }
   };
 
+  const handleUnbindWecom = async (userId: string) => {
+    if (!confirm('确定要解除该用户的企微绑定吗？')) return;
+    try {
+      await api.post('/auth/unbind-wecom', { userId });
+      await fetchUsers();
+    } catch (err: any) {
+      alert('解绑失败：' + err.message);
+    }
+  };
+
   const handleResetPassword = async () => {
     if (!resetUserId || !newPassword) return;
 
@@ -151,9 +161,19 @@ export default function UserManager() {
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {userItem.wecom_userid ? (
-                          <span className="text-green-600 flex items-center gap-1">
-                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                            已绑定
+                          <span className="flex items-center gap-2">
+                            <span className="text-green-600 flex items-center gap-1">
+                              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                              已绑定
+                            </span>
+                            {canManage(userItem) && (
+                              <button
+                                onClick={() => handleUnbindWecom(userItem.id)}
+                                className="text-red-500 hover:text-red-600 text-xs font-medium"
+                              >
+                                解绑
+                              </button>
+                            )}
                           </span>
                         ) : (
                           <span className="text-gray-400 flex items-center gap-1">

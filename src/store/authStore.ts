@@ -19,8 +19,10 @@ interface AuthStore {
   user: User | null;
   loading: boolean;
   error: string | null;
+  pendingWecomUserId: string | null;
   login: (username: string, password: string) => Promise<boolean>;
   wecomLogin: (code: string) => Promise<{ needBind?: boolean; user?: User }>;
+  bindWecom: (userId: string, wecomUserId: string) => Promise<boolean>;
   logout: () => void;
   isAdmin: () => boolean;
   canViewMonthly: () => boolean;
@@ -33,6 +35,7 @@ export const useAuthStore = create<AuthStore>()(
       user: null,
       loading: false,
       error: null,
+      pendingWecomUserId: null,
 
       login: async (username: string, password: string) => {
         set({ loading: true, error: null });
@@ -49,6 +52,14 @@ export const useAuthStore = create<AuthStore>()(
           };
 
           set({ user, loading: false, error: null });
+
+          const pendingWecomUserId = get().pendingWecomUserId;
+          if (pendingWecomUserId && !user.wecomUserId) {
+            await api.post('/auth/bind-wecom', { userId: user.id, wecomUserId: pendingWecomUserId });
+            user.wecomUserId = pendingWecomUserId;
+            set({ user, pendingWecomUserId: null });
+          }
+
           return true;
         } catch (err: any) {
           set({ loading: false, error: err.message || '登录失败，请检查网络连接' });
@@ -63,7 +74,7 @@ export const useAuthStore = create<AuthStore>()(
           const data = await api.post<any>('/auth/wecom-login', { code });
 
           if (data.needBind) {
-            set({ loading: false });
+            set({ loading: false, pendingWecomUserId: data.wecomUserId });
             return { needBind: true };
           }
 
@@ -84,7 +95,18 @@ export const useAuthStore = create<AuthStore>()(
       },
 
       logout: () => {
-        set({ user: null, error: null });
+        set({ user: null, error: null, pendingWecomUserId: null });
+      },
+
+      bindWecom: async (userId: string, wecomUserId: string) => {
+        try {
+          await api.post('/auth/bind-wecom', { userId, wecomUserId });
+          set({ pendingWecomUserId: null });
+          return true;
+        } catch (err) {
+          console.error('绑定企微失败:', err);
+          return false;
+        }
       },
 
       isAdmin: () => {
