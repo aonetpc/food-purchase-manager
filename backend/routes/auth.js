@@ -44,7 +44,7 @@ router.post('/login', async (req, res) => {
 router.get('/users', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC'
+      'SELECT id, username, name, role, wecom_userid, created_at FROM users ORDER BY created_at ASC'
     );
     res.json(rows);
   } catch (err) {

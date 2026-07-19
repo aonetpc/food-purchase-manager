@@ -6,9 +6,17 @@ interface UserItem {
   id: string;
   username: string;
   name: string;
-  role: 'admin' | 'viewer';
+  role: 'admin' | 'finance' | 'boss' | 'viewer';
+  wecom_userid?: string;
   created_at: string;
 }
+
+const ROLE_LABELS: Record<string, { label: string; color: string }> = {
+  admin: { label: '管理员', color: 'bg-red-100 text-red-700' },
+  finance: { label: '财务', color: 'bg-purple-100 text-purple-700' },
+  boss: { label: '董事长', color: 'bg-amber-100 text-amber-700' },
+  viewer: { label: '普通员工', color: 'bg-gray-100 text-gray-700' },
+};
 
 export default function UserManager() {
   const { user } = useAuthStore();
@@ -19,6 +27,7 @@ export default function UserManager() {
   const [newPassword, setNewPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
+  const [roleMessage, setRoleMessage] = useState('');
 
   useEffect(() => {
     fetchUsers();
@@ -33,6 +42,18 @@ export default function UserManager() {
       setError(err.message || '获取用户列表失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    setRoleMessage('');
+    try {
+      await api.put(`/auth/users/${userId}/role`, { role: newRole });
+      await fetchUsers();
+      setRoleMessage('角色已更新');
+      setTimeout(() => setRoleMessage(''), 3000);
+    } catch (err: any) {
+      setRoleMessage(err.message || '更新失败');
     }
   };
 
@@ -95,6 +116,7 @@ export default function UserManager() {
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">用户名</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">姓名</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">角色</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">企微绑定</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">创建时间</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">操作</th>
                   </tr>
@@ -110,13 +132,35 @@ export default function UserManager() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-800">{userItem.name}</td>
                       <td className="px-4 py-3">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          userItem.role === 'admin' 
-                            ? 'bg-red-100 text-red-700' 
-                            : 'bg-gray-100 text-gray-700'
-                        }`}>
-                          {userItem.role === 'admin' ? '管理员' : '查看者'}
-                        </span>
+                        {canManage(userItem) ? (
+                          <select
+                            value={userItem.role}
+                            onChange={(e) => handleRoleChange(userItem.id, e.target.value)}
+                            className={`px-2 py-1 text-xs rounded-full border-0 outline-none cursor-pointer ${ROLE_LABELS[userItem.role]?.color || 'bg-gray-100 text-gray-700'}`}
+                          >
+                            <option value="admin">管理员</option>
+                            <option value="finance">财务</option>
+                            <option value="boss">董事长</option>
+                            <option value="viewer">普通员工</option>
+                          </select>
+                        ) : (
+                          <span className={`px-2 py-1 text-xs rounded-full ${ROLE_LABELS[userItem.role]?.color || 'bg-gray-100 text-gray-700'}`}>
+                            {ROLE_LABELS[userItem.role]?.label || userItem.role}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {userItem.wecom_userid ? (
+                          <span className="text-green-600 flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            已绑定
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 flex items-center gap-1">
+                            <span className="w-2 h-2 bg-gray-300 rounded-full"></span>
+                            未绑定
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500">
                         {new Date(userItem.created_at).toLocaleDateString()}
@@ -143,6 +187,11 @@ export default function UserManager() {
                   ))}
                 </tbody>
               </table>
+              {roleMessage && (
+                <div className="mt-4 p-2 bg-green-50 text-green-700 rounded text-sm text-center">
+                  {roleMessage}
+                </div>
+              )}
             </div>
           )}
 
