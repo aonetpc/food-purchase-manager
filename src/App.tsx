@@ -15,11 +15,20 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import ReimbursementManager from '@/pages/ReimbursementManager';
 import WecomManager from '@/pages/WecomManager';
 import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
+import MobileHome from '@/pages/mobile/Home';
+import MobileComingSoon from '@/pages/mobile/ComingSoon';
 
 export default function App() {
   return (
     <Router>
       <Routes>
+        {/* 手机端路由 - 独立于PC端Layout */}
+        <Route path="/m" element={<MobileHome />} />
+        <Route path="/m/daily" element={<MobileComingSoon title="今日采购" />} />
+        <Route path="/m/yearly" element={<MobileComingSoon title="年度均价" />} />
+        <Route path="/m/query" element={<MobileComingSoon title="食材查询" />} />
+        <Route path="/m/monthly" element={<MobileComingSoon title="月度分析" />} />
+
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/daily" replace />} />

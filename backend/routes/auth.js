@@ -3,6 +3,12 @@ const router = express.Router();
 const pool = require('../db');
 const bcrypt = require('bcrypt');
 
+// 获取企业微信配置
+async function getWecomConfig() {
+  const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
+  return rows.length > 0 ? rows[0] : null;
+}
+
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -105,6 +111,143 @@ router.post('/reset-password', async (req, res) => {
     }
 
     res.json({ success: true, message: '密码重置成功' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
+// 企业微信免登接口
+// 前端在企微内打开H5页面时，通过 wx.agentConfig 或 jsapi 获取 code
+// 然后调用此接口用 code 换取用户身份
+// ================================================
+
+// 用 code 换取企微用户 userid
+router.post('/wecom-login', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: '缺少 code 参数' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(500).json({ error: '企业微信未配置' });
+    }
+
+    // 1. 获取 access_token
+    const tokenRes = await fetch(
+      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`
+    );
+    const tokenData = await tokenRes.json();
+    if (tokenData.errcode !== 0) {
+      return res.status(500).json({ error: tokenData.errmsg || '获取access_token失败' });
+    }
+    const accessToken = tokenData.access_token;
+
+    // 2. 用 code 获取 userid
+    // 注意：H5应用使用 userinfo 接口
+    const userRes = await fetch(
+      `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${accessToken}&code=${code}`
+    );
+    const userData = await userRes.json();
+
+    if (userData.errcode !== 0) {
+      return res.status(401).json({ error: userData.errmsg || 'code无效或已过期' });
+    }
+
+    // 优先使用 userid，如果是第三方应用会返回 openid
+    const wecomUserId = userData.userid;
+    if (!wecomUserId) {
+      return res.status(401).json({ error: '未能获取用户身份，请确保在企业微信内打开' });
+    }
+
+    // 3. 根据企微 userid 查找本地用户
+    const [rows] = await pool.query(
+      'SELECT id, username, name, role, wecom_userid FROM users WHERE wecom_userid = ?',
+      [wecomUserId]
+    );
+
+    if (rows.length === 0) {
+      // 用户未绑定，返回需要绑定的标识
+      return res.json({
+        needBind: true,
+        wecomUserId,
+        message: '请使用账号密码登录一次以完成绑定',
+      });
+    }
+
+    const user = rows[0];
+    res.json({
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      wecomUserId: user.wecom_userid,
+    });
+  } catch (err) {
+    console.error('wecom-login error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 绑定企微账号（用户首次用账号密码登录后，前端调用此接口绑定）
+router.post('/bind-wecom', async (req, res) => {
+  try {
+    const { userId, code } = req.body;
+    if (!userId || !code) {
+      return res.status(400).json({ error: '缺少参数' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(500).json({ error: '企业微信未配置' });
+    }
+
+    // 获取 access_token
+    const tokenRes = await fetch(
+      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`
+    );
+    const tokenData = await tokenRes.json();
+    if (tokenData.errcode !== 0) {
+      return res.status(500).json({ error: tokenData.errmsg || '获取access_token失败' });
+    }
+
+    // 用 code 获取 userid
+    const userRes = await fetch(
+      `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${tokenData.access_token}&code=${code}`
+    );
+    const userData = await userRes.json();
+    if (userData.errcode !== 0 || !userData.userid) {
+      return res.status(401).json({ error: userData.errmsg || 'code无效' });
+    }
+
+    // 更新用户的 wecom_userid
+    await pool.query(
+      'UPDATE users SET wecom_userid = ? WHERE id = ?',
+      [userData.userid, userId]
+    );
+
+    res.json({ success: true, wecomUserId: userData.userid });
+  } catch (err) {
+    console.error('bind-wecom error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 更新用户角色（仅管理员）
+router.put('/users/:id/role', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+    const validRoles = ['admin', 'finance', 'boss', 'viewer'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: '无效的角色' });
+    }
+
+    await pool.query('UPDATE users SET role = ? WHERE id = ?', [role, id]);
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
