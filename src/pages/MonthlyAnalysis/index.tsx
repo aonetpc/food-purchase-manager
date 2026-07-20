@@ -13,6 +13,7 @@ import { formatCurrency, formatPercent, getPriceChangeBgColor } from '@/utils/fo
 import { getPastMonths, getMonthLabel } from '@/utils/date';
 import StatCard from '@/components/StatCard';
 import * as XLSX from 'xlsx';
+import { api } from '@/lib/api';
 
 const buildMonthlyAnalysis = (
   yearMonth: string,
@@ -186,8 +187,7 @@ function PurchaseSummaryTab({ month }: { month: string }) {
     const load = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/purchase/summary?month=${month}`);
-        const data = await res.json();
+        const data = await api.get(`/purchase/summary?month=${month}`);
         if (!cancelled) {
           setSummaryData(data);
         }
@@ -212,8 +212,7 @@ function PurchaseSummaryTab({ month }: { month: string }) {
 
   const handleExport = async () => {
     try {
-      const res = await fetch(`/api/purchase/export?month=${month}`);
-      const data = await res.json();
+      const data = await api.get(`/purchase/export?month=${month}`);
       if (data.data) {
         const ws = XLSX.utils.json_to_sheet(data.data);
         const wb = XLSX.utils.book_new();
