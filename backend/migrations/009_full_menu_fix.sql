@@ -1,39 +1,20 @@
 -- ================================================
 -- 009 - 完整修复菜单路径和权限问题
--- 一次性解决所有菜单和权限问题
+-- 使用已知的模块ID或自动查找
 -- ================================================
 
 -- ================================================
 -- 1. 更新所有菜单路径
 -- ================================================
--- 食材价格查询：/query → /ingredients
 UPDATE permissions SET path = '/ingredients', name = '食材价格查询' WHERE code = 'menu:query';
-
--- 采购录入：/entry → /purchase-entry
 UPDATE permissions SET path = '/purchase-entry' WHERE code = 'menu:entry';
-
--- 食材管理：/ingredients → /ingredient-manager，名称改为食材管理
 UPDATE permissions SET path = '/ingredient-manager', name = '食材管理' WHERE code = 'menu:ingredients';
-
--- 用户管理：确保路径正确
 UPDATE permissions SET path = '/users', name = '用户管理' WHERE code = 'menu:users';
-
--- 分类管理：确保路径正确
 UPDATE permissions SET path = '/categories', name = '分类管理' WHERE code = 'menu:categories';
-
--- 部门管理：确保路径正确
 UPDATE permissions SET path = '/departments', name = '部门管理' WHERE code = 'menu:departments';
-
--- 报销管理：确保路径正确
 UPDATE permissions SET path = '/reimbursement', name = '报销管理' WHERE code = 'menu:reimbursement';
-
--- 每日采购清单：确保路径正确
 UPDATE permissions SET path = '/daily', name = '每日采购清单' WHERE code = 'menu:daily';
-
--- 月度价格分析：确保路径正确
 UPDATE permissions SET path = '/monthly', name = '月度价格分析' WHERE code = 'menu:monthly';
-
--- 年度平均价查询：确保路径正确
 UPDATE permissions SET path = '/yearly', name = '年度平均价查询' WHERE code = 'menu:yearly';
 
 -- ================================================
@@ -42,24 +23,26 @@ UPDATE permissions SET path = '/yearly', name = '年度平均价查询' WHERE co
 UPDATE permissions SET status = 0 WHERE code = 'menu:suppliers';
 
 -- ================================================
--- 3. 添加企业微信管理菜单
+-- 3. 添加企业微信管理菜单（使用已有的模块ID）
 -- ================================================
 INSERT INTO permissions (id, module_id, code, name, type, parent_id, path, icon, sort_order, status)
-SELECT UUID(), (SELECT id FROM modules WHERE code = 'food-purchase'), 'menu:wecom', '企业微信管理', 'menu', NULL, '/wecom', 'Settings', 12, 1
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'menu:wecom');
+SELECT UUID(), m.id, 'menu:wecom', '企业微信管理', 'menu', NULL, '/wecom', 'Settings', 12, 1
+FROM modules m
+WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'menu:wecom')
+LIMIT 1;
 
 -- ================================================
 -- 4. 添加用户管理权限（前端路由需要）
 -- ================================================
 INSERT INTO permissions (id, module_id, code, name, type, parent_id, sort_order, status)
-SELECT UUID(), (SELECT id FROM modules WHERE code = 'food-purchase'), 'action:user:manage', '用户管理', 'button', NULL, 25, 1
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'action:user:manage');
+SELECT UUID(), m.id, 'action:user:manage', '用户管理', 'button', NULL, 25, 1
+FROM modules m
+WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'action:user:manage')
+LIMIT 1;
 
 -- ================================================
 -- 5. 为管理员角色分配所有权限
 -- ================================================
--- 先删除旧的 admin 角色权限（避免重复）
--- 然后重新分配所有权限
 DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE code = 'admin');
 
 INSERT INTO role_permissions (id, role_id, permission_id)
