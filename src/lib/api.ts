@@ -1,11 +1,29 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+function getToken(): string | null {
+  try {
+    const stored = localStorage.getItem('auth-session');
+    if (stored) {
+      const data = JSON.parse(stored);
+      return data?.state?.user?.token || null;
+    }
+  } catch (e) {
+    console.error('Failed to get token:', e);
+  }
+  return null;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${BASE_URL}${path}`;
   
-  const defaultHeaders = {
+  const token = getToken();
+  const defaultHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
   };
+  
+  if (token) {
+    defaultHeaders['Authorization'] = `Bearer ${token}`;
+  }
 
   const response = await fetch(url, {
     ...options,
