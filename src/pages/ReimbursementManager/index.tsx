@@ -116,8 +116,37 @@ export default function ReimbursementManager() {
     }
   };
 
-  const handleDownloadPDF = (id: string) => {
-    window.open(`${api.getBaseUrl()}/purchase-confirmations/${id}/pdf`, '_blank');
+  const handleDownloadPDF = async (id: string) => {
+    try {
+      const token = localStorage.getItem('auth-session');
+      let authToken = '';
+      if (token) {
+        const data = JSON.parse(token);
+        authToken = data?.state?.user?.token || '';
+      }
+      
+      const response = await fetch(`${api.getBaseUrl()}/purchase-confirmations/${id}/pdf`, {
+        headers: {
+          'Authorization': authToken ? `Bearer ${authToken}` : '',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('下载失败');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `采购确认单_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message || '下载失败');
+    }
   };
 
   // 统计数据
