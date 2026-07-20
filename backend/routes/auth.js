@@ -14,7 +14,7 @@ router.post('/login', async (req, res) => {
     const { username, password } = req.body;
 
     const [rows] = await pool.query(
-      'SELECT id, username, name, role, password_hash, wecom_userid FROM users WHERE username = ?',
+      'SELECT id, username, name, role, role_id, status, password_hash, wecom_userid, phone, department_id FROM users WHERE username = ?',
       [username]
     );
 
@@ -23,18 +23,64 @@ router.post('/login', async (req, res) => {
     }
 
     const user = rows[0];
+
+    if (user.status !== 1) {
+      return res.status(403).json({ error: '用户已被禁用' });
+    }
+
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
+    pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date(), user.id]);
+
+    const [permRows] = await pool.query(`
+      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
+      FROM role_permissions rp
+      JOIN permissions p ON rp.permission_id = p.id
+      JOIN modules m ON p.module_id = m.id
+      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
+      ORDER BY m.sort_order ASC, p.sort_order ASC
+    `, [user.role_id]);
+
+    const modules = {};
+    permRows.forEach(perm => {
+      if (!modules[perm.module_code]) {
+        modules[perm.module_code] = { menus: [], actions: [] };
+      }
+      if (perm.type === 'menu') {
+        modules[perm.module_code].menus.push({
+          code: perm.code,
+          name: perm.name,
+          path: perm.path,
+          icon: perm.icon,
+        });
+      } else {
+        modules[perm.module_code].actions.push({
+          code: perm.code,
+          name: perm.name,
+        });
+      }
+    });
+
     res.json({
       id: user.id,
       username: user.username,
       name: user.name,
       role: user.role,
+      role_id: user.role_id,
       wecom_userid: user.wecom_userid,
+      phone: user.phone,
+      department_id: user.department_id,
+      status: user.status,
+      token: user.id,
+      permissions: {
+        modules: Object.values(modules),
+        codes: permRows.map(p => p.code),
+        menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+      },
     });
   } catch (err) {
     console.error(err);
@@ -45,7 +91,7 @@ router.post('/login', async (req, res) => {
 router.get('/users', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT id, username, name, role, wecom_userid, created_at FROM users ORDER BY created_at ASC'
+      'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid, created_at, last_login_at FROM users ORDER BY created_at ASC'
     );
     res.json(rows);
   } catch (err) {
@@ -133,13 +179,11 @@ router.post('/wecom-login', async (req, res) => {
     }
 
     const config = await getWecomConfig();
-    // 查询应用优先使用 query_app_secret，没有则回退到 app_secret
     const appSecret = config.query_app_secret || config.app_secret;
     if (!config || !config.corp_id || !appSecret) {
       return res.status(500).json({ error: '企业微信未配置' });
     }
 
-    // 1. 获取 access_token（使用查询应用的Secret）
     const tokenRes = await fetch(
       `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${appSecret}`
     );
@@ -149,7 +193,6 @@ router.post('/wecom-login', async (req, res) => {
     }
     const accessToken = tokenData.access_token;
 
-    // 2. 用 code 获取 userid
     const userRes = await fetch(
       `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${accessToken}&code=${code}`
     );
@@ -164,13 +207,13 @@ router.post('/wecom-login', async (req, res) => {
       return res.status(401).json({ error: '未能获取用户身份，请确保在企业微信内打开' });
     }
 
-    // 3. 根据企微 userid 查找本地用户
-    const [rows] = await pool.query(
-      'SELECT id, username, name, role, wecom_userid FROM users WHERE wecom_userid = ?',
-      [wecomUserId]
+    // 3. 根据企微 userid 查找本地用户（使用 user_login_methods 表）
+    const [ulmRows] = await pool.query(
+      'SELECT user_id FROM user_login_methods WHERE type = ? AND identifier = ?',
+      ['wecom', wecomUserId]
     );
 
-    if (rows.length === 0) {
+    if (ulmRows.length === 0) {
       return res.json({
         needBind: true,
         wecomUserId,
@@ -178,13 +221,70 @@ router.post('/wecom-login', async (req, res) => {
       });
     }
 
-    const user = rows[0];
+    const userId = ulmRows[0].user_id;
+    const [userRows] = await pool.query(
+      'SELECT id, username, name, role, role_id, status, wecom_userid, phone, department_id FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    const user = userRows[0];
+
+    if (user.status !== 1) {
+      return res.status(403).json({ error: '用户已被禁用' });
+    }
+
+    pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date(), user.id]);
+
+    // 4. 获取用户权限
+    const [permRows] = await pool.query(`
+      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
+      FROM role_permissions rp
+      JOIN permissions p ON rp.permission_id = p.id
+      JOIN modules m ON p.module_id = m.id
+      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
+      ORDER BY m.sort_order ASC, p.sort_order ASC
+    `, [user.role_id]);
+
+    const modules = {};
+    permRows.forEach(perm => {
+      if (!modules[perm.module_code]) {
+        modules[perm.module_code] = { menus: [], actions: [] };
+      }
+      if (perm.type === 'menu') {
+        modules[perm.module_code].menus.push({
+          code: perm.code,
+          name: perm.name,
+          path: perm.path,
+          icon: perm.icon,
+        });
+      } else {
+        modules[perm.module_code].actions.push({
+          code: perm.code,
+          name: perm.name,
+        });
+      }
+    });
+
     res.json({
       id: user.id,
       username: user.username,
       name: user.name,
       role: user.role,
-      wecomUserId: user.wecom_userid,
+      role_id: user.role_id,
+      wecom_userid: user.wecom_userid,
+      phone: user.phone,
+      department_id: user.department_id,
+      status: user.status,
+      token: user.id,
+      permissions: {
+        modules: Object.values(modules),
+        codes: permRows.map(p => p.code),
+        menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+      },
     });
   } catch (err) {
     console.error('wecom-login error:', err);
@@ -232,10 +332,20 @@ router.post('/bind-wecom', async (req, res) => {
       return res.status(400).json({ error: '缺少企微用户ID' });
     }
 
+    // 删除该用户旧的企微绑定
+    await pool.query('DELETE FROM user_login_methods WHERE user_id = ? AND type = ?', [userId, 'wecom']);
+    
+    // 删除该企微ID已有的绑定（一个企微只能绑定一个用户）
+    await pool.query('DELETE FROM user_login_methods WHERE type = ? AND identifier = ?', ['wecom', targetWecomUserId]);
+
+    // 插入新绑定
     await pool.query(
-      'UPDATE users SET wecom_userid = ? WHERE id = ?',
-      [targetWecomUserId, userId]
+      'INSERT INTO user_login_methods (id, user_id, type, identifier, config) VALUES (UUID(), ?, ?, ?, JSON_OBJECT("source", "bind_api"))',
+      [userId, 'wecom', targetWecomUserId]
     );
+
+    // 同时更新 users 表（兼容旧代码）
+    await pool.query('UPDATE users SET wecom_userid = ? WHERE id = ?', [targetWecomUserId, userId]);
 
     res.json({ success: true, wecomUserId: targetWecomUserId });
   } catch (err) {
@@ -252,10 +362,8 @@ router.post('/unbind-wecom', async (req, res) => {
       return res.status(400).json({ error: '缺少用户ID参数' });
     }
 
-    await pool.query(
-      'UPDATE users SET wecom_userid = NULL WHERE id = ?',
-      [userId]
-    );
+    await pool.query('DELETE FROM user_login_methods WHERE user_id = ? AND type = ?', [userId, 'wecom']);
+    await pool.query('UPDATE users SET wecom_userid = NULL WHERE id = ?', [userId]);
 
     res.json({ success: true });
   } catch (err) {

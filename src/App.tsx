@@ -37,30 +37,30 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/daily" replace />} />
           <Route path="purchase-entry" element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredPermission="action:entry:create">
               <PurchaseEntry />
             </ProtectedRoute>
           } />
           <Route path="daily" element={<DailyPurchase />} />
           <Route path="monthly" element={
-            <ProtectedRoute requiredRole={['admin', 'finance', 'boss']}>
+            <ProtectedRoute requiredPermission="menu:monthly">
               <MonthlyAnalysis />
             </ProtectedRoute>
           } />
           <Route path="yearly" element={<YearlyPrice />} />
           <Route path="ingredients" element={<IngredientQuery />} />
           <Route path="categories" element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredPermission="action:category:manage">
               <CategoryManager />
             </ProtectedRoute>
           } />
           <Route path="ingredient-manager" element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredPermission="action:ingredient:manage">
               <IngredientManager />
             </ProtectedRoute>
           } />
           <Route path="departments" element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredPermission="action:department:manage">
               <DepartmentManager />
             </ProtectedRoute>
           } />
@@ -70,12 +70,12 @@ export default function App() {
             </ProtectedRoute>
           } />
           <Route path="users" element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredPermission="action:user:manage">
               <UserManager />
             </ProtectedRoute>
           } />
           <Route path="reimbursement" element={
-            <ProtectedRoute requiredRole="admin">
+            <ProtectedRoute requiredPermission="action:reimbursement:manage">
               <ReimbursementManager />
             </ProtectedRoute>
           } />

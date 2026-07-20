@@ -4,16 +4,45 @@ import { api } from '@/lib/api';
 
 export type UserRole = 'admin' | 'finance' | 'boss' | 'viewer';
 
+export interface MenuItem {
+  code: string;
+  name: string;
+  path: string;
+  icon: string;
+}
+
+export interface ActionItem {
+  code: string;
+  name: string;
+}
+
+export interface ModulePermissions {
+  code: string;
+  name: string;
+  icon?: string;
+  menus: MenuItem[];
+  actions: ActionItem[];
+}
+
+export interface UserPermissions {
+  modules: ModulePermissions[];
+  codes: string[];
+  menuPaths: string[];
+}
+
 export interface User {
   id: string;
   username: string;
   name: string;
   role: UserRole;
+  role_id: string;
+  status: number;
   wecomUserId?: string;
+  phone?: string;
+  department_id?: string;
+  token?: string;
+  permissions?: UserPermissions;
 }
-
-// 角色权限映射：哪些角色可以查看月度分析
-const MONTHLY_ACCESS_ROLES: UserRole[] = ['admin', 'finance', 'boss'];
 
 interface AuthStore {
   user: User | null;
@@ -26,7 +55,9 @@ interface AuthStore {
   logout: () => void;
   isAdmin: () => boolean;
   canViewMonthly: () => boolean;
+  hasPermission: (permissionCode: string) => boolean;
   getSession: () => User | null;
+  getUserMenus: () => MenuItem[];
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -48,7 +79,13 @@ export const useAuthStore = create<AuthStore>()(
             username: data.username,
             name: data.name,
             role: data.role as UserRole,
+            role_id: data.role_id,
+            status: data.status,
             wecomUserId: data.wecom_userid,
+            phone: data.phone,
+            department_id: data.department_id,
+            token: data.token,
+            permissions: data.permissions,
           };
 
           set({ user, loading: false, error: null });
@@ -67,7 +104,6 @@ export const useAuthStore = create<AuthStore>()(
         }
       },
 
-      // 企微免登
       wecomLogin: async (code: string) => {
         set({ loading: true, error: null });
         try {
@@ -83,7 +119,13 @@ export const useAuthStore = create<AuthStore>()(
             username: data.username,
             name: data.name,
             role: data.role as UserRole,
-            wecomUserId: data.wecomUserId,
+            role_id: data.role_id,
+            status: data.status,
+            wecomUserId: data.wecom_userid,
+            phone: data.phone,
+            department_id: data.department_id,
+            token: data.token,
+            permissions: data.permissions,
           };
 
           set({ user, loading: false, error: null });
@@ -114,14 +156,37 @@ export const useAuthStore = create<AuthStore>()(
         return user?.role === 'admin';
       },
 
-      // 是否可以查看月度分析（仅财务、董事长、管理员）
       canViewMonthly: () => {
+        return get().hasPermission('menu:monthly') || get().hasPermission('menu:m-monthly');
+      },
+
+      hasPermission: (permissionCode: string) => {
         const user = get().user;
-        return !!user && MONTHLY_ACCESS_ROLES.includes(user.role);
+        if (!user || !user.permissions) return false;
+        return user.permissions.codes.includes(permissionCode);
       },
 
       getSession: () => {
         return get().user;
+      },
+
+      getUserMenus: () => {
+        const user = get().user;
+        if (!user || !user.permissions) return [];
+
+        const menus: MenuItem[] = [];
+        user.permissions.modules.forEach(mod => {
+          mod.menus.forEach(menu => {
+            menus.push(menu);
+          });
+        });
+
+        return menus.sort((a, b) => {
+          const order = ['/daily', '/monthly', '/yearly', '/query', '/entry', '/reimbursement', '/users', '/categories', '/ingredients', '/departments', '/suppliers'];
+          const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
+          const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
+          return aIdx - bIdx;
+        });
       },
     }),
     {

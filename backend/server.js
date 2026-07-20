@@ -11,20 +11,30 @@ const suppliersRouter = require('./routes/suppliers');
 const wecomRouter = require('./routes/wecom');
 const purchaseConfirmationsRouter = require('./routes/purchase-confirmations');
 
+const { requireAuth, getUserPermissions, getRoles, getPermissions, getModules, requireRole } = require('./middleware/rbac');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
 
-app.use('/api/categories', categoriesRouter);
-app.use('/api/ingredients', ingredientsRouter);
-app.use('/api/purchase', purchaseRouter);
 app.use('/api/auth', authRouter);
-app.use('/api/departments', departmentsRouter);
-app.use('/api/suppliers', suppliersRouter);
 app.use('/api/wecom', wecomRouter);
-app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
+
+// 权限相关接口（需登录）
+app.get('/api/permissions', requireAuth, getUserPermissions);
+app.get('/api/permissions/list', requireAuth, requireRole('admin'), getPermissions);
+app.get('/api/roles', requireAuth, requireRole('admin'), getRoles);
+app.get('/api/modules', requireAuth, getModules);
+
+// 业务接口（需登录）
+app.use('/api/categories', requireAuth, categoriesRouter);
+app.use('/api/ingredients', requireAuth, ingredientsRouter);
+app.use('/api/purchase', requireAuth, purchaseRouter);
+app.use('/api/departments', requireAuth, departmentsRouter);
+app.use('/api/suppliers', requireAuth, suppliersRouter);
+app.use('/api/purchase-confirmations', requireAuth, purchaseConfirmationsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });

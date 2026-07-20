@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -17,16 +17,37 @@ import {
   User,
   Users,
   Receipt,
-  Settings
+  Settings,
+  Truck,
+  PlusCircle,
+  Calendar,
+  Smartphone,
 } from 'lucide-react';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, type MenuItem } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
 import { formatCurrency } from '@/utils/format';
 import { formatDate } from '@/utils/date';
 
+const iconMap: Record<string, any> = {
+  ShoppingCart,
+  TrendingUp,
+  BarChart3,
+  Search,
+  ClipboardList,
+  Tags,
+  Package,
+  Building2,
+  Receipt,
+  Settings,
+  Truck,
+  PlusCircle,
+  Calendar,
+  Smartphone,
+};
+
 export default function Layout() {
   const navigate = useNavigate();
-  const { user, isAdmin, canViewMonthly, logout } = useAuthStore();
+  const { user, isAdmin, canViewMonthly, logout, getUserMenus } = useAuthStore();
   const { fetchRecords, records, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -68,26 +89,30 @@ export default function Layout() {
     ? [...priceChanges].sort((a, b) => a.rate - b.rate)[0]
     : null;
 
-  const navItems = [
-    { path: '/daily', label: '每日采购清单', icon: ShoppingCart },
-    ...(canViewMonthly() ? [{ path: '/monthly', label: '月度价格分析', icon: TrendingUp }] : []),
-    { path: '/yearly', label: '年度平均价查询', icon: BarChart3 },
-    { path: '/ingredients', label: '食材价格查询', icon: Search },
-  ];
+  const navItems = useMemo(() => {
+    const menus = getUserMenus();
+    return menus.filter(m => !m.path.startsWith('/m/'));
+  }, [getUserMenus]);
 
-  const adminNavItems = [
-    { path: '/purchase-entry', label: '采买清单录入', icon: ClipboardList },
-    { path: '/departments', label: '部门管理', icon: Building2 },
-    { path: '/categories', label: '食材分类管理', icon: Tags },
-    { path: '/ingredient-manager', label: '食材信息管理', icon: Package },
-    { path: '/reimbursement', label: '报销管理', icon: Receipt },
-    { path: '/wecom', label: '企业微信管理', icon: Settings },
-  ];
+  const adminNavItems = useMemo(() => {
+    const menus = getUserMenus();
+    return menus.filter(m => 
+      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users'].includes(m.path)
+    );
+  }, [getUserMenus]);
 
-  const visibleNavItems = [
-    ...(isAdmin() ? adminNavItems : []),
-    ...navItems,
-  ];
+  const visibleNavItems = useMemo(() => {
+    const userMenus = getUserMenus();
+    const pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
+    
+    const order = ['/daily', '/monthly', '/yearly', '/query', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/suppliers', '/wecom'];
+    
+    return pcMenus.sort((a, b) => {
+      const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
+      const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
+      return aIdx - bIdx;
+    });
+  }, [getUserMenus]);
 
   const handlePrint = () => {
     window.print();
@@ -101,6 +126,10 @@ export default function Layout() {
 
   const handleLoginClick = () => {
     navigate('/login');
+  };
+
+  const getIcon = (iconName: string) => {
+    return iconMap[iconName] || Package;
   };
 
   return (
@@ -189,17 +218,20 @@ export default function Layout() {
         sidebarOpen ? 'translate-x-0' : '-translate-x-full'
       } lg:translate-x-0`}>
         <nav className="p-4 space-y-1">
-          {visibleNavItems.map(item => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-              onClick={() => window.innerWidth < 1024 && setSidebarOpen(false)}
-            >
-              <item.icon size={20} />
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+          {visibleNavItems.map(item => {
+            const Icon = getIcon(item.icon);
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                onClick={() => window.innerWidth < 1024 && setSidebarOpen(false)}
+              >
+                <Icon size={20} />
+                <span>{item.name}</span>
+              </NavLink>
+            );
+          })}
         </nav>
 
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-100">

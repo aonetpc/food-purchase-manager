@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
  */
 export default function MobileHome() {
   const navigate = useNavigate();
-  const { user, wecomLogin, login, canViewMonthly, logout } = useAuthStore();
+  const { user, wecomLogin, login, canViewMonthly, hasPermission, logout } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loginMode, setLoginMode] = useState<'wecom' | 'manual' | null>(null);
@@ -173,9 +173,9 @@ export default function MobileHome() {
     );
   }
 
-  // 已登录 - 显示导航首页
+  // 已登录 - 显示导航首页（基于权限动态生成）
   const menus = [
-    {
+    hasPermission('menu:m-daily') && {
       key: 'daily',
       title: '今日采购',
       desc: '查看每日采购清单',
@@ -183,7 +183,7 @@ export default function MobileHome() {
       color: 'from-blue-500 to-blue-600',
       path: '/m/daily',
     },
-    {
+    hasPermission('menu:m-yearly') && {
       key: 'yearly',
       title: '年度均价',
       desc: '12个月价格走势',
@@ -191,7 +191,7 @@ export default function MobileHome() {
       color: 'from-purple-500 to-purple-600',
       path: '/m/yearly',
     },
-    {
+    hasPermission('menu:m-query') && {
       key: 'query',
       title: '食材查询',
       desc: '搜索食材价格',
@@ -199,19 +199,15 @@ export default function MobileHome() {
       color: 'from-orange-500 to-orange-600',
       path: '/m/query',
     },
-  ];
-
-  // 月度分析仅财务/董事长可见
-  if (canViewMonthly()) {
-    menus.push({
+    hasPermission('menu:m-monthly') && {
       key: 'monthly',
       title: '月度分析',
       desc: '采购价格分析',
       icon: '📊',
       color: 'from-green-500 to-green-600',
       path: '/m/monthly',
-    } as typeof menus[0]);
-  }
+    },
+  ].filter(Boolean) as typeof menus;
 
   return (
     <div className="min-h-screen bg-gray-50">
