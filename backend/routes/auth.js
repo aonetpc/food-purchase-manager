@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const bcrypt = require('bcrypt');
+const { requireAuth, requireRole } = require('../middleware/rbac');
+const { logOperation } = require('../middleware/logger');
 
-// 获取企业微信配置
 async function getWecomConfig() {
   const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
   return rows.length > 0 ? rows[0] : null;
@@ -19,22 +20,38 @@ router.post('/login', async (req, res) => {
     );
 
     if (rows.length === 0) {
+      await logOperation(null, null, 'auth', 'login_failed', {
+        username,
+        reason: '用户不存在'
+      }, req);
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
     const user = rows[0];
 
     if (user.status !== 1) {
+      await logOperation(null, user.id, 'auth', 'login_failed', {
+        username,
+        reason: '用户已被禁用'
+      }, req);
       return res.status(403).json({ error: '用户已被禁用' });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordValid) {
+      await logOperation(null, user.id, 'auth', 'login_failed', {
+        username,
+        reason: '密码错误'
+      }, req);
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
     pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date(), user.id]);
+    await logOperation(user.id, user.id, 'auth', 'login', {
+      username,
+      login_type: 'password'
+    }, req);
 
     const [permRows] = await pool.query(`
       SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
@@ -88,7 +105,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.get('/users', async (req, res) => {
+router.get('/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query(
       'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid, created_at, last_login_at FROM users ORDER BY created_at ASC'
@@ -169,7 +186,7 @@ router.post('/reset-password', async (req, res) => {
 // ================================================
 
 // 新增用户
-router.post('/users', async (req, res) => {
+router.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { username, name, role, phone, department_id, password } = req.body;
 
@@ -212,6 +229,10 @@ router.post('/users', async (req, res) => {
       [userId, 'password', username]
     );
 
+    await logOperation(req.user.id, userId, 'user', 'create', {
+      username, name, role, phone, department_id
+    }, req);
+
     res.json({ success: true, id: userId, message: '用户创建成功，初始密码为 123456' });
   } catch (err) {
     console.error(err);
@@ -220,12 +241,12 @@ router.post('/users', async (req, res) => {
 });
 
 // 编辑用户信息
-router.put('/users/:id', async (req, res) => {
+router.put('/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, role, phone, department_id } = req.body;
 
-    const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [id]);
+    const [userRows] = await pool.query('SELECT role, username, name AS original_name FROM users WHERE id = ?', [id]);
     if (userRows.length === 0) {
       return res.status(404).json({ error: '用户不存在' });
     }
@@ -246,24 +267,29 @@ router.put('/users/:id', async (req, res) => {
 
     const fields = [];
     const values = [];
+    const changes = {};
 
-    if (name !== undefined) {
+    if (name !== undefined && name !== userRows[0].original_name) {
       fields.push('name = ?');
       values.push(name);
+      changes.name = { from: userRows[0].original_name, to: name };
     }
-    if (role !== undefined) {
+    if (role !== undefined && role !== userRows[0].role) {
       fields.push('role = ?');
       values.push(role);
       fields.push('role_id = ?');
       values.push(roleId);
+      changes.role = { from: userRows[0].role, to: role };
     }
     if (phone !== undefined) {
       fields.push('phone = ?');
       values.push(phone);
+      changes.phone = { to: phone };
     }
     if (department_id !== undefined) {
       fields.push('department_id = ?');
       values.push(department_id);
+      changes.department_id = { to: department_id };
     }
 
     if (fields.length === 0) {
@@ -277,6 +303,11 @@ router.put('/users/:id', async (req, res) => {
       values
     );
 
+    await logOperation(req.user.id, id, 'user', 'update', {
+      username: userRows[0].username,
+      changes
+    }, req);
+
     res.json({ success: true, message: '用户信息更新成功' });
   } catch (err) {
     console.error(err);
@@ -285,13 +316,18 @@ router.put('/users/:id', async (req, res) => {
 });
 
 // 禁用/启用用户
-router.put('/users/:id/status', async (req, res) => {
+router.put('/users/:id/status', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
     if (status !== 0 && status !== 1) {
       return res.status(400).json({ error: '状态值只能是0或1' });
+    }
+
+    const [userRows] = await pool.query('SELECT username, name, status AS original_status FROM users WHERE id = ?', [id]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
     }
 
     const [result] = await pool.query(
@@ -302,6 +338,13 @@ router.put('/users/:id/status', async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: '用户不存在' });
     }
+
+    await logOperation(req.user.id, id, 'user', status === 1 ? 'enable' : 'disable', {
+      username: userRows[0].username,
+      name: userRows[0].name,
+      from_status: userRows[0].original_status,
+      to_status: status
+    }, req);
 
     res.json({ 
       success: true, 
@@ -314,17 +357,22 @@ router.put('/users/:id/status', async (req, res) => {
 });
 
 // 删除用户（软删除，设置status=0）
-router.delete('/users/:id', async (req, res) => {
+router.delete('/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [userRows] = await pool.query('SELECT id FROM users WHERE id = ?', [id]);
+    const [userRows] = await pool.query('SELECT username, name FROM users WHERE id = ?', [id]);
     if (userRows.length === 0) {
       return res.status(404).json({ error: '用户不存在' });
     }
 
     await pool.query('UPDATE users SET status = 0 WHERE id = ?', [id]);
     await pool.query('DELETE FROM user_login_methods WHERE user_id = ?', [id]);
+
+    await logOperation(req.user.id, id, 'user', 'delete', {
+      username: userRows[0].username,
+      name: userRows[0].name
+    }, req);
 
     res.json({ success: true, message: '用户已禁用' });
   } catch (err) {
@@ -428,6 +476,11 @@ router.post('/wecom-login', async (req, res) => {
     }
 
     pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date(), user.id]);
+    await logOperation(user.id, user.id, 'auth', 'login', {
+      username: user.username,
+      login_type: 'wecom',
+      wecom_userid: wecomUserId
+    }, req);
 
     // 4. 获取用户权限
     const [permRows] = await pool.query(`
@@ -483,7 +536,7 @@ router.post('/wecom-login', async (req, res) => {
 });
 
 // 绑定企微账号（使用查询应用的 Secret）
-router.post('/bind-wecom', async (req, res) => {
+router.post('/bind-wecom', requireAuth, async (req, res) => {
   try {
     const { userId, code, wecomUserId } = req.body;
     if (!userId) {
@@ -537,6 +590,10 @@ router.post('/bind-wecom', async (req, res) => {
     // 同时更新 users 表（兼容旧代码）
     await pool.query('UPDATE users SET wecom_userid = ? WHERE id = ?', [targetWecomUserId, userId]);
 
+    await logOperation(req.user.id, userId, 'user', 'bind_wecom', {
+      wecom_userid: targetWecomUserId
+    }, req);
+
     res.json({ success: true, wecomUserId: targetWecomUserId });
   } catch (err) {
     console.error('bind-wecom error:', err);
@@ -545,7 +602,7 @@ router.post('/bind-wecom', async (req, res) => {
 });
 
 // 解绑企微账号
-router.post('/unbind-wecom', async (req, res) => {
+router.post('/unbind-wecom', requireAuth, async (req, res) => {
   try {
     const { userId } = req.body;
     if (!userId) {
@@ -555,6 +612,8 @@ router.post('/unbind-wecom', async (req, res) => {
     await pool.query('DELETE FROM user_login_methods WHERE user_id = ? AND type = ?', [userId, 'wecom']);
     await pool.query('UPDATE users SET wecom_userid = NULL WHERE id = ?', [userId]);
 
+    await logOperation(req.user.id, userId, 'user', 'unbind_wecom', {}, req);
+
     res.json({ success: true });
   } catch (err) {
     console.error('unbind-wecom error:', err);
@@ -563,7 +622,7 @@ router.post('/unbind-wecom', async (req, res) => {
 });
 
 // 更新用户角色（仅管理员）
-router.put('/users/:id/role', async (req, res) => {
+router.put('/users/:id/role', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
     const { role } = req.body;
@@ -572,7 +631,26 @@ router.put('/users/:id/role', async (req, res) => {
       return res.status(400).json({ error: '无效的角色' });
     }
 
-    await pool.query('UPDATE users SET role = ? WHERE id = ?', [role, id]);
+    const [userRows] = await pool.query('SELECT username, name, role AS original_role FROM users WHERE id = ?', [id]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    const [roleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', [role]);
+    if (roleRows.length === 0) {
+      return res.status(400).json({ error: '角色不存在' });
+    }
+    const roleId = roleRows[0].id;
+
+    await pool.query('UPDATE users SET role = ?, role_id = ? WHERE id = ?', [role, roleId, id]);
+
+    await logOperation(req.user.id, id, 'user', 'update_role', {
+      username: userRows[0].username,
+      name: userRows[0].name,
+      from_role: userRows[0].original_role,
+      to_role: role
+    }, req);
+
     res.json({ success: true });
   } catch (err) {
     console.error(err);
