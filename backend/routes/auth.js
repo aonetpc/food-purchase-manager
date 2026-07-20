@@ -165,6 +165,196 @@ router.post('/reset-password', async (req, res) => {
 });
 
 // ================================================
+// 用户管理接口（管理员专用）
+// ================================================
+
+// 新增用户
+router.post('/users', async (req, res) => {
+  try {
+    const { username, name, role, phone, department_id, password } = req.body;
+
+    if (!username || !name || !role) {
+      return res.status(400).json({ error: '用户名、姓名、角色为必填项' });
+    }
+
+    const validRoles = ['admin', 'finance', 'boss', 'viewer'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: '无效的角色' });
+    }
+
+    const [existRows] = await pool.query(
+      'SELECT id FROM users WHERE username = ?',
+      [username]
+    );
+    if (existRows.length > 0) {
+      return res.status(400).json({ error: '用户名已存在' });
+    }
+
+    const [roleRows] = await pool.query(
+      'SELECT id FROM roles WHERE code = ?',
+      [role]
+    );
+    if (roleRows.length === 0) {
+      return res.status(400).json({ error: '角色不存在' });
+    }
+    const roleId = roleRows[0].id;
+
+    const hashedPassword = await bcrypt.hash(password || '123456', 10);
+    const userId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+
+    await pool.query(
+      'INSERT INTO users (id, username, name, role, role_id, phone, department_id, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, username, name, role, roleId, phone, department_id, hashedPassword]
+    );
+
+    await pool.query(
+      'INSERT INTO user_login_methods (id, user_id, type, identifier, config) VALUES (UUID(), ?, ?, ?, JSON_OBJECT("has_password", TRUE))',
+      [userId, 'password', username]
+    );
+
+    res.json({ success: true, id: userId, message: '用户创建成功，初始密码为 123456' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 编辑用户信息
+router.put('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, role, phone, department_id } = req.body;
+
+    const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [id]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    const validRoles = ['admin', 'finance', 'boss', 'viewer'];
+    if (role && !validRoles.includes(role)) {
+      return res.status(400).json({ error: '无效的角色' });
+    }
+
+    let roleId = null;
+    if (role) {
+      const [roleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', [role]);
+      if (roleRows.length === 0) {
+        return res.status(400).json({ error: '角色不存在' });
+      }
+      roleId = roleRows[0].id;
+    }
+
+    const fields = [];
+    const values = [];
+
+    if (name !== undefined) {
+      fields.push('name = ?');
+      values.push(name);
+    }
+    if (role !== undefined) {
+      fields.push('role = ?');
+      values.push(role);
+      fields.push('role_id = ?');
+      values.push(roleId);
+    }
+    if (phone !== undefined) {
+      fields.push('phone = ?');
+      values.push(phone);
+    }
+    if (department_id !== undefined) {
+      fields.push('department_id = ?');
+      values.push(department_id);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: '没有可更新的字段' });
+    }
+
+    values.push(id);
+
+    await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    res.json({ success: true, message: '用户信息更新成功' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 禁用/启用用户
+router.put('/users/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (status !== 0 && status !== 1) {
+      return res.status(400).json({ error: '状态值只能是0或1' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE users SET status = ? WHERE id = ?',
+      [status, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    res.json({ 
+      success: true, 
+      message: status === 1 ? '用户已启用' : '用户已禁用' 
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 删除用户（软删除，设置status=0）
+router.delete('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [userRows] = await pool.query('SELECT id FROM users WHERE id = ?', [id]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    await pool.query('UPDATE users SET status = 0 WHERE id = ?', [id]);
+    await pool.query('DELETE FROM user_login_methods WHERE user_id = ?', [id]);
+
+    res.json({ success: true, message: '用户已禁用' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取单个用户详情
+router.get('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await pool.query(
+      'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid, created_at, last_login_at FROM users WHERE id = ?',
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
 // 企业微信免登接口
 // 前端在企微内打开H5页面时，通过 wx.agentConfig 或 jsapi 获取 code
 // 然后调用此接口用 code 换取用户身份
