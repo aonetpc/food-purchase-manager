@@ -182,7 +182,7 @@ export const useAuthStore = create<AuthStore>()(
         });
 
         return menus.sort((a, b) => {
-          const order = ['/daily', '/monthly', '/yearly', '/query', '/entry', '/reimbursement', '/users', '/categories', '/ingredients', '/departments', '/suppliers'];
+          const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/wecom'];
           const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
           const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
           return aIdx - bIdx;

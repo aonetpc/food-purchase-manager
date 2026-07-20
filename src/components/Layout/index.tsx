@@ -105,7 +105,7 @@ export default function Layout() {
     const userMenus = getUserMenus();
     const pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
     
-    const order = ['/daily', '/monthly', '/yearly', '/query', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/suppliers', '/wecom'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/wecom'];
     
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
