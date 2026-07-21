@@ -191,18 +191,23 @@ router.get('/config', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
     if (rows.length === 0) {
-      // 自动创建空配置行
       await pool.query('INSERT INTO wecom_config (id) VALUES (1)');
       return res.json({});
     }
     const config = rows[0];
-    // 不直接返回敏感字段，返回脱敏版本
+
+    const [wxRows] = await pool.query('SELECT app_id, app_secret, status FROM wechat_config WHERE id = 1');
+    const wxConfig = wxRows.length > 0 ? wxRows[0] : {};
+
     res.json({
       ...config,
       app_secret: config.app_secret ? '****' : '',
       query_app_secret: config.query_app_secret ? '****' : '',
       bank_account: config.bank_account ? '****' : '',
       callback_aes_key: config.callback_aes_key ? '****' : '',
+      wx_app_id: wxConfig.app_id || '',
+      wx_app_secret: wxConfig.app_secret ? '****' : '',
+      wx_status: wxConfig.status,
     });
   } catch (err) {
     console.error(err);
@@ -214,10 +219,20 @@ router.get('/config', async (req, res) => {
 router.get('/config/secret/:field', async (req, res) => {
   try {
     const { field } = req.params;
-    const allowedFields = ['app_secret', 'query_app_secret', 'bank_account', 'callback_aes_key'];
+    const allowedFields = ['app_secret', 'query_app_secret', 'bank_account', 'callback_aes_key', 'wx_app_secret'];
+
     if (!allowedFields.includes(field)) {
       return res.status(400).json({ error: '不允许的字段' });
     }
+
+    if (field === 'wx_app_secret') {
+      const [rows] = await pool.query(`SELECT app_secret as value FROM wechat_config WHERE id = 1`);
+      if (rows.length === 0 || !rows[0].value) {
+        return res.json({ value: '' });
+      }
+      return res.json({ value: rows[0].value });
+    }
+
     const [rows] = await pool.query(`SELECT ${field} as value FROM wecom_config WHERE id = 1`);
     if (rows.length === 0 || !rows[0].value) {
       return res.json({ value: '' });
@@ -239,10 +254,10 @@ router.put('/config', async (req, res) => {
       payee_name, bank_name, bank_account,
       payment_reason_template, approval_field_mapping,
       callback_token, callback_aes_key, app_domain,
-      query_agent_id, query_app_secret
+      query_agent_id, query_app_secret,
+      wx_app_id, wx_app_secret
     } = req.body;
 
-    // 确保配置行存在
     await pool.query('INSERT IGNORE INTO wecom_config (id) VALUES (1)');
 
     const fields = [];
@@ -265,7 +280,6 @@ router.put('/config', async (req, res) => {
     if (callback_token !== undefined) { fields.push('callback_token = ?'); values.push(callback_token || null); }
     if (callback_aes_key !== undefined && callback_aes_key !== '****') { fields.push('callback_aes_key = ?'); values.push(callback_aes_key || null); }
     if (app_domain !== undefined) { fields.push('app_domain = ?'); values.push(app_domain || null); }
-    // 查询应用配置
     if (query_agent_id !== undefined) { fields.push('query_agent_id = ?'); values.push(query_agent_id || null); }
     if (query_app_secret !== undefined && query_app_secret !== '****') { fields.push('query_app_secret = ?'); values.push(query_app_secret || null); }
 
@@ -274,14 +288,29 @@ router.put('/config', async (req, res) => {
       await pool.query(`UPDATE wecom_config SET ${fields.join(', ')} WHERE id = ?`, values);
     }
 
+    await pool.query('INSERT IGNORE INTO wechat_config (id) VALUES (1)');
+    const wxFields = [];
+    const wxValues = [];
+    if (wx_app_id !== undefined) { wxFields.push('app_id = ?'); wxValues.push(wx_app_id || null); }
+    if (wx_app_secret !== undefined && wx_app_secret !== '****') { wxFields.push('app_secret = ?'); wxValues.push(wx_app_secret || null); }
+    if (wxFields.length > 0) {
+      wxValues.push(1);
+      await pool.query(`UPDATE wechat_config SET ${wxFields.join(', ')} WHERE id = ?`, wxValues);
+    }
+
     const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
+    const [wxRows] = await pool.query('SELECT app_id, app_secret, status FROM wechat_config WHERE id = 1');
     const config = rows[0];
+    const wxConfig = wxRows.length > 0 ? wxRows[0] : {};
     res.json({
       ...config,
       app_secret: config.app_secret ? '****' : '',
       query_app_secret: config.query_app_secret ? '****' : '',
       bank_account: config.bank_account ? '****' : '',
       callback_aes_key: config.callback_aes_key ? '****' : '',
+      wx_app_id: wxConfig.app_id || '',
+      wx_app_secret: wxConfig.app_secret ? '****' : '',
+      wx_status: wxConfig.status,
     });
   } catch (err) {
     console.error(err);

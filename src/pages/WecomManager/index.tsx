@@ -21,6 +21,8 @@ interface WecomConfig {
   callback_token?: string;
   callback_aes_key?: string;
   approval_field_mapping?: Record<string, string>;
+  wx_app_id?: string;
+  wx_app_secret?: string;
 }
 
 interface TemplateControl {
@@ -332,6 +334,51 @@ export default function WecomManager() {
             </div>
           </div>
 
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
+              <Smartphone size={16} className="text-green-500" />
+              微信公众号配置（临时工打卡H5）
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">公众号AppID</label>
+                <input
+                  type="text"
+                  value={getFieldValue('wx_app_id')}
+                  onChange={(e) => setFieldValue('wx_app_id', e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="wx..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">公众号AppSecret</label>
+                <div className="relative">
+                  <input
+                    type={showSecrets.wx_app_secret ? 'text' : 'password'}
+                    value={getFieldValue('wx_app_secret')}
+                    onChange={(e) => setFieldValue('wx_app_secret', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="公众号的AppSecret"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleSecret('wx_app_secret')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showSecrets.wx_app_secret ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div className="bg-green-50 border border-green-100 rounded-lg p-3 text-xs text-green-700">
+                <p>💡 配置要求：</p>
+                <p>1. 在微信公众平台 → 设置与开发 → 公众号设置 → 功能设置 → 网页授权域名</p>
+                <p>2. 添加域名：<strong>food.hywellness.com</strong></p>
+                <p>3. 确保公众号已认证（未认证公众号无法使用网页授权获取用户信息）</p>
+                <p>4. 网页授权回调域名需与当前域名一致</p>
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end">
             <button
               onClick={() => saveSection('应用配置', {
@@ -340,6 +387,8 @@ export default function WecomManager() {
                 agent_id: getFieldValue('agent_id'),
                 query_app_secret: getFieldValue('query_app_secret'),
                 query_agent_id: getFieldValue('query_agent_id'),
+                wx_app_id: getFieldValue('wx_app_id'),
+                wx_app_secret: getFieldValue('wx_app_secret'),
               })}
               disabled={sectionStatus['应用配置'] === 'saving'}
               className="btn-primary flex items-center gap-2 disabled:opacity-50"
