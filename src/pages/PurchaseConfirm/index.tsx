@@ -149,11 +149,10 @@ export default function PurchaseConfirmPage() {
   const [wecomAuthing, setWecomAuthing] = useState(false);
 
   useEffect(() => {
-    // 1. 检查 URL 中的企微授权 code
+    // 1. 检查 URL 中的企微授权 code（只要有 code 就尝试回调，不严格检查 state）
     const code = searchParams.get('code');
-    const state = searchParams.get('state');
     
-    if (code && state === 'wecom_confirm' && id) {
+    if (code && id) {
       handleWecomCallback(code);
       return;
     }
@@ -165,11 +164,13 @@ export default function PurchaseConfirmPage() {
       return;
     }
     
-    // 3. 未登录，检测是否在企微环境
-    const isWecom = /wxwork/i.test(navigator.userAgent);
+    // 3. 未登录，检测是否在企微/微信环境
+    const isWecom = /wxwork|MicroMessenger/i.test(navigator.userAgent);
     if (isWecom && id) {
-      setWecomAuthing(true);
-      redirectToWecomAuth();
+      // 延迟跳转，确保页面渲染完成
+      setTimeout(() => {
+        redirectToWecomAuth();
+      }, 500);
     } else if (id) {
       fetchData(id);
     }
@@ -183,6 +184,7 @@ export default function PurchaseConfirmPage() {
 
   const handleWecomCallback = async (code: string) => {
     setWecomAuthing(true);
+    setError('');
     try {
       const result = await api.post<{ success: boolean; user?: any; needBind?: boolean; error?: string }>('/auth/wecom-callback', {
         code,
@@ -204,8 +206,12 @@ export default function PurchaseConfirmPage() {
         throw new Error('登录失败');
       }
     } catch (err: any) {
-      setError(err.message || '企微登录失败');
+      console.error('企微登录失败:', err);
+      // 登录失败，清理URL中的code，降级到手动输入模式
+      window.history.replaceState({}, '', `/confirm/${id}`);
       setWecomAuthing(false);
+      setLoading(false);
+      // 不设置错误提示，让用户可以手动输入姓名
     }
   };
 
