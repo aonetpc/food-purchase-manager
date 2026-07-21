@@ -98,8 +98,8 @@ export default function App() {
               <WecomManager />
             </ProtectedRoute>
           } />
-          <Route path="positions" element={
-            <ProtectedRoute requiredPermission="action:position:manage">
+          <Route path="temp-positions" element={
+            <ProtectedRoute requiredPermission="action:temp-position:manage">
               <PositionManager />
             </ProtectedRoute>
           } />
@@ -108,8 +108,8 @@ export default function App() {
               <TempWorkerManager />
             </ProtectedRoute>
           } />
-          <Route path="auditors" element={
-            <ProtectedRoute requiredPermission="action:auditor:manage">
+          <Route path="temp-auditors" element={
+            <ProtectedRoute requiredPermission="action:temp-auditor:manage">
               <AuditorManager />
             </ProtectedRoute>
           } />
