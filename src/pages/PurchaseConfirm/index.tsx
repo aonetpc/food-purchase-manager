@@ -360,8 +360,21 @@ export default function PurchaseConfirmPage() {
           )}
         </div>
 
-        {/* 确认人姓名输入 */}
-        {!allConfirmed && (
+        {/* 确认人信息（只读） */}
+        {!allConfirmed && userName && (
+          <div className="bg-white rounded-xl shadow-sm p-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">确认人</label>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
+                <span className="text-primary-600 text-sm font-medium">{userName.charAt(0)}</span>
+              </div>
+              <span className="text-gray-800 font-medium">{userName}</span>
+            </div>
+          </div>
+        )}
+        
+        {/* 未登录时显示提示和手动输入 */}
+        {!allConfirmed && !userName && (
           <div className="bg-white rounded-xl shadow-sm p-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">您的姓名</label>
             <input
