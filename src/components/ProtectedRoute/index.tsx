@@ -32,7 +32,7 @@ export default function ProtectedRoute({
     }
   }
 
-  if (requiredPermission && !hasPermission(requiredPermission)) {
+  if (requiredPermission && !hasPermission(requiredPermission) && !isAdmin()) {
     return <Navigate to="/daily" replace />;
   }
 

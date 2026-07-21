@@ -105,6 +105,23 @@ export default function Layout() {
     ? [...priceChanges].sort((a, b) => a.rate - b.rate)[0]
     : null;
 
+  const defaultAdminMenus: MenuItem[] = [
+    { code: 'menu:daily', name: '每日采购清单', path: '/daily', icon: 'ShoppingCart' },
+    { code: 'menu:monthly', name: '月度价格分析', path: '/monthly', icon: 'TrendingUp' },
+    { code: 'menu:yearly', name: '年度均价查询', path: '/yearly', icon: 'BarChart3' },
+    { code: 'menu:ingredients', name: '食材价格查询', path: '/ingredients', icon: 'Search' },
+    { code: 'menu:purchase-entry', name: '采购录入', path: '/purchase-entry', icon: 'ClipboardList' },
+    { code: 'menu:reimbursement', name: '报销管理', path: '/reimbursement', icon: 'Receipt' },
+    { code: 'menu:users', name: '用户管理', path: '/users', icon: 'Users' },
+    { code: 'menu:categories', name: '分类管理', path: '/categories', icon: 'Tags' },
+    { code: 'menu:ingredient-manager', name: '食材管理', path: '/ingredient-manager', icon: 'Package' },
+    { code: 'menu:departments', name: '部门管理', path: '/departments', icon: 'Building2' },
+    { code: 'menu:temp-positions', name: '岗位管理', path: '/temp-positions', icon: 'Target' },
+    { code: 'menu:temp-auditors', name: '审核员管理', path: '/temp-auditors', icon: 'UserCheck' },
+    { code: 'menu:temp-workers', name: '外请人员', path: '/temp-workers', icon: 'Users' },
+    { code: 'menu:wecom', name: '企业微信管理', path: '/wecom', icon: 'Smartphone' },
+  ];
+
   const navItems = useMemo(() => {
     const menus = getUserMenus();
     return menus.filter(m => !m.path.startsWith('/m/'));
@@ -113,22 +130,32 @@ export default function Layout() {
   const adminNavItems = useMemo(() => {
     const menus = getUserMenus();
     return menus.filter(m => 
-      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users'].includes(m.path)
+      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users', '/temp-positions', '/temp-auditors', '/temp-workers'].includes(m.path)
     );
   }, [getUserMenus]);
 
   const visibleNavItems = useMemo(() => {
-    const userMenus = getUserMenus();
+    let userMenus = getUserMenus();
     const pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
+    
+    if (isAdmin() && pcMenus.length === 0) {
+      return defaultAdminMenus;
+    }
+
+    if (isAdmin()) {
+      const existingPaths = new Set(pcMenus.map(m => m.path));
+      const missingMenus = defaultAdminMenus.filter(m => !existingPaths.has(m.path));
+      userMenus = [...pcMenus, ...missingMenus];
+    }
     
     const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/wecom'];
     
-    return pcMenus.sort((a, b) => {
+    return userMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
       const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
       return aIdx - bIdx;
     });
-  }, [getUserMenus]);
+  }, [getUserMenus, isAdmin]);
 
   const handlePrint = () => {
     window.print();
