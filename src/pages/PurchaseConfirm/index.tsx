@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Clock, Package, ArrowLeft, Pen } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
@@ -138,6 +138,7 @@ function SignatureCanvas({ onSignatureChange }: { onSignatureChange: (data: stri
 
 export default function PurchaseConfirmPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<Confirmation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -145,10 +146,68 @@ export default function PurchaseConfirmPage() {
   const [userName, setUserName] = useState('');
   const [signatureData, setSignatureData] = useState<string | null>(null);
   const [activeDeptId, setActiveDeptId] = useState<string | null>(null);
+  const [wecomAuthing, setWecomAuthing] = useState(false);
 
   useEffect(() => {
-    if (id) fetchData(id);
-  }, [id]);
+    // 1. 检查 URL 中的企微授权 code
+    const code = searchParams.get('code');
+    const state = searchParams.get('state');
+    
+    if (code && state === 'wecom_confirm' && id) {
+      handleWecomCallback(code);
+      return;
+    }
+    
+    // 2. 检查本地是否有登录态
+    const token = api.getToken();
+    if (token && id) {
+      fetchData(id);
+      return;
+    }
+    
+    // 3. 未登录，检测是否在企微环境
+    const isWecom = /wxwork/i.test(navigator.userAgent);
+    if (isWecom && id) {
+      setWecomAuthing(true);
+      redirectToWecomAuth();
+    } else if (id) {
+      fetchData(id);
+    }
+  }, [id, searchParams]);
+
+  const redirectToWecomAuth = () => {
+    const redirectUri = encodeURIComponent(window.location.href.split('?')[0]);
+    const authUrl = `${api.getBaseUrl()}/auth/wecom-auth-url?redirect_uri=${redirectUri}`;
+    window.location.href = authUrl;
+  };
+
+  const handleWecomCallback = async (code: string) => {
+    setWecomAuthing(true);
+    try {
+      const result = await api.post<{ success: boolean; user?: any; needBind?: boolean; error?: string }>('/auth/wecom-callback', {
+        code,
+        redirect_uri: window.location.href.split('?')[0],
+      });
+      
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      if (result.user) {
+        // 保存登录态
+        localStorage.setItem('auth-session', JSON.stringify({ state: { user: result.user, pendingWecomUserId: null } }));
+        setUserName(result.user.name || '');
+        // 清理 URL 中的 code
+        window.history.replaceState({}, '', `/confirm/${id}`);
+        if (id) fetchData(id);
+      } else {
+        throw new Error('登录失败');
+      }
+    } catch (err: any) {
+      setError(err.message || '企微登录失败');
+      setWecomAuthing(false);
+    }
+  };
 
   const fetchData = async (confirmId: string) => {
     setLoading(true);
@@ -184,6 +243,17 @@ export default function PurchaseConfirmPage() {
       setConfirming(false);
     }
   };
+
+  if (wecomAuthing) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-gray-500 mb-2">正在通过企业微信登录...</div>
+          <div className="text-xs text-gray-400">首次使用将自动创建确认账号</div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -621,6 +621,221 @@ router.post('/unbind-wecom', requireAuth, async (req, res) => {
   }
 });
 
+// ================================================
+// 企业微信OAuth授权（用于确认页面免登）
+// 企微内打开确认链接时自动跳转授权，回调后自动登录/创建用户
+// ================================================
+
+// 1. 获取企微OAuth授权URL
+router.get('/wecom-auth-url', async (req, res) => {
+  try {
+    const { redirect_uri } = req.query;
+    const config = await getWecomConfig();
+    const appSecret = config.query_app_secret || config.app_secret;
+    
+    if (!config || !config.corp_id || !appSecret) {
+      return res.status(500).json({ error: '企业微信未配置' });
+    }
+
+    // 使用查询应用或自建应用的 AgentID
+    const agentId = config.query_app_agent_id || config.agent_id;
+    if (!agentId) {
+      return res.status(500).json({ error: '企业微信应用ID未配置' });
+    }
+
+    // 构建企微OAuth授权URL
+    const encodedRedirect = encodeURIComponent(redirect_uri || `${req.protocol}://${req.get('host')}/confirm`);
+    const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${config.corp_id}&redirect_uri=${encodedRedirect}&response_type=code&scope=snsapi_base&state=wecom_confirm#wechat_redirect`;
+    
+    res.json({ authUrl });
+  } catch (err) {
+    console.error('wecom-auth-url error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. 企微OAuth回调：用code换取用户身份，自动创建/登录用户
+router.post('/wecom-callback', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: '缺少 code 参数' });
+    }
+
+    const config = await getWecomConfig();
+    const appSecret = config.query_app_secret || config.app_secret;
+    if (!config || !config.corp_id || !appSecret) {
+      return res.status(500).json({ error: '企业微信未配置' });
+    }
+
+    // 获取 access_token
+    const tokenRes = await fetch(
+      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${appSecret}`
+    );
+    const tokenData = await tokenRes.json();
+    if (tokenData.errcode !== 0) {
+      return res.status(500).json({ error: tokenData.errmsg || '获取access_token失败' });
+    }
+    const accessToken = tokenData.access_token;
+
+    // 用 code 换取 userid
+    const userRes = await fetch(
+      `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${accessToken}&code=${code}`
+    );
+    const userData = await userRes.json();
+
+    if (userData.errcode !== 0) {
+      return res.status(401).json({ error: userData.errmsg || 'code无效或已过期' });
+    }
+
+    const wecomUserId = userData.userid;
+    if (!wecomUserId) {
+      return res.status(401).json({ error: '未能获取用户身份，请确保在企业微信内打开' });
+    }
+
+    // 获取用户详细信息（姓名、部门等）
+    let wecomUserInfo = null;
+    try {
+      const infoRes = await fetch(
+        `https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token=${accessToken}&userid=${wecomUserId}`
+      );
+      const infoData = await infoRes.json();
+      if (infoData.errcode === 0) {
+        wecomUserInfo = infoData;
+      }
+    } catch (e) {
+      console.log('获取企微用户详情失败:', e.message);
+    }
+
+    // 查找已绑定的用户
+    let [ulmRows] = await pool.query(
+      'SELECT user_id FROM user_login_methods WHERE type = ? AND identifier = ?',
+      ['wecom', wecomUserId]
+    );
+
+    let userId;
+    let isNewUser = false;
+
+    if (ulmRows.length > 0) {
+      userId = ulmRows[0].user_id;
+    } else {
+      // 自动创建新用户（确认账号）
+      isNewUser = true;
+      userId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+      const username = `wecom_${wecomUserId}`;
+      const name = wecomUserInfo?.name || wecomUserId;
+      const departmentId = wecomUserInfo?.department?.[0] || null;
+      const phone = wecomUserInfo?.mobile || null;
+      
+      // 默认角色为 viewer（普通员工），仅用于系统登录，不影响确认功能
+      const [roleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', ['viewer']);
+      const roleId = roleRows.length > 0 ? roleRows[0].id : null;
+      const hashedPassword = await bcrypt.hash(Date.now().toString(), 10);
+
+      await pool.query(
+        'INSERT INTO users (id, username, name, role, role_id, phone, department_id, password_hash, wecom_userid, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [userId, username, name, 'viewer', roleId, phone, departmentId, hashedPassword, wecomUserId, 1]
+      );
+
+      // 添加登录方式记录
+      await pool.query(
+        'INSERT INTO user_login_methods (id, user_id, type, identifier, config) VALUES (UUID(), ?, ?, ?, JSON_OBJECT("source", "wecom_auto_create"))',
+        [userId, 'wecom', wecomUserId]
+      );
+
+      // 添加密码登录方式（虽然不会使用，但保持完整性）
+      await pool.query(
+        'INSERT INTO user_login_methods (id, user_id, type, identifier, config) VALUES (UUID(), ?, ?, ?, JSON_OBJECT("has_password", TRUE))',
+        [userId, 'password', username]
+      );
+
+      await logOperation(userId, userId, 'auth', 'auto_create_user', {
+        wecom_userid: wecomUserId,
+        name,
+        source: 'wecom_oauth'
+      }, req);
+    }
+
+    // 查询用户信息
+    const [userRows] = await pool.query(
+      'SELECT id, username, name, role, role_id, status, wecom_userid, phone, department_id FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    const user = userRows[0];
+    if (user.status !== 1) {
+      return res.status(403).json({ error: '用户已被禁用' });
+    }
+
+    pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date(), user.id]);
+    await logOperation(user.id, user.id, 'auth', 'login', {
+      username: user.username,
+      login_type: 'wecom_oauth',
+      wecom_userid: wecomUserId,
+      is_new_user: isNewUser
+    }, req);
+
+    // 获取用户权限
+    const [permRows] = await pool.query(`
+      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
+      FROM role_permissions rp
+      JOIN permissions p ON rp.permission_id = p.id
+      JOIN modules m ON p.module_id = m.id
+      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
+      ORDER BY m.sort_order ASC, p.sort_order ASC
+    `, [user.role_id]);
+
+    const modules = {};
+    permRows.forEach(perm => {
+      if (!modules[perm.module_code]) {
+        modules[perm.module_code] = { menus: [], actions: [] };
+      }
+      if (perm.type === 'menu') {
+        modules[perm.module_code].menus.push({
+          code: perm.code,
+          name: perm.name,
+          path: perm.path,
+          icon: perm.icon,
+        });
+      } else {
+        modules[perm.module_code].actions.push({
+          code: perm.code,
+          name: perm.name,
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role,
+        role_id: user.role_id,
+        wecom_userid: user.wecom_userid,
+        phone: user.phone,
+        department_id: user.department_id,
+        status: user.status,
+        token: user.id,
+        permissions: {
+          modules: Object.values(modules),
+          codes: permRows.map(p => p.code),
+          menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+        },
+      },
+      isNewUser,
+    });
+  } catch (err) {
+    console.error('wecom-callback error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 更新用户角色（仅管理员）
 router.put('/users/:id/role', requireAuth, requireRole('admin'), async (req, res) => {
   try {
