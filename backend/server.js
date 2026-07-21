@@ -11,6 +11,14 @@ const suppliersRouter = require('./routes/suppliers');
 const wecomRouter = require('./routes/wecom');
 const purchaseConfirmationsRouter = require('./routes/purchase-confirmations');
 
+// 外请人员打卡模块
+const tempAuthRouter = require('./routes/temp-auth');
+const tempPositionsRouter = require('./routes/temp-positions');
+const tempCheckinsRouter = require('./routes/temp-checkins');
+const tempAssessmentsRouter = require('./routes/temp-assessments');
+const tempStatsRouter = require('./routes/temp-stats');
+const tempWorkersRouter = require('./routes/temp-workers');
+
 const { requireAuth, getUserPermissions, getRoles, getPermissions, getModules, requireRole } = require('./middleware/rbac');
 
 const app = express();
@@ -37,6 +45,21 @@ app.use('/api/suppliers', requireAuth, suppliersRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
+
+// ================================================
+// 外请人员打卡模块
+// ================================================
+// 微信端（外请人员，独立认证）
+app.use('/api/temp/auth', tempAuthRouter);
+app.use('/api/temp/checkins', tempCheckinsRouter); // 内含微信端 + 企微端接口
+
+// 企微端（审核员/董事长，复用现有认证）
+app.use('/api/temp/positions', tempPositionsRouter);
+app.use('/api/temp/assessments', tempAssessmentsRouter);
+app.use('/api/temp/stats', tempStatsRouter);
+
+// PC管理端（管理员）
+app.use('/api/temp/workers', tempWorkersRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
