@@ -1,0 +1,2326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>临时工打卡管理系统演示</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+            background: #f5f6f7;
+            min-height: 100vh;
+        }
+        .container { max-width: 480px; margin: 0 auto; background: #f5f6f7; min-height: 100vh; }
+        
+        .header {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+            padding: 24px 20px;
+            text-align: center;
+        }
+        .header h1 { font-size: 22px; margin-bottom: 6px; }
+        .header p { font-size: 13px; opacity: 0.9; }
+        
+        .tabs {
+            display: flex;
+            background: white;
+            border-bottom: 1px solid #eee;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 16px 10px;
+            font-size: 13px;
+            color: #666;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+            min-width: 60px;
+        }
+        .tab.active {
+            color: #2ecc71;
+            border-bottom-color: #2ecc71;
+            font-weight: 600;
+        }
+        
+        .content { padding: 16px; }
+        .panel { display: none; }
+        .panel.active { display: block; }
+        
+        .card {
+            background: white;
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 14px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .card-title {
+            font-size: 17px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        /* 用户信息卡片 */
+        .user-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 14px;
+        }
+        .user-avatar {
+            width: 60px;
+            height: 60px;
+            background: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 12px;
+        }
+        .user-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+        .user-dept { font-size: 13px; opacity: 0.9; }
+        .user-bind-info {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255,255,255,0.2);
+        }
+        .bind-label { font-size: 12px; opacity: 0.8; margin-bottom: 6px; }
+        .bind-position { font-size: 16px; font-weight: 600; }
+        .bind-rate { font-size: 14px; opacity: 0.9; margin-top: 4px; }
+        
+        /* 本月汇总卡片 */
+        .monthly-summary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 14px;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            text-align: center;
+        }
+        .summary-item .summary-value { font-size: 26px; font-weight: 700; }
+        .summary-item .summary-label { font-size: 12px; opacity: 0.9; margin-top: 4px; }
+        .summary-divider {
+            border-top: 1px solid rgba(255,255,255,0.2);
+            margin: 14px 0;
+            padding-top: 14px;
+        }
+        .summary-note { font-size: 12px; opacity: 0.8; }
+        
+        /* 岗位选择卡片 */
+        .position-card {
+            padding: 18px;
+            border: 2px solid #eee;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .position-card:hover { border-color: #2ecc71; }
+        .position-card.selected { 
+            border-color: #2ecc71; 
+            background: #f0fff4; 
+            box-shadow: 0 0 0 3px rgba(46,204,113,0.1);
+        }
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+        .position-name { font-size: 17px; font-weight: 700; color: #333; }
+        .position-rate { font-size: 14px; color: #2ecc71; margin-top: 4px; font-weight: 600; }
+        .position-detail { font-size: 13px; color: #666; margin-top: 6px; }
+        .position-tag {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .tag-fixed { background: #e8f5e9; color: #2ecc71; }
+        .tag-hourly { background: #fff3e0; color: #ff9800; }
+        .dept-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            background: #e3f2fd;
+            color: #1976d2;
+            margin-top: 4px;
+        }
+        
+        /* 大按钮 */
+        .btn {
+            width: 100%;
+            padding: 22px;
+            border: none;
+            border-radius: 16px;
+            font-size: 19px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+            box-shadow: 0 4px 15px rgba(46,204,113,0.3);
+        }
+        .btn-primary:active { 
+            transform: scale(0.98); 
+            box-shadow: 0 2px 8px rgba(46,204,113,0.2);
+        }
+        .btn-success {
+            background: linear-gradient(135deg, #1abc9c, #16a085);
+            color: white;
+        }
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #666;
+            padding: 14px;
+            font-size: 15px;
+        }
+        .btn-warning {
+            background: linear-gradient(135deg, #f39c12, #e67e22);
+            color: white;
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+        .btn-sm {
+            padding: 8px 16px;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+        
+        /* 输入框 */
+        .input-group { margin-bottom: 16px; }
+        .input-group label {
+            display: block;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 16px 18px;
+            border: 2px solid #eee;
+            border-radius: 12px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        .input-group input:focus { border-color: #2ecc71; }
+        .input-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        /* 统计卡片 */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stat-item {
+            background: white;
+            padding: 20px;
+            border-radius: 14px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .stat-value { font-size: 26px; font-weight: 700; }
+        .stat-label { font-size: 13px; color: #999; margin-top: 6px; }
+        .stat-external .stat-value { color: #e74c3c; }
+        .stat-internal .stat-value { color: #667eea; }
+        .stat-total .stat-value { color: #2ecc71; }
+        
+        /* 记录列表 */
+        .record-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .record-item:last-child { border-bottom: none; }
+        .record-left { flex: 1; }
+        .record-name { font-size: 16px; font-weight: 600; color: #333; }
+        .record-info { font-size: 13px; color: #999; margin-top: 4px; }
+        .record-right { text-align: right; }
+        .record-amount { font-size: 18px; font-weight: 700; }
+        .record-amount.external { color: #e74c3c; }
+        .record-amount.internal { color: #667eea; }
+        .record-tag {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-top: 6px;
+        }
+        .tag-external { background: #ffebee; color: #e74c3c; }
+        .tag-internal { background: #ede7f6; color: #667eea; }
+        .tag-pending { background: #fff3e0; color: #ff9800; }
+        .tag-discount { background: #fce4ec; color: #c2185b; }
+        .tag-fixed { background: #e8f5e9; color: #2ecc71; }
+        
+        /* 工时输入卡片 */
+        .hours-input-card {
+            background: #fff8e1;
+            border: 2px solid #ffcc80;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 14px;
+        }
+        .hours-input-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #e65100;
+            margin-bottom: 12px;
+        }
+        .hours-display {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .hours-display input {
+            flex: 1;
+            padding: 14px;
+            border: 2px solid #ffcc80;
+            border-radius: 10px;
+            font-size: 20px;
+            font-weight: 700;
+            text-align: center;
+            color: #e65100;
+        }
+        .hours-unit {
+            font-size: 16px;
+            color: #e65100;
+            font-weight: 600;
+        }
+        .hours-preview {
+            margin-top: 14px;
+            padding: 14px;
+            background: white;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .hours-preview-label { font-size: 13px; color: #999; }
+        .hours-preview-value { font-size: 24px; font-weight: 700; color: #2ecc71; margin-top: 4px; }
+        
+        /* 成功弹窗 */
+        .success-card {
+            text-align: center;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
+        }
+        .success-icon {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: white;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        .success-title { font-size: 22px; font-weight: 700; color: #2ecc71; margin-bottom: 8px; }
+        .success-text { font-size: 14px; color: #666; }
+        
+        /* 模态框 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.show { display: flex; }
+        .modal-content {
+            background: white;
+            border-radius: 18px;
+            width: 90%;
+            max-width: 400px;
+            max-height: 85vh;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .modal-header {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.85);
+            color: white;
+            padding: 18px 32px;
+            border-radius: 10px;
+            font-size: 16px;
+            z-index: 200;
+            display: none;
+            text-align: center;
+        }
+        .toast.show { display: block; }
+        
+        /* 工资表样式 */
+        .salary-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .salary-table th {
+            background: #f8f9fa;
+            padding: 10px 8px;
+            text-align: center;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #eee;
+            white-space: nowrap;
+        }
+        .salary-table td {
+            padding: 12px 8px;
+            text-align: center;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .salary-table .name-cell {
+            text-align: left;
+            font-weight: 600;
+        }
+        .salary-table .amount {
+            font-weight: 700;
+            color: #2ecc71;
+        }
+        .salary-table .discount {
+            color: #e74c3c;
+            font-size: 11px;
+        }
+        .salary-table .total-row {
+            background: #f8f9fa;
+            font-weight: 700;
+        }
+        .salary-table .total-row td {
+            border-top: 2px solid #ddd;
+            border-bottom: none;
+        }
+        
+        /* 部门统计卡片 */
+        .dept-card {
+            background: white;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 12px;
+            border-left: 4px solid #2ecc71;
+        }
+        .dept-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .dept-name { font-size: 16px; font-weight: 600; color: #333; }
+        .dept-amount { font-size: 20px; font-weight: 700; color: #2ecc71; }
+        .dept-detail {
+            margin-top: 10px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #666;
+        }
+        .dept-breakdown {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #f0f0f0;
+        }
+        .dept-breakdown-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            padding: 6px 0;
+        }
+        .breakdown-name { color: #666; }
+        .breakdown-amount { font-weight: 600; color: #333; }
+        
+        /* 部门标签 */
+        .dept-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .badge-housekeeping { background: #e8f5e9; color: #2ecc71; }
+        .badge-cleaning { background: #e3f2fd; color: #1976d2; }
+        .badge-greening { background: #fff3e0; color: #ff9800; }
+        .badge-engineering { background: #fce4ec; color: #c2185b; }
+        .badge-transport { background: #ede7f6; color: #667eea; }
+        
+        /* 统计子标签 */
+        .sub-tabs {
+            display: flex;
+            background: #f5f6f7;
+            border-radius: 10px;
+            padding: 4px;
+            margin-bottom: 16px;
+        }
+        .sub-tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            font-size: 13px;
+            color: #666;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        .sub-tab.active {
+            background: white;
+            color: #2ecc71;
+            font-weight: 600;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        /* PC端自适应 - 平板 */
+        @media (min-width: 768px) {
+            .container { max-width: 900px; }
+            .stat-grid { grid-template-columns: repeat(4, 1fr); }
+            .content { padding: 20px; }
+            .card { padding: 24px; }
+            .tabs .tab { padding: 16px 16px; font-size: 14px; }
+        }
+        /* PC端自适应 - 桌面 */
+        @media (min-width: 1024px) {
+            .container { max-width: 1200px; }
+            .stat-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
+            .content { padding: 24px; }
+            .input-row { grid-template-columns: 1fr 1fr 1fr; }
+            .salary-table { font-size: 14px; }
+            .salary-table th { padding: 14px 12px; }
+            .salary-table td { padding: 14px 12px; }
+            .btn { padding: 18px; font-size: 17px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 外请人员打卡管理系统</h1>
+            <p>演示版 - 统一注册 + 岗位驱动统计</p>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" data-panel="scan">👥 人员管理</div>
+            <div class="tab" data-panel="miniapp">💚 小程序</div>
+            <div class="tab" data-panel="admin">⚙️ 管理端</div>
+            <div class="tab" data-panel="departments">🏢 部门</div>
+            <div class="tab" data-panel="positions">📋 岗位</div>
+            <div class="tab" data-panel="auditors">👤 审核员</div>
+            <div class="tab" data-panel="assessment">🎯 考核</div>
+            <div class="tab" data-panel="stats">📊 统计</div>
+        </div>
+        
+        <div class="content">
+            <!-- 人员管理面板 -->
+            <div class="panel active" id="scan">
+                <div style="background: #e3f2fd; border-radius: 10px; padding: 14px; margin-bottom: 16px;">
+                    <div style="font-size: 14px; font-weight: 600; color: #1565c0; margin-bottom: 6px;">👥 统一人员管理（不区分外请/内部）</div>
+                    <div style="font-size: 13px; color: #1976d2; line-height:1.7;">
+                        · 所有人扫码注册 → 首次打"临时岗位" → 审核员分配岗位<br>
+                        · 外请/内部区分<b>只在岗位类型上</b>，与人员无关<br>
+                        · 已分配岗位的用户，下次打卡会看到自己的岗位 + 临时岗位
+                    </div>
+                </div>
+
+                <!-- 注册流程说明 -->
+                <div class="card">
+                    <div class="card-title">📱 注册流程（扫码）</div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;">
+                        <span style="background:#e8f5e9;padding:6px 12px;border-radius:8px;color:#2e7d32;">① 扫小程序码</span>
+                        <span style="color:#ccc;">→</span>
+                        <span style="background:#e8f5e9;padding:6px 12px;border-radius:8px;color:#2e7d32;">② 微信授权+填姓名</span>
+                        <span style="color:#ccc;">→</span>
+                        <span style="background:#e8f5e9;padding:6px 12px;border-radius:8px;color:#2e7d32;">③ 选临时岗位打卡</span>
+                    </div>
+                    <p style="font-size:12px;color:#999;margin-top:10px;">首次约20秒 · 再次扫码约5秒（自动识别身份）</p>
+                </div>
+
+                <!-- 人员列表 -->
+                <div class="card">
+                    <div class="card-title">📋 已注册人员</div>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                            <thead>
+                                <tr style="background:#f8f9fa;">
+                                    <th style="padding:10px 8px;text-align:left;">姓名</th>
+                                    <th style="padding:10px 8px;text-align:left;">手机号</th>
+                                    <th style="padding:10px 8px;text-align:left;">已分配岗位</th>
+                                    <th style="padding:10px 8px;text-align:left;">注册时间</th>
+                                    <th style="padding:10px 8px;text-align:left;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr style="border-bottom:1px solid #f0f0f0;">
+                                    <td style="padding:10px 8px;font-weight:600;">王五</td>
+                                    <td style="padding:10px 8px;">138****5678</td>
+                                    <td style="padding:10px 8px;">
+                                        <span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:4px;font-size:11px;">导医</span>
+                                        <span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:4px;">外请导医</span>
+                                    </td>
+                                    <td style="padding:10px 8px;color:#999;">07-01</td>
+                                    <td style="padding:10px 8px;"><button class="btn btn-secondary btn-sm" style="margin:0;padding:4px 10px;" onclick="showToast('编辑王五的岗位分配')">编辑岗位</button></td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #f0f0f0;">
+                                    <td style="padding:10px 8px;font-weight:600;">李四</td>
+                                    <td style="padding:10px 8px;">139****1234</td>
+                                    <td style="padding:10px 8px;">
+                                        <span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:4px;font-size:11px;">绿化工</span>
+                                    </td>
+                                    <td style="padding:10px 8px;color:#999;">07-05</td>
+                                    <td style="padding:10px 8px;"><button class="btn btn-secondary btn-sm" style="margin:0;padding:4px 10px;" onclick="showToast('编辑李四的岗位分配')">编辑岗位</button></td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #f0f0f0;">
+                                    <td style="padding:10px 8px;font-weight:600;">张三</td>
+                                    <td style="padding:10px 8px;">137****8888</td>
+                                    <td style="padding:10px 8px;">
+                                        <span style="background:#fff3e0;color:#e65100;padding:2px 8px;border-radius:4px;font-size:11px;">未分配（仅临时岗位）</span>
+                                    </td>
+                                    <td style="padding:10px 8px;color:#999;">07-18</td>
+                                    <td style="padding:10px 8px;"><button class="btn btn-secondary btn-sm" style="margin:0;padding:4px 10px;" onclick="showToast('编辑张三的岗位分配')">编辑岗位</button></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:10px 8px;font-weight:600;">赵六</td>
+                                    <td style="padding:10px 8px;">136****6666</td>
+                                    <td style="padding:10px 8px;">
+                                        <span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:4px;font-size:11px;">工程工</span>
+                                        <span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:4px;">搬运工</span>
+                                    </td>
+                                    <td style="padding:10px 8px;color:#999;">06-20</td>
+                                    <td style="padding:10px 8px;"><button class="btn btn-secondary btn-sm" style="margin:0;padding:4px 10px;" onclick="showToast('编辑赵六的岗位分配')">编辑岗位</button></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="font-size:12px;color:#999;margin-top:10px;">
+                        💡 所有人员统一管理，外请/内部由<b>岗位类型</b>决定，不影响人员列表
+                    </div>
+                </div>
+
+                <!-- 岗位分配弹窗说明 -->
+                <div class="card" style="background:#fff8e1;border:1px solid #ffcc80;">
+                    <div class="card-title" style="color:#e65100;">💡 岗位分配逻辑</div>
+                    <div style="font-size:13px;color:#6b4e00;line-height:1.8;">
+                        · <b>新用户</b>：扫码注册后只看到「临时岗位」，打卡后等待审核员分配<br>
+                        · <b>审核员分配</b>：在审核打卡记录时，把"临时岗位"改成真实岗位（如导医）<br>
+                        · <b>分配后</b>：用户下次打卡看到「我的岗位 + 临时岗位」<br>
+                        · <b>临时岗位常显</b>：方便已分配岗位的用户临时去其他岗位帮忙
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 小程序打卡面板 -->
+            <div class="panel" id="miniapp">
+                <div class="user-card">
+                    <div class="user-avatar">👤</div>
+                    <div class="user-name">王五</div>
+                    <div class="user-dept">已分配岗位：导医、外请导医</div>
+                    <div class="user-bind-info">
+                        <div class="bind-label">📌 我的岗位（已分配）</div>
+                        <div class="bind-position">导医 · 外请导医</div>
+                        <div class="bind-rate">下次打卡自动显示，临时岗位也保留</div>
+                    </div>
+                </div>
+
+                <!-- 本月汇总 -->
+                <div class="monthly-summary">
+                    <div class="card-title" style="color:white;margin-bottom:14px;">📅 本月汇总（2026年7月）</div>
+                    <div class="summary-grid">
+                        <div class="summary-item">
+                            <div class="summary-value">12</div>
+                            <div class="summary-label">打卡次数</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">96h</div>
+                            <div class="summary-label">工作时长</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">¥1,920</div>
+                            <div class="summary-label">预计收入</div>
+                        </div>
+                    </div>
+                    <div class="summary-divider">
+                        <div class="summary-note">考核状态：待考核 | 若考核不通过将按8折计算</div>
+                    </div>
+                </div>
+
+                <!-- 我的岗位（已分配） -->
+                <div class="card">
+                    <div class="card-title">📌 我的岗位（已分配）</div>
+                    <div class="position-card selected" onclick="selectMiniPosition(this, 1)">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                            <div>
+                                <div class="position-name">导医</div>
+                                <div class="position-rate">按次结算 ¥60/次</div>
+                                <span class="dept-tag">客房部 · 外请</span>
+                            </div>
+                            <span class="position-tag tag-fixed">按次</span>
+                        </div>
+                        <div class="position-detail" style="margin-top:8px;">今日已打1次 · 可再打</div>
+                    </div>
+                    <div class="position-card" onclick="selectMiniPosition(this, 2)">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                            <div>
+                                <div class="position-name">外请导医</div>
+                                <div class="position-rate">按次结算 ¥100/次</div>
+                                <span class="dept-tag">后勤部 · 外请</span>
+                            </div>
+                            <span class="position-tag tag-fixed">按次</span>
+                        </div>
+                        <div class="position-detail" style="margin-top:8px;">今日未打卡</div>
+                    </div>
+                </div>
+
+                <!-- 临时岗位（常显） -->
+                <div class="card">
+                    <div class="card-title">🎯 临时岗位（常显 · 临时调岗用）</div>
+                    <div class="position-card" onclick="selectMiniPosition(this, 6)">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                            <div>
+                                <div class="position-name">临时岗位</div>
+                                <div class="position-rate">打卡后由审核员分配岗位和金额</div>
+                            </div>
+                            <span class="position-tag" style="background:#e3f2fd;color:#1976d2;">临时</span>
+                        </div>
+                        <div class="position-detail" style="margin-top:8px;">点击打卡，等待管理员分配具体岗位和工资</div>
+                    </div>
+                </div>
+                
+                <!-- 工时输入 -->
+                <div class="hours-input-card" id="hoursInputCard" style="display:none;">
+                    <div class="hours-input-title">⏱ 填写今日工时</div>
+                    <div style="font-size:13px;color:#e65100;margin-bottom:10px;">请填写实际工作小时数</div>
+                    <div class="hours-display">
+                        <button style="width:44px;height:44px;border:none;border-radius:10px;background:white;font-size:20px;color:#e65100;" onclick="adjustHours(-0.5)">-</button>
+                        <input type="number" id="workHours" value="8" step="0.5" min="0.5" max="24">
+                        <button style="width:44px;height:44px;border:none;border-radius:10px;background:white;font-size:20px;color:#e65100;" onclick="adjustHours(0.5)">+</button>
+                        <span class="hours-unit">小时</span>
+                    </div>
+                    <div class="hours-preview">
+                        <div class="hours-preview-label">预计收入</div>
+                        <div class="hours-preview-value" id="hoursPreviewAmount">¥200</div>
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary" onclick="miniCheckIn()">
+                    <span>📍</span>
+                    <span>一键打卡上工</span>
+                </button>
+
+                <!-- 审核员功能入口 -->
+                <div class="card" style="background:linear-gradient(135deg,#f0f4ff,#e8f0ff);border:1px solid #c7d2fe;">
+                    <div class="card-title" style="color:#4338ca;">👔 审核员专区</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                        <div style="background:white;border-radius:10px;padding:12px;text-align:center;cursor:pointer;" onclick="showMiniAudit()">
+                            <div style="font-size:24px;margin-bottom:4px;">✅</div>
+                            <div style="font-size:14px;font-weight:600;color:#333;">审核打卡</div>
+                            <div style="font-size:12px;color:#e74c3c;margin-top:2px;">待审核 3 条</div>
+                        </div>
+                        <div style="background:white;border-radius:10px;padding:12px;text-align:center;cursor:pointer;" onclick="showMiniAssessment()">
+                            <div style="font-size:24px;margin-bottom:4px;">🎯</div>
+                            <div style="font-size:14px;font-weight:600;color:#333;">月底考核</div>
+                            <div style="font-size:12px;color:#ff9800;margin-top:2px;">待考核 2 人</div>
+                        </div>
+                    </div>
+                    <div style="font-size:12px;color:#6b7280;margin-top:10px;text-align:center;">
+                        审核员=考核员，负责岗位：导医、外请导医
+                    </div>
+                </div>
+
+                <!-- 董事长功能入口（只读） -->
+                <div class="card" style="background:linear-gradient(135deg,#fff8e1,#fff3e0);border:1px solid #ffcc80;">
+                    <div class="card-title" style="color:#e65100;">👑 董事长专区（只读）</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                        <div style="background:white;border-radius:10px;padding:12px;text-align:center;cursor:pointer;" onclick="showChairDashboard()">
+                            <div style="font-size:24px;margin-bottom:4px;">📊</div>
+                            <div style="font-size:14px;font-weight:600;color:#333;">每日看板</div>
+                            <div style="font-size:12px;color:#666;margin-top:2px;">今日打卡 6 人</div>
+                        </div>
+                        <div style="background:white;border-radius:10px;padding:12px;text-align:center;cursor:pointer;" onclick="showChairStats()">
+                            <div style="font-size:24px;margin-bottom:4px;">📈</div>
+                            <div style="font-size:14px;font-weight:600;color:#333;">统计分析</div>
+                            <div style="font-size:12px;color:#666;margin-top:2px;">总览+部门分析</div>
+                        </div>
+                    </div>
+                    <div style="font-size:12px;color:#6b7280;margin-top:10px;text-align:center;">
+                        只读查看，不进行任何审核/考核操作 · 2个Tab：看板、统计
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 管理端面板 -->
+            <div class="panel" id="admin">
+                <!-- 统计 -->
+                <div class="stat-grid">
+                    <div class="stat-item stat-total">
+                        <div class="stat-value">15</div>
+                        <div class="stat-label">今日打卡</div>
+                    </div>
+                    <div class="stat-item stat-external">
+                        <div class="stat-value">6</div>
+                        <div class="stat-label">待审核</div>
+                    </div>
+                    <div class="stat-item stat-internal">
+                        <div class="stat-value">9</div>
+                        <div class="stat-label">已审核</div>
+                    </div>
+                    <div class="stat-item stat-total">
+                        <div class="stat-value">3</div>
+                        <div class="stat-label">历史待审核</div>
+                    </div>
+                </div>
+                
+                <!-- 历史待审核提醒 -->
+                <div style="background:#fff3e0;border-radius:10px;padding:14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <div style="font-size:14px;font-weight:600;color:#e65100;">⚠️ 有3条历史打卡未审核</div>
+                        <div style="font-size:12px;color:#999;margin-top:4px;">07-15（1条）· 07-16（2条）· 超过3天未审核将无法补录</div>
+                    </div>
+                    <button class="btn btn-warning" style="padding:10px 16px;font-size:13px;" onclick="showHistoryAudit()">去审核</button>
+                </div>
+                
+                <!-- 待审核（所有今日打卡） -->
+                <div class="card">
+                    <div class="card-title">⏳ 待审核打卡（审核后进入统计）</div>
+                    
+                    <!-- 扫码打卡 - 需分配岗位 -->
+                    <div style="background:#fff8e1;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#e65100;font-weight:600;">
+                        以下2条为扫码打卡，需分配岗位
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">张三</div>
+                            <div class="record-info">08:30 扫码 · 待分配岗位 · <span style="color:#e74c3c;">外请</span></div>
+                        </div>
+                        <div class="record-right">
+                            <span class="record-tag tag-pending">待分配</span>
+                            <button class="btn btn-warning btn-sm" onclick="showAuditModal('张三')">分配岗位</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">李四</div>
+                            <div class="record-info">09:00 扫码 · 待分配岗位 · <span style="color:#e74c3c;">外请</span></div>
+                        </div>
+                        <div class="record-right">
+                            <span class="record-tag tag-pending">待分配</span>
+                            <button class="btn btn-warning btn-sm" onclick="showAuditModal('李四')">分配岗位</button>
+                        </div>
+                    </div>
+                    
+                    <!-- 小程序打卡 - 需确认 -->
+                    <div style="background:#e3f2fd;border-radius:8px;padding:8px 12px;margin:14px 0 10px;font-size:12px;color:#1976d2;font-weight:600;">
+                        以下4条为小程序/已分配岗位打卡，需确认审核
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">王五 <span style="font-size:12px;color:#667eea;">内部</span></div>
+                            <div class="record-info">08:00 小程序打卡 · 导医 · 每次¥60 · 客房部</div>
+                        </div>
+                        <div class="record-right">
+                            <span class="record-tag tag-pending">待确认</span>
+                            <button class="btn btn-primary btn-sm" onclick="quickAudit('王五')">通过</button>
+                            <button class="btn btn-warning btn-sm" style="margin-left:4px;" onclick="showEditModal('王五','导医')">修正</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">赵六 <span style="font-size:12px;color:#e74c3c;">外请</span></div>
+                            <div class="record-info">08:15 小程序打卡 · 绿化工 · 6小时 · ¥25/小时 · 后勤部</div>
+                        </div>
+                        <div class="record-right">
+                            <span class="record-tag tag-pending">待确认</span>
+                            <button class="btn btn-primary btn-sm" onclick="quickAudit('赵六')">通过</button>
+                            <button class="btn btn-warning btn-sm" style="margin-left:4px;" onclick="showEditModal('赵六','绿化工')">修正</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">孙七 <span style="font-size:12px;color:#667eea;">内部</span></div>
+                            <div class="record-info">09:00 小程序打卡 · 工程工 · 4小时 · ¥30/小时 · 巙程部</div>
+                        </div>
+                        <div class="record-right">
+                            <span class="record-tag tag-pending">待确认</span>
+                            <button class="btn btn-primary btn-sm" onclick="quickAudit('孙七')">通过</button>
+                            <button class="btn btn-warning btn-sm" style="margin-left:4px;" onclick="showEditModal('孙七','工程工')">修正</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">钱十 <span style="font-size:12px;color:#e74c3c;">外请</span></div>
+                            <div class="record-info">09:30 小程序打卡 · 绿化工 · 8小时 · ¥25/小时 · 后勤部</div>
+                        </div>
+                        <div class="record-right">
+                            <span class="record-tag tag-pending">待确认</span>
+                            <button class="btn btn-primary btn-sm" onclick="quickAudit('钱十')">通过</button>
+                            <button class="btn btn-warning btn-sm" style="margin-left:4px;" onclick="showEditModal('钱十','绿化工')">修正</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 已审核记录（按岗位分类） -->
+                <div class="card">
+                    <div class="card-title">✅ 已审核记录（按岗位分类，已进入统计）</div>
+                    
+                    <!-- 导医 -->
+                    <div style="background:#f8f9fa;border-radius:8px;padding:10px 14px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:15px;font-weight:700;color:#333;">导医</span>
+                            <span style="font-size:12px;color:#999;">客房部 · <span style="color:#e74c3c;">外请</span> · 2人 · ¥120</span>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">周八 <span style="font-size:12px;color:#e74c3c;">外请</span></div>
+                            <div class="record-info">07:45 打卡 · 08:00 审核 · 每次¥60 · 客房部</div>
+                        </div>
+                        <div class="record-right">
+                            <div class="record-amount external">¥60</div>
+                            <button class="btn btn-secondary btn-sm" style="margin-top:4px;padding:4px 10px;font-size:12px;" onclick="showEditModal('周八','导医')">修正</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">吴九 <span style="font-size:12px;color:#667eea;">内部</span></div>
+                            <div class="record-info">07:50 打卡 · 08:05 审核 · 每次¥60 · 客房部</div>
+                        </div>
+                        <div class="record-right">
+                            <div class="record-amount internal">¥60</div>
+                            <button class="btn btn-secondary btn-sm" style="margin-top:4px;padding:4px 10px;font-size:12px;" onclick="showEditModal('吴九','导医')">修正</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 代录入 -->
+                <div class="card">
+                    <div class="card-title">➕ 代录入（无手机人员）</div>
+                    <div class="input-group">
+                        <label>人员姓名</label>
+                        <input type="text" placeholder="输入姓名">
+                    </div>
+                    <div class="input-group">
+                        <label>选择岗位</label>
+                        <select id="adminPosition" onchange="updateAdminHours()">
+                            <option value="1" data-rate="60" data-type="fixed">导医 - 固定¥60/次（客房部 · 外请）</option>
+                            <option value="2" data-rate="100" data-type="fixed">外请导医 - 固定¥100/次（后勤部 · 外请）</option>
+                            <option value="3" data-rate="25" data-type="hourly">绿化工 - ¥25/小时（后勤部 · 外请）</option>
+                            <option value="4" data-rate="30" data-type="hourly">工程工 - ¥30/小时（工程部 · 内部）</option>
+                            <option value="5" data-rate="50" data-type="fixed">搬运工 - 固定¥50/次（后勤部 · 外请）</option>
+                        </select>
+                    </div>
+                    <div class="input-group" id="adminHoursGroup" style="display:none;">
+                        <label>工作小时数</label>
+                        <input type="number" id="adminHours" placeholder="如：6" step="0.5" oninput="updateAdminAmount()">
+                    </div>
+                    <div class="input-group">
+                        <label>金额</label>
+                        <input type="number" id="adminAmount" placeholder="选择岗位后自动带出" style="color:#2ecc71;font-weight:700;">
+                    </div>
+                    <div class="input-group">
+                        <label>补录日期</label>
+                        <input type="date" id="adminDate">
+                        <p style="font-size:12px;color:#999;margin-top:4px;">只能补录3天内的记录，超过3天无法补录</p>
+                    </div>
+                    <button class="btn btn-primary" style="padding:18px;font-size:17px;" onclick="adminAddRecord()">
+                        <span>➕</span>
+                        <span>添加打卡记录</span>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 部门管理面板 -->
+            <div class="panel" id="departments">
+                <div class="card">
+                    <div class="card-title">🏢 部门列表</div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">客房部</div>
+                            <div class="record-info">包含：导医</div>
+                        </div>
+                        <div class="record-right">
+                            <button class="btn btn-warning btn-sm">编辑</button>
+                            <button class="btn btn-danger btn-sm" style="margin-left:6px;">删除</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">后勤部</div>
+                            <div class="record-info">包含：外请导医、绿化工、搬运工</div>
+                        </div>
+                        <div class="record-right">
+                            <button class="btn btn-warning btn-sm">编辑</button>
+                            <button class="btn btn-danger btn-sm" style="margin-left:6px;">删除</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">工程部</div>
+                            <div class="record-info">包含：工程工</div>
+                        </div>
+                        <div class="record-right">
+                            <button class="btn btn-warning btn-sm">编辑</button>
+                            <button class="btn btn-danger btn-sm" style="margin-left:6px;">删除</button>
+                        </div>
+                    </div>
+                    <div class="record-item">
+                        <div class="record-left">
+                            <div class="record-name">餐饮部</div>
+                            <div class="record-info">包含：厨房帮工</div>
+                        </div>
+                        <div class="record-right">
+                            <button class="btn btn-warning btn-sm">编辑</button>
+                            <button class="btn btn-danger btn-sm" style="margin-left:6px;">删除</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">➕ 添加部门</div>
+                    <div class="input-group">
+                        <label>部门名称</label>
+                        <input type="text" placeholder="如：客房部">
+                    </div>
+                    <div class="input-group">
+                        <label>备注</label>
+                        <input type="text" placeholder="选填">
+                    </div>
+                    <button class="btn btn-primary" style="padding:18px;font-size:17px;">
+                        <span>➕</span>
+                        <span>保存部门</span>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 岗位管理面板 -->
+            <div class="panel" id="positions">
+                <div class="card">
+                    <div class="card-title">📋 岗位列表</div>
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:14px;min-width:700px;">
+                        <thead>
+                            <tr style="background:#f8f9fa;">
+                                <th style="padding:12px 8px;text-align:left;font-weight:600;border-bottom:2px solid #eee;">岗位名称</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">部门</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">类型</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">计费</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">价格</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">考核</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">审核员</th>
+                                <th style="padding:12px 8px;text-align:center;font-weight:600;border-bottom:2px solid #eee;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;">
+                                    <div style="font-weight:600;color:#333;">导医</div>
+                                    <span class="position-tag tag-fixed" style="margin-top:4px;">按次结算</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span class="dept-badge badge-housekeeping">客房部</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#e74c3c;font-size:12px;font-weight:600;">外请</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">按天</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;color:#667eea;">¥60/次</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#e74c3c;font-weight:600;">需考核</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:12px;color:#2ecc71;">张经理<br>王主管</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <button class="btn btn-warning btn-sm" style="margin:0;padding:4px 10px;font-size:12px;">编辑</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;">
+                                    <div style="font-weight:600;color:#333;">外请导医</div>
+                                    <span class="position-tag tag-fixed" style="margin-top:4px;">按次结算</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span class="dept-badge badge-cleaning">后勤部</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#e74c3c;font-size:12px;font-weight:600;">外请</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">按天</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;color:#667eea;">¥100/次</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#999;">不考核</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:12px;color:#2ecc71;">李主管</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <button class="btn btn-warning btn-sm" style="margin:0;padding:4px 10px;font-size:12px;">编辑</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;">
+                                    <div style="font-weight:600;color:#333;">绿化工</div>
+                                    <span class="position-tag tag-hourly" style="margin-top:4px;">按小时</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span class="dept-badge badge-greening">后勤部</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#e74c3c;font-size:12px;font-weight:600;">外请</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">按小时</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;color:#ff9800;">¥25/小时</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#e74c3c;font-weight:600;">需考核</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:12px;color:#2ecc71;">李主管</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <button class="btn btn-warning btn-sm" style="margin:0;padding:4px 10px;font-size:12px;">编辑</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;">
+                                    <div style="font-weight:600;color:#333;">工程工</div>
+                                    <span class="position-tag tag-hourly" style="margin-top:4px;">按小时</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span class="dept-badge badge-engineering">工程部</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#667eea;font-size:12px;font-weight:600;">内部</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">按小时</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;color:#ff9800;">¥30/小时</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <span style="color:#999;">不考核</span>
+                                </td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:12px;color:#2ecc71;">赵主管</td>
+                                <td style="padding:14px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                                    <button class="btn btn-warning btn-sm" style="margin:0;padding:4px 10px;font-size:12px;">编辑</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:14px 8px;">
+                                    <div style="font-weight:600;color:#333;">搬运工</div>
+                                    <span class="position-tag tag-fixed" style="margin-top:4px;">按次结算</span>
+                                </td>
+                                <td style="padding:14px 8px;text-align:center;">
+                                    <span class="dept-badge badge-transport">后勤部</span>
+                                </td>
+                                <td style="padding:14px 8px;text-align:center;">
+                                    <span style="color:#e74c3c;font-size:12px;font-weight:600;">外请</span>
+                                </td>
+                                <td style="padding:14px 8px;text-align:center;">按次</td>
+                                <td style="padding:14px 8px;text-align:right;font-weight:600;color:#667eea;">¥50/次</td>
+                                <td style="padding:14px 8px;text-align:center;">
+                                    <span style="color:#999;">不考核</span>
+                                </td>
+                                <td style="padding:14px 8px;text-align:center;font-size:12px;color:#e65100;">未分配</td>
+                                <td style="padding:14px 8px;text-align:center;">
+                                    <button class="btn btn-warning btn-sm" style="margin:0;padding:4px 10px;font-size:12px;">编辑</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">➕ 添加/编辑岗位</div>
+                    <div class="input-group">
+                        <label>岗位名称</label>
+                        <input type="text" id="posName" placeholder="如：导医">
+                    </div>
+                    <div class="input-group">
+                        <label>所属部门</label>
+                        <select id="posDepartment">
+                            <option value="1">客房部</option>
+                            <option value="2">后勤部</option>
+                            <option value="3">工程部</option>
+                            <option value="4">餐饮部</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>岗位类型</label>
+                        <select id="posWorkerType">
+                            <option value="external">外请岗位（扫码打卡）</option>
+                            <option value="internal">内部岗位（小程序打卡）</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>计费方式</label>
+                        <select id="posBillingType" onchange="toggleBillingType()">
+                            <option value="fixed">按次结算（打卡即完成）</option>
+                            <option value="hourly">按小时计费（需填写工时）</option>
+                        </select>
+                    </div>
+                    <div class="input-group" id="fixedPriceGroup">
+                        <label>按次结算金额</label>
+                        <input type="number" id="posFixedPrice" placeholder="如：160">
+                    </div>
+                    <div class="input-group" id="hourlyPriceGroup" style="display:none;">
+                        <label>小时单价</label>
+                        <input type="number" id="posHourlyPrice" placeholder="如：25">
+                    </div>
+                    <div class="input-group">
+                        <label>工资单位</label>
+                        <select id="posUnit">
+                            <option value="day">/天</option>
+                            <option value="time">/次</option>
+                            <option value="hour">/小时</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>是否需要考核</label>
+                        <select id="posNeedAssess">
+                            <option value="no">不需要考核</option>
+                            <option value="yes">需要考核（月底考核，不通过打8折）</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" style="padding:18px;font-size:17px;" onclick="savePosition()">
+                        <span>💾</span>
+                        <span>保存岗位</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 审核员管理面板 -->
+            <div class="panel" id="auditors">
+                <div style="background:#e3f2fd;border-radius:10px;padding:14px;margin-bottom:16px;">
+                    <div style="font-size:14px;font-weight:600;color:#1565c0;margin-bottom:6px;">👤 审核员管理（按岗位分配，审核员=考核员）</div>
+                    <div style="font-size:13px;color:#1976d2;line-height:1.7;">
+                        审核员通过小程序操作：<br>
+                        ✅ <b>日常审核</b>：审核自己负责岗位的每日打卡记录<br>
+                        🎯 <b>月底考核</b>：对需考核岗位的人员进行月度考核打分<br>
+                        一个岗位可分配多个审核员，一个审核员可负责多个岗位
+                    </div>
+                </div>
+
+                <!-- 董事长角色说明 -->
+                <div style="background:#fff8e1;border:1px solid #ffcc80;border-radius:10px;padding:14px;margin-bottom:16px;">
+                    <div style="font-size:14px;font-weight:600;color:#e65100;margin-bottom:6px;">👑 董事长角色（只读，无需分配岗位）</div>
+                    <div style="font-size:13px;color:#6b4e00;line-height:1.7;">
+                        董事长通过小程序登录，仅查看不操作：<br>
+                        📊 <b>看板</b>：每日打卡+审核情况总览（各岗位明细、审核进度）<br>
+                        📈 <b>统计</b>：总览（外请/内部支出、人次、工时）+ 部门分析（各部门支出占比、外请率）<br>
+                        <span style="color:#999;">无打卡、无审核、无考核权限 · 默认查看全公司数据</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">📋 审核员列表（按岗位）</div>
+
+                    <!-- 导医 -->
+                    <div style="background:#f8f9fa;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:15px;font-weight:700;color:#333;">导医</span>
+                            <span style="font-size:12px;color:#999;">客房部 · 2名审核员</span>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <span style="background:#e8f5e9;color:#2ecc71;padding:6px 12px;border-radius:20px;font-size:13px;font-weight:600;">张经理 ✅</span>
+                            <span style="background:#e8f5e9;color:#2ecc71;padding:6px 12px;border-radius:20px;font-size:13px;font-weight:600;">王主管 ✅</span>
+                            <span style="background:#f5f5f5;color:#999;padding:6px 12px;border-radius:20px;font-size:13px;cursor:pointer;" onclick="addAuditorToPosition('导医')">+ 添加</span>
+                        </div>
+                    </div>
+
+                    <!-- 外请导医 -->
+                    <div style="background:#f8f9fa;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:15px;font-weight:700;color:#333;">外请导医</span>
+                            <span style="font-size:12px;color:#999;">后勤部 · 1名审核员</span>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <span style="background:#e8f5e9;color:#2ecc71;padding:6px 12px;border-radius:20px;font-size:13px;font-weight:600;">李主管 ✅</span>
+                            <span style="background:#f5f5f5;color:#999;padding:6px 12px;border-radius:20px;font-size:13px;cursor:pointer;" onclick="addAuditorToPosition('外请导医')">+ 添加</span>
+                        </div>
+                    </div>
+
+                    <!-- 绿化工 -->
+                    <div style="background:#f8f9fa;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:15px;font-weight:700;color:#333;">绿化工</span>
+                            <span style="font-size:12px;color:#999;">后勤部 · 1名审核员</span>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <span style="background:#e8f5e9;color:#2ecc71;padding:6px 12px;border-radius:20px;font-size:13px;font-weight:600;">李主管 ✅</span>
+                            <span style="background:#f5f5f5;color:#999;padding:6px 12px;border-radius:20px;font-size:13px;cursor:pointer;" onclick="addAuditorToPosition('绿化工')">+ 添加</span>
+                        </div>
+                    </div>
+
+                    <!-- 工程工 -->
+                    <div style="background:#f8f9fa;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:15px;font-weight:700;color:#333;">工程工</span>
+                            <span style="font-size:12px;color:#999;">工程部 · 1名审核员</span>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <span style="background:#e8f5e9;color:#2ecc71;padding:6px 12px;border-radius:20px;font-size:13px;font-weight:600;">赵主管 ✅</span>
+                            <span style="background:#f5f5f5;color:#999;padding:6px 12px;border-radius:20px;font-size:13px;cursor:pointer;" onclick="addAuditorToPosition('工程工')">+ 添加</span>
+                        </div>
+                    </div>
+
+                    <!-- 搬运工 -->
+                    <div style="background:#f8f9fa;border-radius:8px;padding:12px 14px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:15px;font-weight:700;color:#333;">搬运工</span>
+                            <span style="font-size:12px;color:#999;">后勤部 · 0名审核员</span>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <span style="background:#fff3e0;color:#e65100;padding:6px 12px;border-radius:20px;font-size:13px;">⚠️ 未分配审核员</span>
+                            <span style="background:#f5f5f5;color:#999;padding:6px 12px;border-radius:20px;font-size:13px;cursor:pointer;" onclick="addAuditorToPosition('搬运工')">+ 添加</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 董事长设置卡片 -->
+                <div class="card" style="background:linear-gradient(135deg,#fff8e1,#fff3e0);border:1px solid #ffcc80;">
+                    <div class="card-title" style="color:#e65100;">👑 董事长账号设置</div>
+                    <div style="font-size:12px;color:#6b4e00;margin-bottom:14px;">
+                        董事长无需分配岗位，登录小程序即拥有只读看板+统计权限，可查看全公司数据
+                    </div>
+
+                    <!-- 已设置董事长列表 -->
+                    <div style="background:white;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-size:15px;font-weight:700;color:#333;">姚董 <span style="font-size:11px;color:#999;margin-left:4px;">主账号</span></div>
+                                <div style="font-size:12px;color:#999;margin-top:2px;">138xxxx0001 · 已绑定微信</div>
+                            </div>
+                            <div style="display:flex;gap:8px;">
+                                <button class="btn btn-secondary btn-sm" style="margin:0;padding:6px 12px;" onclick="editChairman('姚董')">编辑</button>
+                                <button class="btn btn-secondary btn-sm" style="margin:0;padding:6px 12px;color:#e74c3c;" onclick="removeChairman('姚董')">移除</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background:white;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-size:15px;font-weight:700;color:#333;">姚总</div>
+                                <div style="font-size:12px;color:#999;margin-top:2px;">138xxxx0002 · 已绑定微信</div>
+                            </div>
+                            <div style="display:flex;gap:8px;">
+                                <button class="btn btn-secondary btn-sm" style="margin:0;padding:6px 12px;" onclick="editChairman('姚总')">编辑</button>
+                                <button class="btn btn-secondary btn-sm" style="margin:0;padding:6px 12px;color:#e74c3c;" onclick="removeChairman('姚总')">移除</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 添加董事长表单 -->
+                    <div style="border-top:1px dashed #ffcc80;padding-top:14px;margin-top:6px;">
+                        <div class="input-group" style="margin-bottom:10px;">
+                            <label>姓名</label>
+                            <input type="text" id="chairmanName" placeholder="请输入董事长姓名">
+                        </div>
+                        <div class="input-group" style="margin-bottom:10px;">
+                            <label>手机号（用于绑定微信登录）</label>
+                            <input type="tel" id="chairmanPhone" placeholder="请输入手机号">
+                        </div>
+                        <div class="input-group" style="margin-bottom:14px;">
+                            <label>数据查看范围</label>
+                            <select id="chairmanScope">
+                                <option value="all">全公司（所有部门）</option>
+                                <option value="dept">指定部门</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-warning" style="padding:14px;font-size:15px;" onclick="addChairman()">
+                            <span>👑</span>
+                            <span>添加董事长账号</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">➕ 添加审核员</div>
+                    <div class="input-group">
+                        <label>选择人员</label>
+                        <select id="auditorPerson">
+                            <option value="">请选择人员（从已注册小程序用户中选择）</option>
+                            <option value="1">张经理（138xxxx1234）</option>
+                            <option value="2">王主管（138xxxx5678）</option>
+                            <option value="3">李主管（138xxxx9012）</option>
+                            <option value="4">赵主管（138xxxx3456）</option>
+                            <option value="5">钱主管（138xxxx7890）</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>负责岗位（可多选）</label>
+                        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#333;cursor:pointer;">
+                                <input type="checkbox" value="导医"> 导医（客房部）
+                            </label>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#333;cursor:pointer;">
+                                <input type="checkbox" value="外请导医"> 外请导医（后勤部）
+                            </label>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#333;cursor:pointer;">
+                                <input type="checkbox" value="绿化工"> 绿化工（后勤部）
+                            </label>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#333;cursor:pointer;">
+                                <input type="checkbox" value="工程工"> 工程工（工程部）
+                            </label>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#333;cursor:pointer;">
+                                <input type="checkbox" value="搬运工"> 搬运工（后勤部）
+                            </label>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" style="padding:18px;font-size:17px;" onclick="saveAuditor()">
+                        <span>➕</span>
+                        <span>保存审核员</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 考核设置面板 -->
+            <div class="panel" id="assessment">
+                <div class="card">
+                    <div class="card-title">🎯 月底考核折扣方案</div>
+                    <div style="background:#f8f9fa;border-radius:10px;padding:16px;margin-bottom:14px;">
+                        <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:10px;">当前方案：通过与否</div>
+                        <div style="display:flex;gap:10px;">
+                            <span style="padding:6px 14px;background:#e8f5e9;color:#2ecc71;border-radius:20px;font-size:13px;font-weight:600;">通过 100%</span>
+                            <span style="padding:6px 14px;background:#ffebee;color:#e74c3c;border-radius:20px;font-size:13px;font-weight:600;">不通过 80%</span>
+                        </div>
+                        <div style="font-size:13px;color:#666;margin-top:10px;">
+                            月底统一考核，通过按原价结算，不通过整月费用打8折（扣20%）<br>
+                            若次月考核通过，上月扣的20%自动补发
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="background:#e3f2fd;border-radius:10px;padding:14px;margin-bottom:16px;">
+                    <div style="font-size:14px;font-weight:600;color:#1565c0;margin-bottom:6px;">📌 考核说明</div>
+                    <div style="font-size:13px;color:#1976d2;line-height:1.6;">
+                        只有标记为「需考核」的岗位才需要月底考核<br>
+                        同一人做了多个岗位时，分别对需考核的岗位进行考核<br>
+                        不需考核的岗位按原价结算，不受考核影响
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">📋 本月待考核（按岗位显示）</div>
+                    
+                    <!-- 王五：做了2个岗位，但只有导医需要考核 -->
+                    <div style="background:#fff8e1;border-radius:10px;padding:14px;margin-bottom:14px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                            <div>
+                                <div style="font-size:16px;font-weight:700;color:#333;">王五</div>
+                                <div style="font-size:12px;color:#999;margin-top:2px;">本月共做2个岗位，1个需考核</div>
+                            </div>
+                            <span style="font-size:12px;color:#999;background:#f5f5f5;padding:4px 10px;border-radius:10px;">外请导医不需考核 · ¥1,000</span>
+                        </div>
+                        <div class="record-item" style="border-bottom:none;padding:8px 0;">
+                            <div class="record-left">
+                                <div class="record-name" style="font-size:15px;">导医 <span style="color:#e74c3c;font-size:12px;">需考核</span></div>
+                                <div class="record-info">12次 · ¥720 · 客房部</div>
+                            </div>
+                            <div class="record-right">
+                                <span class="record-tag tag-pending">待考核</span>
+                                <button class="btn btn-primary btn-sm" onclick="showAssessmentModal('王五', '导医', 720)">考核</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 赵六：只做了绿化工，需要考核 -->
+                    <div style="background:#fff8e1;border-radius:10px;padding:14px;margin-bottom:14px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                            <div>
+                                <div style="font-size:16px;font-weight:700;color:#333;">赵六</div>
+                                <div style="font-size:12px;color:#999;margin-top:2px;">本月共做1个岗位，1个需考核</div>
+                            </div>
+                        </div>
+                        <div class="record-item" style="border-bottom:none;padding:8px 0;">
+                            <div class="record-left">
+                                <div class="record-name" style="font-size:15px;">绿化工 <span style="color:#e74c3c;font-size:12px;">需考核</span></div>
+                                <div class="record-info">8次 · 45小时 · ¥1,125 · 后勤部</div>
+                            </div>
+                            <div class="record-right">
+                                <span class="record-tag tag-pending">待考核</span>
+                                <button class="btn btn-primary btn-sm" onclick="showAssessmentModal('赵六', '绿化工', 1125)">考核</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 统计报表面板 -->
+            <div class="panel" id="stats">
+                <!-- 统计子标签 -->
+                <div class="sub-tabs">
+                    <div class="sub-tab active" onclick="switchStatTab(this, 'overview')">总览</div>
+                    <div class="sub-tab" onclick="switchStatTab(this, 'dept')">部门分析</div>
+                    <div class="sub-tab" onclick="switchStatTab(this, 'salary')">工资表</div>
+                </div>
+                
+                <!-- 总览 -->
+                <div id="stat-overview" style="display:block;">
+                    <div class="stat-grid">
+                        <div class="stat-item stat-total">
+                            <div class="stat-value">48</div>
+                            <div class="stat-label">本月人次</div>
+                        </div>
+                        <div class="stat-item stat-total">
+                            <div class="stat-value">¥6,083</div>
+                            <div class="stat-label">实发总费用</div>
+                        </div>
+                        <div class="stat-item stat-external">
+                            <div class="stat-value">35</div>
+                            <div class="stat-label">外请人次</div>
+                        </div>
+                        <div class="stat-item stat-external">
+                            <div class="stat-value">¥4,250</div>
+                            <div class="stat-label">外请费用</div>
+                        </div>
+                        <div class="stat-item stat-internal">
+                            <div class="stat-value">13</div>
+                            <div class="stat-label">内部人次</div>
+                        </div>
+                        <div class="stat-item stat-internal">
+                            <div class="stat-value">¥633</div>
+                            <div class="stat-label">内部费用</div>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-title">📊 按岗位统计</div>
+                        <div class="record-item">
+                            <div class="record-left">
+                                <div class="record-name">导医</div>
+                                <div class="record-info">15人次 · 按次结算</div>
+                            </div>
+                            <div class="record-right">
+                                <div class="record-amount">¥900</div>
+                            </div>
+                        </div>
+                        <div class="record-item">
+                            <div class="record-left">
+                                <div class="record-name">绿化工</div>
+                                <div class="record-info">10人次 · 78小时 · 按小时</div>
+                            </div>
+                            <div class="record-right">
+                                <div class="record-amount">¥1,950</div>
+                            </div>
+                        </div>
+                        <div class="record-item">
+                            <div class="record-left">
+                                <div class="record-name">工程工</div>
+                                <div class="record-info">8人次 · 52小时 · 按小时</div>
+                            </div>
+                            <div class="record-right">
+                                <div class="record-amount">¥1,560</div>
+                            </div>
+                        </div>
+                        <div class="record-item">
+                            <div class="record-left">
+                                <div class="record-name">外请导医</div>
+                                <div class="record-info">10人次 · 按次结算</div>
+                            </div>
+                            <div class="record-right">
+                                <div class="record-amount">¥1,000</div>
+                            </div>
+                        </div>
+                        <div class="record-item">
+                            <div class="record-left">
+                                <div class="record-name">搬运工</div>
+                                <div class="record-info">5人次 · 按次结算</div>
+                            </div>
+                            <div class="record-right">
+                                <div class="record-amount">¥250</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 部门分析 -->
+                <div id="stat-dept" style="display:none;">
+                    <div class="card">
+                        <div class="card-title">🏢 各部门外请费用统计</div>
+                        
+                        <div class="dept-card" style="border-left-color:#2ecc71;">
+                            <div class="dept-header">
+                                <div class="dept-name">客房部</div>
+                                <div class="dept-amount">¥900</div>
+                            </div>
+                            <div class="dept-detail">
+                                <span>6人次 · 全部外请</span>
+                                <span style="color:#2ecc71;font-weight:600;">外请率 100%</span>
+                            </div>
+                            <div class="dept-breakdown">
+                                <div class="dept-breakdown-item">
+                                    <span class="breakdown-name">导医</span>
+                                    <span class="breakdown-amount">¥900</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dept-card" style="border-left-color:#1976d2;">
+                            <div class="dept-header">
+                                <div class="dept-name">后勤部</div>
+                                <div class="dept-amount">¥3,200</div>
+                            </div>
+                            <div class="dept-detail">
+                                <span>25人次 · 外请20人/内部5人</span>
+                                <span style="color:#e74c3c;font-weight:600;">外请率 80%</span>
+                            </div>
+                            <div class="dept-breakdown">
+                                <div class="dept-breakdown-item">
+                                    <span class="breakdown-name">绿化工（按小时）</span>
+                                    <span class="breakdown-amount">¥1,950</span>
+                                </div>
+                                <div class="dept-breakdown-item">
+                                    <span class="breakdown-name">外请导医</span>
+                                    <span class="breakdown-amount">¥1,000</span>
+                                </div>
+                                <div class="dept-breakdown-item">
+                                    <span class="breakdown-name">搬运工</span>
+                                    <span class="breakdown-amount">¥250</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dept-card" style="border-left-color:#c2185b;">
+                            <div class="dept-header">
+                                <div class="dept-name">工程部</div>
+                                <div class="dept-amount">¥1,560</div>
+                            </div>
+                            <div class="dept-detail">
+                                <span>8人次 · 外请5人/内部3人</span>
+                                <span style="color:#e74c3c;font-weight:600;">外请率 62.5%</span>
+                            </div>
+                            <div class="dept-breakdown">
+                                <div class="dept-breakdown-item">
+                                    <span class="breakdown-name">工程工（按小时）</span>
+                                    <span class="breakdown-amount">¥1,560</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dept-card" style="border-left-color:#ff9800;">
+                            <div class="dept-header">
+                                <div class="dept-name">餐饮部</div>
+                                <div class="dept-amount">¥520</div>
+                            </div>
+                            <div class="dept-detail">
+                                <span>4人次 · 全部内部</span>
+                                <span style="color:#2ecc71;font-weight:600;">外请率 0%</span>
+                            </div>
+                            <div class="dept-breakdown">
+                                <div class="dept-breakdown-item">
+                                    <span class="breakdown-name">厨房帮工</span>
+                                    <span class="breakdown-amount">¥520</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top:16px;padding-top:16px;border-top:2px solid #eee;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span style="font-size:15px;color:#666;">总计外请费用</span>
+                                <span style="font-size:22px;font-weight:700;color:#e74c3c;">¥5,660</span>
+                            </div>
+                            <div style="font-size:13px;color:#999;margin-top:4px;">内部费用 ¥633 · 外请费用占比 80%</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 工资表 -->
+                <div id="stat-salary" style="display:none;">
+                    <div style="overflow-x:auto;">
+                        <table class="salary-table">
+                            <thead>
+                                <tr>
+                                    <th>姓名</th>
+                                    <th>部门</th>
+                                    <th>岗位</th>
+                                    <th>类型</th>
+                                    <th>次数</th>
+                                    <th>工时</th>
+                                    <th>原价</th>
+                                    <th>考核</th>
+                                    <th>实发</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="name-cell">王五</td>
+                                    <td>客房部</td>
+                                    <td>导医</td>
+                                    <td>内部</td>
+                                    <td>12</td>
+                                    <td>-</td>
+                                    <td class="amount">¥720</td>
+                                    <td><span style="color:#2ecc71;">通过</span></td>
+                                    <td class="amount">¥720</td>
+                                </tr>
+                                <tr>
+                                    <td class="name-cell">赵六</td>
+                                    <td>后勤部</td>
+                                    <td>绿化工</td>
+                                    <td>外请</td>
+                                    <td>8</td>
+                                    <td>45h</td>
+                                    <td class="amount">¥1,125</td>
+                                    <td><span style="color:#2ecc71;">通过</span></td>
+                                    <td class="amount">¥1,125</td>
+                                </tr>
+                                <tr>
+                                    <td class="name-cell">孙七</td>
+                                    <td>工程部</td>
+                                    <td>工程工</td>
+                                    <td>外请</td>
+                                    <td>6</td>
+                                    <td>32h</td>
+                                    <td class="amount">¥960</td>
+                                    <td><span style="color:#e74c3c;">不通过</span></td>
+                                    <td class="amount">¥768<br><span class="discount">8折</span></td>
+                                </tr>
+                                <tr>
+                                    <td class="name-cell">周八</td>
+                                    <td>后勤部</td>
+                                    <td>外请导医</td>
+                                    <td>外请</td>
+                                    <td>10</td>
+                                    <td>-</td>
+                                    <td class="amount">¥1,000</td>
+                                    <td><span style="color:#2ecc71;">通过</span></td>
+                                    <td class="amount">¥1,000</td>
+                                </tr>
+                                <tr>
+                                    <td class="name-cell">张三</td>
+                                    <td>后勤部</td>
+                                    <td>搬运工</td>
+                                    <td>外请</td>
+                                    <td>5</td>
+                                    <td>-</td>
+                                    <td class="amount">¥250</td>
+                                    <td><span style="color:#2ecc71;">通过</span></td>
+                                    <td class="amount">¥250</td>
+                                </tr>
+                                <tr>
+                                    <td class="name-cell">李四</td>
+                                    <td>客房部</td>
+                                    <td>导医</td>
+                                    <td>外请</td>
+                                    <td>3</td>
+                                    <td>-</td>
+                                    <td class="amount">¥480</td>
+                                    <td><span style="color:#2ecc71;">通过</span></td>
+                                    <td class="amount">¥480</td>
+                                </tr>
+                                <tr class="total-row">
+                                    <td colspan="6" style="text-align:right;">合计</td>
+                                    <td class="amount">¥5,935</td>
+                                    <td>-</td>
+                                    <td class="amount">¥5,743</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div style="margin-top:16px;">
+                        <button class="btn btn-primary" style="padding:18px;font-size:17px;" onclick="exportSalary()">
+                            <span>📥</span>
+                            <span>导出工资表（Excel）</span>
+                        </button>
+                        <button class="btn btn-secondary" style="margin-top:12px;">推送到企微群</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 成功弹窗 -->
+    <div class="modal" id="successModal">
+        <div class="modal-content">
+            <div class="success-card">
+                <div class="success-icon">🎉</div>
+                <div class="success-title">打卡成功！</div>
+                <div class="success-text" id="successText">已记录您的上工信息</div>
+            </div>
+            <button class="btn btn-success" style="margin-top:20px;" onclick="closeSuccessModal()">
+                <span>知道了</span>
+            </button>
+        </div>
+    </div>
+    
+    <!-- 审核弹窗 -->
+    <div class="modal" id="auditModal">
+        <div class="modal-content">
+            <div class="modal-header">确认临时工岗位</div>
+            
+            <div style="background:#f8f9fa;border-radius:10px;padding:14px;margin-bottom:16px;">
+                <div style="font-size:18px;font-weight:700;color:#333;" id="auditName">张三</div>
+                <div style="font-size:13px;color:#999;margin-top:4px;">07-17 08:30 扫码上工</div>
+            </div>
+            
+            <div class="input-group">
+                <label>选择岗位</label>
+                <select id="auditPosition" onchange="updateAuditRate()">
+                    <option value="">请选择岗位</option>
+                    <option value="1" data-rate="60" data-type="fixed">导医 - 固定¥60/次（客房部）</option>
+                    <option value="2" data-rate="100" data-type="fixed">外请导医 - 固定¥100/次（后勤部）</option>
+                    <option value="3" data-rate="25" data-type="hourly">绿化工 - ¥25/小时（后勤部）</option>
+                    <option value="4" data-rate="30" data-type="hourly">工程工 - ¥30/小时（工程部）</option>
+                    <option value="5" data-rate="50" data-type="fixed">搬运工 - 固定¥50/次（后勤部）</option>
+                </select>
+            </div>
+            
+            <div class="input-group" id="auditHoursGroup" style="display:none;">
+                <label>工作小时数</label>
+                <input type="number" id="auditHours" placeholder="如：8" step="0.5" oninput="updateAuditAmount()">
+            </div>
+            
+            <div class="input-group">
+                <label>金额（可调整）</label>
+                <input type="number" id="auditRate" placeholder="选择岗位后自动带出" style="color:#2ecc71;font-weight:700;">
+            </div>
+            
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="closeAuditModal()">取消</button>
+                <button class="btn btn-danger" style="flex:1;" onclick="rejectAudit()">驳回</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="confirmAudit()">确认通过</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 考核弹窗 -->
+    <div class="modal" id="assessmentModal">
+        <div class="modal-content">
+            <div class="modal-header">月底考核</div>
+            
+            <div style="background:#f8f9fa;border-radius:10px;padding:14px;margin-bottom:16px;">
+                <div style="font-size:18px;font-weight:700;color:#333;" id="assessName">王五</div>
+                <div style="font-size:14px;color:#1976d2;font-weight:600;margin-top:4px;" id="assessPosition">导医</div>
+                <div style="font-size:13px;color:#666;margin-top:4px;" id="assessInfo">本月打卡12次 · 预计收入¥1,920</div>
+            </div>
+            
+            <div class="input-group">
+                <label>考核结果</label>
+                <select id="assessResult" onchange="updateAssessPreview()">
+                    <option value="pass">通过（按原价结算）</option>
+                    <option value="fail">不通过（按8折结算）</option>
+                </select>
+            </div>
+            
+            <div style="background:#fff3e0;border-radius:10px;padding:14px;margin-bottom:16px;">
+                <div style="font-size:13px;color:#e65100;font-weight:600;">结算预览</div>
+                <div style="display:flex;justify-content:space-between;margin-top:8px;">
+                    <span style="font-size:13px;color:#666;">原收入</span>
+                    <span style="font-size:16px;font-weight:600;" id="assessOriginal">¥1,920</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-top:4px;">
+                    <span style="font-size:13px;color:#666;">考核折扣</span>
+                    <span style="font-size:16px;font-weight:600;color:#e74c3c;" id="assessDiscount">无</span>
+                </div>
+                <div style="border-top:1px solid #ffe0b2;margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;">
+                    <span style="font-size:14px;font-weight:600;">实际结算</span>
+                    <span style="font-size:18px;font-weight:700;color:#2ecc71;" id="assessFinal">¥1,920</span>
+                </div>
+            </div>
+            
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="closeAssessmentModal()">取消</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="confirmAssessment()">确认考核</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 历史审核弹窗 -->
+    <div class="modal" id="historyModal">
+        <div class="modal-content">
+            <div class="modal-header">历史待审核记录</div>
+            
+            <div style="background:#fff3e0;border-radius:10px;padding:14px;margin-bottom:16px;">
+                <div style="font-size:13px;color:#e65100;font-weight:600;">⚠️ 补录规则</div>
+                <div style="font-size:12px;color:#999;margin-top:6px;line-height:1.6;">
+                    • 打卡记录3天内未审核将自动标记为逾期<br>
+                    • 逾期记录仍可审核，但需填写补录原因<br>
+                    • 超过7天的记录将锁定，无法再审核或修改
+                </div>
+            </div>
+            
+            <!-- 07-15 -->
+            <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:8px;padding-left:4px;">07-15（1条待审核）</div>
+            <div class="record-item">
+                <div class="record-left">
+                    <div class="record-name">郑一</div>
+                    <div class="record-info">07-15 08:00 扫码 · 待分配岗位 · <span style="color:#e74c3c;">外请</span></div>
+                </div>
+                <div class="record-right">
+                    <span class="record-tag tag-pending">2天前</span>
+                    <button class="btn btn-warning btn-sm" onclick="showAuditModal('郑一')">审核</button>
+                </div>
+            </div>
+            
+            <!-- 07-16 -->
+            <div style="font-size:13px;font-weight:700;color:#333;margin:16px 0 8px;padding-left:4px;">07-16（2条待审核）</div>
+            <div class="record-item">
+                <div class="record-left">
+                    <div class="record-name">刘二</div>
+                    <div class="record-info">07-16 09:00 小程序 · 外请导医 · ¥100 · 后勤部</div>
+                </div>
+                <div class="record-right">
+                    <span class="record-tag tag-pending">1天前</span>
+                    <button class="btn btn-primary btn-sm" onclick="quickAudit('刘二')">通过</button>
+                </div>
+            </div>
+            <div class="record-item">
+                <div class="record-left">
+                    <div class="record-name">陈三</div>
+                    <div class="record-info">07-16 10:00 小程序 · 绿化工 · 5小时 · ¥125 · 后勤部</div>
+                </div>
+                <div class="record-right">
+                    <span class="record-tag tag-pending">1天前</span>
+                    <button class="btn btn-primary btn-sm" onclick="quickAudit('陈三')">通过</button>
+                </div>
+            </div>
+            
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button class="btn btn-primary" style="flex:1;" onclick="closeHistoryModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修正弹窗 -->
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <div class="modal-header">修正打卡记录</div>
+            
+            <div style="background:#f8f9fa;border-radius:10px;padding:14px;margin-bottom:16px;">
+                <div style="font-size:18px;font-weight:700;color:#333;" id="editName">王五</div>
+                <div style="font-size:13px;color:#666;margin-top:4px;" id="editInfo">当前岗位：导医</div>
+            </div>
+            
+            <div class="input-group">
+                <label>修改岗位</label>
+                <select id="editPosition" onchange="updateEditHours()">
+                    <option value="1" data-rate="60" data-type="fixed">导医 - 固定¥60/次（客房部）</option>
+                    <option value="2" data-rate="100" data-type="fixed">外请导医 - 固定¥100/次（后勤部）</option>
+                    <option value="3" data-rate="25" data-type="hourly">绿化工 - ¥25/小时（后勤部）</option>
+                    <option value="4" data-rate="30" data-type="hourly">工程工 - ¥30/小时（工程部）</option>
+                    <option value="5" data-rate="50" data-type="fixed">搬运工 - 固定¥50/次（后勤部）</option>
+                </select>
+            </div>
+            
+            <div class="input-group" id="editHoursGroup" style="display:none;">
+                <label>工作小时数</label>
+                <input type="number" id="editHours" placeholder="如：8" step="0.5" oninput="updateEditAmount()">
+            </div>
+            
+            <div class="input-group">
+                <label>金额（可手动调整）</label>
+                <input type="number" id="editAmount" placeholder="金额" style="color:#2ecc71;font-weight:700;">
+            </div>
+            
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="closeEditModal()">取消</button>
+                <button class="btn btn-danger" style="flex:1;" onclick="deleteEditRecord()">删除记录</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="confirmEdit()">保存修正</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast" id="toast"></div>
+    
+    <script>
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                this.classList.add('active');
+                document.getElementById(this.dataset.panel).classList.add('active');
+            });
+        });
+        
+        function switchStatTab(el, tabName) {
+            document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+            document.getElementById('stat-overview').style.display = 'none';
+            document.getElementById('stat-dept').style.display = 'none';
+            document.getElementById('stat-salary').style.display = 'none';
+            document.getElementById('stat-' + tabName).style.display = 'block';
+        }
+        
+        function tempCheckIn() {
+            const name = document.getElementById('workerName').value;
+            const phone = document.getElementById('workerPhone').value;
+            
+            if (!name || !phone) {
+                showToast('请填写姓名和手机号');
+                return;
+            }
+            
+            document.getElementById('successText').textContent = '打卡成功！等待管理员审核分配岗位';
+            document.getElementById('successModal').classList.add('show');
+        }
+        
+        let selectedPositionType = 'fixed';
+        let hourlyRate = 25;
+        
+        function selectMiniPosition(el, id) {
+            document.querySelectorAll('#miniapp .position-card').forEach(c => c.classList.remove('selected'));
+            el.classList.add('selected');
+            
+            if (id === 3) {
+                selectedPositionType = 'hourly';
+                hourlyRate = 25;
+                document.getElementById('hoursInputCard').style.display = 'block';
+                updateHoursPreview();
+            } else if (id === 4) {
+                selectedPositionType = 'hourly';
+                hourlyRate = 30;
+                document.getElementById('hoursInputCard').style.display = 'block';
+                updateHoursPreview();
+            } else if (id === 6) {
+                selectedPositionType = 'temp';
+                document.getElementById('hoursInputCard').style.display = 'none';
+            } else {
+                selectedPositionType = 'fixed';
+                document.getElementById('hoursInputCard').style.display = 'none';
+            }
+        }
+        
+        function adjustHours(delta) {
+            const input = document.getElementById('workHours');
+            let val = parseFloat(input.value) || 0;
+            val = Math.max(0.5, Math.min(24, val + delta));
+            input.value = val;
+            updateHoursPreview();
+        }
+        
+        function updateHoursPreview() {
+            const hours = parseFloat(document.getElementById('workHours').value) || 0;
+            const amount = hours * hourlyRate;
+            document.getElementById('hoursPreviewAmount').textContent = '¥' + amount;
+        }
+        
+        document.getElementById('workHours').addEventListener('input', updateHoursPreview);
+        
+        function miniCheckIn() {
+            if (selectedPositionType === 'hourly') {
+                const hours = document.getElementById('workHours').value;
+                document.getElementById('successText').textContent = `打卡成功！工时${hours}小时，预计收入¥${hours * hourlyRate}`;
+            } else if (selectedPositionType === 'temp') {
+                document.getElementById('successText').textContent = '打卡成功！等待管理员审核分配岗位';
+            } else {
+                document.getElementById('successText').textContent = '打卡成功！按次结算已记录';
+            }
+            document.getElementById('successModal').classList.add('show');
+        }
+
+        function showMiniAudit() {
+            showToast('跳转至小程序审核页面（仅显示您负责的岗位）');
+        }
+        function showMiniAssessment() {
+            showToast('跳转至小程序考核页面（月底进行考核）');
+        }
+        function showChairDashboard() {
+            showToast('董事长看板：每日打卡+审核情况（只读，不操作）');
+        }
+        function showChairStats() {
+            showToast('董事长统计：总览+部门分析（只读，不操作）');
+        }
+        
+        function showAuditModal(name) {
+            document.getElementById('auditName').textContent = name;
+            document.getElementById('auditModal').classList.add('show');
+        }
+        
+        function closeAuditModal() {
+            document.getElementById('auditModal').classList.remove('show');
+        }
+        
+        function updateAuditRate() {
+            const select = document.getElementById('auditPosition');
+            const option = select.options[select.selectedIndex];
+            const rate = parseFloat(option.dataset.rate) || 0;
+            const type = option.dataset.type;
+            if (type === 'hourly') {
+                document.getElementById('auditHoursGroup').style.display = 'block';
+                document.getElementById('auditHours').value = 8;
+                document.getElementById('auditRate').value = 8 * rate;
+            } else {
+                document.getElementById('auditHoursGroup').style.display = 'none';
+                document.getElementById('auditRate').value = rate;
+            }
+        }
+        
+        function updateAuditAmount() {
+            const select = document.getElementById('auditPosition');
+            const option = select.options[select.selectedIndex];
+            const rate = parseFloat(option.dataset.rate) || 0;
+            const hours = parseFloat(document.getElementById('auditHours').value) || 0;
+            document.getElementById('auditRate').value = hours * rate;
+        }
+        
+        function confirmAudit() {
+            const position = document.getElementById('auditPosition').value;
+            if (!position) {
+                showToast('请选择岗位');
+                return;
+            }
+            closeAuditModal();
+            showToast('审核通过！岗位已确认，进入统计');
+        }
+        
+        function rejectAudit() {
+            closeAuditModal();
+            showToast('已驳回，该记录不进入统计');
+        }
+        
+        function quickAudit(name) {
+            showToast(name + ' 审核通过，已进入统计');
+        }
+        
+        function showHistoryAudit() {
+            document.getElementById('historyModal').classList.add('show');
+        }
+        
+        function closeHistoryModal() {
+            document.getElementById('historyModal').classList.remove('show');
+        }
+        
+        let assessAmount = 0;
+        
+        function showAssessmentModal(name, position, amount) {
+            document.getElementById('assessName').textContent = name;
+            document.getElementById('assessPosition').textContent = position + ' · 需考核';
+            document.getElementById('assessInfo').textContent = '预计收入 ¥' + amount.toLocaleString();
+            assessAmount = amount;
+            document.getElementById('assessOriginal').textContent = '¥' + amount.toLocaleString();
+            document.getElementById('assessResult').value = 'pass';
+            updateAssessPreview();
+            document.getElementById('assessmentModal').classList.add('show');
+        }
+        
+        function updateAssessPreview() {
+            const result = document.getElementById('assessResult').value;
+            if (result === 'pass') {
+                document.getElementById('assessDiscount').textContent = '无';
+                document.getElementById('assessFinal').textContent = '¥' + assessAmount.toLocaleString();
+            } else {
+                document.getElementById('assessDiscount').textContent = '8折（扣¥' + Math.round(assessAmount * 0.2) + '）';
+                document.getElementById('assessFinal').textContent = '¥' + Math.round(assessAmount * 0.8).toLocaleString();
+            }
+        }
+        
+        function closeAssessmentModal() {
+            document.getElementById('assessmentModal').classList.remove('show');
+        }
+        
+        function confirmAssessment() {
+            closeAssessmentModal();
+            showToast('考核已确认！费用已更新');
+        }
+        
+        function closeSuccessModal() {
+            document.getElementById('successModal').classList.remove('show');
+        }
+        
+        function updateAdminHours() {
+            const select = document.getElementById('adminPosition');
+            const option = select.options[select.selectedIndex];
+            const rate = parseFloat(option.dataset.rate) || 0;
+            const type = option.dataset.type;
+            if (type === 'hourly') {
+                document.getElementById('adminHoursGroup').style.display = 'block';
+                document.getElementById('adminHours').value = 8;
+                document.getElementById('adminAmount').value = 8 * rate;
+            } else {
+                document.getElementById('adminHoursGroup').style.display = 'none';
+                document.getElementById('adminAmount').value = rate;
+            }
+        }
+        
+        function updateAdminAmount() {
+            const select = document.getElementById('adminPosition');
+            const option = select.options[select.selectedIndex];
+            const rate = parseFloat(option.dataset.rate) || 0;
+            const hours = parseFloat(document.getElementById('adminHours').value) || 0;
+            document.getElementById('adminAmount').value = hours * rate;
+        }
+        
+        function adminAddRecord() {
+            showToast('记录添加成功！（需审核后进入统计）');
+        }
+
+        function addAuditorToPosition(position) {
+            showToast('为「' + position + '」添加审核员');
+        }
+
+        function saveAuditor() {
+            const person = document.getElementById('auditorPerson').value;
+            if (!person) {
+                showToast('请选择人员');
+                return;
+            }
+            showToast('审核员已保存，该人员将在小程序中看到审核Tab');
+        }
+
+        // 董事长账号管理
+        function addChairman() {
+            const name = document.getElementById('chairmanName').value.trim();
+            const phone = document.getElementById('chairmanPhone').value.trim();
+            const scope = document.getElementById('chairmanScope').value;
+            if (!name) { showToast('请输入董事长姓名'); return; }
+            if (!phone) { showToast('请输入手机号'); return; }
+            showToast('董事长「' + name + '」已添加，登录小程序即可查看只读看板');
+            document.getElementById('chairmanName').value = '';
+            document.getElementById('chairmanPhone').value = '';
+        }
+        function editChairman(name) {
+            showToast('编辑董事长「' + name + '」的信息');
+        }
+        function removeChairman(name) {
+            if (confirm('确定移除董事长「' + name + '」？移除后该账号将无法登录小程序查看数据')) {
+                showToast('董事长「' + name + '」已移除');
+            }
+        }
+        
+        function showEditModal(name, position) {
+            document.getElementById('editName').textContent = name;
+            document.getElementById('editInfo').textContent = '当前岗位：' + position;
+            // 根据当前岗位预选
+            const select = document.getElementById('editPosition');
+            for (let i = 0; i < select.options.length; i++) {
+                if (select.options[i].text.indexOf(position) >= 0) {
+                    select.selectedIndex = i;
+                    break;
+                }
+            }
+            updateEditHours();
+            document.getElementById('editModal').classList.add('show');
+        }
+        
+        function updateEditHours() {
+            const select = document.getElementById('editPosition');
+            const option = select.options[select.selectedIndex];
+            const type = option.dataset.type;
+            const rate = parseFloat(option.dataset.rate);
+            if (type === 'hourly') {
+                document.getElementById('editHoursGroup').style.display = 'block';
+                document.getElementById('editHours').value = 8;
+                document.getElementById('editAmount').value = 8 * rate;
+            } else {
+                document.getElementById('editHoursGroup').style.display = 'none';
+                document.getElementById('editAmount').value = rate;
+            }
+        }
+        
+        function updateEditAmount() {
+            const select = document.getElementById('editPosition');
+            const option = select.options[select.selectedIndex];
+            const rate = parseFloat(option.dataset.rate);
+            const hours = parseFloat(document.getElementById('editHours').value) || 0;
+            document.getElementById('editAmount').value = hours * rate;
+        }
+        
+        function closeEditModal() {
+            document.getElementById('editModal').classList.remove('show');
+        }
+        
+        function deleteEditRecord() {
+            closeEditModal();
+            showToast('记录已删除');
+        }
+        
+        function confirmEdit() {
+            closeEditModal();
+            showToast('修正已保存');
+        }
+        
+        function editPosition(name) {
+            document.getElementById('posName').value = name;
+            showToast('已加载岗位信息，请修改后保存');
+        }
+        
+        function toggleBillingType() {
+            const type = document.getElementById('posBillingType').value;
+            if (type === 'fixed') {
+                document.getElementById('fixedPriceGroup').style.display = 'block';
+                document.getElementById('hourlyPriceGroup').style.display = 'none';
+            } else {
+                document.getElementById('fixedPriceGroup').style.display = 'none';
+                document.getElementById('hourlyPriceGroup').style.display = 'block';
+            }
+        }
+        
+        function savePosition() {
+            const name = document.getElementById('posName').value;
+            if (!name) {
+                showToast('请输入岗位名称');
+                return;
+            }
+            showToast('岗位保存成功！');
+        }
+        
+        function exportSalary() {
+            showToast('工资表导出成功！');
+        }
+        
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+        
+        document.getElementById('successModal').addEventListener('click', function(e) {
+            if (e.target === this) closeSuccessModal();
+        });
+        
+        document.getElementById('auditModal').addEventListener('click', function(e) {
+            if (e.target === this) closeAuditModal();
+        });
+        
+        document.getElementById('assessmentModal').addEventListener('click', function(e) {
+            if (e.target === this) closeAssessmentModal();
+        });
+        
+        document.getElementById('editModal').addEventListener('click', function(e) {
+            if (e.target === this) closeEditModal();
+        });
+        
+        document.getElementById('historyModal').addEventListener('click', function(e) {
+            if (e.target === this) closeHistoryModal();
+        });
+    </script>
+</body>
+</html>

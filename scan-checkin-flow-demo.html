@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>扫码注册打卡流程演示（简化版）</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+            background: #f5f6f7;
+            min-height: 100vh;
+        }
+
+        .phone-stage {
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 30px 20px;
+            flex-wrap: wrap;
+        }
+        .phone-frame {
+            width: 340px;
+            background: #fff;
+            border-radius: 28px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+            overflow: hidden;
+            border: 8px solid #1a1a1a;
+        }
+        .status-bar {
+            background: #000;
+            color: white;
+            padding: 6px 18px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            align-items: center;
+        }
+        .phone-label {
+            text-align: center;
+            padding: 8px 0;
+            background: #f0f0f0;
+            font-size: 13px;
+            color: #666;
+            font-weight: 600;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .phone-label .step-num {
+            display: inline-block;
+            background: #2ecc71;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            line-height: 20px;
+            font-size: 11px;
+            margin-right: 6px;
+        }
+        .phone-screen {
+            min-height: 600px;
+            background: #f5f6f7;
+        }
+
+        /* 微信扫码 */
+        .wechat-scan {
+            background: #000;
+            height: 460px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .scan-box {
+            width: 200px;
+            height: 200px;
+            border: 2px solid rgba(255,255,255,0.6);
+            position: relative;
+        }
+        .scan-box::before, .scan-box::after {
+            content: '';
+            position: absolute;
+            width: 28px;
+            height: 28px;
+            border: 4px solid #2ecc71;
+        }
+        .scan-box::before { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+        .scan-box::after { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+        .scan-line {
+            position: absolute;
+            left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #2ecc71, transparent);
+            animation: scan 2s linear infinite;
+        }
+        @keyframes scan {
+            0% { top: 0; }
+            50% { top: 100%; }
+            100% { top: 0; }
+        }
+        .qr-code {
+            width: 160px;
+            height: 160px;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 90px;
+            border-radius: 8px;
+        }
+        .scan-tip {
+            position: absolute;
+            bottom: 20px;
+            left: 0; right: 0;
+            text-align: center;
+            color: rgba(255,255,255,0.8);
+            font-size: 13px;
+        }
+
+        /* 小程序顶部 */
+        .miniapp-header {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+            padding: 20px 18px 16px;
+        }
+        .miniapp-header .nav-back { font-size: 13px; opacity: 0.9; margin-bottom: 10px; }
+        .miniapp-header .title { font-size: 18px; font-weight: 700; }
+        .miniapp-header .sub { font-size: 12px; opacity: 0.85; margin-top: 4px; }
+
+        .content { padding: 18px; }
+
+        /* 授权卡 */
+        .auth-card {
+            background: white;
+            border-radius: 14px;
+            padding: 22px 18px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .auth-logo {
+            width: 56px;
+            height: 56px;
+            background: #2ecc71;
+            border-radius: 12px;
+            margin: 0 auto 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            color: white;
+        }
+        .auth-title { font-size: 17px; font-weight: 700; color: #333; margin-bottom: 6px; }
+        .auth-desc { font-size: 13px; color: #999; margin-bottom: 18px; line-height: 1.6; }
+        .auth-perm {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 12px;
+            text-align: left;
+            margin-bottom: 18px;
+        }
+        .auth-perm-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            padding: 4px 0;
+        }
+        .auth-perm-item span:first-child { color: #666; }
+        .auth-perm-item span:last-child { color: #2ecc71; font-weight: 600; }
+
+        .btn-wechat {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        /* 输入 */
+        .input-group { margin-bottom: 14px; }
+        .input-group label {
+            display: block;
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 14px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            background: white;
+        }
+        .input-group input:focus { border-color: #2ecc71; }
+        .phone-quick {
+            background: linear-gradient(135deg, #07c160, #06ad56);
+            color: white;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        /* 岗位卡片 */
+        .position-card {
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.15s;
+        }
+        .position-card:active { transform: scale(0.98); }
+        .position-card .pos-icon { font-size: 32px; }
+        .position-card .pos-info { flex: 1; }
+        .position-card .pos-name { font-size: 16px; font-weight: 700; }
+        .position-card .pos-rate { font-size: 12px; opacity: 0.9; margin-top: 2px; }
+        .bg-temp { background: linear-gradient(135deg, #95a5a6, #7f8c8d); }
+        .bg-green { background: linear-gradient(135deg, #2ecc71, #27ae60); }
+        .bg-blue { background: linear-gradient(135deg, #3498db, #2980b9); }
+        .bg-orange { background: linear-gradient(135deg, #f39c12, #e67e22); }
+        .bg-pink { background: linear-gradient(135deg, #e91e63, #c2185b); }
+
+        .section-title {
+            font-size: 13px;
+            color: #999;
+            margin: 14px 0 10px;
+            font-weight: 500;
+        }
+
+        /* 大打卡按钮 */
+        .checkin-btn {
+            width: 100%;
+            padding: 22px;
+            border: none;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+            font-size: 18px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 6px 20px rgba(46,204,113,0.3);
+            margin-top: 16px;
+        }
+        .checkin-btn.disabled {
+            background: #ccc;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
+        /* 成功页 */
+        .success-page { text-align: center; padding: 40px 20px; }
+        .success-circle {
+            width: 90px;
+            height: 90px;
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            border-radius: 50%;
+            margin: 0 auto 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 44px;
+            color: white;
+            box-shadow: 0 6px 24px rgba(46,204,113,0.4);
+        }
+        .success-title { font-size: 22px; font-weight: 700; color: #333; margin-bottom: 8px; }
+        .success-amount { font-size: 32px; font-weight: 700; color: #2ecc71; margin: 12px 0; }
+        .success-info {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 18px;
+            text-align: left;
+        }
+        .success-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        .success-info-row:last-child { border-bottom: none; }
+        .success-info-row span:first-child { color: #999; }
+        .success-info-row span:last-child { color: #333; font-weight: 500; }
+
+        /* 流程说明 */
+        .flow-desc { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .flow-desc h2 { font-size: 18px; color: #333; margin-bottom: 14px; text-align: center; }
+        .flow-steps {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .flow-step {
+            background: white;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-size: 13px;
+            color: #333;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .flow-step .num {
+            background: #2ecc71;
+            color: white;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            font-size: 11px;
+            line-height: 18px;
+            text-align: center;
+        }
+        .flow-arrow { color: #ccc; font-size: 16px; align-self: center; }
+
+        .tips-box {
+            background: #e3f2fd;
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 13px;
+            color: #1565c0;
+            line-height: 1.8;
+        }
+        .tips-box b { color: #0d47a1; }
+
+        .compare-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            max-width: 800px;
+            margin: 20px auto 0;
+        }
+        .compare-card {
+            background: white;
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+    </style>
+</head>
+<body>
+
+<div class="flow-desc">
+    <h2>扫码注册打卡流程（简化版 · 统一入口）</h2>
+    <div class="flow-steps">
+        <div class="flow-step"><span class="num">1</span>微信扫小程序码</div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step"><span class="num">2</span>微信授权+填姓名+获取手机号</div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step"><span class="num">3</span>选临时岗位打卡</div>
+    </div>
+    <div class="tips-box">
+        <b>核心逻辑：</b><br>
+        · <b>所有人统一扫码注册</b>，不区分外请/内部，首次都打"临时岗位"<br>
+        · 注册只需<b>姓名（必填）+ 手机号（微信一键获取）</b>，约20秒完成<br>
+        · 审核员在审核打卡记录时，把"临时岗位"改成真实岗位（如导医）<br>
+        · <b>下次扫码/搜小程序</b>，已分配的岗位会自动显示，临时岗位也保留<br>
+        · 外请/内部区分<b>只在岗位类型上</b>，用于费用统计，与打卡人无关
+    </div>
+</div>
+
+<div class="phone-stage">
+
+    <!-- 步骤1：微信扫码 -->
+    <div class="phone-frame">
+        <div class="status-bar"><span>9:41</span><span>📶 WiFi 🔋 100%</span></div>
+        <div class="phone-label"><span class="step-num">1</span>微信扫小程序码</div>
+        <div class="phone-screen">
+            <div class="wechat-scan">
+                <div class="scan-box">
+                    <div class="qr-code">📋</div>
+                    <div class="scan-line"></div>
+                </div>
+                <div class="scan-tip">对准小程序码即可自动扫描</div>
+            </div>
+            <div style="padding:16px;">
+                <div style="background:#fff8e1;border:1px solid #ffcc80;border-radius:10px;padding:12px;font-size:12px;color:#6b4e00;line-height:1.7;">
+                    📌 <b>小程序码张贴位置：</b><br>
+                    · 酒店入口/大堂<br>
+                    · 各部门办公室门口<br>
+                    · 员工通道<br><br>
+                    <b>所有岗位共用一个小程序码</b><br>
+                    扫码进入后由用户选择岗位打卡
+                </div>
+                <div style="background:#e3f2fd;border-radius:10px;padding:12px;margin-top:12px;font-size:12px;color:#1565c0;line-height:1.7;">
+                    💡 也可以在微信里<b>搜索小程序名称</b>直接打开，效果一样
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 步骤2：微信授权+填信息 -->
+    <div class="phone-frame">
+        <div class="status-bar"><span>9:41</span><span>📶 WiFi 🔋 100%</span></div>
+        <div class="phone-label"><span class="step-num">2</span>授权+填写姓名手机号</div>
+        <div class="phone-screen">
+            <div class="miniapp-header">
+                <div class="nav-back">‹ 外请人员打卡系统</div>
+                <div class="title">注册打卡</div>
+                <div class="sub">仅首次需要填写，以后自动登录</div>
+            </div>
+            <div class="content">
+                <!-- 授权部分 -->
+                <div class="auth-card" style="margin-bottom:14px;">
+                    <div class="auth-logo">👥</div>
+                    <div class="auth-title">微信授权登录</div>
+                    <div class="auth-desc">允许后获取微信身份，无需密码</div>
+                    <div class="auth-perm">
+                        <div class="auth-perm-item"><span>微信身份(openid)</span><span>✓ 允许</span></div>
+                        <div class="auth-perm-item"><span>自动登录</span><span>✓ 允许</span></div>
+                    </div>
+                    <button class="btn-wechat"><span>💬</span><span>已授权</span></button>
+                </div>
+
+                <!-- 填信息 -->
+                <div style="background:white;border-radius:14px;padding:18px;box-shadow:0 2px 10px rgba(0,0,0,0.05);">
+                    <div style="font-size:15px;font-weight:700;color:#333;margin-bottom:14px;">完善信息</div>
+
+                    <div class="input-group">
+                        <label>姓名 <span style="color:#e74c3c;">*</span>（必填）</label>
+                        <input type="text" placeholder="请输入真实姓名" value="张三">
+                    </div>
+
+                    <div class="input-group">
+                        <label>手机号 <span style="color:#999;font-size:11px;">（微信一键获取）</span></label>
+                        <button class="phone-quick"><span>📱</span><span>微信一键获取手机号</span></button>
+                        <div style="background:#f0f9eb;border:1px solid #c8e6c9;border-radius:10px;padding:12px 14px;font-size:14px;color:#333;display:flex;justify-content:space-between;align-items:center;">
+                            <span>138****5678</span>
+                            <span style="font-size:12px;color:#2ecc71;font-weight:600;">✓ 已获取</span>
+                        </div>
+                    </div>
+
+                    <button class="btn-wechat"><span>✓</span><span>提交并打卡</span></button>
+                </div>
+
+                <div style="font-size:11px;color:#999;text-align:center;margin-top:12px;line-height:1.6;">
+                    · 姓名<b>必填</b>，用于工资结算和审核识别<br>
+                    · 手机号用微信组件获取，<b>每月1000次免费</b><br>
+                    · 下次扫码自动识别身份，无需再填
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 步骤3：选临时岗位打卡 -->
+    <div class="phone-frame">
+        <div class="status-bar"><span>9:41</span><span>📶 WiFi 🔋 100%</span></div>
+        <div class="phone-label"><span class="step-num">3</span>选临时岗位打卡（首次）</div>
+        <div class="phone-screen">
+            <div class="miniapp-header">
+                <div class="nav-back">‹ 打卡</div>
+                <div class="title">今日打卡</div>
+                <div class="sub">张三 · 138****5678 · 待分配岗位</div>
+            </div>
+            <div class="content">
+                <!-- 首次：只有临时岗位 -->
+                <div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#e65100;line-height:1.6;">
+                    💡 你还没有被分配固定岗位，请先打"临时岗位"，审核员会为你分配真实岗位
+                </div>
+
+                <div class="section-title">📍 可打卡岗位</div>
+
+                <!-- 临时岗位（常显） -->
+                <div class="position-card bg-temp">
+                    <div class="pos-icon">🎯</div>
+                    <div class="pos-info">
+                        <div class="pos-name">临时岗位</div>
+                        <div class="pos-rate">¥待审核员定价 · 打卡后由审核员分配</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.3);padding:4px 10px;border-radius:10px;font-size:11px;">✓ 已选</div>
+                </div>
+
+                <div style="background:white;border-radius:12px;padding:14px;margin-top:14px;">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;">
+                        <span style="color:#999;">打卡时间</span>
+                        <span style="color:#333;font-weight:500;">2026-07-18 09:41</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;">
+                        <span style="color:#999;">选择岗位</span>
+                        <span style="color:#7f8c8d;font-weight:600;">临时岗位</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;">
+                        <span style="color:#999;">预估金额</span>
+                        <span style="color:#999;font-weight:600;">待审核定价</span>
+                    </div>
+                </div>
+
+                <button class="checkin-btn">✓ 确认打卡</button>
+
+                <div style="font-size:11px;color:#999;text-align:center;margin-top:12px;line-height:1.6;">
+                    打卡后审核员将为你分配岗位和金额<br>
+                    下次打卡会显示已分配的岗位
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- 已注册用户的打卡页（对比） -->
+<div class="flow-desc" style="margin-top:30px;">
+    <h2>已注册用户下次打卡（已分配岗位后）</h2>
+    <div class="tips-box" style="background:#f0f9eb;color:#2e7d32;border:1px solid #c8e6c9;">
+        <b>关键逻辑：临时岗位永远显示 + 已分配岗位叠加显示</b><br>
+        · 审核员分配岗位后，用户下次进入小程序会看到自己的固定岗位<br>
+        · <b>临时岗位依然保留</b>，方便临时去其他岗位帮忙时打卡<br>
+        · 没有分配岗位的新用户，只看到临时岗位
+    </div>
+</div>
+
+<div style="display:flex;justify-content:center;padding:0 20px 40px;">
+    <div class="phone-frame">
+        <div class="status-bar"><span>14:20</span><span>📶 WiFi 🔋 95%</span></div>
+        <div class="phone-label">已分配岗位用户 · 打卡页</div>
+        <div class="phone-screen">
+            <div class="miniapp-header">
+                <div class="nav-back">‹ 打卡</div>
+                <div class="title">今日打卡</div>
+                <div class="sub">张三 · 138****5678 · 已分配岗位：导医</div>
+            </div>
+            <div class="content">
+                <!-- 今日已打卡提示 -->
+                <div style="background:white;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                    <div style="width:8px;height:8px;border-radius:50%;background:#2ecc71;"></div>
+                    <div style="font-size:13px;color:#666;">今日已打卡 1 次（导医 ¥60）</div>
+                </div>
+
+                <div class="section-title">📌 我的岗位（已分配）</div>
+
+                <!-- 已分配岗位 -->
+                <div class="position-card bg-green">
+                    <div class="pos-icon">🏨</div>
+                    <div class="pos-info">
+                        <div class="pos-name">导医</div>
+                        <div class="pos-rate">¥60/次 · 外请 · 今日已打1次</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.3);padding:4px 10px;border-radius:10px;font-size:11px;">可再打</div>
+                </div>
+
+                <div class="section-title">🎯 临时岗位（常显）</div>
+
+                <!-- 临时岗位（常显） -->
+                <div class="position-card bg-temp">
+                    <div class="pos-icon">🎯</div>
+                    <div class="pos-info">
+                        <div class="pos-name">临时岗位</div>
+                        <div class="pos-rate">¥待审核员定价 · 临时去其他岗位时用</div>
+                    </div>
+                </div>
+
+                <div style="background:#e3f2fd;border-radius:10px;padding:12px;margin-top:14px;font-size:12px;color:#1565c0;line-height:1.7;">
+                    💡 <b>两个岗位都能打</b>：<br>
+                    · 正常在导医岗工作 → 打"导医"<br>
+                    · 临时被叫去其他岗位帮忙 → 打"临时岗位"，审核员后续分配
+                </div>
+
+                <button class="checkin-btn">✓ 确认打卡</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 对比说明 -->
+<div class="flow-desc">
+    <div class="compare-grid">
+        <div class="compare-card">
+            <div style="font-size:15px;font-weight:700;color:#ff9800;margin-bottom:12px;">🆕 首次打卡（无分配岗位）</div>
+            <div style="font-size:13px;color:#666;line-height:2;">
+                ① 扫码 → ② 授权+填姓名 → ③ 选临时岗位打卡<br>
+                <b style="color:#333;">约20秒，只看到"临时岗位"一个选项</b>
+            </div>
+        </div>
+        <div class="compare-card">
+            <div style="font-size:15px;font-weight:700;color:#2ecc71;margin-bottom:12px;">🔁 再次打卡（已分配岗位）</div>
+            <div style="font-size:13px;color:#666;line-height:2;">
+                ① 扫码/搜小程序 → ② 自动登录 → ③ 选岗位打卡<br>
+                <b style="color:#333;">约5秒，看到"我的岗位 + 临时岗位"</b><br>
+                <span style="font-size:11px;color:#999;">临时岗位常显，方便临时调岗</span>
+            </div>
+        </div>
+    </div>
+
+    <div style="background:#f0f9eb;border:1px solid #c8e6c9;border-radius:12px;padding:16px;margin-top:20px;max-width:800px;margin-left:auto;margin-right:auto;">
+        <div style="font-size:14px;font-weight:700;color:#2e7d32;margin-bottom:8px;">✅ 打卡页统一逻辑</div>
+        <div style="font-size:13px;color:#333;line-height:1.9;">
+            · <b>临时岗位永远显示</b>（无论新老用户）<br>
+            · <b>已分配岗位叠加显示</b>（有就显示，没有就不显示）<br>
+            · 没有分配岗位的新用户：只看到临时岗位<br>
+            · 有分配岗位的老用户：看到"我的岗位 + 临时岗位"<br>
+            · 外请/内部区分<b>不在打卡页体现</b>，只在岗位类型和费用统计里体现
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
