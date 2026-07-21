@@ -34,9 +34,42 @@ export default function MobileHome() {
       return;
     }
 
-    // 企微环境，每次都走免登流程，确保身份准确
+    // 企微环境，先检查本地是否有有效的企微登录态
+    const hasValidWecomSession = checkValidWecomSession();
+    
+    if (hasValidWecomSession && user) {
+      // 有有效登录态，直接使用
+      setLoading(false);
+      return;
+    }
+
+    // 无有效登录态，走企微免登
     loadWecomSDKAndAuth();
   }, []);
+
+  const checkValidWecomSession = () => {
+    try {
+      const stored = localStorage.getItem('auth-session');
+      if (!stored) return false;
+      
+      const data = JSON.parse(stored);
+      const sessionUser = data?.state?.user;
+      
+      if (!sessionUser || !sessionUser.id || !sessionUser.wecom_userid) return false;
+      
+      const sessionTime = data?.state?.sessionTime || sessionUser.last_login_at;
+      if (!sessionTime) return false;
+      
+      const sessionDate = new Date(sessionTime);
+      const now = new Date();
+      const hoursDiff = (now.getTime() - sessionDate.getTime()) / (1000 * 60 * 60);
+      
+      return hoursDiff < 24;
+    } catch (e) {
+      console.error('检查登录态失败:', e);
+      return false;
+    }
+  };
 
   // 加载企微JS-SDK并获取免登code
   const loadWecomSDKAndAuth = async () => {

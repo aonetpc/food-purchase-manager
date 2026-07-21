@@ -159,7 +159,6 @@ export default function PurchaseConfirmPage() {
     const code = searchParams.get('code');
     
     if (code && id) {
-      // 企微回调时，先获取登录态（不自动确认）
       handleWecomCallback(code);
       return;
     }
@@ -168,8 +167,16 @@ export default function PurchaseConfirmPage() {
     const isWecom = /wxwork|MicroMessenger/i.test(navigator.userAgent);
     
     if (isWecom && id) {
-      // 企微环境下，优先走企微免登，确保身份准确
-      // 延迟跳转，确保页面渲染完成
+      // 企微环境下，先检查本地是否有有效的企微登录态
+      const hasValidWecomSession = checkValidWecomSession();
+      
+      if (hasValidWecomSession) {
+        // 有有效登录态，直接使用
+        fetchData(id);
+        return;
+      }
+      
+      // 无有效登录态，走企微免登
       setTimeout(() => {
         redirectToWecomAuth();
       }, 300);
@@ -179,7 +186,6 @@ export default function PurchaseConfirmPage() {
     // 3. 非企微环境，检查本地是否有登录态
     const token = api.getToken();
     if (token && id) {
-      // 从登录态中读取用户姓名
       try {
         const stored = localStorage.getItem('auth-session');
         if (stored) {
@@ -199,6 +205,30 @@ export default function PurchaseConfirmPage() {
       fetchData(id);
     }
   }, [id, searchParams]);
+
+  const checkValidWecomSession = () => {
+    try {
+      const stored = localStorage.getItem('auth-session');
+      if (!stored) return false;
+      
+      const data = JSON.parse(stored);
+      const user = data?.state?.user;
+      
+      if (!user || !user.id || !user.wecom_userid) return false;
+      
+      const sessionTime = data?.state?.sessionTime || data?.state?.user?.last_login_at;
+      if (!sessionTime) return false;
+      
+      const sessionDate = new Date(sessionTime);
+      const now = new Date();
+      const hoursDiff = (now.getTime() - sessionDate.getTime()) / (1000 * 60 * 60);
+      
+      return hoursDiff < 24;
+    } catch (e) {
+      console.error('检查登录态失败:', e);
+      return false;
+    }
+  };
 
   const redirectToWecomAuth = () => {
     const redirectUri = encodeURIComponent(window.location.href.split('?')[0]);
@@ -231,8 +261,15 @@ export default function PurchaseConfirmPage() {
       }
       
       if (result.user) {
-        // 保存登录态
-        localStorage.setItem('auth-session', JSON.stringify({ state: { user: result.user, pendingWecomUserId: null } }));
+        // 保存登录态（包含登录时间）
+        const sessionData = { 
+          state: { 
+            user: result.user, 
+            pendingWecomUserId: null,
+            sessionTime: new Date().toISOString()
+          } 
+        };
+        localStorage.setItem('auth-session', JSON.stringify(sessionData));
         setUserName(result.user.name || '');
         // 清理 URL 中的 code
         window.history.replaceState({}, '', `/confirm/${id}`);
@@ -272,12 +309,19 @@ export default function PurchaseConfirmPage() {
         wecomUserId: pendingWecomUserId,
       });
 
-      // 3. 保存登录态（包含企微信息）
+      // 3. 保存登录态（包含企微信息和登录时间）
       const user = {
         ...loginResult,
         wecom_userid: pendingWecomUserId,
       };
-      localStorage.setItem('auth-session', JSON.stringify({ state: { user, pendingWecomUserId: null } }));
+      const sessionData = { 
+        state: { 
+          user, 
+          pendingWecomUserId: null,
+          sessionTime: new Date().toISOString()
+        } 
+      };
+      localStorage.setItem('auth-session', JSON.stringify(sessionData));
       setUserName(user.name || '');
       setShowBindForm(false);
       if (id) fetchData(id);
