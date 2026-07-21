@@ -712,48 +712,17 @@ router.post('/wecom-callback', async (req, res) => {
       ['wecom', wecomUserId]
     );
 
-    let userId;
-    let isNewUser = false;
-
-    if (ulmRows.length > 0) {
-      userId = ulmRows[0].user_id;
-    } else {
-      // 自动创建新用户（确认账号）
-      isNewUser = true;
-      userId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-      const username = `wecom_${wecomUserId}`;
-      const name = wecomUserInfo?.name || wecomUserId;
-      const departmentId = wecomUserInfo?.department?.[0] || null;
-      const phone = wecomUserInfo?.mobile || null;
-      
-      // 默认角色为 viewer（普通员工），仅用于系统登录，不影响确认功能
-      const [roleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', ['viewer']);
-      const roleId = roleRows.length > 0 ? roleRows[0].id : null;
-      const hashedPassword = await bcrypt.hash(Date.now().toString(), 10);
-
-      await pool.query(
-        'INSERT INTO users (id, username, name, role, role_id, phone, department_id, password_hash, wecom_userid, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [userId, username, name, 'viewer', roleId, phone, departmentId, hashedPassword, wecomUserId, 1]
-      );
-
-      // 添加登录方式记录
-      await pool.query(
-        'INSERT INTO user_login_methods (id, user_id, type, identifier, config) VALUES (UUID(), ?, ?, ?, JSON_OBJECT("source", "wecom_auto_create"))',
-        [userId, 'wecom', wecomUserId]
-      );
-
-      // 添加密码登录方式（虽然不会使用，但保持完整性）
-      await pool.query(
-        'INSERT INTO user_login_methods (id, user_id, type, identifier, config) VALUES (UUID(), ?, ?, ?, JSON_OBJECT("has_password", TRUE))',
-        [userId, 'password', username]
-      );
-
-      await logOperation(userId, userId, 'auth', 'auto_create_user', {
-        wecom_userid: wecomUserId,
-        name,
-        source: 'wecom_oauth'
-      }, req);
+    if (ulmRows.length === 0) {
+      // 未绑定用户，返回提示（不自动创建）
+      return res.json({
+        needBind: true,
+        wecomUserId,
+        wecomName: wecomUserInfo?.name || wecomUserId,
+        message: '您的企业微信账号未绑定系统用户，请联系管理员绑定',
+      });
     }
+
+    const userId = ulmRows[0].user_id;
 
     // 查询用户信息
     const [userRows] = await pool.query(

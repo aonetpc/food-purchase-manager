@@ -161,6 +161,17 @@ export default function PurchaseConfirmPage() {
     // 2. 检查本地是否有登录态
     const token = api.getToken();
     if (token && id) {
+      // 从登录态中读取用户姓名
+      try {
+        const stored = localStorage.getItem('auth-session');
+        if (stored) {
+          const data = JSON.parse(stored);
+          const name = data?.state?.user?.name || '';
+          if (name) setUserName(name);
+        }
+      } catch (e) {
+        console.error('读取登录态失败:', e);
+      }
       fetchData(id);
       return;
     }
@@ -187,13 +198,22 @@ export default function PurchaseConfirmPage() {
     setWecomAuthing(true);
     setError('');
     try {
-      const result = await api.post<{ success: boolean; user?: any; needBind?: boolean; error?: string }>('/auth/wecom-callback', {
+      const result = await api.post<{ success: boolean; user?: any; needBind?: boolean; wecomName?: string; message?: string; error?: string }>('/auth/wecom-callback', {
         code,
         redirect_uri: window.location.href.split('?')[0],
       });
       
       if (result.error) {
         throw new Error(result.error);
+      }
+      
+      if (result.needBind) {
+        // 未绑定用户，显示提示
+        window.history.replaceState({}, '', `/confirm/${id}`);
+        setWecomAuthing(false);
+        setLoading(false);
+        setError(`企业微信用户「${result.wecomName || ''}」未绑定系统账号，请联系管理员绑定后再确认。`);
+        return;
       }
       
       if (result.user) {
