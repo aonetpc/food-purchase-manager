@@ -24,6 +24,9 @@ import MobileYearly from '@/pages/mobile/Yearly';
 import MobileQuery from '@/pages/mobile/Query';
 import MobileMonthly from '@/pages/mobile/Monthly';
 import MobileComingSoon from '@/pages/mobile/ComingSoon';
+import TempLogin from '@/pages/temp/Login';
+import TempCheckin from '@/pages/temp/Checkin';
+import TempProfile from '@/pages/temp/Profile';
 
 export default function App() {
   return (
@@ -35,6 +38,12 @@ export default function App() {
         <Route path="/m/yearly" element={<MobileYearly />} />
         <Route path="/m/query" element={<MobileQuery />} />
         <Route path="/m/monthly" element={<MobileMonthly />} />
+
+        {/* 外请人员微信端H5路由 - 独立于PC端Layout */}
+        <Route path="/temp/login" element={<TempLogin />} />
+        <Route path="/temp/checkin" element={<TempCheckin />} />
+        <Route path="/temp/profile" element={<TempProfile />} />
+        <Route path="/temp" element={<Navigate to="/temp/login" replace />} />
 
         <Route path="/login" element={<Login />} />
         <Route path="/confirm/:id" element={<PurchaseConfirmPage />} />
