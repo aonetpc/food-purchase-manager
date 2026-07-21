@@ -236,6 +236,7 @@ export default function PurchaseConfirmPage() {
         setUserName(result.user.name || '');
         // 清理 URL 中的 code
         window.history.replaceState({}, '', `/confirm/${id}`);
+        setWecomAuthing(false);
         if (id) fetchData(id);
       } else {
         throw new Error('登录失败');
