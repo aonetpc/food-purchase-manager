@@ -626,7 +626,7 @@ router.post('/unbind-wecom', requireAuth, async (req, res) => {
 // 企微内打开确认链接时自动跳转授权，回调后自动登录/创建用户
 // ================================================
 
-// 1. 获取企微OAuth授权URL
+// 1. 获取企微OAuth授权URL（直接重定向，不返回JSON）
 router.get('/wecom-auth-url', async (req, res) => {
   try {
     const { redirect_uri } = req.query;
@@ -637,17 +637,16 @@ router.get('/wecom-auth-url', async (req, res) => {
       return res.status(500).json({ error: '企业微信未配置' });
     }
 
-    // 使用查询应用或自建应用的 AgentID
     const agentId = config.query_app_agent_id || config.agent_id;
     if (!agentId) {
       return res.status(500).json({ error: '企业微信应用ID未配置' });
     }
 
-    // 构建企微OAuth授权URL
     const encodedRedirect = encodeURIComponent(redirect_uri || `${req.protocol}://${req.get('host')}/confirm`);
     const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${config.corp_id}&redirect_uri=${encodedRedirect}&response_type=code&scope=snsapi_base&state=wecom_confirm#wechat_redirect`;
     
-    res.json({ authUrl });
+    // 直接重定向到企微授权页面
+    res.redirect(authUrl);
   } catch (err) {
     console.error('wecom-auth-url error:', err);
     res.status(500).json({ error: err.message });

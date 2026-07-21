@@ -177,7 +177,7 @@ export default function PurchaseConfirmPage() {
 
   const redirectToWecomAuth = () => {
     const redirectUri = encodeURIComponent(window.location.href.split('?')[0]);
-    const authUrl = `${api.getBaseUrl()}/auth/wecom-auth-url?redirect_uri=${redirectUri}`;
+    const authUrl = `/api/auth/wecom-auth-url?redirect_uri=${redirectUri}`;
     window.location.href = authUrl;
   };
 
