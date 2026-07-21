@@ -34,7 +34,9 @@ app.use('/api/ingredients', requireAuth, ingredientsRouter);
 app.use('/api/purchase', requireAuth, purchaseRouter);
 app.use('/api/departments', requireAuth, departmentsRouter);
 app.use('/api/suppliers', requireAuth, suppliersRouter);
-app.use('/api/purchase-confirmations', requireAuth, purchaseConfirmationsRouter);
+
+// 采购确认接口（部分接口不需要登录）
+app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
