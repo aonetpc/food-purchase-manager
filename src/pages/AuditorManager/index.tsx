@@ -43,7 +43,7 @@ export default function AuditorManager() {
     setError('');
     try {
       const [usersRes, positionsRes] = await Promise.all([
-        api.get<User[]>('/users'),
+        api.get<User[]>('/auth/users'),
         api.get<Position[]>('/temp/positions'),
       ]);
       setUsers(usersRes);
