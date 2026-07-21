@@ -44,6 +44,11 @@ export default function UserManager() {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showBindModal, setShowBindModal] = useState(false);
+  const [bindingUserId, setBindingUserId] = useState<string | null>(null);
+  const [bindWecomUserId, setBindWecomUserId] = useState('');
+  const [bindLoading, setBindLoading] = useState(false);
+  const [bindMessage, setBindMessage] = useState('');
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
   const [formData, setFormData] = useState({
     username: '',
@@ -92,6 +97,28 @@ export default function UserManager() {
       await fetchUsers();
     } catch (err: any) {
       alert('解绑失败：' + err.message);
+    }
+  };
+
+  const handleBindWecom = async () => {
+    if (!bindingUserId || !bindWecomUserId.trim()) return;
+
+    setBindLoading(true);
+    setBindMessage('');
+    try {
+      await api.post('/auth/bind-wecom', { userId: bindingUserId, wecomUserId: bindWecomUserId.trim() });
+      await fetchUsers();
+      setBindMessage('绑定成功');
+      setTimeout(() => {
+        setShowBindModal(false);
+        setBindingUserId(null);
+        setBindWecomUserId('');
+        setBindMessage('');
+      }, 1000);
+    } catch (err: any) {
+      setBindMessage(err.message || '绑定失败');
+    } finally {
+      setBindLoading(false);
     }
   };
 
@@ -331,10 +358,25 @@ export default function UserManager() {
                             )}
                           </span>
                         ) : (
-                          <span className="text-gray-400 flex items-center gap-1">
-                            <span className="w-2 h-2 bg-gray-300 rounded-full"></span>
-                            未绑定
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-400 flex items-center gap-1">
+                              <span className="w-2 h-2 bg-gray-300 rounded-full"></span>
+                              未绑定
+                            </span>
+                            {canManage(userItem) && (
+                              <button
+                                onClick={() => {
+                                  setBindingUserId(userItem.id);
+                                  setBindWecomUserId('');
+                                  setBindMessage('');
+                                  setShowBindModal(true);
+                                }}
+                                className="text-blue-500 hover:text-blue-600 text-xs font-medium"
+                              >
+                                绑定
+                              </button>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500">
@@ -592,6 +634,57 @@ export default function UserManager() {
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
               >
                 保存修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 绑定企微弹窗 */}
+      {showBindModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-800">绑定企业微信</h3>
+              <button onClick={() => { setShowBindModal(false); setBindingUserId(null); setBindWecomUserId(''); setBindMessage(''); }} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {bindMessage && (
+                <div className={`p-2 text-sm rounded ${
+                  bindMessage.includes('成功') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                }`}>
+                  {bindMessage}
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">企业微信 UserID</label>
+                <input
+                  type="text"
+                  value={bindWecomUserId}
+                  onChange={(e) => setBindWecomUserId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder="请输入企业微信 userid"
+                />
+                <p className="mt-1 text-xs text-gray-400">
+                  企业微信 userid 可在企微管理后台的成员详情中查看
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 p-4 border-t">
+              <button
+                onClick={() => { setShowBindModal(false); setBindingUserId(null); setBindWecomUserId(''); setBindMessage(''); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleBindWecom}
+                disabled={bindLoading || !bindWecomUserId.trim()}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {bindLoading ? '绑定中...' : '确认绑定'}
               </button>
             </div>
           </div>

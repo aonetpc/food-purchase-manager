@@ -51,6 +51,13 @@ export default function Layout() {
   const { fetchRecords, records, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [changePasswordData, setChangePasswordData] = useState({
+    oldPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [changePasswordMessage, setChangePasswordMessage] = useState('');
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -124,6 +131,41 @@ export default function Layout() {
     navigate('/login');
   };
 
+  const handleChangePassword = async () => {
+    setChangePasswordMessage('');
+    const { oldPassword, newPassword, confirmPassword } = changePasswordData;
+    
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      setChangePasswordMessage('请填写所有字段');
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      setChangePasswordMessage('两次输入的新密码不一致');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      setChangePasswordMessage('新密码长度不能少于6位');
+      return;
+    }
+    
+    try {
+      await api.post('/auth/change-password', {
+        userId: user?.id,
+        oldPassword,
+        newPassword,
+      });
+      setChangePasswordMessage('密码修改成功，请重新登录');
+      setTimeout(() => {
+        logout();
+        navigate('/login');
+      }, 2000);
+    } catch (err: any) {
+      setChangePasswordMessage(err.message || '修改失败');
+    }
+  };
+
   const handleLoginClick = () => {
     navigate('/login');
   };
@@ -192,6 +234,13 @@ export default function Layout() {
                       </button>
                     )}
                     <div className="border-t border-gray-100 my-1" />
+                    <button
+                      onClick={() => { setUserMenuOpen(false); setShowChangePassword(true); }}
+                      className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <Lock size={16} />
+                      修改密码
+                    </button>
                     <button
                       onClick={handleLogout}
                       className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
@@ -288,6 +337,73 @@ export default function Layout() {
           </div>
         </div>
       </main>
+
+      {/* 修改密码弹窗 */}
+      {showChangePassword && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-800">修改密码</h3>
+              <button onClick={() => { setShowChangePassword(false); setChangePasswordMessage(''); }} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {changePasswordMessage && (
+                <div className={`p-2 text-sm rounded ${
+                  changePasswordMessage.includes('成功') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                }`}>
+                  {changePasswordMessage}
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">旧密码</label>
+                <input
+                  type="password"
+                  value={changePasswordData.oldPassword}
+                  onChange={(e) => setChangePasswordData({ ...changePasswordData, oldPassword: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder="请输入旧密码"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">新密码</label>
+                <input
+                  type="password"
+                  value={changePasswordData.newPassword}
+                  onChange={(e) => setChangePasswordData({ ...changePasswordData, newPassword: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder="请输入新密码（至少6位）"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">确认新密码</label>
+                <input
+                  type="password"
+                  value={changePasswordData.confirmPassword}
+                  onChange={(e) => setChangePasswordData({ ...changePasswordData, confirmPassword: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder="请再次输入新密码"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 p-4 border-t">
+              <button
+                onClick={() => { setShowChangePassword(false); setChangePasswordMessage(''); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleChangePassword}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                确认修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

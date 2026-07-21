@@ -744,7 +744,7 @@ router.post('/wecom-callback', async (req, res) => {
       username: user.username,
       login_type: 'wecom_oauth',
       wecom_userid: wecomUserId,
-      is_new_user: isNewUser
+      is_new_user: false
     }, req);
 
     // 获取用户权限
@@ -796,7 +796,7 @@ router.post('/wecom-callback', async (req, res) => {
           menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
         },
       },
-      isNewUser,
+      isNewUser: false,
     });
   } catch (err) {
     console.error('wecom-callback error:', err);

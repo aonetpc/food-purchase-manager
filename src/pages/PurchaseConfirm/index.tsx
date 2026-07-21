@@ -147,6 +147,12 @@ export default function PurchaseConfirmPage() {
   const [signatureData, setSignatureData] = useState<string | null>(null);
   const [activeDeptId, setActiveDeptId] = useState<string | null>(null);
   const [wecomAuthing, setWecomAuthing] = useState(false);
+  const [showBindForm, setShowBindForm] = useState(false);
+  const [pendingWecomUserId, setPendingWecomUserId] = useState('');
+  const [pendingWecomName, setPendingWecomName] = useState('');
+  const [bindUsername, setBindUsername] = useState('');
+  const [bindPassword, setBindPassword] = useState('');
+  const [binding, setBinding] = useState(false);
 
   useEffect(() => {
     // 1. 检查 URL 中的企微授权 code（只要有 code 就尝试回调，不严格检查 state）
@@ -198,7 +204,7 @@ export default function PurchaseConfirmPage() {
     setWecomAuthing(true);
     setError('');
     try {
-      const result = await api.post<{ success: boolean; user?: any; needBind?: boolean; wecomName?: string; message?: string; error?: string }>('/auth/wecom-callback', {
+      const result = await api.post<{ success: boolean; user?: any; needBind?: boolean; wecomUserId?: string; wecomName?: string; message?: string; error?: string }>('/auth/wecom-callback', {
         code,
         redirect_uri: window.location.href.split('?')[0],
       });
@@ -208,11 +214,13 @@ export default function PurchaseConfirmPage() {
       }
       
       if (result.needBind) {
-        // 未绑定用户，显示提示
+        // 未绑定用户，显示绑定表单
         window.history.replaceState({}, '', `/confirm/${id}`);
         setWecomAuthing(false);
         setLoading(false);
-        setError(`企业微信用户「${result.wecomName || ''}」未绑定系统账号，请联系管理员绑定后再确认。`);
+        setPendingWecomUserId(result.wecomUserId || '');
+        setPendingWecomName(result.wecomName || '');
+        setShowBindForm(true);
         return;
       }
       
@@ -233,6 +241,43 @@ export default function PurchaseConfirmPage() {
       setWecomAuthing(false);
       setLoading(false);
       // 不设置错误提示，让用户可以手动输入姓名
+    }
+  };
+
+  const handleBindWecom = async () => {
+    if (!bindUsername.trim() || !bindPassword.trim()) {
+      setError('请输入用户名和密码');
+      return;
+    }
+
+    setBinding(true);
+    setError('');
+    try {
+      // 1. 先用账号密码登录
+      const loginResult = await api.post<any>('/auth/login', { 
+        username: bindUsername.trim(), 
+        password: bindPassword 
+      });
+
+      // 2. 绑定企微账号
+      await api.post('/auth/bind-wecom', {
+        userId: loginResult.id,
+        wecomUserId: pendingWecomUserId,
+      });
+
+      // 3. 保存登录态（包含企微信息）
+      const user = {
+        ...loginResult,
+        wecom_userid: pendingWecomUserId,
+      };
+      localStorage.setItem('auth-session', JSON.stringify({ state: { user, pendingWecomUserId: null } }));
+      setUserName(user.name || '');
+      setShowBindForm(false);
+      if (id) fetchData(id);
+    } catch (err: any) {
+      setError(err.message || '绑定失败，请检查用户名和密码');
+    } finally {
+      setBinding(false);
     }
   };
 
@@ -286,6 +331,73 @@ export default function PurchaseConfirmPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-500">加载中...</div>
+      </div>
+    );
+  }
+
+  // 企微未绑定时显示绑定表单
+  if (showBindForm) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-6">
+            <div className="inline-block w-16 h-16 bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-lg flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-800">账号绑定</h2>
+            <p className="text-gray-500 text-sm mt-1">
+              企业微信用户「{pendingWecomName || pendingWecomUserId}」
+            </p>
+            <p className="text-gray-400 text-xs mt-1">
+              请使用系统账号密码登录以完成绑定
+            </p>
+          </div>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-xl text-sm text-center">
+              {error}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl shadow-xl p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+              <input
+                type="text"
+                value={bindUsername}
+                onChange={(e) => setBindUsername(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500"
+                placeholder="请输入用户名"
+                autoComplete="username"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
+              <input
+                type="password"
+                value={bindPassword}
+                onChange={(e) => setBindPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleBindWecom()}
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500"
+                placeholder="请输入密码"
+                autoComplete="current-password"
+              />
+            </div>
+            <button
+              onClick={handleBindWecom}
+              disabled={binding}
+              className="w-full py-3 bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {binding ? '绑定中...' : '登录并绑定'}
+            </button>
+          </div>
+
+          <p className="text-center text-xs text-gray-400 mt-6">
+            绑定后下次将自动登录
+          </p>
+        </div>
       </div>
     );
   }
