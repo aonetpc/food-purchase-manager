@@ -7,13 +7,31 @@
 -- ================================================
 -- 1. 升级部门表：支持二级部门（树形结构）
 -- ================================================
-ALTER TABLE departments
-  ADD COLUMN IF NOT EXISTS parent_id VARCHAR(36) NULL COMMENT '父部门ID，NULL=顶级',
-  ADD COLUMN IF NOT EXISTS level TINYINT DEFAULT 1 COMMENT '层级：1=顶级 2=二级',
-  ADD COLUMN IF NOT EXISTS full_path VARCHAR(200) COMMENT '层级路径，如"房务/小卖部"';
-
--- 添加索引（幂等）
-CREATE INDEX IF NOT EXISTS idx_parent ON departments(parent_id);
+-- 注意：MySQL 5.7 及以下版本不支持 ADD COLUMN IF NOT EXISTS，需用存储过程实现幂等
+DROP PROCEDURE IF EXISTS p_upgrade_departments;
+DELIMITER $$
+CREATE PROCEDURE p_upgrade_departments()
+BEGIN
+  -- 检查并添加 parent_id
+  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'departments' AND COLUMN_NAME = 'parent_id') THEN
+    ALTER TABLE departments ADD COLUMN parent_id VARCHAR(36) NULL COMMENT '父部门ID，NULL=顶级';
+  END IF;
+  -- 检查并添加 level
+  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'departments' AND COLUMN_NAME = 'level') THEN
+    ALTER TABLE departments ADD COLUMN level TINYINT DEFAULT 1 COMMENT '层级：1=顶级 2=二级';
+  END IF;
+  -- 检查并添加 full_path
+  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'departments' AND COLUMN_NAME = 'full_path') THEN
+    ALTER TABLE departments ADD COLUMN full_path VARCHAR(200) COMMENT '层级路径，如"房务/小卖部"';
+  END IF;
+  -- 检查并添加索引
+  IF NOT EXISTS (SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'departments' AND INDEX_NAME = 'idx_parent') THEN
+    CREATE INDEX idx_parent ON departments(parent_id);
+  END IF;
+END$$
+DELIMITER ;
+CALL p_upgrade_departments();
+DROP PROCEDURE IF EXISTS p_upgrade_departments;
 
 -- 初始化层级：现有部门全部视为顶级
 UPDATE departments SET level = 1 WHERE level IS NULL;
