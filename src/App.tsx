@@ -15,6 +15,9 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import ReimbursementManager from '@/pages/ReimbursementManager';
 import WecomManager from '@/pages/WecomManager';
 import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
+import PositionManager from '@/pages/PositionManager';
+import TempWorkerManager from '@/pages/TempWorkerManager';
+import AuditorManager from '@/pages/AuditorManager';
 import MobileHome from '@/pages/mobile/Home';
 import MobileDaily from '@/pages/mobile/Daily';
 import MobileYearly from '@/pages/mobile/Yearly';
@@ -84,6 +87,21 @@ export default function App() {
           <Route path="wecom" element={
             <ProtectedRoute requiredRole="admin">
               <WecomManager />
+            </ProtectedRoute>
+          } />
+          <Route path="positions" element={
+            <ProtectedRoute requiredPermission="action:position:manage">
+              <PositionManager />
+            </ProtectedRoute>
+          } />
+          <Route path="temp-workers" element={
+            <ProtectedRoute requiredPermission="action:temp-worker:manage">
+              <TempWorkerManager />
+            </ProtectedRoute>
+          } />
+          <Route path="auditors" element={
+            <ProtectedRoute requiredPermission="action:auditor:manage">
+              <AuditorManager />
             </ProtectedRoute>
           } />
         </Route>

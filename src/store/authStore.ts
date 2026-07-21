@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 
-export type UserRole = 'admin' | 'finance' | 'boss' | 'viewer';
+export type UserRole = 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman';
 
 export interface MenuItem {
   code: string;
@@ -182,7 +182,7 @@ export const useAuthStore = create<AuthStore>()(
         });
 
         return menus.sort((a, b) => {
-          const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/wecom'];
+          const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/positions', '/auditors', '/temp-workers', '/wecom'];
           const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
           const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
           return aIdx - bIdx;

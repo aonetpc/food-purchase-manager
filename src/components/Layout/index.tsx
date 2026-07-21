@@ -22,11 +22,16 @@ import {
   PlusCircle,
   Calendar,
   Smartphone,
+  Lock,
+  Target,
+  UserCheck,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuthStore, type MenuItem } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
 import { formatCurrency } from '@/utils/format';
 import { formatDate } from '@/utils/date';
+import { api } from '@/lib/api';
 
 const iconMap: Record<string, any> = {
   ShoppingCart,
@@ -43,6 +48,10 @@ const iconMap: Record<string, any> = {
   PlusCircle,
   Calendar,
   Smartphone,
+  Lock,
+  Target,
+  UserCheck,
+  ShieldCheck,
 };
 
 export default function Layout() {
@@ -112,7 +121,7 @@ export default function Layout() {
     const userMenus = getUserMenus();
     const pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
     
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/wecom'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/positions', '/auditors', '/temp-workers', '/wecom'];
     
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
@@ -210,7 +219,9 @@ export default function Layout() {
                     <p className="text-xs text-gray-500">
                     {user.role === 'admin' ? '管理员' : 
                      user.role === 'finance' ? '财务' : 
-                     user.role === 'boss' ? '董事长' : '普通员工'}
+                     user.role === 'boss' ? '董事长' :
+                     user.role === 'temp_auditor' ? '外请审核员' :
+                     user.role === 'temp_chairman' ? '外请董事长' : '普通员工'}
                   </p>
                   </div>
                   <ChevronDown size={16} className="text-gray-400 hidden sm:block" />
