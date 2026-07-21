@@ -153,6 +153,7 @@ export default function PurchaseConfirmPage() {
     const code = searchParams.get('code');
     
     if (code && id) {
+      // 企微回调时，先获取登录态（不自动确认）
       handleWecomCallback(code);
       return;
     }
