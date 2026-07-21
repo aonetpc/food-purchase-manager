@@ -56,11 +56,8 @@ WHERE d1.name IN ('员工餐', '早餐');
 -- 更新 full_path
 UPDATE departments SET full_path = name WHERE parent_id IS NULL;
 UPDATE departments d1
-SET d1.full_path = CONCAT(
-  (SELECT d2.name FROM departments d2 WHERE d2.id = d1.parent_id),
-  '/',
-  d1.name
-)
+LEFT JOIN departments d2 ON d2.id = d1.parent_id
+SET d1.full_path = CONCAT(d2.name, '/', d1.name)
 WHERE d1.parent_id IS NOT NULL;
 
 -- ================================================
