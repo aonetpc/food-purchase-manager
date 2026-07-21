@@ -64,8 +64,15 @@ export default function TempLogin() {
       const code = urlParams.get('code');
 
       if (!code) {
+        const configRes = await api.get<any>('/wecom/config');
+        const appId = configRes.wx_app_id || '';
+        if (!appId) {
+          setError('微信公众号未配置，请联系管理员');
+          setLoading(false);
+          return;
+        }
         const redirectUri = encodeURIComponent(window.location.href);
-        const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=wx4a9c2d7e8f1a2b3c&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=STATE#wechat_redirect`;
+        const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=STATE#wechat_redirect`;
         window.location.href = authUrl;
         return;
       }
