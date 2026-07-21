@@ -164,7 +164,19 @@ export default function PurchaseConfirmPage() {
       return;
     }
     
-    // 2. 检查本地是否有登录态
+    // 2. 检测是否在企微/微信环境
+    const isWecom = /wxwork|MicroMessenger/i.test(navigator.userAgent);
+    
+    if (isWecom && id) {
+      // 企微环境下，优先走企微免登，确保身份准确
+      // 延迟跳转，确保页面渲染完成
+      setTimeout(() => {
+        redirectToWecomAuth();
+      }, 300);
+      return;
+    }
+    
+    // 3. 非企微环境，检查本地是否有登录态
     const token = api.getToken();
     if (token && id) {
       // 从登录态中读取用户姓名
@@ -182,14 +194,8 @@ export default function PurchaseConfirmPage() {
       return;
     }
     
-    // 3. 未登录，检测是否在企微/微信环境
-    const isWecom = /wxwork|MicroMessenger/i.test(navigator.userAgent);
-    if (isWecom && id) {
-      // 延迟跳转，确保页面渲染完成
-      setTimeout(() => {
-        redirectToWecomAuth();
-      }, 500);
-    } else if (id) {
+    // 4. 未登录且非企微环境，直接加载数据（可手动输入姓名）
+    if (id) {
       fetchData(id);
     }
   }, [id, searchParams]);

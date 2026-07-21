@@ -23,19 +23,18 @@ export default function MobileHome() {
 
   // 企微免登流程
   useEffect(() => {
-    if (user) {
-      setLoading(false);
-      return;
-    }
-
     if (!isWecom()) {
-      // 非企微环境，显示手动登录
-      setLoginMode('manual');
-      setLoading(false);
+      // 非企微环境，使用本地登录态或显示手动登录
+      if (user) {
+        setLoading(false);
+      } else {
+        setLoginMode('manual');
+        setLoading(false);
+      }
       return;
     }
 
-    // 企微环境，加载JS-SDK并获取code
+    // 企微环境，每次都走免登流程，确保身份准确
     loadWecomSDKAndAuth();
   }, []);
 
