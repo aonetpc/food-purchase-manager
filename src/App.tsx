@@ -34,6 +34,8 @@ export default function App() {
         <Route path="/m/monthly" element={<MobileMonthly />} />
 
         <Route path="/login" element={<Login />} />
+        <Route path="/confirm/:id" element={<PurchaseConfirmPage />} />
+        
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/daily" replace />} />
           <Route path="purchase-entry" element={
@@ -84,7 +86,6 @@ export default function App() {
               <WecomManager />
             </ProtectedRoute>
           } />
-          <Route path="confirm/:id" element={<PurchaseConfirmPage />} />
         </Route>
       </Routes>
     </Router>
