@@ -85,7 +85,7 @@ async function getTempPositions() {
 
   // 数据库没有临时岗位记录时，兜底返回内存中的虚拟岗位
   const [deptRows] = await pool.query(
-    `SELECT id, name FROM departments WHERE status = 1 LIMIT 1`
+    `SELECT id, name FROM departments ORDER BY id LIMIT 1`
   );
   const fallbackDept = deptRows.length > 0 ? deptRows[0] : { id: '', name: '默认部门' };
 
