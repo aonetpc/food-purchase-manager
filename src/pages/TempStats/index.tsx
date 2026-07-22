@@ -33,7 +33,8 @@ interface PositionStat {
 }
 
 export default function TempStats() {
-  const { token } = useAuthStore();
+  const { user } = useAuthStore();
+  const token = user?.token;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [overview, setOverview] = useState<OverviewStats | null>(null);

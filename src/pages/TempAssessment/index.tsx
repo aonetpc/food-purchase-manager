@@ -41,7 +41,8 @@ const DISCOUNT_OPTIONS = [
 ];
 
 export default function TempAssessment() {
-  const { token } = useAuthStore();
+  const { user } = useAuthStore();
+  const token = user?.token;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [groups, setGroups] = useState<PositionGroup[]>([]);

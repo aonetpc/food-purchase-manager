@@ -55,7 +55,8 @@ const ADD_REASON_OPTIONS = [
 ];
 
 export default function TempAudit() {
-  const { token } = useAuthStore();
+  const { user } = useAuthStore();
+  const token = user?.token;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [records, setRecords] = useState<CheckinRecord[]>([]);
