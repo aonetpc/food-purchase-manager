@@ -42,19 +42,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path, { method: 'GET' }),
-  post: <T>(path: string, data?: any) =>
+  get: <T>(path: string, options?: RequestInit) => request<T>(path, { ...options, method: 'GET' }),
+  post: <T>(path: string, data?: any, options?: RequestInit) =>
     request<T>(path, {
+      ...options,
       method: 'POST',
       body: data ? JSON.stringify(data) : undefined,
     }),
-  put: <T>(path: string, data?: any) =>
+  put: <T>(path: string, data?: any, options?: RequestInit) =>
     request<T>(path, {
+      ...options,
       method: 'PUT',
       body: data ? JSON.stringify(data) : undefined,
     }),
-  delete: <T>(path: string) =>
-    request<T>(path, { method: 'DELETE' }),
+  delete: <T>(path: string, options?: RequestInit) =>
+    request<T>(path, { ...options, method: 'DELETE' }),
   getBaseUrl: () => BASE_URL,
   getToken,
 };
