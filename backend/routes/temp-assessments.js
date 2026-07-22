@@ -38,6 +38,7 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
         MAX(cr.assessment_discount) as assessment_discount
       FROM checkin_records cr
       JOIN positions p ON cr.position_id = p.id
+      ${req.dataScope.join}
       WHERE p.need_assessment = 1
         AND cr.status = 'approved'
         AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
@@ -99,6 +100,7 @@ router.get('/done', requireAuth, attachDataScope, async (req, res) => {
         MAX(cr.assessed_by) as assessed_by
       FROM checkin_records cr
       JOIN positions p ON cr.position_id = p.id
+      ${req.dataScope.join}
       WHERE p.need_assessment = 1
         AND cr.status = 'approved'
         AND cr.assessment_status != 'pending'
@@ -225,6 +227,7 @@ router.get('/', requireAuth, attachDataScope, async (req, res) => {
       SELECT cr.*, p.need_assessment
       FROM checkin_records cr
       JOIN positions p ON cr.position_id = p.id
+      ${req.dataScope.join}
       WHERE p.need_assessment = 1
         AND cr.status = 'approved'
         AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
@@ -313,6 +316,7 @@ router.get('/stats', requireAuth, attachDataScope, async (req, res) => {
                     WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
       FROM checkin_records cr
       JOIN positions p ON cr.position_id = p.id
+      ${req.dataScope.join}
       WHERE p.need_assessment = 1
         AND cr.status = 'approved'
         AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?

@@ -29,13 +29,14 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
     const [checkinRows] = await pool.query(`
       SELECT
         COUNT(*) as month_checkins,
-        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as month_approved_amount,
-        COALESCE(SUM(CASE WHEN status = 'approved' AND assessment_status = 'discounted'
-                         THEN amount * assessment_discount
-                    WHEN status = 'approved' THEN amount ELSE 0 END), 0) as month_final_amount,
-        COUNT(DISTINCT user_id) as active_workers
-      FROM checkin_records
-      WHERE DATE_FORMAT(checkin_date, "%Y-%m") = ?
+        SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END) as month_approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as month_final_amount,
+        COUNT(DISTINCT cr.user_id) as active_workers
+      FROM checkin_records cr
+      ${req.dataScope.join}
+      WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND ${req.dataScope.sql}
     `, params);
 
@@ -44,8 +45,9 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
 
     const [todayRows] = await pool.query(`
       SELECT COUNT(*) as today_checkins
-      FROM checkin_records
-      WHERE checkin_date = ?
+      FROM checkin_records cr
+      ${req.dataScope.join}
+      WHERE cr.checkin_date = ?
         AND ${req.dataScope.sql}
     `, todayParams);
 
@@ -90,6 +92,7 @@ router.get('/department', requireAuth, attachDataScope, async (req, res) => {
       FROM checkin_records cr
       LEFT JOIN departments d ON cr.department_id = d.id
       LEFT JOIN departments dp ON d.parent_id = dp.id
+      ${req.dataScope.join}
       WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND ${req.dataScope.sql}
       GROUP BY cr.department_id, d.name, d.full_path, dp.name
@@ -129,6 +132,7 @@ router.get('/departments', requireAuth, attachDataScope, async (req, res) => {
         COUNT(DISTINCT cr.position_id) as position_count
       FROM checkin_records cr
       LEFT JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
       WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND ${req.dataScope.sql}
       GROUP BY cr.department_id, d.name
@@ -161,6 +165,7 @@ router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
                     WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
       FROM checkin_records cr
       LEFT JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
       WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND ${req.dataScope.sql}
       GROUP BY cr.position_id, cr.position_name, d.name, cr.position_type
@@ -183,13 +188,14 @@ router.get('/today', requireAuth, attachDataScope, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT
         COUNT(*) as total_count,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_count,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_count,
-        COUNT(DISTINCT user_id) as worker_count,
-        COUNT(DISTINCT position_id) as position_count
-      FROM checkin_records
-      WHERE checkin_date = ?
+        SUM(CASE WHEN cr.status = 'pending' THEN 1 ELSE 0 END) as pending_count,
+        SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved_count,
+        SUM(CASE WHEN cr.status = 'rejected' THEN 1 ELSE 0 END) as rejected_count,
+        COUNT(DISTINCT cr.user_id) as worker_count,
+        COUNT(DISTINCT cr.position_id) as position_count
+      FROM checkin_records cr
+      ${req.dataScope.join}
+      WHERE cr.checkin_date = ?
         AND ${req.dataScope.sql}
     `, params);
 
@@ -202,6 +208,7 @@ router.get('/today', requireAuth, attachDataScope, async (req, res) => {
         SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved
       FROM checkin_records cr
       JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
       WHERE cr.checkin_date = ?
         AND ${req.dataScope.sql}
       GROUP BY d.name

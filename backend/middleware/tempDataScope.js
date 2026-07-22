@@ -22,12 +22,11 @@ async function getTempRoles(userId) {
 
 /**
  * 构建数据范围查询条件
- * 返回 { sql: '...', params: [...] }
+ * 返回 { sql: '...', params: [], join: '...', joinAlias: '...' }
  */
 async function buildTempDataScope(req) {
   const userId = req.user.id;
 
-  // 获取用户的所有角色（包括 user_roles 表和 users.role 字段）
   const [userRoleRows] = await pool.query(`
     SELECT r.code FROM user_roles ur
     JOIN roles r ON ur.role_id = r.id
@@ -45,19 +44,21 @@ async function buildTempDataScope(req) {
 
   // 管理员/董事长：全部数据
   if (roleCodes.has('admin') || roleCodes.has('temp_chairman') || roleCodes.has('boss')) {
-    return { sql: '1=1', params: [] };
+    return { sql: '1=1', params: [], join: '', joinAlias: '' };
   }
 
   // 审核员：只看自己负责的岗位
   if (roleCodes.has('temp_auditor')) {
     return {
-      sql: `cr.position_id IN (SELECT pa.position_id FROM position_auditors pa WHERE pa.user_id = ?)`,
+      sql: `pa.user_id = ?`,
       params: [userId],
+      join: `INNER JOIN position_auditors pa ON cr.position_id = pa.position_id`,
+      joinAlias: 'pa',
     };
   }
 
   // 默认：无数据
-  return { sql: '1=0', params: [] };
+  return { sql: '1=0', params: [], join: '', joinAlias: '' };
 }
 
 /**

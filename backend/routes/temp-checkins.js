@@ -209,7 +209,7 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
     let dateFilter = '';
 
     if (date) {
-      dateFilter = 'AND checkin_date = ?';
+      dateFilter = 'AND cr.checkin_date = ?';
       params.push(date);
     }
 
@@ -220,6 +220,7 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
       FROM checkin_records cr
       LEFT JOIN position_auditors pa ON cr.position_id = pa.position_id
       LEFT JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
       WHERE cr.status = 'pending' AND ${req.dataScope.sql}
       ${dateFilter}
       ORDER BY cr.created_at DESC
@@ -256,6 +257,7 @@ router.get('/approved', requireAuth, attachDataScope, async (req, res) => {
       SELECT cr.*, d.full_path as department_name
       FROM checkin_records cr
       LEFT JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
       WHERE 1=1 AND ${req.dataScope.sql}
       ${filters}
       ORDER BY cr.audited_at DESC
@@ -564,12 +566,13 @@ router.get('/audit/stats', requireAuth, attachDataScope, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        COALESCE(SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END), 0) as approved_amount,
-        COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) as pending_amount
-      FROM checkin_records
+        SUM(CASE WHEN cr.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN cr.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'pending' THEN cr.amount ELSE 0 END), 0) as pending_amount
+      FROM checkin_records cr
+      ${req.dataScope.join}
       WHERE ${req.dataScope.sql}
     `, req.dataScope.params);
 
