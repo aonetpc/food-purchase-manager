@@ -79,13 +79,58 @@ app.get('/api/debug/role-perms', async (req, res) => {
     const [rolePerms] = await pool.query('SELECT rp.role_id, rp.permission_id, r.code as role_code, p.code as perm_code FROM role_permissions rp JOIN roles r ON rp.role_id = r.id JOIN permissions p ON rp.permission_id = p.id ORDER BY r.code, p.code');
     const [users] = await pool.query('SELECT id, username, name, role, role_id FROM users WHERE username IN ("admin", "viewer", "finance", "boss")');
 
-    // 测试 viewer 用户的合并权限
+    // 测试 viewer 用户的合并权限（直接复制函数逻辑）
     const viewer = users.find(u => u.username === 'viewer');
     let viewerMergedPerms = null;
     let viewerError = null;
+    let viewerRoleRows = null;
+    let viewerPermRows = null;
     if (viewer) {
       try {
-        viewerMergedPerms = await getUserMergedPermissions(viewer.id);
+        [viewerRoleRows] = await pool.query(`
+          SELECT DISTINCT role_id FROM (
+            SELECT role_id FROM user_roles WHERE user_id = ?
+            UNION
+            SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+          ) t
+        `, [viewer.id, viewer.id]);
+
+        if (viewerRoleRows.length > 0) {
+          const roleIds = viewerRoleRows.map(r => r.role_id);
+          const placeholders = roleIds.map(() => '?').join(',');
+          [viewerPermRows] = await pool.query(`
+            SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code, m.name as module_name, m.icon as module_icon
+            FROM role_permissions rp
+            JOIN permissions p ON rp.permission_id = p.id
+            JOIN modules m ON p.module_id = m.id
+            WHERE rp.role_id IN (${placeholders}) AND p.status = 1 AND m.status = 1
+            ORDER BY m.sort_order ASC, p.sort_order ASC
+          `, roleIds);
+
+          const modules = {};
+          const seenCodes = new Set();
+          viewerPermRows.forEach(perm => {
+            if (seenCodes.has(perm.code)) return;
+            seenCodes.add(perm.code);
+            if (!modules[perm.module_code]) {
+              modules[perm.module_code] = { code: perm.module_code, name: perm.module_name, icon: perm.module_icon, menus: [], actions: [] };
+            }
+            if (perm.type === 'menu') {
+              modules[perm.module_code].menus.push({ code: perm.code, name: perm.name, path: perm.path, icon: perm.icon });
+            } else {
+              modules[perm.module_code].actions.push({ code: perm.code, name: perm.name });
+            }
+          });
+
+          viewerMergedPerms = {
+            modules: Object.values(modules),
+            codes: viewerPermRows.map(p => p.code).filter((v, i, a) => a.indexOf(v) === i),
+            menuPaths: viewerPermRows.filter(p => p.type === 'menu' && p.path).map(p => p.path).filter((v, i, a) => a.indexOf(v) === i),
+            roleIds,
+          };
+        } else {
+          viewerMergedPerms = { modules: [], codes: [], menuPaths: [], roleIds: [] };
+        }
       } catch (e) {
         viewerError = e.message;
       }
