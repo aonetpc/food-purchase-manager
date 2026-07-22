@@ -67,7 +67,7 @@ router.post('/wx-login', async (req, res) => {
       pool.query('UPDATE temp_worker_users SET last_login_at = ? WHERE id = ?', [new Date(), user.id]);
 
       const isNewUser = !user.name;
-      const redirectUrl = `${req.headers.origin}/temp/login#token=temp_${user.id}&is_new_user=${isNewUser}&user_id=${user.id}&user_name=${encodeURIComponent(user.name || '')}&user_phone=${encodeURIComponent(user.phone || '')}`;
+      const redirectUrl = `${req.headers.origin}/temp/login?token=temp_${user.id}&is_new_user=${isNewUser}&user_id=${user.id}&user_name=${encodeURIComponent(user.name || '')}&user_phone=${encodeURIComponent(user.phone || '')}`;
       return res.redirect(redirectUrl);
     }
 
@@ -79,7 +79,7 @@ router.post('/wx-login', async (req, res) => {
       [userId, openid, unionid]
     );
 
-    const redirectUrl = `${req.headers.origin}/temp/login#token=temp_${userId}&is_new_user=true&user_id=${userId}`;
+    const redirectUrl = `${req.headers.origin}/temp/login?token=temp_${userId}&is_new_user=true&user_id=${userId}`;
     return res.redirect(redirectUrl);
     } catch (insertErr) {
       console.error('temp wx-login insert error:', insertErr);

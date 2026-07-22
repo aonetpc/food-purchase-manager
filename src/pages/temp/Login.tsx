@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 
 interface TempUser {
@@ -15,37 +15,60 @@ interface TempUserState {
   is_new_user: boolean;
 }
 
-const TEMP_SESSION_KEY = 'temp-worker-session';
-const TEMP_SESSION_KEY_SESSION = 'temp-worker-session-session';
+const TEMP_SESSION_COOKIE = 'temp_worker_session';
+
+const setCookie = (name: string, value: string, days: number = 1) => {
+  const date = new Date();
+  date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+  const expires = `expires=${date.toUTCString()}`;
+  document.cookie = `${name}=${encodeURIComponent(value)};${expires};path=/;SameSite=Lax`;
+};
+
+const getCookie = (name: string): string | null => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return decodeURIComponent(parts.pop()!.split(';').shift() || '');
+  return null;
+};
+
+const deleteCookie = (name: string) => {
+  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+};
 
 export const getTempUserSession = (): TempUserState | null => {
   try {
-    let stored = localStorage.getItem(TEMP_SESSION_KEY);
-    if (!stored) {
-      stored = sessionStorage.getItem(TEMP_SESSION_KEY_SESSION);
+    const cookieVal = getCookie(TEMP_SESSION_COOKIE);
+    if (cookieVal) {
+      return JSON.parse(cookieVal);
     }
-    if (!stored) return null;
-    return JSON.parse(stored);
+    const stored = localStorage.getItem(TEMP_SESSION_COOKIE);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+    return null;
   } catch {
     return null;
   }
 };
 
 export const saveTempUserSession = (session: TempUserState): void => {
+  const value = JSON.stringify(session);
   try {
-    localStorage.setItem(TEMP_SESSION_KEY, JSON.stringify(session));
-  } catch {
-    sessionStorage.setItem(TEMP_SESSION_KEY_SESSION, JSON.stringify(session));
-  }
+    localStorage.setItem(TEMP_SESSION_COOKIE, value);
+  } catch {}
+  try {
+    setCookie(TEMP_SESSION_COOKIE, value, 1);
+  } catch {}
 };
 
 export const clearTempUserSession = (): void => {
-  localStorage.removeItem(TEMP_SESSION_KEY);
-  sessionStorage.removeItem(TEMP_SESSION_KEY_SESSION);
+  localStorage.removeItem(TEMP_SESSION_COOKIE);
+  deleteCookie(TEMP_SESSION_COOKIE);
 };
 
 export default function TempLogin() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
@@ -53,40 +76,45 @@ export default function TempLogin() {
   const [phone, setPhone] = useState('');
 
   useEffect(() => {
-    const session = getTempUserSession();
-    if (session) {
-      if (session.is_new_user) {
-        setShowRegister(true);
-        setLoading(false);
-      } else {
-        navigate('/temp/checkin');
-      }
-      return;
-    }
+    const token = searchParams.get('token');
+    const isNew = searchParams.get('is_new_user');
+    const userId = searchParams.get('user_id');
+    const userName = searchParams.get('user_name') || '';
+    const userPhone = searchParams.get('user_phone') || '';
 
-    const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
-    const hashToken = hashParams.get('token');
-    const hashIsNew = hashParams.get('is_new_user');
-    const hashUserId = hashParams.get('user_id');
-
-    if (hashToken && hashIsNew) {
+    if (token && isNew !== null) {
       const sessionData: TempUserState = {
-        token: hashToken,
+        token,
         user: {
-          id: hashUserId || '',
-          name: '',
-          phone: '',
+          id: userId || '',
+          name: decodeURIComponent(userName),
+          phone: decodeURIComponent(userPhone),
           avatar_url: '',
         },
-        is_new_user: hashIsNew === 'true',
+        is_new_user: isNew === 'true',
       };
       saveTempUserSession(sessionData);
       if (sessionData.is_new_user) {
         setShowRegister(true);
-        setLoading(false);
+        setName(sessionData.user.name);
+        setPhone(sessionData.user.phone);
       } else {
         navigate('/temp/checkin');
       }
+      setLoading(false);
+      return;
+    }
+
+    const session = getTempUserSession();
+    if (session) {
+      if (session.is_new_user) {
+        setShowRegister(true);
+        setName(session.user.name);
+        setPhone(session.user.phone);
+      } else {
+        navigate('/temp/checkin');
+      }
+      setLoading(false);
       return;
     }
 
@@ -174,8 +202,16 @@ export default function TempLogin() {
     try {
       const session = getTempUserSession();
       if (!session) {
-        setError('登录状态失效，请重新扫码');
-        return;
+        const token = searchParams.get('token');
+        if (!token) {
+          setError('登录状态失效，请重新扫码');
+          return;
+        }
+        session = {
+          token,
+          user: { id: '', name: '', phone: '', avatar_url: '' },
+          is_new_user: true,
+        };
       }
 
       const response = await fetch(`${api.getBaseUrl()}/temp/auth/register`, {
@@ -188,8 +224,8 @@ export default function TempLogin() {
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: '注册失败' }));
-        throw new Error(error.error || '注册失败');
+        const errorData = await response.json().catch(() => ({ error: '注册失败' }));
+        throw new Error(errorData.error || '注册失败');
       }
 
       session.is_new_user = false;
