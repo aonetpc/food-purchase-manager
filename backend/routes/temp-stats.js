@@ -19,6 +19,11 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
+    
+    if (!/^\d{4}-\d{2}$/.test(targetMonth)) {
+      return res.status(400).json({ error: '月份格式不正确，应为 YYYY-MM' });
+    }
+    
     const params = [...req.dataScope.params, targetMonth];
 
     const [checkinRows] = await pool.query(`

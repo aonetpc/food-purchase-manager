@@ -51,7 +51,7 @@ async function buildTempDataScope(req) {
   // 审核员：只看自己负责的岗位
   if (roleCodes.has('temp_auditor')) {
     return {
-      sql: `position_id IN (SELECT position_id FROM position_auditors WHERE user_id = ?)`,
+      sql: `cr.position_id IN (SELECT pa.position_id FROM position_auditors pa WHERE pa.user_id = ?)`,
       params: [userId],
     };
   }
