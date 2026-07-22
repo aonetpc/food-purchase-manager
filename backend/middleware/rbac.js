@@ -31,9 +31,19 @@ async function requireAuth(req, res, next) {
 
   try {
     // 从 token 解析用户信息
-    // 目前简单实现：token 格式为 "Bearer userId"
-    const userId = token.replace('Bearer ', '');
-    
+    // token 格式可能是 "Bearer xxx" 或 "Bearer userId"
+    let userId = token.replace(/^Bearer\s+/i, '').trim();
+
+    // 尝试解析JSON token (Base64编码的userId)
+    try {
+      const decoded = JSON.parse(Buffer.from(userId, 'base64').toString('utf-8'));
+      if (decoded && decoded.userId) {
+        userId = decoded.userId;
+      }
+    } catch (e) {
+      // 不是 base64 编码的JSON，直接使用原值
+    }
+
     const [rows] = await pool.query(
       'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid FROM users WHERE id = ?',
       [userId]
