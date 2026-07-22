@@ -216,29 +216,78 @@ export default function TempCheckin() {
                         暂无可用岗位，请联系管理员分配
                       </div>
                     ) : (
-                      <select
-                        value={selectedPosition}
-                        onChange={(e) => setSelectedPosition(e.target.value)}
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
-                      >
-                        <option value="">请选择岗位</option>
-                        {positions.filter(p => p.name !== '临时岗位').length > 0 && (
-                          <optgroup label="已分配岗位">
-                            {positions.filter(p => p.name !== '临时岗位').map(pos => (
-                              <option key={pos.id} value={pos.id}>
-                                {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'})
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
+                      <div className="space-y-2">
                         {positions.filter(p => p.name === '临时岗位').map(pos => (
-                          <optgroup label="其他" key="temp">
-                            <option key={pos.id} value={pos.id}>
-                              ⭐ 临时岗位（待审核分配）
-                            </option>
-                          </optgroup>
+                          <button
+                            key={pos.id}
+                            type="button"
+                            onClick={() => setSelectedPosition(pos.id)}
+                            className={`w-full text-left p-3 rounded-xl border-2 transition-all ${
+                              selectedPosition === pos.id
+                                ? 'border-orange-500 bg-orange-50'
+                                : 'border-gray-200 bg-white'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg">⭐</span>
+                                <div>
+                                  <p className="font-medium text-gray-800">{pos.name}</p>
+                                  <p className="text-xs text-gray-500">待审核分配</p>
+                                </div>
+                              </div>
+                              <div className={`w-5 h-5 rounded-full border-2 ${
+                                selectedPosition === pos.id
+                                  ? 'border-orange-500 bg-orange-500'
+                                  : 'border-gray-300'
+                              } flex items-center justify-center`}>
+                                {selectedPosition === pos.id && (
+                                  <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                          </button>
                         ))}
-                      </select>
+
+                        {positions.filter(p => p.name !== '临时岗位').length > 0 && (
+                          <>
+                            {positions.filter(p => p.name !== '临时岗位').map(pos => (
+                              <button
+                                key={pos.id}
+                                type="button"
+                                onClick={() => setSelectedPosition(pos.id)}
+                                className={`w-full text-left p-3 rounded-xl border-2 transition-all ${
+                                  selectedPosition === pos.id
+                                    ? 'border-orange-500 bg-orange-50'
+                                    : 'border-gray-200 bg-white'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="font-medium text-gray-800">{pos.department_name} / {pos.name}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                      {pos.type === 'external' ? '外请' : '内部'} · ¥{pos.rate}{pos.pay_type === 'per_hour' ? '/小时' : '/次'}
+                                    </p>
+                                  </div>
+                                  <div className={`w-5 h-5 rounded-full border-2 ${
+                                    selectedPosition === pos.id
+                                      ? 'border-orange-500 bg-orange-500'
+                                      : 'border-gray-300'
+                                  } flex items-center justify-center`}>
+                                    {selectedPosition === pos.id && (
+                                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                      </svg>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
 
