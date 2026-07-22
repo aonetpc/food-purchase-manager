@@ -160,20 +160,12 @@ export default function TempAudit() {
             </svg>
           </button>
           <h1 className="text-xl font-bold">打卡审核</h1>
-          <div className="flex gap-2">
-            <button
-              onClick={() => navigate('/m/temp-assessment')}
-              className="px-3 py-1.5 bg-white/20 rounded-lg text-sm"
-            >
-              考核
-            </button>
-            <button
-              onClick={() => navigate('/m/temp-stats')}
-              className="px-3 py-1.5 bg-white/20 rounded-lg text-sm"
-            >
-              统计
-            </button>
-          </div>
+          <button
+            onClick={() => navigate('/m/temp-stats')}
+            className="px-3 py-1.5 bg-white/20 rounded-lg text-sm"
+          >
+            统计
+          </button>
         </div>
 
         {stats && (
