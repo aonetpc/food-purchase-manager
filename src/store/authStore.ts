@@ -182,11 +182,11 @@ export const useAuthStore = create<AuthStore>()(
         });
 
         return menus.sort((a, b) => {
-          const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/wecom'];
-          const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
-          const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
-          return aIdx - bIdx;
-        });
+      const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
+      const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
+      const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
+      return aIdx - bIdx;
+    });
       },
     }),
     {

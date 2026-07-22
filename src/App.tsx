@@ -27,9 +27,12 @@ import MobileComingSoon from '@/pages/mobile/ComingSoon';
 import TempLogin from '@/pages/temp/Login';
 import TempCheckin from '@/pages/temp/Checkin';
 import TempProfile from '@/pages/temp/Profile';
-import TempAudit from '@/pages/mobile/TempAudit';
-import TempAssessment from '@/pages/mobile/TempAssessment';
-import TempStats from '@/pages/mobile/TempStats';
+import TempAudit from '@/pages/TempAudit';
+import TempAssessment from '@/pages/TempAssessment';
+import TempStats from '@/pages/TempStats';
+import MobileTempAudit from '@/pages/mobile/TempAudit';
+import MobileTempAssessment from '@/pages/mobile/TempAssessment';
+import MobileTempStats from '@/pages/mobile/TempStats';
 
 export default function App() {
   return (
@@ -49,9 +52,9 @@ export default function App() {
         <Route path="/temp" element={<Navigate to="/temp/login" replace />} />
 
         {/* 企微端审核管理路由 - 内部人员使用 */}
-        <Route path="/m/temp-audit" element={<TempAudit />} />
-        <Route path="/m/temp-assessment" element={<TempAssessment />} />
-        <Route path="/m/temp-stats" element={<TempStats />} />
+        <Route path="/m/temp-audit" element={<MobileTempAudit />} />
+        <Route path="/m/temp-assessment" element={<MobileTempAssessment />} />
+        <Route path="/m/temp-stats" element={<MobileTempStats />} />
 
         <Route path="/login" element={<Login />} />
         <Route path="/confirm/:id" element={<PurchaseConfirmPage />} />
@@ -119,6 +122,21 @@ export default function App() {
           <Route path="temp-auditors" element={
             <ProtectedRoute requiredPermission="action:temp-auditor:manage">
               <AuditorManager />
+            </ProtectedRoute>
+          } />
+          <Route path="temp-audit" element={
+            <ProtectedRoute requiredPermission="menu:temp-audit">
+              <TempAudit />
+            </ProtectedRoute>
+          } />
+          <Route path="temp-assessment" element={
+            <ProtectedRoute requiredPermission="menu:temp-assessment">
+              <TempAssessment />
+            </ProtectedRoute>
+          } />
+          <Route path="temp-stats" element={
+            <ProtectedRoute requiredPermission="menu:temp-stats">
+              <TempStats />
             </ProtectedRoute>
           } />
         </Route>

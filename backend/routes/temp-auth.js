@@ -33,7 +33,7 @@ router.post('/wx-login', async (req, res) => {
     }
 
     const config = await getWechatConfig();
-    if (!config || !config.app_id || !config.app_secret || config.status !== 1) {
+    if (!config || !config.app_id || !config.app_secret) {
       return res.status(500).json({ error: '微信登录未配置，请联系管理员' });
     }
 
