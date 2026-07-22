@@ -311,7 +311,7 @@ router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
         `SELECT COUNT(*) as cnt FROM position_auditors WHERE position_id = ? AND user_id = ?`,
         [assign_position_id, req.user.id]
       );
-      if (assignScopeCheck[0][0].cnt === 0 && adminCheck[0].cnt === 0) {
+      if (assignScopeCheck[0].cnt === 0 && adminCheck[0].cnt === 0) {
         return res.status(403).json({ error: '无权分配此岗位' });
       }
 
@@ -401,7 +401,7 @@ router.post('/:id/reject', requireAuth, attachDataScope, async (req, res) => {
       [req.user.id]
     );
 
-    if (scopeCheck.cnt === 0 && adminCheck.cnt === 0) {
+    if (scopeCheck[0].cnt === 0 && adminCheck[0].cnt === 0) {
       return res.status(403).json({ error: '无权审核此岗位的记录' });
     }
 
@@ -453,7 +453,7 @@ router.post('/add-record', requireAuth, async (req, res) => {
       [req.user.id]
     );
 
-    if (scopeCheck.cnt === 0 && adminCheck.cnt === 0) {
+    if (scopeCheck[0].cnt === 0 && adminCheck[0].cnt === 0) {
       return res.status(403).json({ error: '无权在此岗位补录' });
     }
 
@@ -539,8 +539,8 @@ router.post('/assign-position', requireAuth, async (req, res) => {
       [req.user.id]
     );
 
-    if (scopeCheck.cnt === 0 && adminCheck.cnt === 0) {
-      return res.status(403).json({ error: '无权分配此岗位' });
+    if (scopeCheck[0].cnt === 0 && adminCheck[0].cnt === 0) {
+      return res.status(403).json({ error: '无权审核此岗位' });
     }
 
     await pool.query(
