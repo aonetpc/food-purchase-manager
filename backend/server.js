@@ -73,10 +73,24 @@ app.get('/api/health', (req, res) => {
 app.get('/api/debug/role-perms', async (req, res) => {
   try {
     const pool = require('./db');
+    const { getUserMergedPermissions } = require('./routes/auth');
     const [roles] = await pool.query('SELECT id, code, name FROM roles ORDER BY sort_order');
     const [permissions] = await pool.query('SELECT id, code, name, type, path, module_id FROM permissions WHERE status = 1 ORDER BY code');
     const [rolePerms] = await pool.query('SELECT rp.role_id, rp.permission_id, r.code as role_code, p.code as perm_code FROM role_permissions rp JOIN roles r ON rp.role_id = r.id JOIN permissions p ON rp.permission_id = p.id ORDER BY r.code, p.code');
     const [users] = await pool.query('SELECT id, username, name, role, role_id FROM users WHERE username IN ("admin", "viewer", "finance", "boss")');
+
+    // 测试 viewer 用户的合并权限
+    const viewer = users.find(u => u.username === 'viewer');
+    let viewerMergedPerms = null;
+    let viewerError = null;
+    if (viewer) {
+      try {
+        viewerMergedPerms = await getUserMergedPermissions(viewer.id);
+      } catch (e) {
+        viewerError = e.message;
+      }
+    }
+
     res.json({
       role_count: roles.length,
       permission_count: permissions.length,
@@ -89,6 +103,8 @@ app.get('/api/debug/role-perms', async (req, res) => {
         return acc;
       }, {}),
       users,
+      viewer_merged_permissions: viewerMergedPerms,
+      viewer_error: viewerError,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
