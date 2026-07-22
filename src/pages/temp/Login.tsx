@@ -178,9 +178,19 @@ export default function TempLogin() {
         return;
       }
 
-      await api.post('/temp/auth/register', { name: name.trim(), phone: phone.trim() }, {
-        headers: { Authorization: `Bearer ${session.token}` },
+      const response = await fetch(`${api.getBaseUrl()}/temp/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`,
+        },
+        body: JSON.stringify({ name: name.trim(), phone: phone.trim() }),
       });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: '注册失败' }));
+        throw new Error(error.error || '注册失败');
+      }
 
       session.is_new_user = false;
       session.user.name = name.trim();
