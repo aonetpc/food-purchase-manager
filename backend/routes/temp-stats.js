@@ -21,29 +21,43 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
     const targetMonth = month || new Date().toISOString().substring(0, 7);
     const params = [...req.dataScope.params, targetMonth];
 
-    const [rows] = await pool.query(`
+    const [checkinRows] = await pool.query(`
       SELECT
-        COUNT(*) as total_count,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_count,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_count,
-        COALESCE(SUM(CASE WHEN position_type = 'external' AND status = 'approved' THEN amount ELSE 0 END), 0) as external_amount,
-        COALESCE(SUM(CASE WHEN position_type = 'internal' AND status = 'approved' THEN amount ELSE 0 END), 0) as internal_amount,
+        COUNT(*) as month_checkins,
+        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as month_approved_amount,
         COALESCE(SUM(CASE WHEN status = 'approved' AND assessment_status = 'discounted'
                          THEN amount * assessment_discount
-                    WHEN status = 'approved' THEN amount ELSE 0 END), 0) as final_amount,
-        COUNT(DISTINCT user_id) as worker_count
+                    WHEN status = 'approved' THEN amount ELSE 0 END), 0) as month_final_amount,
+        COUNT(DISTINCT user_id) as active_workers
       FROM checkin_records
       WHERE DATE_FORMAT(checkin_date, "%Y-%m") = ?
         AND ${req.dataScope.sql}
     `, params);
 
-    const overview = rows[0];
-    overview.external_rate = (overview.external_amount + overview.internal_amount) > 0
-      ? (overview.external_amount / (overview.external_amount + overview.internal_amount) * 100).toFixed(1)
-      : 0;
+    const today = new Date().toISOString().split('T')[0];
+    const todayParams = [...req.dataScope.params, today];
 
-    res.json(overview);
+    const [todayRows] = await pool.query(`
+      SELECT COUNT(*) as today_checkins
+      FROM checkin_records
+      WHERE checkin_date = ?
+        AND ${req.dataScope.sql}
+    `, todayParams);
+
+    const [userRows] = await pool.query(`
+      SELECT COUNT(*) as total_workers
+      FROM temp_worker_users
+      WHERE status = 1
+    `);
+
+    res.json({
+      total_workers: userRows[0].total_workers,
+      active_workers: checkinRows[0].active_workers,
+      today_checkins: todayRows[0].today_checkins,
+      month_checkins: checkinRows[0].month_checkins,
+      month_approved_amount: checkinRows[0].month_approved_amount,
+      month_final_amount: checkinRows[0].month_final_amount,
+    });
   } catch (err) {
     console.error('stats overview error:', err);
     res.status(500).json({ error: err.message });
@@ -77,7 +91,6 @@ router.get('/department', requireAuth, attachDataScope, async (req, res) => {
       ORDER BY external_amount + internal_amount DESC
     `, params);
 
-    // 计算外请率
     rows.forEach(row => {
       const total = parseFloat(row.external_amount) + parseFloat(row.internal_amount);
       row.external_rate = total > 0
@@ -88,6 +101,70 @@ router.get('/department', requireAuth, attachDataScope, async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('stats department error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/departments', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { month } = req.query;
+    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const params = [...req.dataScope.params, targetMonth];
+
+    const [rows] = await pool.query(`
+      SELECT
+        cr.department_id,
+        d.name as department_name,
+        COUNT(*) as total_checkins,
+        SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved_checkins,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount,
+        COUNT(DISTINCT cr.position_id) as position_count
+      FROM checkin_records cr
+      LEFT JOIN departments d ON cr.department_id = d.id
+      WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND ${req.dataScope.sql}
+      GROUP BY cr.department_id, d.name
+      ORDER BY approved_amount DESC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('stats departments error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { month } = req.query;
+    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const params = [...req.dataScope.params, targetMonth];
+
+    const [rows] = await pool.query(`
+      SELECT
+        cr.position_id,
+        cr.position_name,
+        d.name as department_name,
+        cr.position_type as type,
+        COUNT(*) as total_checkins,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
+      FROM checkin_records cr
+      LEFT JOIN departments d ON cr.department_id = d.id
+      WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND ${req.dataScope.sql}
+      GROUP BY cr.position_id, cr.position_name, d.name, cr.position_type
+      ORDER BY approved_amount DESC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('stats positions error:', err);
     res.status(500).json({ error: err.message });
   }
 });

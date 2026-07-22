@@ -81,7 +81,8 @@ router.post('/wx-login', async (req, res) => {
 
     // 新用户：自动创建（仅 openid，等前端补充姓名手机号）
     const userId = uuidv4();
-    await pool.query(
+    try {
+      await pool.query(
       'INSERT INTO temp_worker_users (id, openid, unionid, status) VALUES (?, ?, ?, 1)',
       [userId, openid, unionid]
     );
@@ -97,6 +98,10 @@ router.post('/wx-login', async (req, res) => {
         avatar_url: null,
       },
     });
+    } catch (insertErr) {
+      console.error('temp wx-login insert error:', insertErr);
+      res.status(500).json({ error: insertErr.message });
+    }
   } catch (err) {
     console.error('temp wx-login error:', err);
     res.status(500).json({ error: err.message });
