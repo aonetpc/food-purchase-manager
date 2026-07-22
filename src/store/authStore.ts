@@ -36,6 +36,7 @@ export interface User {
   name: string;
   role: UserRole;
   role_id: string;
+  roles?: string[];
   status: number;
   wecomUserId?: string;
   phone?: string;
@@ -80,6 +81,7 @@ export const useAuthStore = create<AuthStore>()(
             name: data.name,
             role: data.role as UserRole,
             role_id: data.role_id,
+            roles: data.roles || [],
             status: data.status,
             wecomUserId: data.wecom_userid,
             phone: data.phone,
@@ -120,6 +122,7 @@ export const useAuthStore = create<AuthStore>()(
             name: data.name,
             role: data.role as UserRole,
             role_id: data.role_id,
+            roles: data.roles || [],
             status: data.status,
             wecomUserId: data.wecom_userid,
             phone: data.phone,
@@ -153,7 +156,10 @@ export const useAuthStore = create<AuthStore>()(
 
       isAdmin: () => {
         const user = get().user;
-        return user?.role === 'admin';
+        if (!user) return false;
+        if (user.role === 'admin') return true;
+        if (user.roles && user.roles.includes('admin')) return true;
+        return false;
       },
 
       canViewMonthly: () => {

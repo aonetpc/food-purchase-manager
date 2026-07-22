@@ -40,15 +40,25 @@ async function getUserMergedPermissions(userId) {
   const placeholders = roleIds.map(() => '?').join(',');
 
   let permRows = [];
+  let moduleInfoMap = {};
   try {
     [permRows] = await pool.query(`
-      SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
+      SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code, m.name as module_name, m.icon as module_icon
       FROM role_permissions rp
       JOIN permissions p ON rp.permission_id = p.id
       JOIN modules m ON p.module_id = m.id
       WHERE rp.role_id IN (${placeholders}) AND p.status = 1 AND m.status = 1
       ORDER BY m.sort_order ASC, p.sort_order ASC
     `, roleIds);
+    permRows.forEach(perm => {
+      if (!moduleInfoMap[perm.module_code]) {
+        moduleInfoMap[perm.module_code] = {
+          code: perm.module_code,
+          name: perm.module_name,
+          icon: perm.module_icon,
+        };
+      }
+    });
   } catch (e) {
     return { modules: [], codes: [], menuPaths: [], roleIds: [] };
   }
@@ -59,7 +69,13 @@ async function getUserMergedPermissions(userId) {
     if (seenCodes.has(perm.code)) return;
     seenCodes.add(perm.code);
     if (!modules[perm.module_code]) {
-      modules[perm.module_code] = { menus: [], actions: [] };
+      modules[perm.module_code] = {
+        code: moduleInfoMap[perm.module_code]?.code || perm.module_code,
+        name: moduleInfoMap[perm.module_code]?.name || perm.module_code,
+        icon: moduleInfoMap[perm.module_code]?.icon || '',
+        menus: [],
+        actions: [],
+      };
     }
     if (perm.type === 'menu') {
       modules[perm.module_code].menus.push({
