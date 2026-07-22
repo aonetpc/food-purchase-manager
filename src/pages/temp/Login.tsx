@@ -16,10 +16,14 @@ interface TempUserState {
 }
 
 const TEMP_SESSION_KEY = 'temp-worker-session';
+const TEMP_SESSION_KEY_SESSION = 'temp-worker-session-session';
 
 export const getTempUserSession = (): TempUserState | null => {
   try {
-    const stored = localStorage.getItem(TEMP_SESSION_KEY);
+    let stored = localStorage.getItem(TEMP_SESSION_KEY);
+    if (!stored) {
+      stored = sessionStorage.getItem(TEMP_SESSION_KEY_SESSION);
+    }
     if (!stored) return null;
     return JSON.parse(stored);
   } catch {
@@ -28,11 +32,16 @@ export const getTempUserSession = (): TempUserState | null => {
 };
 
 export const saveTempUserSession = (session: TempUserState): void => {
-  localStorage.setItem(TEMP_SESSION_KEY, JSON.stringify(session));
+  try {
+    localStorage.setItem(TEMP_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    sessionStorage.setItem(TEMP_SESSION_KEY_SESSION, JSON.stringify(session));
+  }
 };
 
 export const clearTempUserSession = (): void => {
   localStorage.removeItem(TEMP_SESSION_KEY);
+  sessionStorage.removeItem(TEMP_SESSION_KEY_SESSION);
 };
 
 export default function TempLogin() {
@@ -47,6 +56,32 @@ export default function TempLogin() {
     const session = getTempUserSession();
     if (session) {
       if (session.is_new_user) {
+        setShowRegister(true);
+        setLoading(false);
+      } else {
+        navigate('/temp/checkin');
+      }
+      return;
+    }
+
+    const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
+    const hashToken = hashParams.get('token');
+    const hashIsNew = hashParams.get('is_new_user');
+    const hashUserId = hashParams.get('user_id');
+
+    if (hashToken && hashIsNew) {
+      const sessionData: TempUserState = {
+        token: hashToken,
+        user: {
+          id: hashUserId || '',
+          name: '',
+          phone: '',
+          avatar_url: '',
+        },
+        is_new_user: hashIsNew === 'true',
+      };
+      saveTempUserSession(sessionData);
+      if (sessionData.is_new_user) {
         setShowRegister(true);
         setLoading(false);
       } else {
@@ -86,7 +121,24 @@ export default function TempLogin() {
         return;
       }
 
-      const res = await api.post<any>('/temp/auth/wx-login', { code });
+      const response = await fetch(`${api.getBaseUrl()}/temp/auth/wx-login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code }),
+        redirect: 'manual',
+      });
+
+      if (response.status === 302) {
+        const redirectUrl = response.headers.get('Location');
+        if (redirectUrl) {
+          window.location.href = redirectUrl;
+          return;
+        }
+      }
+
+      const res = await response.json();
 
       if (!res.success) {
         setError(res.error || '登录失败');
