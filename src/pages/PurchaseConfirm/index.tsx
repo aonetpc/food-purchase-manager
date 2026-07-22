@@ -144,6 +144,7 @@ export default function PurchaseConfirmPage() {
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [userName, setUserName] = useState('');
+  const [nameFromSession, setNameFromSession] = useState(false);
   const [signatureData, setSignatureData] = useState<string | null>(null);
   const [activeDeptId, setActiveDeptId] = useState<string | null>(null);
   const [wecomAuthing, setWecomAuthing] = useState(false);
@@ -171,7 +172,18 @@ export default function PurchaseConfirmPage() {
       const hasValidWecomSession = checkValidWecomSession();
       
       if (hasValidWecomSession) {
-        // 有有效登录态，直接使用
+        // 有有效登录态，读取姓名
+        try {
+          const stored = localStorage.getItem('auth-session');
+          if (stored) {
+            const data = JSON.parse(stored);
+            const name = data?.state?.user?.name || '';
+            if (name) {
+              setUserName(name);
+              setNameFromSession(true);
+            }
+          }
+        } catch (e) {}
         fetchData(id);
         return;
       }
@@ -191,7 +203,10 @@ export default function PurchaseConfirmPage() {
         if (stored) {
           const data = JSON.parse(stored);
           const name = data?.state?.user?.name || '';
-          if (name) setUserName(name);
+          if (name) {
+            setUserName(name);
+            setNameFromSession(true);
+          }
         }
       } catch (e) {
         console.error('读取登录态失败:', e);
@@ -271,6 +286,7 @@ export default function PurchaseConfirmPage() {
         };
         localStorage.setItem('auth-session', JSON.stringify(sessionData));
         setUserName(result.user.name || '');
+        setNameFromSession(true);
         // 清理 URL 中的 code
         window.history.replaceState({}, '', `/confirm/${id}`);
         setWecomAuthing(false);
@@ -323,6 +339,7 @@ export default function PurchaseConfirmPage() {
       };
       localStorage.setItem('auth-session', JSON.stringify(sessionData));
       setUserName(user.name || '');
+      setNameFromSession(true);
       setShowBindForm(false);
       if (id) fetchData(id);
     } catch (err: any) {
@@ -523,12 +540,23 @@ export default function PurchaseConfirmPage() {
           )}
         </div>
 
-        {/* 确认人姓名输入 */}
-        {!allConfirmed && (
+        {/* 确认人信息（自动获取，只读） */}
+        {!allConfirmed && nameFromSession && userName && (
           <div className="bg-white rounded-xl shadow-sm p-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {userName ? '确认人（可修改）' : '您的姓名'}
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">确认人</label>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
+                <span className="text-primary-600 text-sm font-medium">{userName.charAt(0)}</span>
+              </div>
+              <span className="text-gray-800 font-medium">{userName}</span>
+            </div>
+          </div>
+        )}
+        
+        {/* 未登录时手动输入姓名 */}
+        {!allConfirmed && !nameFromSession && (
+          <div className="bg-white rounded-xl shadow-sm p-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">您的姓名</label>
             <input
               type="text"
               value={userName}
