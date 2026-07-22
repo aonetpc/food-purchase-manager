@@ -58,21 +58,30 @@ export default function TempLogin() {
     handleWechatAuth();
   }, []);
 
+  const getWechatAuthUrl = async () => {
+    try {
+      const configRes = await api.get<any>('/wecom/config');
+      const appId = configRes.wx_app_id || '';
+      if (!appId) {
+        throw new Error('微信公众号未配置，请联系管理员');
+      }
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const redirectUri = encodeURIComponent(cleanUrl);
+      const timestamp = Date.now();
+      const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=${timestamp}#wechat_redirect`;
+      return authUrl;
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
   const handleWechatAuth = async () => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get('code');
 
       if (!code) {
-        const configRes = await api.get<any>('/wecom/config');
-        const appId = configRes.wx_app_id || '';
-        if (!appId) {
-          setError('微信公众号未配置，请联系管理员');
-          setLoading(false);
-          return;
-        }
-        const redirectUri = encodeURIComponent(window.location.href);
-        const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=STATE#wechat_redirect`;
+        const authUrl = await getWechatAuthUrl();
         window.location.href = authUrl;
         return;
       }
@@ -215,7 +224,10 @@ export default function TempLogin() {
           )}
 
           <button
-            onClick={handleWechatAuth}
+            onClick={async () => {
+              const authUrl = await getWechatAuthUrl();
+              window.location.href = authUrl;
+            }}
             className="mt-8 w-full py-3 bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold rounded-xl shadow-md active:scale-95 transition-transform"
           >
             微信登录

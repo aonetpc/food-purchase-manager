@@ -34,8 +34,8 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
         SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved_count,
         SUM(CASE WHEN cr.status = 'rejected' THEN 1 ELSE 0 END) as rejected_count,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as total_amount,
-        MAX(CR.assessment_status) as assessment_status,
-        MAX(CR.assessment_discount) as assessment_discount
+        MAX(cr.assessment_status) as assessment_status,
+        MAX(cr.assessment_discount) as assessment_discount
       FROM checkin_records cr
       JOIN positions p ON cr.position_id = p.id
       WHERE p.need_assessment = 1

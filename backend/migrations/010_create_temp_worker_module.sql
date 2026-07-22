@@ -65,7 +65,7 @@ WHERE d1.parent_id IS NOT NULL;
 -- ================================================
 CREATE TABLE IF NOT EXISTS temp_worker_users (
   id VARCHAR(36) PRIMARY KEY,
-  name VARCHAR(50) NOT NULL COMMENT '姓名',
+  name VARCHAR(50) COMMENT '姓名（可空，新用户先注册后完善）',
   phone VARCHAR(20) COMMENT '手机号',
   openid VARCHAR(50) UNIQUE COMMENT '微信openid',
   unionid VARCHAR(50) COMMENT '微信unionid',
