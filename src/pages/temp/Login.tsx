@@ -15,60 +15,31 @@ interface TempUserState {
   is_new_user: boolean;
 }
 
-const TEMP_SESSION_COOKIE = 'temp_worker_session';
-
-const setCookie = (name: string, value: string, days: number = 1) => {
-  const date = new Date();
-  date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-  const expires = `expires=${date.toUTCString()}`;
-  document.cookie = `${name}=${encodeURIComponent(value)};${expires};path=/;SameSite=Lax`;
-};
-
-const getCookie = (name: string): string | null => {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return decodeURIComponent(parts.pop()!.split(';').shift() || '');
-  return null;
-};
-
-const deleteCookie = (name: string) => {
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
-};
+const TEMP_SESSION_KEY = 'temp_worker_session';
 
 export const getTempUserSession = (): TempUserState | null => {
   try {
-    const cookieVal = getCookie(TEMP_SESSION_COOKIE);
-    if (cookieVal) {
-      return JSON.parse(cookieVal);
-    }
-    const stored = localStorage.getItem(TEMP_SESSION_COOKIE);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return null;
+    const stored = localStorage.getItem(TEMP_SESSION_KEY);
+    if (!stored) return null;
+    return JSON.parse(stored);
   } catch {
     return null;
   }
 };
 
 export const saveTempUserSession = (session: TempUserState): void => {
-  const value = JSON.stringify(session);
   try {
-    localStorage.setItem(TEMP_SESSION_COOKIE, value);
-  } catch {}
-  try {
-    setCookie(TEMP_SESSION_COOKIE, value, 1);
+    localStorage.setItem(TEMP_SESSION_KEY, JSON.stringify(session));
   } catch {}
 };
 
 export const clearTempUserSession = (): void => {
-  localStorage.removeItem(TEMP_SESSION_COOKIE);
-  deleteCookie(TEMP_SESSION_COOKIE);
+  localStorage.removeItem(TEMP_SESSION_KEY);
 };
 
 export default function TempLogin() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
@@ -76,121 +47,111 @@ export default function TempLogin() {
   const [phone, setPhone] = useState('');
 
   useEffect(() => {
-    const token = searchParams.get('token');
-    const isNew = searchParams.get('is_new_user');
-    const userId = searchParams.get('user_id');
-    const userName = searchParams.get('user_name') || '';
-    const userPhone = searchParams.get('user_phone') || '';
-
-    if (token && isNew !== null) {
-      const sessionData: TempUserState = {
-        token,
-        user: {
-          id: userId || '',
-          name: decodeURIComponent(userName),
-          phone: decodeURIComponent(userPhone),
-          avatar_url: '',
-        },
-        is_new_user: isNew === 'true',
-      };
-      saveTempUserSession(sessionData);
-      if (sessionData.is_new_user) {
-        setShowRegister(true);
-        setName(sessionData.user.name);
-        setPhone(sessionData.user.phone);
-      } else {
-        navigate('/temp/checkin');
-      }
-      setLoading(false);
-      return;
-    }
-
-    const session = getTempUserSession();
-    if (session) {
-      if (session.is_new_user) {
-        setShowRegister(true);
-        setName(session.user.name);
-        setPhone(session.user.phone);
-      } else {
-        navigate('/temp/checkin');
-      }
-      setLoading(false);
-      return;
-    }
-
-    handleWechatAuth();
+    initLogin();
   }, []);
 
-  const getWechatAuthUrl = async () => {
+  const initLogin = async () => {
     try {
-      const configRes = await api.get<any>('/wecom/config');
-      const appId = configRes.wx_app_id || '';
-      if (!appId) {
-        throw new Error('微信公众号未配置，请联系管理员');
-      }
-      const cleanUrl = window.location.origin + window.location.pathname;
-      const redirectUri = encodeURIComponent(cleanUrl);
-      const timestamp = Date.now();
-      const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=${timestamp}#wechat_redirect`;
-      return authUrl;
-    } catch (err: any) {
-      throw err;
-    }
-  };
+      const token = searchParams.get('token');
+      const isNew = searchParams.get('is_new_user');
+      const userId = searchParams.get('user_id');
+      const userName = searchParams.get('user_name') || '';
+      const userPhone = searchParams.get('user_phone') || '';
 
-  const handleWechatAuth = async () => {
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
+      if (token && isNew !== null) {
+        const sessionData: TempUserState = {
+          token,
+          user: {
+            id: userId || '',
+            name: decodeURIComponent(userName),
+            phone: decodeURIComponent(userPhone),
+            avatar_url: '',
+          },
+          is_new_user: isNew === 'true',
+        };
+        saveTempUserSession(sessionData);
+        searchParams.delete('token');
+        searchParams.delete('is_new_user');
+        searchParams.delete('user_id');
+        searchParams.delete('user_name');
+        searchParams.delete('user_phone');
+        setSearchParams(searchParams, { replace: true });
 
-      if (!code) {
-        const authUrl = await getWechatAuthUrl();
-        window.location.href = authUrl;
-        return;
-      }
-
-      const response = await fetch(`${api.getBaseUrl()}/temp/auth/wx-login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ code }),
-        redirect: 'manual',
-      });
-
-      if (response.status === 302) {
-        const redirectUrl = response.headers.get('Location');
-        if (redirectUrl) {
-          window.location.href = redirectUrl;
-          return;
+        if (sessionData.is_new_user) {
+          setShowRegister(true);
+          setName(sessionData.user.name);
+          setPhone(sessionData.user.phone);
+        } else {
+          navigate('/temp/checkin');
         }
-      }
-
-      const res = await response.json();
-
-      if (!res.success) {
-        setError(res.error || '登录失败');
         setLoading(false);
         return;
       }
 
-      saveTempUserSession({
-        token: res.token,
-        user: res.user,
-        is_new_user: res.is_new_user,
-      });
-
-      if (res.is_new_user) {
-        setShowRegister(true);
-      } else {
-        navigate('/temp/checkin');
+      const session = getTempUserSession();
+      if (session) {
+        if (session.is_new_user) {
+          setShowRegister(true);
+          setName(session.user.name);
+          setPhone(session.user.phone);
+        } else {
+          navigate('/temp/checkin');
+        }
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      await handleWechatAuth();
     } catch (err: any) {
-      console.error('微信登录失败:', err);
-      setError(err.message || '微信登录失败，请重试');
+      console.error('登录初始化失败:', err);
+      setError(err.message || '登录失败');
       setLoading(false);
     }
+  };
+
+  const getWechatAuthUrl = async () => {
+    const configRes = await api.get<any>('/wecom/config');
+    const appId = configRes.wx_app_id || '';
+    if (!appId) {
+      throw new Error('微信公众号未配置，请联系管理员');
+    }
+    const cleanUrl = window.location.origin + window.location.pathname;
+    const redirectUri = encodeURIComponent(cleanUrl);
+    const timestamp = Date.now();
+    const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=${timestamp}#wechat_redirect`;
+    return authUrl;
+  };
+
+  const handleWechatAuth = async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+
+    if (!code) {
+      const authUrl = await getWechatAuthUrl();
+      window.location.href = authUrl;
+      return;
+    }
+
+    const res = await api.post<any>('/temp/auth/wx-login', { code });
+
+    if (!res.success) {
+      setError(res.error || '登录失败');
+      setLoading(false);
+      return;
+    }
+
+    saveTempUserSession({
+      token: res.token,
+      user: res.user,
+      is_new_user: res.is_new_user,
+    });
+
+    if (res.is_new_user) {
+      setShowRegister(true);
+    } else {
+      navigate('/temp/checkin');
+    }
+    setLoading(false);
   };
 
   const handleRegister = async () => {
@@ -200,7 +161,7 @@ export default function TempLogin() {
     }
 
     try {
-      const session = getTempUserSession();
+      let session = getTempUserSession();
       if (!session) {
         const token = searchParams.get('token');
         if (!token) {
