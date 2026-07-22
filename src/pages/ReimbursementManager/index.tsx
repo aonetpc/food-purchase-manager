@@ -116,6 +116,17 @@ export default function ReimbursementManager() {
     }
   };
 
+  const handleResetConfirmations = async (id: string) => {
+    if (!window.confirm('确定重置所有部门的确认状态吗？所有部门将需要重新签字确认。')) return;
+    try {
+      await api.post(`/purchase-confirmations/${id}/reset-confirmations`);
+      showDetail(id);
+      fetchConfirmations();
+    } catch (err: any) {
+      setError(err.message || '重置失败');
+    }
+  };
+
   const handleDownloadPDF = async (id: string) => {
     try {
       const token = localStorage.getItem('auth-session');
@@ -361,6 +372,15 @@ export default function ReimbursementManager() {
                               <RefreshCw size={14} />
                             </button>
                           )}
+                          {(c.status === 'pending' || c.status === 'confirmed') && (
+                            <button
+                              onClick={() => handleResetConfirmations(c.id)}
+                              className="text-gray-400 hover:text-orange-500 transition-colors"
+                              title="重置确认"
+                            >
+                              <RefreshCw size={14} />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDelete(c.id)}
                             className="text-gray-400 hover:text-red-500 transition-colors"
@@ -516,6 +536,15 @@ export default function ReimbursementManager() {
                     >
                       <ExternalLink size={16} />
                       发起报销
+                    </button>
+                  )}
+                  {(detailConfirmation.status === 'pending' || detailConfirmation.status === 'confirmed') && (
+                    <button
+                      onClick={() => handleResetConfirmations(detailConfirmation.id)}
+                      className="btn-secondary flex items-center gap-2 text-orange-500 hover:bg-orange-50"
+                    >
+                      <RefreshCw size={16} />
+                      重置确认
                     </button>
                   )}
                 </div>
