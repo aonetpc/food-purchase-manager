@@ -37,8 +37,9 @@ router.post('/', requireTempAuth, async (req, res) => {
 
     // 查岗位信息
     let posRows;
+    let realPositionId = position_id;
     if (position_id === 'temp-position-default') {
-      // 虚拟临时岗位：从数据库查找"临时岗位"记录，没有则用兜底值
+      // 临时岗位：从数据库查找，没有则自动创建
       const [tempRows] = await pool.query(
         `SELECT p.*, d.name as department_name
          FROM positions p
@@ -47,20 +48,32 @@ router.post('/', requireTempAuth, async (req, res) => {
       );
       if (tempRows.length > 0) {
         posRows = tempRows;
+        realPositionId = tempRows[0].id;
       } else {
-        // 兜底：使用内存中的虚拟岗位
+        // 自动创建临时岗位
         const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY id LIMIT 1`);
-        const fallbackDept = deptRows.length > 0 ? deptRows[0] : { id: '', name: '默认部门' };
-        posRows = [{
-          id: 'temp-position-default',
-          department_id: fallbackDept.id,
-          name: '临时岗位',
-          type: 'external',
-          pay_type: 'per_time',
-          rate: 0,
-          need_assessment: 0,
-          department_name: fallbackDept.name,
-        }];
+        const fallbackDept = deptRows.length > 0 ? deptRows[0] : null;
+        if (!fallbackDept) {
+          return res.status(500).json({ error: '系统暂无部门数据，请先创建部门' });
+        }
+        const newTempId = 'temp-position-default';
+        try {
+          await pool.query(
+            `INSERT INTO positions (id, department_id, name, type, pay_type, rate, need_assessment, sort_order, status)
+             VALUES (?, ?, '临时岗位', 'external', 'per_time', 0, 0, 999, 1)`,
+            [newTempId, fallbackDept.id]
+          );
+        } catch (e) {
+          // 已存在则忽略
+        }
+        const [newRows] = await pool.query(
+          `SELECT p.*, d.name as department_name
+           FROM positions p JOIN departments d ON p.department_id = d.id
+           WHERE p.id = ?`,
+          [newTempId]
+        );
+        posRows = newRows;
+        realPositionId = newTempId;
       }
     } else {
       [posRows] = await pool.query(`
@@ -76,16 +89,6 @@ router.post('/', requireTempAuth, async (req, res) => {
     }
 
     const position = posRows[0];
-
-    // 验证打卡权限：我的岗位 或 临时岗位（external）
-    const myPositions = await getTempUserPositions(req.tempUser.id);
-    const tempPositions = await getTempPositions();
-    const allAllowed = [...myPositions, ...tempPositions];
-    const canCheckin = allAllowed.some(p => p.id === position_id);
-
-    if (!canCheckin) {
-      return res.status(403).json({ error: '无权在该岗位打卡' });
-    }
 
     // 计算金额
     let amount;
@@ -109,7 +112,7 @@ router.post('/', requireTempAuth, async (req, res) => {
       VALUES (?, 'temp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [
       id, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
-      position_id, position.name, position.type, position.department_id, position.department_name,
+      realPositionId, position.name, position.type, position.department_id, position.department_name,
       today, hours || null, amount
     ]);
 
@@ -276,19 +279,28 @@ router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
       return res.status(404).json({ error: '记录不存在' });
     }
 
-    // 检查数据权限
-    const scopeCheck = await pool.query(
-      `SELECT COUNT(*) as cnt FROM position_auditors WHERE position_id = ? AND user_id = ?`,
-      [record[0].position_id, req.user.id]
-    );
-
     const [adminCheck] = await pool.query(
       `SELECT COUNT(*) as cnt FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = ? AND r.code = 'admin'`,
       [req.user.id]
     );
+    const isAdmin = adminCheck[0].cnt > 0;
 
-    if (scopeCheck[0][0].cnt === 0 && adminCheck[0].cnt === 0) {
-      return res.status(403).json({ error: '无权审核此岗位的记录' });
+    // 临时岗位打卡记录：任何审核员都能审核，管理员默认能审核
+    const [isTempPos] = await pool.query(
+      `SELECT COUNT(*) as cnt FROM positions WHERE id = ? AND name = '临时岗位'`,
+      [record[0].position_id]
+    );
+    const isTempPosition = isTempPos[0].cnt > 0;
+
+    if (!isAdmin && !isTempPosition) {
+      // 非管理员且非临时岗位：检查数据权限
+      const [scopeCheck] = await pool.query(
+        `SELECT COUNT(*) as cnt FROM position_auditors WHERE position_id = ? AND user_id = ?`,
+        [record[0].position_id, req.user.id]
+      );
+      if (scopeCheck[0].cnt === 0) {
+        return res.status(403).json({ error: '无权审核此岗位的记录' });
+      }
     }
 
     // 如果需要分配岗位，验证审核员有权操作该岗位
