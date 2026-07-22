@@ -363,6 +363,12 @@ jobs:
             mkdir -p /opt/food-purchase/backend/uploads/pdfs
             chmod 755 /opt/food-purchase/backend/uploads/pdfs
 
+            # 数据库迁移：执行所有迁移SQL文件（幂等，可重复执行）
+            for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
+              echo "Running migration: $sql_file"
+              mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
+            done
+
             sudo systemctl restart food-purchase-backend
             sleep 3
             curl -s http://127.0.0.1:3001/api/health || exit 1
