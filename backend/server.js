@@ -69,6 +69,32 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+// 临时调试接口：查看角色权限数据（用于排查菜单不显示问题）
+app.get('/api/debug/role-perms', async (req, res) => {
+  try {
+    const pool = require('./db');
+    const [roles] = await pool.query('SELECT id, code, name FROM roles ORDER BY sort_order');
+    const [permissions] = await pool.query('SELECT id, code, name, type, path, module_id FROM permissions WHERE status = 1 ORDER BY code');
+    const [rolePerms] = await pool.query('SELECT rp.role_id, rp.permission_id, r.code as role_code, p.code as perm_code FROM role_permissions rp JOIN roles r ON rp.role_id = r.id JOIN permissions p ON rp.permission_id = p.id ORDER BY r.code, p.code');
+    const [users] = await pool.query('SELECT id, username, name, role, role_id FROM users WHERE username IN ("admin", "viewer", "finance", "boss")');
+    res.json({
+      role_count: roles.length,
+      permission_count: permissions.length,
+      role_permission_count: rolePerms.length,
+      roles,
+      permissions: permissions.filter(p => p.type === 'menu').map(p => ({ code: p.code, name: p.name, path: p.path })),
+      role_permissions_summary: rolePerms.reduce((acc, rp) => {
+        if (!acc[rp.role_code]) acc[rp.role_code] = [];
+        acc[rp.role_code].push(rp.perm_code);
+        return acc;
+      }, {}),
+      users,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));
