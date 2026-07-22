@@ -239,6 +239,30 @@ export default function MobileHome() {
       color: 'from-green-500 to-green-600',
       path: '/m/monthly',
     },
+    hasPermission('menu:m-temp-audit') && {
+      key: 'temp-audit',
+      title: '打卡审核',
+      desc: '审核临时工打卡记录',
+      icon: '✅',
+      color: 'from-cyan-500 to-blue-500',
+      path: '/m/temp-audit',
+    },
+    hasPermission('menu:m-temp-assessment') && {
+      key: 'temp-assessment',
+      title: '月底考核',
+      desc: '考核结算比例',
+      icon: '📝',
+      color: 'from-teal-500 to-cyan-500',
+      path: '/m/temp-assessment',
+    },
+    hasPermission('menu:m-temp-stats') && {
+      key: 'temp-stats',
+      title: '统计看板',
+      desc: '打卡数据统计',
+      icon: '📈',
+      color: 'from-indigo-500 to-purple-500',
+      path: '/m/temp-stats',
+    },
   ].filter(Boolean) as typeof menus;
 
   return (

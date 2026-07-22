@@ -244,14 +244,22 @@ INSERT IGNORE INTO permissions (id, module_id, code, name, type, parent_id, sort
   (UUID(), 'temp-worker', 'action:temp-assessment:manage', '管理考核', 'button', NULL, 4, 1),
   (UUID(), 'temp-worker', 'action:temp-stats:view', '查看统计', 'button', NULL, 5, 1);
 
--- 为 temp_chairman 分配只读统计权限
+-- 移动端菜单权限
+INSERT IGNORE INTO permissions (id, module_id, code, name, type, parent_id, path, icon, sort_order, status) VALUES
+  (UUID(), 'temp-worker', 'menu:m-temp-audit', '手机-打卡审核', 'menu', NULL, '/m/temp-audit', 'Smartphone', 200, 1),
+  (UUID(), 'temp-worker', 'menu:m-temp-assessment', '手机-月底考核', 'menu', NULL, '/m/temp-assessment', 'Smartphone', 201, 1),
+  (UUID(), 'temp-worker', 'menu:m-temp-stats', '手机-统计看板', 'menu', NULL, '/m/temp-stats', 'Smartphone', 202, 1);
+
+-- 为 temp_chairman 分配只读统计权限（统计看板+月度分析）
 INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT UUID(), r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
 WHERE r.code = 'temp_chairman'
-  AND p.module_id = 'temp-worker'
-  AND p.code IN ('menu:temp-stats', 'action:temp-stats:view');
+  AND (
+    (p.module_id = 'temp-worker' AND p.code IN ('menu:temp-stats', 'action:temp-stats:view'))
+    OR p.code IN ('menu:m-temp-stats', 'menu:m-monthly', 'menu:monthly')
+  );
 
 -- 为 temp_auditor 分配移动端审核相关 API 权限（PC端不强制）
 INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
@@ -262,6 +270,14 @@ WHERE r.code = 'temp_auditor'
   AND p.module_id = 'temp-worker'
   AND p.code IN ('menu:temp-assessments');
 
+-- 为 temp_auditor 分配移动端审核权限
+INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
+SELECT UUID(), r.id, p.id
+FROM roles r
+CROSS JOIN permissions p
+WHERE r.code = 'temp_auditor'
+  AND p.code IN ('menu:m-temp-audit', 'menu:m-temp-assessment', 'menu:m-temp-stats');
+
 -- 为 admin 分配全部外请模块权限
 INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT UUID(), r.id, p.id
@@ -269,6 +285,14 @@ FROM roles r
 CROSS JOIN permissions p
 WHERE r.code = 'admin'
   AND p.module_id = 'temp-worker';
+
+-- 为 admin 分配全部移动端外请模块权限
+INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
+SELECT UUID(), r.id, p.id
+FROM roles r
+CROSS JOIN permissions p
+WHERE r.code = 'admin'
+  AND p.code IN ('menu:m-temp-audit', 'menu:m-temp-assessment', 'menu:m-temp-stats');
 
 -- ================================================
 -- 10. 验证
