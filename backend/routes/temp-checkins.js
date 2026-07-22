@@ -36,14 +36,42 @@ router.post('/', requireTempAuth, async (req, res) => {
     }
 
     // 查岗位信息
-    const [posRows] = await pool.query(`
-      SELECT p.*, d.name as department_name
-      FROM positions p
-      JOIN departments d ON p.department_id = d.id
-      WHERE p.id = ? AND p.status = 1
-    `, [position_id]);
+    let posRows;
+    if (position_id === 'temp-position-default') {
+      // 虚拟临时岗位：从数据库查找"临时岗位"记录，没有则用兜底值
+      const [tempRows] = await pool.query(
+        `SELECT p.*, d.name as department_name
+         FROM positions p
+         JOIN departments d ON p.department_id = d.id
+         WHERE p.name = '临时岗位' AND p.status = 1 LIMIT 1`
+      );
+      if (tempRows.length > 0) {
+        posRows = tempRows;
+      } else {
+        // 兜底：使用内存中的虚拟岗位
+        const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY id LIMIT 1`);
+        const fallbackDept = deptRows.length > 0 ? deptRows[0] : { id: '', name: '默认部门' };
+        posRows = [{
+          id: 'temp-position-default',
+          department_id: fallbackDept.id,
+          name: '临时岗位',
+          type: 'external',
+          pay_type: 'per_time',
+          rate: 0,
+          need_assessment: 0,
+          department_name: fallbackDept.name,
+        }];
+      }
+    } else {
+      [posRows] = await pool.query(`
+        SELECT p.*, d.name as department_name
+        FROM positions p
+        JOIN departments d ON p.department_id = d.id
+        WHERE p.id = ? AND p.status = 1
+      `, [position_id]);
+    }
 
-    if (posRows.length === 0) {
+    if (!posRows || posRows.length === 0) {
       return res.status(400).json({ error: '岗位不存在或已禁用' });
     }
 
