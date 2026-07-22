@@ -67,25 +67,40 @@ async function requireAuth(req, res, next) {
     req.user = user;
 
     // 获取用户权限列表（支持多角色合并）
-    const [roleRows] = await pool.query(`
-      SELECT DISTINCT role_id FROM (
-        SELECT role_id FROM user_roles WHERE user_id = ?
-        UNION
-        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
-      ) t
-    `, [userId, userId]);
+    let roleRows = [];
+    try {
+      [roleRows] = await pool.query(`
+        SELECT DISTINCT role_id FROM (
+          SELECT role_id FROM user_roles WHERE user_id = ?
+          UNION
+          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+        ) t
+      `, [userId, userId]);
+    } catch (e) {
+      try {
+        [roleRows] = await pool.query('SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL', [userId]);
+      } catch (e2) {
+        req.user.permissions = [];
+        req.user.permissionCodes = new Set();
+        return next();
+      }
+    }
 
     let permRows = [];
     if (roleRows.length > 0) {
       const roleIds = roleRows.map(r => r.role_id);
       const placeholders = roleIds.map(() => '?').join(',');
-      [permRows] = await pool.query(`
-        SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id
-        FROM role_permissions rp
-        JOIN permissions p ON rp.permission_id = p.id
-        WHERE rp.role_id IN (${placeholders}) AND p.status = 1
-        ORDER BY p.sort_order ASC
-      `, roleIds);
+      try {
+        [permRows] = await pool.query(`
+          SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id
+          FROM role_permissions rp
+          JOIN permissions p ON rp.permission_id = p.id
+          WHERE rp.role_id IN (${placeholders}) AND p.status = 1
+          ORDER BY p.sort_order ASC
+        `, roleIds);
+      } catch (e) {
+        permRows = [];
+      }
     }
 
     req.user.permissions = permRows;

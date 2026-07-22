@@ -15,36 +15,48 @@ async function getWecomConfig() {
  * 同时查 user_roles 多角色表 + users.role_id 单角色（兼容旧数据）
  */
 async function getUserMergedPermissions(userId) {
-  // 查用户的所有角色ID（多角色表 + 单角色兼容）
-  const [roleRows] = await pool.query(`
-    SELECT DISTINCT role_id FROM (
-      SELECT role_id FROM user_roles WHERE user_id = ?
-      UNION
-      SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
-    ) t
-  `, [userId, userId]);
+  let roleRows = [];
+  try {
+    [roleRows] = await pool.query(`
+      SELECT DISTINCT role_id FROM (
+        SELECT role_id FROM user_roles WHERE user_id = ?
+        UNION
+        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+      ) t
+    `, [userId, userId]);
+  } catch (e) {
+    try {
+      [roleRows] = await pool.query('SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL', [userId]);
+    } catch (e2) {
+      return { modules: [], codes: [], menuPaths: [], roleIds: [] };
+    }
+  }
 
   if (roleRows.length === 0) {
-    return { modules: {}, codes: [], menuPaths: [], roleIds: [] };
+    return { modules: [], codes: [], menuPaths: [], roleIds: [] };
   }
 
   const roleIds = roleRows.map(r => r.role_id);
   const placeholders = roleIds.map(() => '?').join(',');
 
-  // 查这些角色的所有权限（去重）
-  const [permRows] = await pool.query(`
-    SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
-    FROM role_permissions rp
-    JOIN permissions p ON rp.permission_id = p.id
-    JOIN modules m ON p.module_id = m.id
-    WHERE rp.role_id IN (${placeholders}) AND p.status = 1 AND m.status = 1
-    ORDER BY m.sort_order ASC, p.sort_order ASC
-  `, roleIds);
+  let permRows = [];
+  try {
+    [permRows] = await pool.query(`
+      SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
+      FROM role_permissions rp
+      JOIN permissions p ON rp.permission_id = p.id
+      JOIN modules m ON p.module_id = m.id
+      WHERE rp.role_id IN (${placeholders}) AND p.status = 1 AND m.status = 1
+      ORDER BY m.sort_order ASC, p.sort_order ASC
+    `, roleIds);
+  } catch (e) {
+    return { modules: [], codes: [], menuPaths: [], roleIds: [] };
+  }
 
   const modules = {};
   const seenCodes = new Set();
   permRows.forEach(perm => {
-    if (seenCodes.has(perm.code)) return; // 去重
+    if (seenCodes.has(perm.code)) return;
     seenCodes.add(perm.code);
     if (!modules[perm.module_code]) {
       modules[perm.module_code] = { menus: [], actions: [] };
@@ -76,16 +88,27 @@ async function getUserMergedPermissions(userId) {
  * 获取用户所有角色编码列表
  */
 async function getUserRoleCodes(userId) {
-  const [rows] = await pool.query(`
-    SELECT DISTINCT r.code
-    FROM (
-      SELECT role_id FROM user_roles WHERE user_id = ?
-      UNION
-      SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
-    ) t
-    JOIN roles r ON r.id = t.role_id
-  `, [userId, userId]);
-  return rows.map(r => r.code);
+  try {
+    const [rows] = await pool.query(`
+      SELECT DISTINCT r.code
+      FROM (
+        SELECT role_id FROM user_roles WHERE user_id = ?
+        UNION
+        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+      ) t
+      JOIN roles r ON r.id = t.role_id
+    `, [userId, userId]);
+    return rows.map(r => r.code);
+  } catch (e) {
+    try {
+      const [rows] = await pool.query(`
+        SELECT r.code FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?
+      `, [userId]);
+      return rows.map(r => r.code);
+    } catch (e2) {
+      return [];
+    }
+  }
 }
 
 router.post('/login', async (req, res) => {
