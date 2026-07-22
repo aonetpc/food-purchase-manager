@@ -43,7 +43,7 @@ async function getUserMergedPermissions(userId) {
   let moduleInfoMap = {};
   try {
     [permRows] = await pool.query(`
-      SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code, m.name as module_name, m.icon as module_icon
+      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code, m.name as module_name, m.icon as module_icon, m.sort_order as module_sort_order, p.sort_order as perm_sort_order
       FROM role_permissions rp
       JOIN permissions p ON rp.permission_id = p.id
       JOIN modules m ON p.module_id = m.id
@@ -56,10 +56,12 @@ async function getUserMergedPermissions(userId) {
           code: perm.module_code,
           name: perm.module_name,
           icon: perm.module_icon,
+          sort_order: perm.module_sort_order,
         };
       }
     });
   } catch (e) {
+    console.error('getUserMergedPermissions perm query error:', e);
     return { modules: [], codes: [], menuPaths: [], roleIds: [] };
   }
 

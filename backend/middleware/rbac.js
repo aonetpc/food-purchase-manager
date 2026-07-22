@@ -92,7 +92,7 @@ async function requireAuth(req, res, next) {
       const placeholders = roleIds.map(() => '?').join(',');
       try {
         [permRows] = await pool.query(`
-          SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id
+          SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, p.sort_order
           FROM role_permissions rp
           JOIN permissions p ON rp.permission_id = p.id
           WHERE rp.role_id IN (${placeholders}) AND p.status = 1
