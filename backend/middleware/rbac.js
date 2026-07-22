@@ -66,14 +66,27 @@ async function requireAuth(req, res, next) {
     // 将用户信息挂载到req对象
     req.user = user;
 
-    // 获取用户权限列表
-    const [permRows] = await pool.query(`
-      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id
-      FROM role_permissions rp
-      JOIN permissions p ON rp.permission_id = p.id
-      WHERE rp.role_id = ? AND p.status = 1
-      ORDER BY p.sort_order ASC
-    `, [user.role_id]);
+    // 获取用户权限列表（支持多角色合并）
+    const [roleRows] = await pool.query(`
+      SELECT DISTINCT role_id FROM (
+        SELECT role_id FROM user_roles WHERE user_id = ?
+        UNION
+        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+      ) t
+    `, [userId, userId]);
+
+    let permRows = [];
+    if (roleRows.length > 0) {
+      const roleIds = roleRows.map(r => r.role_id);
+      const placeholders = roleIds.map(() => '?').join(',');
+      [permRows] = await pool.query(`
+        SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id
+        FROM role_permissions rp
+        JOIN permissions p ON rp.permission_id = p.id
+        WHERE rp.role_id IN (${placeholders}) AND p.status = 1
+        ORDER BY p.sort_order ASC
+      `, roleIds);
+    }
 
     req.user.permissions = permRows;
     req.user.permissionCodes = new Set(permRows.map(p => p.code));
@@ -97,11 +110,34 @@ function requireRole(...roles) {
       return res.status(401).json({ error: '未登录' });
     }
 
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: '无权限访问' });
+    // 检查单角色（兼容旧字段）和多角色（user_roles 表）
+    let userRoleCodes = [];
+    if (req.user.role) {
+      userRoleCodes.push(req.user.role);
+    }
+    // 从 permissions 中已合并了多角色信息，但角色码需要额外查询
+    // 这里用已有信息：如果单角色匹配则通过
+    if (roles.includes(req.user.role)) {
+      return next();
     }
 
-    next();
+    // 查多角色
+    try {
+      const [roleCodeRows] = await pool.query(`
+        SELECT DISTINCT r.code
+        FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id = ?
+      `, [req.user.id]);
+      const multiRoleCodes = roleCodeRows.map(r => r.code);
+      if (roles.some(r => multiRoleCodes.includes(r))) {
+        return next();
+      }
+    } catch (e) {
+      // 查询失败，忽略
+    }
+
+    return res.status(403).json({ error: '无权限访问' });
   };
 }
 

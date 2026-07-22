@@ -10,6 +10,84 @@ async function getWecomConfig() {
   return rows.length > 0 ? rows[0] : null;
 }
 
+/**
+ * 获取用户所有角色的合并权限（支持多角色）
+ * 同时查 user_roles 多角色表 + users.role_id 单角色（兼容旧数据）
+ */
+async function getUserMergedPermissions(userId) {
+  // 查用户的所有角色ID（多角色表 + 单角色兼容）
+  const [roleRows] = await pool.query(`
+    SELECT DISTINCT role_id FROM (
+      SELECT role_id FROM user_roles WHERE user_id = ?
+      UNION
+      SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+    ) t
+  `, [userId, userId]);
+
+  if (roleRows.length === 0) {
+    return { modules: {}, codes: [], menuPaths: [], roleIds: [] };
+  }
+
+  const roleIds = roleRows.map(r => r.role_id);
+  const placeholders = roleIds.map(() => '?').join(',');
+
+  // 查这些角色的所有权限（去重）
+  const [permRows] = await pool.query(`
+    SELECT DISTINCT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
+    FROM role_permissions rp
+    JOIN permissions p ON rp.permission_id = p.id
+    JOIN modules m ON p.module_id = m.id
+    WHERE rp.role_id IN (${placeholders}) AND p.status = 1 AND m.status = 1
+    ORDER BY m.sort_order ASC, p.sort_order ASC
+  `, roleIds);
+
+  const modules = {};
+  const seenCodes = new Set();
+  permRows.forEach(perm => {
+    if (seenCodes.has(perm.code)) return; // 去重
+    seenCodes.add(perm.code);
+    if (!modules[perm.module_code]) {
+      modules[perm.module_code] = { menus: [], actions: [] };
+    }
+    if (perm.type === 'menu') {
+      modules[perm.module_code].menus.push({
+        code: perm.code,
+        name: perm.name,
+        path: perm.path,
+        icon: perm.icon,
+      });
+    } else {
+      modules[perm.module_code].actions.push({
+        code: perm.code,
+        name: perm.name,
+      });
+    }
+  });
+
+  return {
+    modules: Object.values(modules),
+    codes: permRows.map(p => p.code).filter((v, i, a) => a.indexOf(v) === i),
+    menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path).filter((v, i, a) => a.indexOf(v) === i),
+    roleIds,
+  };
+}
+
+/**
+ * 获取用户所有角色编码列表
+ */
+async function getUserRoleCodes(userId) {
+  const [rows] = await pool.query(`
+    SELECT DISTINCT r.code
+    FROM (
+      SELECT role_id FROM user_roles WHERE user_id = ?
+      UNION
+      SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+    ) t
+    JOIN roles r ON r.id = t.role_id
+  `, [userId, userId]);
+  return rows.map(r => r.code);
+}
+
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -53,34 +131,8 @@ router.post('/login', async (req, res) => {
       login_type: 'password'
     }, req);
 
-    const [permRows] = await pool.query(`
-      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
-      FROM role_permissions rp
-      JOIN permissions p ON rp.permission_id = p.id
-      JOIN modules m ON p.module_id = m.id
-      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
-      ORDER BY m.sort_order ASC, p.sort_order ASC
-    `, [user.role_id]);
-
-    const modules = {};
-    permRows.forEach(perm => {
-      if (!modules[perm.module_code]) {
-        modules[perm.module_code] = { menus: [], actions: [] };
-      }
-      if (perm.type === 'menu') {
-        modules[perm.module_code].menus.push({
-          code: perm.code,
-          name: perm.name,
-          path: perm.path,
-          icon: perm.icon,
-        });
-      } else {
-        modules[perm.module_code].actions.push({
-          code: perm.code,
-          name: perm.name,
-        });
-      }
-    });
+    const mergedPerms = await getUserMergedPermissions(user.id);
+    const roleCodes = await getUserRoleCodes(user.id);
 
     res.json({
       id: user.id,
@@ -88,15 +140,16 @@ router.post('/login', async (req, res) => {
       name: user.name,
       role: user.role,
       role_id: user.role_id,
+      roles: roleCodes,
       wecom_userid: user.wecom_userid,
       phone: user.phone,
       department_id: user.department_id,
       status: user.status,
       token: user.id,
       permissions: {
-        modules: Object.values(modules),
-        codes: permRows.map(p => p.code),
-        menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+        modules: mergedPerms.modules,
+        codes: mergedPerms.codes,
+        menuPaths: mergedPerms.menuPaths,
       },
     });
   } catch (err) {
@@ -110,7 +163,30 @@ router.get('/users', requireAuth, requireRole('admin'), async (req, res) => {
     const [rows] = await pool.query(
       'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid, created_at, last_login_at FROM users ORDER BY created_at ASC'
     );
-    res.json(rows);
+
+    // 查每个用户的多角色
+    const userIds = rows.map(r => r.id);
+    let roleMap = {};
+    if (userIds.length > 0) {
+      const placeholders = userIds.map(() => '?').join(',');
+      const [userRoleRows] = await pool.query(`
+        SELECT ur.user_id, r.id AS role_id, r.code AS role_code, r.name AS role_name
+        FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id IN (${placeholders})
+      `, userIds);
+      userRoleRows.forEach(ur => {
+        if (!roleMap[ur.user_id]) roleMap[ur.user_id] = [];
+        roleMap[ur.user_id].push({ id: ur.role_id, code: ur.role_code, name: ur.role_name });
+      });
+    }
+
+    const result = rows.map(r => ({
+      ...r,
+      roles: roleMap[r.id] || (r.role_id ? [{ id: r.role_id, code: r.role, name: r.role }] : []),
+    }));
+
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -194,7 +270,7 @@ router.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
       return res.status(400).json({ error: '用户名、姓名、角色为必填项' });
     }
 
-    const validRoles = ['admin', 'finance', 'boss', 'viewer'];
+    const validRoles = ['admin', 'finance', 'boss', 'viewer', 'temp_auditor', 'temp_chairman'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: '无效的角色' });
     }
@@ -251,7 +327,7 @@ router.put('/users/:id', requireAuth, requireRole('admin'), async (req, res) => 
       return res.status(404).json({ error: '用户不存在' });
     }
 
-    const validRoles = ['admin', 'finance', 'boss', 'viewer'];
+    const validRoles = ['admin', 'finance', 'boss', 'viewer', 'temp_auditor', 'temp_chairman'];
     if (role && !validRoles.includes(role)) {
       return res.status(400).json({ error: '无效的角色' });
     }
@@ -482,35 +558,9 @@ router.post('/wecom-login', async (req, res) => {
       wecom_userid: wecomUserId
     }, req);
 
-    // 4. 获取用户权限
-    const [permRows] = await pool.query(`
-      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
-      FROM role_permissions rp
-      JOIN permissions p ON rp.permission_id = p.id
-      JOIN modules m ON p.module_id = m.id
-      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
-      ORDER BY m.sort_order ASC, p.sort_order ASC
-    `, [user.role_id]);
-
-    const modules = {};
-    permRows.forEach(perm => {
-      if (!modules[perm.module_code]) {
-        modules[perm.module_code] = { menus: [], actions: [] };
-      }
-      if (perm.type === 'menu') {
-        modules[perm.module_code].menus.push({
-          code: perm.code,
-          name: perm.name,
-          path: perm.path,
-          icon: perm.icon,
-        });
-      } else {
-        modules[perm.module_code].actions.push({
-          code: perm.code,
-          name: perm.name,
-        });
-      }
-    });
+    // 4. 获取用户权限（多角色合并）
+    const mergedPerms = await getUserMergedPermissions(user.id);
+    const roleCodes = await getUserRoleCodes(user.id);
 
     res.json({
       id: user.id,
@@ -518,15 +568,16 @@ router.post('/wecom-login', async (req, res) => {
       name: user.name,
       role: user.role,
       role_id: user.role_id,
+      roles: roleCodes,
       wecom_userid: user.wecom_userid,
       phone: user.phone,
       department_id: user.department_id,
       status: user.status,
       token: user.id,
       permissions: {
-        modules: Object.values(modules),
-        codes: permRows.map(p => p.code),
-        menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+        modules: mergedPerms.modules,
+        codes: mergedPerms.codes,
+        menuPaths: mergedPerms.menuPaths,
       },
     });
   } catch (err) {
@@ -747,35 +798,9 @@ router.post('/wecom-callback', async (req, res) => {
       is_new_user: false
     }, req);
 
-    // 获取用户权限
-    const [permRows] = await pool.query(`
-      SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.module_id, m.code as module_code
-      FROM role_permissions rp
-      JOIN permissions p ON rp.permission_id = p.id
-      JOIN modules m ON p.module_id = m.id
-      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
-      ORDER BY m.sort_order ASC, p.sort_order ASC
-    `, [user.role_id]);
-
-    const modules = {};
-    permRows.forEach(perm => {
-      if (!modules[perm.module_code]) {
-        modules[perm.module_code] = { menus: [], actions: [] };
-      }
-      if (perm.type === 'menu') {
-        modules[perm.module_code].menus.push({
-          code: perm.code,
-          name: perm.name,
-          path: perm.path,
-          icon: perm.icon,
-        });
-      } else {
-        modules[perm.module_code].actions.push({
-          code: perm.code,
-          name: perm.name,
-        });
-      }
-    });
+    // 获取用户权限（多角色合并）
+    const mergedPerms = await getUserMergedPermissions(user.id);
+    const roleCodes = await getUserRoleCodes(user.id);
 
     res.json({
       success: true,
@@ -785,15 +810,16 @@ router.post('/wecom-callback', async (req, res) => {
         name: user.name,
         role: user.role,
         role_id: user.role_id,
+        roles: roleCodes,
         wecom_userid: user.wecom_userid,
         phone: user.phone,
         department_id: user.department_id,
         status: user.status,
         token: user.id,
         permissions: {
-          modules: Object.values(modules),
-          codes: permRows.map(p => p.code),
-          menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+          modules: mergedPerms.modules,
+          codes: mergedPerms.codes,
+          menuPaths: mergedPerms.menuPaths,
         },
       },
       isNewUser: false,
@@ -809,7 +835,7 @@ router.put('/users/:id/role', requireAuth, requireRole('admin'), async (req, res
   try {
     const { id } = req.params;
     const { role } = req.body;
-    const validRoles = ['admin', 'finance', 'boss', 'viewer'];
+    const validRoles = ['admin', 'finance', 'boss', 'viewer', 'temp_auditor', 'temp_chairman'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: '无效的角色' });
     }

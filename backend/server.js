@@ -20,6 +20,7 @@ const tempStatsRouter = require('./routes/temp-stats');
 const tempWorkersRouter = require('./routes/temp-workers');
 
 const { requireAuth, getUserPermissions, getRoles, getPermissions, getModules, requireRole } = require('./middleware/rbac');
+const rolesRouter = require('./routes/roles');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -35,6 +36,9 @@ app.get('/api/permissions', requireAuth, getUserPermissions);
 app.get('/api/permissions/list', requireAuth, requireRole('admin'), getPermissions);
 app.get('/api/roles', requireAuth, requireRole('admin'), getRoles);
 app.get('/api/modules', requireAuth, getModules);
+
+// 角色管理接口（管理员专用）
+app.use('/api/roles', rolesRouter);
 
 // 业务接口（需登录）
 app.use('/api/categories', requireAuth, categoriesRouter);

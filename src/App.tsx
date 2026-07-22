@@ -11,6 +11,7 @@ import IngredientManager from '@/pages/IngredientManager';
 import DepartmentManager from '@/pages/DepartmentManager';
 import Profile from '@/pages/Profile';
 import UserManager from '@/pages/UserManager';
+import RoleManager from '@/pages/RoleManager';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ReimbursementManager from '@/pages/ReimbursementManager';
 import WecomManager from '@/pages/WecomManager';
@@ -97,6 +98,11 @@ export default function App() {
           <Route path="users" element={
             <ProtectedRoute requiredPermission="action:user:manage">
               <UserManager />
+            </ProtectedRoute>
+          } />
+          <Route path="roles" element={
+            <ProtectedRoute requiredRole="admin">
+              <RoleManager />
             </ProtectedRoute>
           } />
           <Route path="reimbursement" element={

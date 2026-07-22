@@ -7,8 +7,9 @@ interface UserItem {
   id: string;
   username: string;
   name: string;
-  role: 'admin' | 'finance' | 'boss' | 'viewer';
+  role: 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman';
   role_id: string;
+  roles?: { id: string; code: string; name: string }[];
   status: number;
   phone?: string;
   department_id?: string;
@@ -22,6 +23,8 @@ const ROLE_LABELS: Record<string, { label: string; color: string }> = {
   finance: { label: '财务', color: 'bg-purple-100 text-purple-700' },
   boss: { label: '董事长', color: 'bg-amber-100 text-amber-700' },
   viewer: { label: '普通员工', color: 'bg-gray-100 text-gray-700' },
+  temp_auditor: { label: '外请审核员', color: 'bg-blue-100 text-blue-700' },
+  temp_chairman: { label: '外请董事长', color: 'bg-teal-100 text-teal-700' },
 };
 
 const ROLE_OPTIONS = [
@@ -29,6 +32,8 @@ const ROLE_OPTIONS = [
   { value: 'finance', label: '财务' },
   { value: 'boss', label: '董事长' },
   { value: 'viewer', label: '普通员工' },
+  { value: 'temp_auditor', label: '外请审核员' },
+  { value: 'temp_chairman', label: '外请董事长' },
 ];
 
 export default function UserManager() {
@@ -59,6 +64,11 @@ export default function UserManager() {
     password: '',
   });
   const [formMessage, setFormMessage] = useState('');
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [roleModalUser, setRoleModalUser] = useState<UserItem | null>(null);
+  const [allRoles, setAllRoles] = useState<{ id: string; code: string; name: string; is_system: number }[]>([]);
+  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
+  const [roleLoading, setRoleLoading] = useState(false);
 
   useEffect(() => {
     fetchUsers();
@@ -81,12 +91,40 @@ export default function UserManager() {
     u.name.toLowerCase().includes(searchText.toLowerCase())
   );
 
-  const handleRoleChange = async (userId: string, newRole: string) => {
+  const openRoleModal = async (userItem: UserItem) => {
+    setRoleModalUser(userItem);
+    setShowRoleModal(true);
+    setRoleLoading(true);
     try {
-      await api.put(`/auth/users/${userId}`, { role: newRole });
-      await fetchUsers();
+      const roles = await api.get<any[]>('/roles');
+      setAllRoles(roles);
+      // 当前已分配的角色ID
+      const currentRoleIds = (userItem.roles && userItem.roles.length > 0 ? userItem.roles : [])
+        .map(r => r.id);
+      // 也加入 users.role_id 如果不在 roles 中
+      if (userItem.role_id && !currentRoleIds.includes(userItem.role_id)) {
+        currentRoleIds.push(userItem.role_id);
+      }
+      setSelectedRoleIds(currentRoleIds);
     } catch (err: any) {
-      alert('更新失败：' + err.message);
+      alert('获取角色列表失败：' + err.message);
+    } finally {
+      setRoleLoading(false);
+    }
+  };
+
+  const handleSaveRoles = async () => {
+    if (!roleModalUser) return;
+    setRoleLoading(true);
+    try {
+      await api.put(`/roles/user/${roleModalUser.id}`, { roleIds: selectedRoleIds });
+      await fetchUsers();
+      setShowRoleModal(false);
+      setRoleModalUser(null);
+    } catch (err: any) {
+      alert('分配角色失败：' + err.message);
+    } finally {
+      setRoleLoading(false);
     }
   };
 
@@ -312,21 +350,21 @@ export default function UserManager() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-800">{userItem.name}</td>
                       <td className="px-4 py-3">
-                        {canManage(userItem) ? (
-                          <select
-                            value={userItem.role}
-                            onChange={(e) => handleRoleChange(userItem.id, e.target.value)}
-                            className={`px-2 py-1 text-xs rounded-full border-0 outline-none cursor-pointer ${ROLE_LABELS[userItem.role]?.color || 'bg-gray-100 text-gray-700'}`}
-                          >
-                            {ROLE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className={`px-2 py-1 text-xs rounded-full ${ROLE_LABELS[userItem.role]?.color || 'bg-gray-100 text-gray-700'}`}>
-                            {ROLE_LABELS[userItem.role]?.label || userItem.role}
-                          </span>
-                        )}
+                        <div className="flex flex-wrap gap-1">
+                          {(userItem.roles && userItem.roles.length > 0 ? userItem.roles : [{ code: userItem.role, name: ROLE_LABELS[userItem.role]?.label || userItem.role }]).map((r) => (
+                            <span key={r.code} className={`px-2 py-0.5 text-xs rounded-full ${ROLE_LABELS[r.code]?.color || 'bg-gray-100 text-gray-700'}`}>
+                              {ROLE_LABELS[r.code]?.label || r.code}
+                            </span>
+                          ))}
+                          {canManage(userItem) && (
+                            <button
+                              onClick={() => openRoleModal(userItem)}
+                              className="px-2 py-0.5 text-xs text-blue-600 hover:text-blue-700 border border-blue-300 rounded-full"
+                            >
+                              分配
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         {userItem.status === 1 ? (
@@ -685,6 +723,67 @@ export default function UserManager() {
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
                 {bindLoading ? '绑定中...' : '确认绑定'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 分配角色弹窗 */}
+      {showRoleModal && roleModalUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-800">分配角色 - {roleModalUser.name}</h3>
+              <button onClick={() => { setShowRoleModal(false); setRoleModalUser(null); }} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              {roleLoading ? (
+                <div className="text-center py-4 text-gray-500">加载中...</div>
+              ) : (
+                allRoles.map((role) => (
+                  <label key={role.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedRoleIds.includes(role.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRoleIds([...selectedRoleIds, role.id]);
+                        } else {
+                          setSelectedRoleIds(selectedRoleIds.filter(id => id !== role.id));
+                        }
+                      }}
+                      className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-gray-800">{role.name}</span>
+                      {role.is_system === 1 && (
+                        <span className="ml-2 px-1.5 py-0.5 bg-blue-50 text-blue-600 text-xs rounded">内置</span>
+                      )}
+                    </div>
+                    <span className={`px-2 py-0.5 text-xs rounded-full ${ROLE_LABELS[role.code]?.color || 'bg-gray-100 text-gray-700'}`}>
+                      {ROLE_LABELS[role.code]?.label || role.code}
+                    </span>
+                  </label>
+                ))
+              )}
+              <p className="text-xs text-gray-400 mt-2">提示：用户可同时拥有多个角色，权限取并集</p>
+            </div>
+            <div className="flex gap-3 p-4 border-t">
+              <button
+                onClick={() => { setShowRoleModal(false); setRoleModalUser(null); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveRoles}
+                disabled={roleLoading}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {roleLoading ? '保存中...' : '保存'}
               </button>
             </div>
           </div>

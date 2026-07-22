@@ -26,6 +26,7 @@ import {
   Target,
   UserCheck,
   ShieldCheck,
+  Shield,
 } from 'lucide-react';
 import { useAuthStore, type MenuItem } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
@@ -52,6 +53,8 @@ const iconMap: Record<string, any> = {
   Target,
   UserCheck,
   ShieldCheck,
+  Shield,
+  Users,
 };
 
 export default function Layout() {
@@ -113,6 +116,7 @@ export default function Layout() {
     { code: 'menu:purchase-entry', name: '采购录入', path: '/purchase-entry', icon: 'ClipboardList' },
     { code: 'menu:reimbursement', name: '报销管理', path: '/reimbursement', icon: 'Receipt' },
     { code: 'menu:users', name: '用户管理', path: '/users', icon: 'Users' },
+    { code: 'menu:roles', name: '角色管理', path: '/roles', icon: 'Shield' },
     { code: 'menu:categories', name: '分类管理', path: '/categories', icon: 'Tags' },
     { code: 'menu:ingredient-manager', name: '食材管理', path: '/ingredient-manager', icon: 'Package' },
     { code: 'menu:departments', name: '部门管理', path: '/departments', icon: 'Building2' },
@@ -133,7 +137,7 @@ export default function Layout() {
   const adminNavItems = useMemo(() => {
     const menus = getUserMenus();
     return menus.filter(m => 
-      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
+      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users', '/roles', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
     );
   }, [getUserMenus]);
 
@@ -151,8 +155,8 @@ export default function Layout() {
       userMenus = [...pcMenus, ...missingMenus];
     }
     
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
-    
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
+
     return userMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
       const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
