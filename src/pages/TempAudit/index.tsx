@@ -45,6 +45,7 @@ interface Position {
   type: string;
   pay_type: string;
   rate: number;
+  status?: number;
 }
 
 const ADD_REASON_OPTIONS = [
@@ -157,7 +158,17 @@ export default function TempAudit() {
   };
 
   const isTempPosition = (record: CheckinRecord) => {
-    return record.position_name === '临时岗位';
+    return record.position_name?.trim() === '临时岗位';
+  };
+
+  const formatCheckinDate = (dateStr: string) => {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
   const handleOpenAddRecord = () => {
@@ -405,7 +416,7 @@ export default function TempAudit() {
                     <td className="py-4 px-4">
                       <div className="flex items-center gap-1 text-sm text-gray-700">
                         <Calendar size={14} className="text-gray-400" />
-                        {record.checkin_date}
+                        {formatCheckinDate(record.checkin_date)}
                       </div>
                     </td>
                     <td className="py-4 px-4">
@@ -500,7 +511,7 @@ export default function TempAudit() {
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div>
                   <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{selectedRecord.checkin_date}</span>
+                  <span className="text-gray-700">{formatCheckinDate(selectedRecord.checkin_date)}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">工时：</span>
@@ -525,7 +536,7 @@ export default function TempAudit() {
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                 >
                   <option value="">不分配，保持临时岗位</option>
-                  {positions.filter(p => p.name !== '临时岗位' && p.status === 1).map(pos => (
+                  {positions.filter(p => p.name !== '临时岗位' && p.status != 0).map(pos => (
                     <option key={pos.id} value={pos.id}>
                       {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'}) - ¥{pos.rate}/{pos.pay_type === 'per_hour' ? '小时' : '次'}
                     </option>
@@ -612,7 +623,7 @@ export default function TempAudit() {
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                 >
                   <option value="">请选择岗位</option>
-                  {positions.filter(p => p.name !== '临时岗位' && p.status === 1).map(pos => (
+                  {positions.filter(p => p.name !== '临时岗位' && p.status != 0).map(pos => (
                     <option key={pos.id} value={pos.id}>
                       {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'}) - ¥{pos.rate}/{pos.pay_type === 'per_hour' ? '小时' : '次'}
                     </option>

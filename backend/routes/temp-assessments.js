@@ -214,6 +214,87 @@ router.post('/:id/correct', requireAuth, async (req, res) => {
   }
 });
 
+// 手机端兼容：单条考核记录列表
+router.get('/', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { month } = req.query;
+    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const params = [...req.dataScope.params, targetMonth];
+
+    const [rows] = await pool.query(`
+      SELECT cr.*, p.need_assessment
+      FROM checkin_records cr
+      JOIN positions p ON cr.position_id = p.id
+      WHERE p.need_assessment = 1
+        AND cr.status = 'approved'
+        AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND ${req.dataScope.sql}
+      ORDER BY cr.checkin_date DESC, cr.created_at DESC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('assessments list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 手机端兼容：按记录ID提交考核（实际会批量更新该用户当月该岗位）
+router.post('/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { discount } = req.body;
+
+    // 根据记录ID查询对应的用户、岗位、月份
+    const [records] = await pool.query(
+      'SELECT user_id, position_id, checkin_date FROM checkin_records WHERE id = ?',
+      [id]
+    );
+    if (records.length === 0) {
+      return res.status(404).json({ error: '记录不存在' });
+    }
+
+    const { user_id, position_id, checkin_date } = records[0];
+    const month = new Date(checkin_date).toISOString().substring(0, 7);
+    const assessment_status = parseFloat(discount) === 1.0 ? 'passed' : 'discounted';
+    const assessment_discount = parseFloat(discount) || 1.00;
+
+    // 验证权限
+    const [scopeCheck] = await pool.query(
+      `SELECT COUNT(*) as cnt FROM position_auditors WHERE position_id = ? AND user_id = ?`,
+      [position_id, req.user.id]
+    );
+    const [adminCheck] = await pool.query(
+      `SELECT COUNT(*) as cnt FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = ? AND r.code = 'admin'`,
+      [req.user.id]
+    );
+    if (scopeCheck[0].cnt === 0 && adminCheck[0].cnt === 0) {
+      return res.status(403).json({ error: '无权考核此岗位' });
+    }
+
+    // 批量更新
+    await pool.query(`
+      UPDATE checkin_records
+      SET assessment_status = ?,
+          assessment_discount = ?,
+          assessed_by = ?,
+          assessed_at = NOW()
+      WHERE user_id = ? AND position_id = ?
+        AND status = 'approved'
+        AND DATE_FORMAT(checkin_date, "%Y-%m") = ?
+    `, [assessment_status, assessment_discount, req.user.id, user_id, position_id, month]);
+
+    await logOperation(req.user.id, user_id, 'temp_assessment', 'submit', {
+      position_id, month, assessment_status, assessment_discount
+    }, req);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('assessment post by id error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 考核统计
 router.get('/stats', requireAuth, attachDataScope, async (req, res) => {
   try {

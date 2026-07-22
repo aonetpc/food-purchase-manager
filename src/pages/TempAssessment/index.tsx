@@ -92,7 +92,7 @@ export default function TempAssessment() {
       setSubmitting(true);
       const assessment_status = assessDiscount === 1.0 ? 'passed' : 'discounted';
       
-      await api.post('/temp/assessments/submit', {
+      await api.post(`/temp/assessments/${selectedWorker.user_id}/submit`, {
         user_id: selectedWorker.user_id,
         position_id: selectedWorker.position_id,
         month: selectedMonth,

@@ -40,7 +40,8 @@ interface Stats {
 
 export default function TempAudit() {
   const navigate = useNavigate();
-  const { user, token } = useAuthStore();
+  const { user } = useAuthStore();
+  const token = user?.token;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [records, setRecords] = useState<CheckinRecord[]>([]);
@@ -64,8 +65,11 @@ export default function TempAudit() {
     try {
       setLoading(true);
       setError('');
+      const recordsUrl = activeTab === 'pending'
+        ? '/temp/checkins/pending'
+        : `/temp/checkins/approved?status=${activeTab}`;
       const [recordsRes, statsRes] = await Promise.all([
-        api.get<CheckinRecord[]>(`/temp/checkins/audit?status=${activeTab}`, {
+        api.get<CheckinRecord[]>(recordsUrl, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         api.get<Stats>('/temp/checkins/audit/stats', {
@@ -98,10 +102,12 @@ export default function TempAudit() {
 
     try {
       setSubmitting(true);
-      await api.post(`/temp/checkins/${selectedRecord.id}/audit`, {
-        action: auditAction,
-        note: auditNote.trim(),
-      }, {
+      const url = `/temp/checkins/${selectedRecord.id}/${auditAction}`;
+      const body: any = {};
+      if (auditAction === 'reject') {
+        body.audit_note = auditNote.trim();
+      }
+      await api.post(url, body, {
         headers: { Authorization: `Bearer ${token}` },
       });
 

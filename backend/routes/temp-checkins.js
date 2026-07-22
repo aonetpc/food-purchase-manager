@@ -41,7 +41,7 @@ router.post('/', requireTempAuth, async (req, res) => {
     if (position_id === 'temp-position-default') {
       // 临时岗位：从数据库查找，没有则自动创建
       const [tempRows] = await pool.query(
-        `SELECT p.*, d.name as department_name
+        `SELECT p.*, d.full_path as department_name
          FROM positions p
          JOIN departments d ON p.department_id = d.id
          WHERE p.name = '临时岗位' AND p.status = 1 LIMIT 1`
@@ -67,7 +67,7 @@ router.post('/', requireTempAuth, async (req, res) => {
           // 已存在则忽略
         }
         const [newRows] = await pool.query(
-          `SELECT p.*, d.name as department_name
+          `SELECT p.*, d.full_path as department_name
            FROM positions p JOIN departments d ON p.department_id = d.id
            WHERE p.id = ?`,
           [newTempId]
@@ -77,7 +77,7 @@ router.post('/', requireTempAuth, async (req, res) => {
       }
     } else {
       [posRows] = await pool.query(`
-        SELECT p.*, d.name as department_name
+        SELECT p.*, d.full_path as department_name
         FROM positions p
         JOIN departments d ON p.department_id = d.id
         WHERE p.id = ? AND p.status = 1
@@ -216,9 +216,10 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
     params.push(parseInt(pageSize), offset);
 
     const [rows] = await pool.query(`
-      SELECT cr.*, pa.user_id as auditor_id
+      SELECT cr.*, pa.user_id as auditor_id, d.full_path as department_name
       FROM checkin_records cr
       LEFT JOIN position_auditors pa ON cr.position_id = pa.position_id
+      LEFT JOIN departments d ON cr.department_id = d.id
       WHERE cr.status = 'pending' AND ${req.dataScope.sql}
       ${dateFilter}
       ORDER BY cr.created_at DESC
@@ -252,8 +253,9 @@ router.get('/approved', requireAuth, attachDataScope, async (req, res) => {
     params.push(parseInt(pageSize), offset);
 
     const [rows] = await pool.query(`
-      SELECT cr.*
+      SELECT cr.*, d.full_path as department_name
       FROM checkin_records cr
+      LEFT JOIN departments d ON cr.department_id = d.id
       WHERE 1=1 AND ${req.dataScope.sql}
       ${filters}
       ORDER BY cr.audited_at DESC
@@ -429,7 +431,7 @@ router.post('/add-record', requireAuth, async (req, res) => {
 
     // 查岗位
     const [posRows] = await pool.query(`
-      SELECT p.*, d.name as department_name
+      SELECT p.*, d.full_path as department_name
       FROM positions p
       JOIN departments d ON p.department_id = d.id
       WHERE p.id = ? AND p.status = 1
