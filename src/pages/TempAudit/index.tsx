@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, X, Calendar, Clock, DollarSign, User, Building, Filter, Search } from 'lucide-react';
+import { Check, X, Calendar, Clock, DollarSign, User, Building, Filter, Search, Users } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -38,19 +38,46 @@ interface Stats {
   pending_amount: number;
 }
 
+interface Position {
+  id: string;
+  name: string;
+  department_name: string;
+  type: string;
+  pay_type: string;
+  rate: number;
+}
+
+const ADD_REASON_OPTIONS = [
+  { value: 'no_phone', label: '老人无手机' },
+  { value: 'phone_dead', label: '手机没电' },
+  { value: 'forgot', label: '忘记打卡' },
+  { value: 'other', label: '其他' },
+];
+
 export default function TempAudit() {
   const { token } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [records, setRecords] = useState<CheckinRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected'>('pending');
   const [selectedRecord, setSelectedRecord] = useState<CheckinRecord | null>(null);
   const [showAuditModal, setShowAuditModal] = useState(false);
+  const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [auditAction, setAuditAction] = useState<'approve' | 'reject'>('approve');
   const [auditNote, setAuditNote] = useState('');
+  const [assignPositionId, setAssignPositionId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [addRecordForm, setAddRecordForm] = useState({
+    user_name: '',
+    user_phone: '',
+    position_id: '',
+    checkin_date: new Date().toISOString().split('T')[0],
+    hours: '',
+    add_reason: '',
+  });
 
   useEffect(() => {
     fetchData();
@@ -60,16 +87,20 @@ export default function TempAudit() {
     try {
       setLoading(true);
       setError('');
-      const [recordsRes, statsRes] = await Promise.all([
-        api.get<CheckinRecord[]>(`/temp/checkins/audit?status=${activeTab}`, {
+      const [recordsRes, statsRes, positionsRes] = await Promise.all([
+        api.get<CheckinRecord[]>(`/temp/checkins/${activeTab}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         api.get<Stats>('/temp/checkins/audit/stats', {
           headers: { Authorization: `Bearer ${token}` },
         }),
+        api.get<Position[]>('/temp/positions', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ]);
       setRecords(recordsRes || []);
       setStats(statsRes);
+      setPositions(positionsRes || []);
     } catch (err: any) {
       console.error('获取审核数据失败:', err);
       setError(err.message || '获取数据失败');
@@ -82,6 +113,7 @@ export default function TempAudit() {
     setSelectedRecord(record);
     setAuditAction(action);
     setAuditNote('');
+    setAssignPositionId('');
     setShowAuditModal(true);
   };
 
@@ -94,22 +126,89 @@ export default function TempAudit() {
 
     try {
       setSubmitting(true);
-      await api.post(`/temp/checkins/${selectedRecord.id}/audit`, {
-        action: auditAction,
-        note: auditNote.trim(),
-      }, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body: any = {
+        audit_note: auditNote.trim() || null,
+      };
+
+      if (auditAction === 'approve') {
+        if (assignPositionId) {
+          body.assign_position_id = assignPositionId;
+        }
+        await api.post(`/temp/checkins/${selectedRecord.id}/approve`, body, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } else {
+        await api.post(`/temp/checkins/${selectedRecord.id}/reject`, body, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
 
       setShowAuditModal(false);
       setSelectedRecord(null);
       setAuditNote('');
+      setAssignPositionId('');
       fetchData();
     } catch (err: any) {
       setError(err.message || '审核失败');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const isTempPosition = (record: CheckinRecord) => {
+    return record.position_name === '临时岗位';
+  };
+
+  const handleOpenAddRecord = () => {
+    setAddRecordForm({
+      user_name: '',
+      user_phone: '',
+      position_id: '',
+      checkin_date: new Date().toISOString().split('T')[0],
+      hours: '',
+      add_reason: '',
+    });
+    setShowAddRecordModal(true);
+  };
+
+  const handleAddRecordFieldChange = (field: string, value: string) => {
+    setAddRecordForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const submitAddRecord = async () => {
+    if (!addRecordForm.user_name || !addRecordForm.position_id || !addRecordForm.checkin_date) {
+      setError('请填写姓名、岗位和日期');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await api.post('/temp/checkins/add-record', {
+        ...addRecordForm,
+        hours: addRecordForm.hours ? parseFloat(addRecordForm.hours) : null,
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      setShowAddRecordModal(false);
+      setAddRecordForm({
+        user_name: '',
+        user_phone: '',
+        position_id: '',
+        checkin_date: new Date().toISOString().split('T')[0],
+        hours: '',
+        add_reason: '',
+      });
+      fetchData();
+    } catch (err: any) {
+      setError(err.message || '补录失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const getSelectedPosition = () => {
+    return positions.find(p => p.id === addRecordForm.position_id);
   };
 
   const getStatusText = (status: string) => {
@@ -234,15 +333,26 @@ export default function TempAudit() {
               </button>
             ))}
           </div>
-          <div className="relative">
-            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              placeholder="搜索姓名、岗位、部门..."
-              className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-            />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleOpenAddRecord}
+              className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1.5"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              补录打卡
+            </button>
+            <div className="relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchKeyword}
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                placeholder="搜索姓名、岗位、部门..."
+                className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              />
+            </div>
           </div>
         </div>
 
@@ -366,7 +476,7 @@ export default function TempAudit() {
 
       {showAuditModal && selectedRecord && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAuditModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800">
                 {auditAction === 'approve' ? '确认通过' : '确认驳回'}
@@ -402,6 +512,30 @@ export default function TempAudit() {
               </div>
             </div>
 
+            {auditAction === 'approve' && isTempPosition(selectedRecord) && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Users size={14} className="inline mr-1" />
+                  分配岗位
+                </label>
+                <select
+                  value={assignPositionId}
+                  onChange={(e) => setAssignPositionId(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                >
+                  <option value="">不分配，保持临时岗位</option>
+                  {positions.filter(p => p.name !== '临时岗位' && p.status === 1).map(pos => (
+                    <option key={pos.id} value={pos.id}>
+                      {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'}) - ¥{pos.rate}/{pos.pay_type === 'per_hour' ? '小时' : '次'}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  分配岗位后，用户下次打卡可直接选择该岗位
+                </p>
+              </div>
+            )}
+
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 {auditAction === 'reject' ? '驳回原因 *' : '审核备注'}
@@ -430,6 +564,126 @@ export default function TempAudit() {
                 }`}
               >
                 {submitting ? '提交中...' : `确认${auditAction === 'approve' ? '通过' : '驳回'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddRecordModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddRecordModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">补录打卡</h3>
+              <button onClick={() => setShowAddRecordModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">姓名 *</label>
+                <input
+                  type="text"
+                  value={addRecordForm.user_name}
+                  onChange={(e) => handleAddRecordFieldChange('user_name', e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="输入姓名后自动匹配已注册用户"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">手机号</label>
+                <input
+                  type="tel"
+                  value={addRecordForm.user_phone}
+                  onChange={(e) => handleAddRecordFieldChange('user_phone', e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="可选，用于区分同名用户"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">岗位 *</label>
+                <select
+                  value={addRecordForm.position_id}
+                  onChange={(e) => handleAddRecordFieldChange('position_id', e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                >
+                  <option value="">请选择岗位</option>
+                  {positions.filter(p => p.name !== '临时岗位' && p.status === 1).map(pos => (
+                    <option key={pos.id} value={pos.id}>
+                      {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'}) - ¥{pos.rate}/{pos.pay_type === 'per_hour' ? '小时' : '次'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {getSelectedPosition()?.pay_type === 'per_hour' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">工作小时数</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={addRecordForm.hours}
+                    onChange={(e) => handleAddRecordFieldChange('hours', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder="请输入工作小时数"
+                  />
+                  {getSelectedPosition() && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      单价 ¥{getSelectedPosition()?.rate}/小时，预计 ¥{(parseFloat(addRecordForm.hours) || 0) * (getSelectedPosition()?.rate || 0)}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {getSelectedPosition()?.pay_type === 'per_time' && (
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <p className="text-sm text-gray-600">
+                    按次计费：<span className="font-semibold text-orange-600">¥{getSelectedPosition()?.rate}</span>
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">补录原因</label>
+                <select
+                  value={addRecordForm.add_reason}
+                  onChange={(e) => handleAddRecordFieldChange('add_reason', e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                >
+                  <option value="">请选择补录原因</option>
+                  {ADD_REASON_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.label}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">补录日期 *</label>
+                <input
+                  type="date"
+                  value={addRecordForm.checkin_date}
+                  onChange={(e) => handleAddRecordFieldChange('checkin_date', e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setShowAddRecordModal(false)}
+                className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-medium hover:bg-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={submitAddRecord}
+                disabled={submitting || !addRecordForm.user_name || !addRecordForm.position_id || !addRecordForm.checkin_date}
+                className="flex-1 py-3 bg-green-500 text-white rounded-xl font-medium hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submitting ? '提交中...' : '确认补录'}
               </button>
             </div>
           </div>

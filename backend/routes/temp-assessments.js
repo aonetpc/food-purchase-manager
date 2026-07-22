@@ -214,4 +214,35 @@ router.post('/:id/correct', requireAuth, async (req, res) => {
   }
 });
 
+// 考核统计
+router.get('/stats', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { month } = req.query;
+    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const params = [...req.dataScope.params, targetMonth];
+
+    const [rows] = await pool.query(`
+      SELECT
+        COUNT(DISTINCT cr.user_id) as total,
+        COUNT(DISTINCT CASE WHEN cr.assessment_status = 'pending' THEN cr.user_id END) as pending,
+        COUNT(DISTINCT CASE WHEN cr.assessment_status = 'passed' THEN cr.user_id END) as passed,
+        COUNT(DISTINCT CASE WHEN cr.assessment_status = 'discounted' THEN cr.user_id END) as discounted,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
+      FROM checkin_records cr
+      JOIN positions p ON cr.position_id = p.id
+      WHERE p.need_assessment = 1
+        AND cr.status = 'approved'
+        AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND ${req.dataScope.sql}
+    `, params);
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('assessment stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

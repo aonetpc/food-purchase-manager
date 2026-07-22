@@ -3,19 +3,25 @@ import { X, Calendar, DollarSign, User, Check, Target } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
-interface AssessmentRecord {
-  id: string;
+interface AssessmentWorker {
+  user_id: string;
   user_name: string;
   user_phone: string;
+  position_id: string;
   position_name: string;
-  department_name: string;
-  checkin_date: string;
-  hours: number | null;
-  amount: number;
-  status: string;
+  total_count: number;
+  approved_count: number;
+  rejected_count: number;
+  total_amount: number;
   assessment_status: 'pending' | 'passed' | 'discounted';
   assessment_discount: number;
-  assessed_at: string;
+  final_amount: number;
+}
+
+interface PositionGroup {
+  position_id: string;
+  position_name: string;
+  workers: AssessmentWorker[];
 }
 
 interface Stats {
@@ -38,10 +44,10 @@ export default function TempAssessment() {
   const { token } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [records, setRecords] = useState<AssessmentRecord[]>([]);
+  const [groups, setGroups] = useState<PositionGroup[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
-  const [selectedRecord, setSelectedRecord] = useState<AssessmentRecord | null>(null);
+  const [selectedWorker, setSelectedWorker] = useState<AssessmentWorker | null>(null);
   const [showAssessModal, setShowAssessModal] = useState(false);
   const [assessDiscount, setAssessDiscount] = useState(1.0);
   const [submitting, setSubmitting] = useState(false);
@@ -54,15 +60,15 @@ export default function TempAssessment() {
     try {
       setLoading(true);
       setError('');
-      const [recordsRes, statsRes] = await Promise.all([
-        api.get<AssessmentRecord[]>(`/temp/assessments?month=${selectedMonth}`, {
+      const [groupsRes, statsRes] = await Promise.all([
+        api.get<PositionGroup[]>(`/temp/assessments/pending?month=${selectedMonth}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         api.get<Stats>(`/temp/assessments/stats?month=${selectedMonth}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
-      setRecords(recordsRes || []);
+      setGroups(groupsRes || []);
       setStats(statsRes);
     } catch (err: any) {
       console.error('获取考核数据失败:', err);
@@ -72,25 +78,31 @@ export default function TempAssessment() {
     }
   };
 
-  const handleAssess = (record: AssessmentRecord) => {
-    setSelectedRecord(record);
-    setAssessDiscount(record.assessment_discount || 1.0);
+  const handleAssess = (worker: AssessmentWorker) => {
+    setSelectedWorker(worker);
+    setAssessDiscount(worker.assessment_discount || 1.0);
     setShowAssessModal(true);
   };
 
   const submitAssess = async () => {
-    if (!selectedRecord) return;
+    if (!selectedWorker) return;
 
     try {
       setSubmitting(true);
-      await api.post(`/temp/assessments/${selectedRecord.id}`, {
-        discount: assessDiscount,
+      const assessment_status = assessDiscount === 1.0 ? 'passed' : 'discounted';
+      
+      await api.post('/temp/assessments/submit', {
+        user_id: selectedWorker.user_id,
+        position_id: selectedWorker.position_id,
+        month: selectedMonth,
+        assessment_status,
+        assessment_discount: assessDiscount,
       }, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
       setShowAssessModal(false);
-      setSelectedRecord(null);
+      setSelectedWorker(null);
       fetchData();
     } catch (err: any) {
       setError(err.message || '考核失败');
@@ -230,94 +242,86 @@ export default function TempAssessment() {
       <div className="card">
         {loading ? (
           <div className="text-center py-10 text-gray-500">加载中...</div>
-        ) : records.length === 0 ? (
+        ) : groups.length === 0 ? (
           <div className="text-center py-12 text-gray-400">
             <Target size={48} className="mx-auto mb-2 opacity-50" />
             <p>本月暂无考核记录</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">姓名</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">岗位</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">部门</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">日期</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">工时</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">原金额</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">考核结果</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">实际金额</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.map(record => (
-                  <tr key={record.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-4 px-4">
-                      <div className="font-medium text-gray-800">{record.user_name}</div>
-                      <div className="text-xs text-gray-400">{record.user_phone || '-'}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="text-sm text-gray-700">{record.position_name}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="text-sm text-gray-600">{record.department_name}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-1 text-sm text-gray-700">
-                        <Calendar size={14} className="text-gray-400" />
-                        {record.checkin_date}
-                      </div>
-                    </td>
-                    <td className="py-4 px-4">
-                      {record.hours ? (
-                        <div className="text-sm text-gray-700">{record.hours}小时</div>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-1">
-                        <DollarSign size={14} className="text-gray-400" />
-                        <span className="font-medium">¥{record.amount}</span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-                        record.assessment_status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : colorMap[getDiscountColor(record.assessment_discount)]
-                      }`}>
-                        {record.assessment_status === 'pending' ? '待考核' : getDiscountLabel(record.assessment_discount)}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4">
-                      {record.assessment_status !== 'pending' ? (
-                        <div className="font-semibold text-gray-800">
-                          ¥{(record.amount * record.assessment_discount).toFixed(2)}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4">
-                      <button
-                        onClick={() => handleAssess(record)}
-                        className="px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-sm font-medium hover:bg-purple-100 transition-colors"
-                      >
-                        {record.assessment_status === 'pending' ? '进行考核' : '修改考核'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-6">
+            {groups.map(group => (
+              <div key={group.position_id}>
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">{group.position_name}</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">姓名</th>
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">打卡次数</th>
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">通过次数</th>
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">原金额</th>
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">考核结果</th>
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">实际金额</th>
+                        <th className="text-left py-3 px-4 font-medium text-gray-600">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.workers.map(worker => (
+                        <tr key={`${worker.user_id}-${worker.position_id}`} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-4 px-4">
+                            <div className="font-medium text-gray-800">{worker.user_name}</div>
+                            <div className="text-xs text-gray-400">{worker.user_phone || '-'}</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-sm text-gray-700">{worker.total_count}</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-sm text-gray-700">{worker.approved_count}</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-1">
+                              <DollarSign size={14} className="text-gray-400" />
+                              <span className="font-medium">¥{worker.total_amount}</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                              worker.assessment_status === 'pending'
+                                ? 'bg-yellow-100 text-yellow-700'
+                                : colorMap[getDiscountColor(worker.assessment_discount)]
+                            }`}>
+                              {worker.assessment_status === 'pending' ? '待考核' : getDiscountLabel(worker.assessment_discount)}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            {worker.assessment_status !== 'pending' ? (
+                              <div className="font-semibold text-gray-800">
+                                ¥{worker.final_amount.toFixed(2)}
+                              </div>
+                            ) : (
+                              <span className="text-sm text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="py-4 px-4">
+                            <button
+                              onClick={() => handleAssess(worker)}
+                              className="px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-sm font-medium hover:bg-purple-100 transition-colors"
+                            >
+                              {worker.assessment_status === 'pending' ? '进行考核' : '修改考核'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {showAssessModal && selectedRecord && (
+      {showAssessModal && selectedWorker && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAssessModal(false)}>
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -330,21 +334,21 @@ export default function TempAssessment() {
             <div className="bg-gray-50 rounded-xl p-4 mb-4">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 bg-purple-500 rounded-full flex items-center justify-center text-white font-medium">
-                  {selectedRecord.user_name.charAt(0)}
+                  {selectedWorker.user_name.charAt(0)}
                 </div>
                 <div>
-                  <p className="font-medium text-gray-800">{selectedRecord.user_name}</p>
-                  <p className="text-xs text-gray-500">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
+                  <p className="font-medium text-gray-800">{selectedWorker.user_name}</p>
+                  <p className="text-xs text-gray-500">{selectedWorker.position_name}</p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{selectedRecord.checkin_date}</span>
+                  <span className="text-gray-400">打卡次数：</span>
+                  <span className="text-gray-700">{selectedWorker.total_count}次</span>
                 </div>
                 <div>
                   <span className="text-gray-400">原金额：</span>
-                  <span className="text-gray-700 font-semibold">¥{selectedRecord.amount}</span>
+                  <span className="text-gray-700 font-semibold">¥{selectedWorker.total_amount}</span>
                 </div>
               </div>
             </div>
@@ -373,7 +377,7 @@ export default function TempAssessment() {
 
             <div className="bg-blue-50 rounded-xl p-4 mb-4">
               <p className="text-sm text-blue-700">
-                实际结算金额：<span className="font-bold text-lg">¥{(selectedRecord.amount * assessDiscount).toFixed(2)}</span>
+                实际结算金额：<span className="font-bold text-lg">¥{(selectedWorker.total_amount * assessDiscount).toFixed(2)}</span>
               </p>
             </div>
 

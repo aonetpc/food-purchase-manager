@@ -98,6 +98,21 @@ CREATE TABLE IF NOT EXISTS positions (
   CONSTRAINT fk_pos_dept FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='岗位表';
 
+-- 初始化临时岗位（新用户默认可见，可直接打卡）
+INSERT IGNORE INTO positions (id, department_id, name, type, pay_type, rate, need_assessment, sort_order, status)
+SELECT
+  'temp-position-default' AS id,
+  (SELECT id FROM departments WHERE status = 1 LIMIT 1) AS department_id,
+  '临时岗位' AS name,
+  'external' AS type,
+  'per_time' AS pay_type,
+  0.00 AS rate,
+  0 AS need_assessment,
+  999 AS sort_order,
+  1 AS status
+FROM dual
+WHERE NOT EXISTS (SELECT 1 FROM positions WHERE name = '临时岗位');
+
 -- ================================================
 -- 4. 创建岗位-审核员关联表（数据权限核心）
 -- ================================================

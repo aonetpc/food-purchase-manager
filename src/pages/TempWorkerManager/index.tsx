@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, X, Users, Search, UserCheck, UserX } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Users, Search, UserCheck, UserX, Check } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface TempWorker {
@@ -23,6 +23,8 @@ interface Position {
   department_name: string;
   is_primary: number;
   assigned_at: string;
+  pay_type: string;
+  rate: number;
 }
 
 export default function TempWorkerManager() {
@@ -33,9 +35,13 @@ export default function TempWorkerManager() {
   const [selectedWorker, setSelectedWorker] = useState<TempWorker | null>(null);
   const [workerPositions, setWorkerPositions] = useState<Position[]>([]);
   const [showPositionModal, setShowPositionModal] = useState(false);
+  const [allPositions, setAllPositions] = useState<Position[]>([]);
+  const [selectedPositionId, setSelectedPositionId] = useState('');
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     fetchWorkers();
+    fetchAllPositions();
   }, []);
 
   const fetchWorkers = async () => {
@@ -52,12 +58,54 @@ export default function TempWorkerManager() {
     }
   };
 
+  const fetchAllPositions = async () => {
+    try {
+      const res = await api.get<Position[]>('/temp/positions');
+      setAllPositions(res.filter(p => p.name !== '临时岗位' && p.status === 1));
+    } catch (e) {
+      console.error('获取岗位列表失败:', e);
+    }
+  };
+
   const handleViewPositions = async (worker: TempWorker) => {
     setSelectedWorker(worker);
+    setSelectedPositionId('');
     try {
       const res = await api.get<Position[]>(`/temp/workers/${worker.id}/positions`);
       setWorkerPositions(res);
       setShowPositionModal(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleAssignPosition = async () => {
+    if (!selectedWorker || !selectedPositionId) return;
+    setAssigning(true);
+    try {
+      await api.post(`/temp/workers/${selectedWorker.id}/positions`, {
+        position_id: selectedPositionId,
+        is_primary: 0,
+      });
+      const res = await api.get<Position[]>(`/temp/workers/${selectedWorker.id}/positions`);
+      setWorkerPositions(res);
+      setSelectedPositionId('');
+      fetchWorkers();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const handleRemovePosition = async (positionId: string) => {
+    if (!selectedWorker) return;
+    if (!window.confirm('确定取消该岗位分配吗？')) return;
+    try {
+      await api.delete(`/temp/workers/${selectedWorker.id}/positions/${positionId}`);
+      const res = await api.get<Position[]>(`/temp/workers/${selectedWorker.id}/positions`);
+      setWorkerPositions(res);
+      fetchWorkers();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -232,18 +280,44 @@ export default function TempWorkerManager() {
 
       {showPositionModal && selectedWorker && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowPositionModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-800">岗位分配 - {selectedWorker.name}</h3>
               <button onClick={() => setShowPositionModal(false)} className="p-1 hover:bg-gray-100 rounded-md">
                 <X size={20} className="text-gray-500" />
               </button>
             </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">分配新岗位</label>
+              <div className="flex gap-2">
+                <select
+                  value={selectedPositionId}
+                  onChange={(e) => setSelectedPositionId(e.target.value)}
+                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                >
+                  <option value="">请选择岗位</option>
+                  {allPositions.filter(p => !workerPositions.find(wp => wp.id === p.id)).map(pos => (
+                    <option key={pos.id} value={pos.id}>
+                      {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'}) - ¥{pos.rate}/{pos.pay_type === 'per_hour' ? '小时' : '次'}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAssignPosition}
+                  disabled={!selectedPositionId || assigning}
+                  className="px-4 py-3 bg-primary-500 text-white rounded-xl font-medium hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={20} />
+                </button>
+              </div>
+            </div>
+
             {workerPositions.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
                 <Users size={48} className="mx-auto mb-2 opacity-50" />
                 <p>该人员尚未分配岗位</p>
-                <p className="text-xs mt-1">审核员可在审核时为其分配岗位</p>
+                <p className="text-xs mt-1">上方选择岗位后点击添加按钮分配</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -254,9 +328,18 @@ export default function TempWorkerManager() {
                         <div className="font-medium text-gray-800">{pos.name}</div>
                         <div className="text-xs text-gray-500">{pos.department_name} | {pos.type === 'external' ? '外请' : '内部'}</div>
                       </div>
-                      {pos.is_primary === 1 && (
-                        <span className="text-xs px-2 py-1 bg-primary-100 text-primary-600 rounded">主岗</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {pos.is_primary === 1 && (
+                          <span className="text-xs px-2 py-1 bg-primary-100 text-primary-600 rounded">主岗</span>
+                        )}
+                        <button
+                          onClick={() => handleRemovePosition(pos.id)}
+                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded"
+                          title="取消分配"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                     <div className="text-xs text-gray-400 mt-1">分配时间: {new Date(pos.assigned_at).toLocaleString()}</div>
                   </div>

@@ -68,15 +68,15 @@ async function getTempUserPositions(tempUserId) {
 }
 
 /**
- * 获取外请人员的临时岗位（所有人可见）
+ * 获取外请人员的临时岗位（所有人可见，新用户可直接使用）
+ * 返回固定的临时岗位记录
  */
 async function getTempPositions() {
   const [rows] = await pool.query(`
     SELECT p.id, p.name, p.type, p.pay_type, p.rate, p.department_id, d.name as department_name
     FROM positions p
     JOIN departments d ON p.department_id = d.id
-    WHERE p.status = 1 AND p.type = 'external'
-    ORDER BY p.sort_order ASC
+    WHERE p.status = 1 AND p.name = '临时岗位'
   `);
   return rows;
 }

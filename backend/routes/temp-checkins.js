@@ -240,7 +240,7 @@ router.get('/approved', requireAuth, attachDataScope, async (req, res) => {
 router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { id } = req.params;
-    const { audit_note, adjust_amount } = req.body;
+    const { audit_note, adjust_amount, assign_position_id } = req.body;
 
     // 验证权限：审核员只能审核自己负责岗位的记录
     const [record] = await pool.query('SELECT * FROM checkin_records WHERE id = ?', [id]);
@@ -263,16 +263,68 @@ router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
       return res.status(403).json({ error: '无权审核此岗位的记录' });
     }
 
-    const finalAmount = adjust_amount !== undefined ? adjust_amount : record[0].amount;
+    // 如果需要分配岗位，验证审核员有权操作该岗位
+    if (assign_position_id) {
+      const [assignScopeCheck] = await pool.query(
+        `SELECT COUNT(*) as cnt FROM position_auditors WHERE position_id = ? AND user_id = ?`,
+        [assign_position_id, req.user.id]
+      );
+      if (assignScopeCheck[0][0].cnt === 0 && adminCheck[0].cnt === 0) {
+        return res.status(403).json({ error: '无权分配此岗位' });
+      }
 
-    await pool.query(`
-      UPDATE checkin_records
-      SET status = 'approved', audit_by = ?, audit_note = ?, audited_at = NOW(),
-          amount = ?
-      WHERE id = ?
-    `, [req.user.id, audit_note || null, finalAmount, id]);
+      // 获取岗位信息用于更新打卡记录
+      const [posRows] = await pool.query(`
+        SELECT p.*, d.name as department_name
+        FROM positions p
+        JOIN departments d ON p.department_id = d.id
+        WHERE p.id = ? AND p.status = 1
+      `, [assign_position_id]);
 
-    await logOperation(req.user.id, id, 'temp_checkin', 'approve', { audit_note, adjust_amount }, req);
+      if (posRows.length === 0) {
+        return res.status(400).json({ error: '分配的岗位不存在' });
+      }
+
+      const position = posRows[0];
+
+      // 更新打卡记录为新岗位
+      const newAmount = adjust_amount !== undefined 
+        ? adjust_amount 
+        : (position.pay_type === 'per_hour' 
+            ? parseFloat(position.rate) * parseFloat(record[0].hours || 0) 
+            : parseFloat(position.rate));
+
+      await pool.query(`
+        UPDATE checkin_records
+        SET status = 'approved', audit_by = ?, audit_note = ?, audited_at = NOW(),
+            amount = ?,
+            position_id = ?, position_name = ?, position_type = ?,
+            department_id = ?, department_name = ?
+        WHERE id = ?
+      `, [req.user.id, audit_note || null, newAmount,
+          assign_position_id, position.name, position.type,
+          position.department_id, position.department_name, id]);
+
+      // 分配岗位给用户（用户来源为temp时）
+      if (record[0].user_source === 'temp') {
+        await pool.query(
+          `INSERT IGNORE INTO user_positions (id, user_source, user_id, position_id, is_primary, assigned_by)
+           VALUES (?, 'temp', ?, ?, 1, ?)`,
+          [uuidv4(), record[0].user_id, assign_position_id, req.user.id]
+        );
+      }
+    } else {
+      const finalAmount = adjust_amount !== undefined ? adjust_amount : record[0].amount;
+
+      await pool.query(`
+        UPDATE checkin_records
+        SET status = 'approved', audit_by = ?, audit_note = ?, audited_at = NOW(),
+            amount = ?
+        WHERE id = ?
+      `, [req.user.id, audit_note || null, finalAmount, id]);
+    }
+
+    await logOperation(req.user.id, id, 'temp_checkin', 'approve', { audit_note, adjust_amount, assign_position_id }, req);
 
     res.json({ success: true });
   } catch (err) {
@@ -460,6 +512,28 @@ router.post('/assign-position', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('assign-position error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 审核统计
+router.get('/audit/stats', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        COALESCE(SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) as pending_amount
+      FROM checkin_records
+      WHERE ${req.dataScope.sql}
+    `, req.dataScope.params);
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('audit stats error:', err);
     res.status(500).json({ error: err.message });
   }
 });
