@@ -56,7 +56,21 @@ export default function TempCheckin() {
         }),
       ]);
 
-      const allPositions = [...(meRes.my_positions || []), ...(meRes.temp_positions || [])];
+      const myPositions = meRes.my_positions || [];
+      const tempPositions = meRes.temp_positions || [];
+
+      // 临时岗位：去重（如果已分配岗位中有临时岗位，不重复显示）
+      const filteredMy = myPositions.filter((p: Position) => p.name !== '临时岗位');
+      const tempPos: Position = tempPositions[0] || {
+        id: 'temp-position-default',
+        name: '临时岗位',
+        department_name: '待分配',
+        type: 'external' as const,
+        pay_type: 'per_time' as const,
+        rate: 0,
+      };
+
+      const allPositions: Position[] = [...filteredMy, tempPos];
       setPositions(allPositions);
       setTodayChecked(todayRes.checked);
       setTodayRecords(todayRes.records || []);
@@ -208,10 +222,21 @@ export default function TempCheckin() {
                         className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
                       >
                         <option value="">请选择岗位</option>
-                        {positions.map(pos => (
-                          <option key={pos.id} value={pos.id}>
-                            {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'})
-                          </option>
+                        {positions.filter(p => p.name !== '临时岗位').length > 0 && (
+                          <optgroup label="已分配岗位">
+                            {positions.filter(p => p.name !== '临时岗位').map(pos => (
+                              <option key={pos.id} value={pos.id}>
+                                {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {positions.filter(p => p.name === '临时岗位').map(pos => (
+                          <optgroup label="其他" key="temp">
+                            <option key={pos.id} value={pos.id}>
+                              ⭐ 临时岗位（待审核分配）
+                            </option>
+                          </optgroup>
                         ))}
                       </select>
                     )}
