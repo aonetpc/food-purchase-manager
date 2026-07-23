@@ -21,14 +21,42 @@ const { logOperation } = require('../middleware/logger');
 // 获取岗位列表（管理员/审核员可调用）
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(`
+    const userId = req.user.id;
+    
+    const [userRoleRows] = await pool.query(`
+      SELECT r.code FROM user_roles ur
+      JOIN roles r ON ur.role_id = r.id
+      WHERE ur.user_id = ?
+    `, [userId]);
+
+    const [legacyRoleRows] = await pool.query(`
+      SELECT r.code FROM roles r WHERE r.code = ?
+    `, [req.user.role]);
+
+    const roleCodes = new Set([
+      ...userRoleRows.map(r => r.code),
+      ...legacyRoleRows.map(r => r.code),
+    ]);
+
+    let query = `
       SELECT p.*, d.name as department_name, d.full_path as department_path,
              (SELECT COUNT(*) FROM position_auditors pa WHERE pa.position_id = p.id) as auditor_count,
              (SELECT COUNT(*) FROM user_positions up WHERE up.position_id = p.id) as worker_count
       FROM positions p
       LEFT JOIN departments d ON p.department_id = d.id
-      ORDER BY d.sort_order ASC, p.sort_order ASC
-    `);
+    `;
+    const params = [];
+
+    if (roleCodes.has('admin') || roleCodes.has('temp_chairman') || roleCodes.has('boss')) {
+      query += ' ORDER BY d.sort_order ASC, p.sort_order ASC';
+    } else if (roleCodes.has('temp_auditor')) {
+      query += ` WHERE p.id IN (SELECT position_id FROM position_auditors WHERE user_id = ?) ORDER BY d.sort_order ASC, p.sort_order ASC`;
+      params.push(userId);
+    } else {
+      query += ' WHERE 1=0';
+    }
+
+    const [rows] = await pool.query(query, params);
     res.json(rows);
   } catch (err) {
     console.error(err);
