@@ -305,7 +305,7 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       SELECT
         u.name as worker_name,
         u.phone as worker_phone,
-        u.department_name as worker_department,
+        cr.department_name as worker_department,
         COUNT(*) as checkin_count,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
@@ -319,8 +319,8 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND cr.status = 'approved'
         AND ${req.dataScope.sql}
-      GROUP BY cr.user_id, u.name, u.phone, u.department_name
-      ORDER BY u.department_name ASC, u.name ASC
+      GROUP BY cr.user_id, u.name, u.phone, cr.department_name
+      ORDER BY cr.department_name ASC, u.name ASC
     `, params);
 
     const doc = new PDFDocument({
