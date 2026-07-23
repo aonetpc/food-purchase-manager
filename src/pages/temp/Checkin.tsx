@@ -182,7 +182,7 @@ export default function TempCheckin() {
         )}
       </div>
 
-      <div className="px-4 -mt-4">
+      <div className="px-4 mt-6">
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-xl text-sm">
             {error}
