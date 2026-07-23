@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -27,6 +27,8 @@ import {
   UserCheck,
   ShieldCheck,
   Shield,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuthStore, type MenuItem } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
@@ -57,11 +59,22 @@ const iconMap: Record<string, any> = {
   Users,
 };
 
+const menuGroups = [
+  { name: '常用', paths: ['/daily', '/purchase-entry', '/reimbursement'] },
+  { name: '统计', paths: ['/monthly', '/yearly', '/ingredients', '/temp-stats'] },
+  { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
+  { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom'] },
+];
+
 export default function Layout() {
   const navigate = useNavigate();
   const { user, isAdmin, canViewMonthly, logout, getUserMenus } = useAuthStore();
   const { fetchRecords, records, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [tooltipText, setTooltipText] = useState('');
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [changePasswordData, setChangePasswordData] = useState({
@@ -216,6 +229,46 @@ export default function Layout() {
     return iconMap[iconName] || Package;
   };
 
+  const getMenuGroup = (path: string) => {
+    return menuGroups.find(group => group.paths.includes(path));
+  };
+
+  const groupedMenuItems = useMemo(() => {
+    const groups: Record<string, MenuItem[]> = {};
+    menuGroups.forEach(group => {
+      groups[group.name] = [];
+    });
+    
+    visibleNavItems.forEach(item => {
+      const group = getMenuGroup(item.path);
+      if (group) {
+        groups[group.name].push(item);
+      }
+    });
+    
+    return groups;
+  }, [visibleNavItems]);
+
+  const handleMouseEnterMenu = (e: React.MouseEvent, name: string) => {
+    if (sidebarCollapsed) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setTooltipText(name);
+      setTooltipPosition({
+        top: rect.top + rect.height / 2 - 14,
+        left: rect.right + 8,
+      });
+      setTooltipVisible(true);
+    }
+  };
+
+  const handleMouseLeaveMenu = () => {
+    setTooltipVisible(false);
+  };
+
+  const toggleSidebarCollapse = () => {
+    setSidebarCollapsed(!sidebarCollapsed);
+  };
+
   return (
     <div className="min-h-screen bg-cream-100">
       <header className="no-print fixed top-0 left-0 right-0 h-16 bg-white border-b border-gray-200 z-50 shadow-sm">
@@ -307,63 +360,100 @@ export default function Layout() {
         </div>
       </header>
 
-      <aside className={`no-print fixed left-0 top-16 bottom-0 w-60 bg-white border-r border-gray-200 transition-transform duration-300 z-40 ${
+      <aside className={`no-print fixed left-0 top-16 bottom-0 bg-white border-r border-gray-200 transition-all duration-300 z-40 flex flex-col ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-      } lg:translate-x-0`}>
-        <nav className="p-4 space-y-1">
-          {visibleNavItems.map(item => {
-            const Icon = getIcon(item.icon);
+      } lg:translate-x-0 ${sidebarCollapsed ? 'w-16' : 'w-60'}`}>
+        <div className="flex-shrink-0 flex justify-center py-3 border-b border-gray-100">
+          <button
+            onClick={toggleSidebarCollapse}
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+            title={sidebarCollapsed ? '展开菜单' : '收起菜单'}
+          >
+            {sidebarCollapsed ? <ChevronRight size={18} className="text-gray-500" /> : <ChevronLeft size={18} className="text-gray-500" />}
+          </button>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto py-2">
+          {menuGroups.map(group => {
+            const items = groupedMenuItems[group.name];
+            if (!items || items.length === 0) return null;
+            
             return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                onClick={() => window.innerWidth < 1024 && setSidebarOpen(false)}
-              >
-                <Icon size={20} />
-                <span>{item.name}</span>
-              </NavLink>
+              <div key={group.name} className="mb-2">
+                {!sidebarCollapsed && (
+                  <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    {group.name}
+                  </div>
+                )}
+                <div className="space-y-1 px-2">
+                  {items.map(item => {
+                    const Icon = getIcon(item.icon);
+                    return (
+                      <NavLink
+                        key={item.path}
+                        to={item.path}
+                        className={({ isActive }) => `nav-link flex items-center px-3 py-2.5 rounded-lg transition-all duration-200 ${
+                          isActive 
+                            ? 'bg-primary-50 text-primary-600' 
+                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                        } ${sidebarCollapsed ? 'justify-center' : ''}`}
+                        onClick={() => window.innerWidth < 1024 && setSidebarOpen(false)}
+                        onMouseEnter={(e) => handleMouseEnterMenu(e, item.name)}
+                        onMouseLeave={handleMouseLeaveMenu}
+                        title={sidebarCollapsed ? item.name : undefined}
+                      >
+                        <Icon size={18} className="flex-shrink-0" />
+                        {!sidebarCollapsed && (
+                          <span className="ml-3 text-sm font-medium">{item.name}</span>
+                        )}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>
 
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-100">
-          <div className="bg-primary-50 rounded-xl p-4">
-            <p className="text-sm font-medium text-primary-700 mb-2">💰 今日采购金额</p>
-            <p className="text-lg font-bold text-primary-600 mb-3">{formatCurrency(totalAmount)}</p>
-            
-            {maxIncrease && (
-              <div className="mb-2">
-                <p className="text-xs font-medium text-red-600">📈 价格上涨提醒</p>
-                <p className="text-sm text-gray-700">
-                  {maxIncrease.item.ingredientName} +{maxIncrease.rate.toFixed(1)}%
-                  <span className="text-xs text-gray-400 ml-1">
-                    ({maxIncrease.source === 'lastMonth' ? '较上月平均' : '较基准价'})
-                  </span>
-                </p>
+        <div className="flex-shrink-0 border-t border-gray-100 p-3">
+          {sidebarCollapsed ? (
+            <div className="flex justify-center">
+              <div className="w-10 h-10 bg-primary-50 rounded-xl flex items-center justify-center">
+                <span className="text-xs font-bold text-primary-600">¥{totalAmount >= 1000 ? (totalAmount/1000).toFixed(1) + 'K' : Math.round(totalAmount)}</span>
               </div>
-            )}
-            
-            {maxDecrease && (
-              <div>
-                <p className="text-xs font-medium text-green-600">📉 价格下跌提醒</p>
-                <p className="text-sm text-gray-700">
-                  {maxDecrease.item.ingredientName} {maxDecrease.rate.toFixed(1)}%
-                  <span className="text-xs text-gray-400 ml-1">
-                    ({maxDecrease.source === 'lastMonth' ? '较上月平均' : '较基准价'})
-                  </span>
-                </p>
-              </div>
-            )}
-            
-            {!maxIncrease && !maxDecrease && totalAmount > 0 && (
-              <p className="text-xs text-gray-500">暂无明显价格波动</p>
-            )}
-            
-            {totalAmount === 0 && (
-              <p className="text-xs text-gray-500">今日暂无采购数据</p>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="bg-primary-50 rounded-xl p-3">
+              <p className="text-xs font-medium text-primary-700 mb-1">💰 今日采购金额</p>
+              <p className="text-lg font-bold text-primary-600 mb-2">{formatCurrency(totalAmount)}</p>
+              
+              {maxIncrease && (
+                <div className="mb-1.5">
+                  <p className="text-xs font-medium text-red-600">📈 价格上涨提醒</p>
+                  <p className="text-xs text-gray-700 truncate">
+                    {maxIncrease.item.ingredientName} +{maxIncrease.rate.toFixed(1)}%
+                  </p>
+                </div>
+              )}
+              
+              {maxDecrease && (
+                <div>
+                  <p className="text-xs font-medium text-green-600">📉 价格下跌提醒</p>
+                  <p className="text-xs text-gray-700 truncate">
+                    {maxDecrease.item.ingredientName} {maxDecrease.rate.toFixed(1)}%
+                  </p>
+                </div>
+              )}
+              
+              {!maxIncrease && !maxDecrease && totalAmount > 0 && (
+                <p className="text-xs text-gray-500">暂无明显价格波动</p>
+              )}
+              
+              {totalAmount === 0 && (
+                <p className="text-xs text-gray-500">今日暂无采购数据</p>
+              )}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -374,7 +464,21 @@ export default function Layout() {
         />
       )}
 
-      <main className="pt-16 lg:pl-60">
+      {tooltipVisible && (
+        <div 
+          className="fixed z-50 px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg shadow-lg whitespace-nowrap"
+          style={{ 
+            top: tooltipPosition.top, 
+            left: tooltipPosition.left,
+            transform: 'translateY(-50%)'
+          }}
+        >
+          {tooltipText}
+          <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 border-4 border-transparent border-r-gray-800"></div>
+        </div>
+      )}
+
+      <main className={`pt-16 transition-all duration-300 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-60'}`}>
         <div className="p-6 max-w-7xl mx-auto">
           <div className="animate-fade-in">
             <Outlet />
