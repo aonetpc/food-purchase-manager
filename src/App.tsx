@@ -18,7 +18,6 @@ import WecomManager from '@/pages/WecomManager';
 import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
 import PositionManager from '@/pages/PositionManager';
 import TempWorkerManager from '@/pages/TempWorkerManager';
-import AuditorManager from '@/pages/AuditorManager';
 import MobileHome from '@/pages/mobile/Home';
 import MobileDaily from '@/pages/mobile/Daily';
 import MobileYearly from '@/pages/mobile/Yearly';
@@ -125,11 +124,7 @@ export default function App() {
               <TempWorkerManager />
             </ProtectedRoute>
           } />
-          <Route path="temp-auditors" element={
-            <ProtectedRoute requiredPermission="action:temp-auditor:manage">
-              <AuditorManager />
-            </ProtectedRoute>
-          } />
+          
           <Route path="temp-audit" element={
             <ProtectedRoute requiredPermission="menu:temp-audit">
               <TempAudit />

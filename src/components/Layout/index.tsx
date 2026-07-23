@@ -121,7 +121,6 @@ export default function Layout() {
     { code: 'menu:ingredient-manager', name: '食材管理', path: '/ingredient-manager', icon: 'Package' },
     { code: 'menu:departments', name: '部门管理', path: '/departments', icon: 'Building2' },
     { code: 'menu:temp-positions', name: '岗位管理', path: '/temp-positions', icon: 'Target' },
-    { code: 'menu:temp-auditors', name: '审核员管理', path: '/temp-auditors', icon: 'UserCheck' },
     { code: 'menu:temp-workers', name: '外请人员', path: '/temp-workers', icon: 'Users' },
     { code: 'menu:temp-audit', name: '打卡审核', path: '/temp-audit', icon: 'Check' },
     { code: 'menu:temp-assessment', name: '月底考核', path: '/temp-assessment', icon: 'Calendar' },
@@ -137,7 +136,7 @@ export default function Layout() {
   const adminNavItems = useMemo(() => {
     const menus = getUserMenus();
     return menus.filter(m => 
-      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users', '/roles', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
+      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users', '/roles', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
     );
   }, [getUserMenus]);
 
@@ -155,7 +154,7 @@ export default function Layout() {
       userMenus = [...pcMenus, ...missingMenus];
     }
     
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
 
     return userMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;

@@ -144,16 +144,18 @@ router.get('/:id/auditors', requireAuth, async (req, res) => {
 router.get('/available-auditors', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT u.id, u.name, u.username, u.phone, u.role
-      FROM users u
-      JOIN user_roles ur ON u.id = ur.user_id
-      JOIN roles r ON ur.role_id = r.id
-      WHERE r.code = 'temp_auditor' AND u.status = 1
-      UNION
-      SELECT u.id, u.name, u.username, u.phone, u.role
-      FROM users u
-      WHERE u.role = 'temp_auditor' AND u.status = 1
-      ORDER BY u.name ASC
+      SELECT id, name, username, phone, role FROM (
+        SELECT u.id, u.name, u.username, u.phone, u.role
+        FROM users u
+        JOIN user_roles ur ON u.id = ur.user_id
+        JOIN roles r ON ur.role_id = r.id
+        WHERE r.code = 'temp_auditor' AND u.status = 1
+        UNION
+        SELECT u.id, u.name, u.username, u.phone, u.role
+        FROM users u
+        WHERE u.role = 'temp_auditor' AND u.status = 1
+      ) AS temp_auditors
+      ORDER BY name ASC
     `);
     res.json(rows);
   } catch (err) {
