@@ -80,6 +80,12 @@ export default function TempAudit() {
     hours: '',
     add_reason: '',
   });
+  const [showReAuditModal, setShowReAuditModal] = useState(false);
+  const [reAuditForm, setReAuditForm] = useState({
+    adjust_amount: '',
+    assign_position_id: '',
+    audit_note: '',
+  });
 
   useEffect(() => {
     fetchData();
@@ -90,8 +96,9 @@ export default function TempAudit() {
       setLoading(true);
       setError('');
       const [recordsRes, statsRes, positionsRes] = await Promise.all([
-        api.get<CheckinRecord[]>(`/temp/checkins/${activeTab}`, {
+        api.get<CheckinRecord[]>(`/temp/checkins/${activeTab === 'rejected' ? 'approved' : activeTab}`, {
           headers: { Authorization: `Bearer ${token}` },
+          params: activeTab === 'rejected' ? { status: 'rejected' } : activeTab === 'approved' ? { status: 'approved' } : {},
         }),
         api.get<Stats>('/temp/checkins/audit/stats', {
           headers: { Authorization: `Bearer ${token}` },
@@ -152,6 +159,41 @@ export default function TempAudit() {
       fetchData();
     } catch (err: any) {
       setError(err.message || '审核失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReAudit = (record: CheckinRecord) => {
+    setSelectedRecord(record);
+    setReAuditForm({
+      adjust_amount: '',
+      assign_position_id: '',
+      audit_note: '',
+    });
+    setShowReAuditModal(true);
+  };
+
+  const submitReAudit = async () => {
+    if (!selectedRecord) return;
+
+    try {
+      setSubmitting(true);
+      const body: any = {};
+      if (reAuditForm.adjust_amount) body.adjust_amount = parseFloat(reAuditForm.adjust_amount);
+      if (reAuditForm.assign_position_id) body.assign_position_id = reAuditForm.assign_position_id;
+      if (reAuditForm.audit_note) body.audit_note = reAuditForm.audit_note;
+
+      await api.put(`/temp/checkins/${selectedRecord.id}/re-audit`, body, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      setShowReAuditModal(false);
+      setSelectedRecord(null);
+      setReAuditForm({ adjust_amount: '', assign_position_id: '', audit_note: '' });
+      fetchData();
+    } catch (err: any) {
+      setError(err.message || '修改失败');
     } finally {
       setSubmitting(false);
     }
@@ -477,6 +519,14 @@ export default function TempAudit() {
                           </button>
                         </div>
                       )}
+                      {(record.status === 'approved' || record.status === 'rejected') && (
+                        <button
+                          onClick={() => handleReAudit(record)}
+                          className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors"
+                        >
+                          重新审核
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -576,6 +626,98 @@ export default function TempAudit() {
                 }`}
               >
                 {submitting ? '提交中...' : `确认${auditAction === 'approve' ? '通过' : '驳回'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReAuditModal && selectedRecord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowReAuditModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">重新审核</h3>
+              <button onClick={() => setShowReAuditModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-4 mb-4">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
+                  {selectedRecord.user_name.charAt(0)}
+                </div>
+                <div>
+                  <p className="font-medium text-gray-800">{selectedRecord.user_name}</p>
+                  <p className="text-xs text-gray-500">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <span className="text-gray-400">日期：</span>
+                  <span className="text-gray-700">{formatCheckinDate(selectedRecord.checkin_date)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">当前金额：</span>
+                  <span className="text-gray-700 font-semibold">¥{selectedRecord.amount}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">重新分配岗位</label>
+                <select
+                  value={reAuditForm.assign_position_id}
+                  onChange={(e) => setReAuditForm(prev => ({ ...prev, assign_position_id: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                >
+                  <option value="">不修改岗位</option>
+                  {positions.filter(p => p.name !== '临时岗位' && p.status != 0).map(pos => (
+                    <option key={pos.id} value={pos.id}>
+                      {pos.department_name} / {pos.name} ({pos.type === 'external' ? '外请' : '内部'}) - ¥{pos.rate}/{pos.pay_type === 'per_hour' ? '小时' : '次'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">调整金额</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={reAuditForm.adjust_amount}
+                  onChange={(e) => setReAuditForm(prev => ({ ...prev, adjust_amount: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="留空则保持原金额或使用岗位单价"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">备注</label>
+                <textarea
+                  value={reAuditForm.audit_note}
+                  onChange={(e) => setReAuditForm(prev => ({ ...prev, audit_note: e.target.value }))}
+                  rows={2}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none"
+                  placeholder="可填写修改原因"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setShowReAuditModal(false)}
+                className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-medium hover:bg-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={submitReAudit}
+                disabled={submitting}
+                className="flex-1 py-3 bg-blue-500 text-white rounded-xl font-medium hover:bg-blue-600 transition-colors disabled:opacity-50"
+              >
+                {submitting ? '提交中...' : '确认修改'}
               </button>
             </div>
           </div>

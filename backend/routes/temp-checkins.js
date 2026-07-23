@@ -422,6 +422,87 @@ router.post('/:id/reject', requireAuth, attachDataScope, async (req, res) => {
   }
 });
 
+router.put('/:id/re-audit', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { adjust_amount, assign_position_id, audit_note } = req.body;
+
+    const [record] = await pool.query('SELECT * FROM checkin_records WHERE id = ?', [id]);
+    if (record.length === 0) {
+      return res.status(404).json({ error: '记录不存在' });
+    }
+
+    const [adminCheck] = await pool.query(
+      `SELECT COUNT(*) as cnt FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = ? AND r.code = 'admin'`,
+      [req.user.id]
+    );
+    const isAdmin = adminCheck[0].cnt > 0;
+
+    if (!isAdmin) {
+      const [scopeCheck] = await pool.query(
+        `SELECT COUNT(*) as cnt FROM position_auditors WHERE position_id = ? AND user_id = ?`,
+        [record[0].position_id, req.user.id]
+      );
+      if (scopeCheck[0].cnt === 0) {
+        return res.status(403).json({ error: '无权修改此记录' });
+      }
+    }
+
+    let updateData = { audit_by: req.user.id, audited_at: new Date() };
+    if (audit_note) updateData.audit_note = audit_note;
+
+    if (assign_position_id) {
+      const [posRows] = await pool.query(`
+        SELECT p.*, d.name as department_name
+        FROM positions p
+        JOIN departments d ON p.department_id = d.id
+        WHERE p.id = ? AND p.status = 1
+      `, [assign_position_id]);
+
+      if (posRows.length === 0) {
+        return res.status(400).json({ error: '岗位不存在' });
+      }
+
+      const position = posRows[0];
+      const newAmount = adjust_amount !== undefined
+        ? adjust_amount
+        : (position.pay_type === 'per_hour'
+            ? parseFloat(position.rate) * parseFloat(record[0].hours || 0)
+            : parseFloat(position.rate));
+
+      updateData.position_id = assign_position_id;
+      updateData.position_name = position.name;
+      updateData.position_type = position.type;
+      updateData.department_id = position.department_id;
+      updateData.department_name = position.department_name;
+      updateData.amount = newAmount;
+
+      if (record[0].user_source === 'temp') {
+        await pool.query(
+          `INSERT IGNORE INTO user_positions (id, user_source, user_id, position_id, is_primary, assigned_by)
+           VALUES (?, 'temp', ?, ?, 1, ?)`,
+          [uuidv4(), record[0].user_id, assign_position_id, req.user.id]
+        );
+      }
+    } else if (adjust_amount !== undefined) {
+      updateData.amount = adjust_amount;
+    }
+
+    const updateFields = Object.keys(updateData).map(k => `${k} = ?`).join(', ');
+    const updateValues = Object.values(updateData);
+    updateValues.push(id);
+
+    await pool.query(`UPDATE checkin_records SET ${updateFields} WHERE id = ?`, updateValues);
+
+    await logOperation(req.user.id, id, 'temp_checkin', 're-audit', { adjust_amount, assign_position_id, audit_note }, req);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('re-audit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 补录打卡（审核员代填）
 router.post('/add-record', requireAuth, async (req, res) => {
   try {
