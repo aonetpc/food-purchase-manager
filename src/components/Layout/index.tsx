@@ -154,27 +154,17 @@ export default function Layout() {
   }, [getUserMenus]);
 
   const visibleNavItems = useMemo(() => {
-    let userMenus = getUserMenus();
+    const userMenus = getUserMenus();
     const pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
-    
-    if (isAdmin() && pcMenus.length === 0) {
-      return defaultAdminMenus;
-    }
-
-    if (isAdmin()) {
-      const existingPaths = new Set(pcMenus.map(m => m.path));
-      const missingMenus = defaultAdminMenus.filter(m => !existingPaths.has(m.path));
-      userMenus = [...pcMenus, ...missingMenus];
-    }
     
     const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
 
-    return userMenus.sort((a, b) => {
+    return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
       const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
       return aIdx - bIdx;
     });
-  }, [getUserMenus, isAdmin]);
+  }, [getUserMenus]);
 
   const handlePrint = () => {
     window.print();
