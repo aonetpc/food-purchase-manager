@@ -1,4 +1,4 @@
-# 华医食材采购管理平台
+# 华医OA管理平台
 
 基于 React + TypeScript + Vite 前端，Node.js + Express + MySQL 后端的食材采购管理系统。
 
