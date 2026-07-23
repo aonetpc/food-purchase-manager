@@ -305,25 +305,26 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       SELECT
         u.name as worker_name,
         u.phone as worker_phone,
-        cr.position_name,
-        cr.department_name,
+        u.department_name as worker_department,
         COUNT(*) as checkin_count,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
                          THEN cr.amount * cr.assessment_discount
-                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted' THEN 1 ELSE 0 END), 0) as discounted_count,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'normal' THEN 1 ELSE 0 END), 0) as normal_count
       FROM checkin_records cr
       JOIN temp_worker_users u ON cr.user_id = u.id
       ${req.dataScope.join}
       WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND cr.status = 'approved'
         AND ${req.dataScope.sql}
-      GROUP BY cr.user_id, u.name, u.phone, cr.position_name, cr.department_name
-      ORDER BY cr.department_name ASC, cr.position_name ASC, u.name ASC
+      GROUP BY cr.user_id, u.name, u.phone, u.department_name
+      ORDER BY u.department_name ASC, u.name ASC
     `, params);
 
     const doc = new PDFDocument({
-      margin: 50,
+      margin: 40,
       size: 'A4',
     });
 
@@ -340,66 +341,134 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
     }
 
-    doc.fontSize(20).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('外请人员工资表', { align: 'center' });
-    doc.fontSize(12).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`${targetMonth}月份`, { align: 'center' });
-    doc.moveDown();
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const startX = doc.page.margins.left;
 
-    const tableTop = 80;
-    const itemCodeX = 50;
-    const descriptionX = 130;
-    const quantityX = 280;
-    const priceX = 350;
-    const amountX = 430;
+    doc.fontSize(16).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('外请人员工资表', { align: 'center' });
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`${targetMonth}月份`, { align: 'center' });
+    doc.moveDown(1);
 
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
-    doc.text('姓名', itemCodeX, tableTop);
-    doc.text('电话', descriptionX, tableTop);
-    doc.text('岗位', quantityX, tableTop);
-    doc.text('部门', priceX, tableTop);
-    doc.text('打卡次数', amountX, tableTop);
-    doc.text('审核金额', 520, tableTop);
-    doc.text('最终金额', 600, tableTop);
+    const colWidths = [60, 90, 70, 50, 50, 50, 70];
+    const headers = ['姓名', '电话', '部门', '打卡次数', '正常考核', '折扣考核', '最终金额'];
+    
+    let y = doc.y;
+    
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
+    let x = startX;
+    headers.forEach((header, index) => {
+      doc.text(header, x, y, { width: colWidths[index], align: 'center' });
+      x += colWidths[index];
+    });
+    y += 12;
+    
+    doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke();
+    y += 4;
 
-    doc.moveTo(50, tableTop + 15).lineTo(680, tableTop + 15).stroke();
-
-    let i = 0;
     let totalApproved = 0;
     let totalFinal = 0;
+    let currentDepartment = '';
+    let deptTotalApproved = 0;
+    let deptTotalFinal = 0;
 
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-    rows.forEach(row => {
-      const y = tableTop + 30 + (i * 20);
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+    rows.forEach((row, index) => {
       const approved = parseFloat(row.approved_amount);
       const final = parseFloat(row.final_amount);
+      const department = row.worker_department || '未分配';
+
+      if (department !== currentDepartment) {
+        if (currentDepartment !== '') {
+          y += 4;
+          doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ dash: [2, 2] });
+          y += 6;
+          doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
+          x = startX;
+          doc.text(`${currentDepartment}小计`, x, y, { width: colWidths[0] + colWidths[1] + colWidths[2] });
+          x += colWidths[0] + colWidths[1] + colWidths[2];
+          doc.text('', x, y, { width: colWidths[3] });
+          x += colWidths[3];
+          doc.text('', x, y, { width: colWidths[4] });
+          x += colWidths[4];
+          doc.text('', x, y, { width: colWidths[5] });
+          x += colWidths[5];
+          doc.text('¥' + deptTotalFinal.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
+          y += 12;
+          deptTotalApproved = 0;
+          deptTotalFinal = 0;
+        }
+        currentDepartment = department;
+        y += 4;
+        doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
+        doc.text(`【${department}】`, startX, y);
+        y += 10;
+        doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+      }
+
+      x = startX;
+      doc.text(row.worker_name, x, y, { width: colWidths[0], align: 'center' });
+      x += colWidths[0];
+      doc.text(row.worker_phone || '-', x, y, { width: colWidths[1], align: 'center' });
+      x += colWidths[1];
+      doc.text(department, x, y, { width: colWidths[2], align: 'center' });
+      x += colWidths[2];
+      doc.text(row.checkin_count.toString(), x, y, { width: colWidths[3], align: 'center' });
+      x += colWidths[3];
+      doc.text(row.normal_count.toString(), x, y, { width: colWidths[4], align: 'center' });
+      x += colWidths[4];
+      doc.text(row.discounted_count.toString(), x, y, { width: colWidths[5], align: 'center' });
+      x += colWidths[5];
+      doc.text('¥' + final.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
+
+      y += 14;
+
+      if (index < rows.length - 1) {
+        doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ color: '#eee' });
+        y += 2;
+      }
+
       totalApproved += approved;
       totalFinal += final;
-
-      doc.text(row.worker_name, itemCodeX, y);
-      doc.text(row.worker_phone || '-', descriptionX, y);
-      doc.text(row.position_name, quantityX, y);
-      doc.text(row.department_name, priceX, y);
-      doc.text(row.checkin_count.toString(), amountX, y);
-      doc.text('¥' + approved.toFixed(2), 520, y);
-      doc.text('¥' + final.toFixed(2), 600, y);
-
-      i++;
+      deptTotalApproved += approved;
+      deptTotalFinal += final;
     });
 
-    doc.moveTo(50, tableTop + 30 + (i * 20)).lineTo(680, tableTop + 30 + (i * 20)).stroke();
+    if (currentDepartment !== '') {
+      y += 4;
+      doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ dash: [2, 2] });
+      y += 6;
+      doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
+      x = startX;
+      doc.text(`${currentDepartment}小计`, x, y, { width: colWidths[0] + colWidths[1] + colWidths[2] });
+      x += colWidths[0] + colWidths[1] + colWidths[2];
+      doc.text('', x, y, { width: colWidths[3] });
+      x += colWidths[3];
+      doc.text('', x, y, { width: colWidths[4] });
+      x += colWidths[4];
+      doc.text('', x, y, { width: colWidths[5] });
+      x += colWidths[5];
+      doc.text('¥' + deptTotalFinal.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
+      y += 12;
+    }
 
-    const totalY = tableTop + 45 + (i * 20);
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
-    doc.text('合计', itemCodeX, totalY);
-    doc.text('-', descriptionX, totalY);
-    doc.text('-', quantityX, totalY);
-    doc.text('-', priceX, totalY);
-    doc.text(rows.length.toString(), amountX, totalY);
-    doc.text('¥' + totalApproved.toFixed(2), 520, totalY);
-    doc.text('¥' + totalFinal.toFixed(2), 600, totalY);
+    y += 8;
+    doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke();
+    y += 4;
 
-    doc.moveDown(3);
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-    doc.text('导出时间: ' + new Date().toLocaleString('zh-CN'), 50);
+    doc.fontSize(9).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
+    x = startX;
+    doc.text('合计', x, y, { width: colWidths[0] + colWidths[1] + colWidths[2] });
+    x += colWidths[0] + colWidths[1] + colWidths[2];
+    doc.text(rows.length.toString(), x, y, { width: colWidths[3], align: 'center' });
+    x += colWidths[3];
+    doc.text('', x, y, { width: colWidths[4] });
+    x += colWidths[4];
+    doc.text('', x, y, { width: colWidths[5] });
+    x += colWidths[5];
+    doc.text('¥' + totalFinal.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
+
+    y += 20;
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+    doc.text('导出时间: ' + new Date().toLocaleString('zh-CN'), startX, y);
 
     doc.end();
   } catch (err) {
