@@ -14,6 +14,35 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/rbac');
 const { attachDataScope } = require('../middleware/tempDataScope');
 const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
+
+function findChineseFont() {
+  const paths = [
+    path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Regular.otf'),
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Regular.otf'),
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.ttf'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p) && !p.endsWith('.ttc')) return p;
+  }
+  return null;
+}
+
+function findChineseBoldFont() {
+  const paths = [
+    path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Bold.otf'),
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Bold.otf'),
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Bold.ttf'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p) && !p.endsWith('.ttc')) return p;
+  }
+  return null;
+}
 
 // 统计总览
 router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
@@ -303,8 +332,16 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
 
     doc.pipe(res);
 
-    doc.fontSize(20).font('Helvetica-Bold').text('外请人员工资表', { align: 'center' });
-    doc.fontSize(12).font('Helvetica').text(`${targetMonth}月份`, { align: 'center' });
+    const chineseFont = findChineseFont();
+    const chineseBoldFont = findChineseBoldFont();
+    const hasChineseFont = !!chineseFont;
+    if (hasChineseFont) {
+      doc.registerFont('Chinese-Regular', chineseFont);
+      doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
+    }
+
+    doc.fontSize(20).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('外请人员工资表', { align: 'center' });
+    doc.fontSize(12).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`${targetMonth}月份`, { align: 'center' });
     doc.moveDown();
 
     const tableTop = 80;
@@ -314,7 +351,7 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
     const priceX = 350;
     const amountX = 430;
 
-    doc.fontSize(10).font('Helvetica-Bold');
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
     doc.text('姓名', itemCodeX, tableTop);
     doc.text('电话', descriptionX, tableTop);
     doc.text('岗位', quantityX, tableTop);
@@ -329,6 +366,7 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
     let totalApproved = 0;
     let totalFinal = 0;
 
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
     rows.forEach(row => {
       const y = tableTop + 30 + (i * 20);
       const approved = parseFloat(row.approved_amount);
@@ -336,7 +374,6 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       totalApproved += approved;
       totalFinal += final;
 
-      doc.fontSize(10).font('Helvetica');
       doc.text(row.worker_name, itemCodeX, y);
       doc.text(row.worker_phone || '-', descriptionX, y);
       doc.text(row.position_name, quantityX, y);
@@ -351,7 +388,7 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
     doc.moveTo(50, tableTop + 30 + (i * 20)).lineTo(680, tableTop + 30 + (i * 20)).stroke();
 
     const totalY = tableTop + 45 + (i * 20);
-    doc.fontSize(10).font('Helvetica-Bold');
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
     doc.text('合计', itemCodeX, totalY);
     doc.text('-', descriptionX, totalY);
     doc.text('-', quantityX, totalY);
@@ -361,7 +398,7 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
     doc.text('¥' + totalFinal.toFixed(2), 600, totalY);
 
     doc.moveDown(3);
-    doc.fontSize(10).font('Helvetica');
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
     doc.text('导出时间: ' + new Date().toLocaleString('zh-CN'), 50);
 
     doc.end();
