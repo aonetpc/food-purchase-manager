@@ -241,14 +241,17 @@ router.get('/approved', requireAuth, attachDataScope, async (req, res) => {
     const offset = (page - 1) * pageSize;
     const params = [...req.dataScope.params];
 
-    let filters = `AND cr.status IN ('approved', 'rejected')`;
+    let filters = '';
+    if (status === 'approved') {
+      filters = `AND cr.status = 'approved'`;
+    } else if (status === 'rejected') {
+      filters = `AND cr.status = 'rejected'`;
+    } else {
+      filters = `AND cr.status IN ('approved', 'rejected')`;
+    }
     if (month) {
       filters += ' AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?';
       params.push(month);
-    }
-    if (status) {
-      filters += ' AND cr.status = ?';
-      params.push(status);
     }
 
     params.push(parseInt(pageSize), offset);
