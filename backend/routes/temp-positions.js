@@ -140,6 +140,28 @@ router.get('/:id/auditors', requireAuth, async (req, res) => {
   }
 });
 
+// 获取可用审核员列表（用于下拉选择）
+router.get('/available-auditors', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT u.id, u.name, u.username, u.phone, u.role
+      FROM users u
+      JOIN user_roles ur ON u.id = ur.user_id
+      JOIN roles r ON ur.role_id = r.id
+      WHERE r.code = 'temp_auditor' AND u.status = 1
+      UNION
+      SELECT u.id, u.name, u.username, u.phone, u.role
+      FROM users u
+      WHERE u.role = 'temp_auditor' AND u.status = 1
+      ORDER BY u.name ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 分配审核员到岗位
 router.post('/:id/auditors', requireAuth, requireRole('admin'), async (req, res) => {
   try {

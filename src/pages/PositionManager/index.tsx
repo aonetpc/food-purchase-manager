@@ -38,6 +38,8 @@ export default function PositionManager() {
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
   const [auditors, setAuditors] = useState<{ id: string; user_id: string; name: string; username: string; phone: string; role: string }[]>([]);
+  const [availableAuditors, setAvailableAuditors] = useState<{ id: string; name: string; username: string; phone: string; role: string }[]>([]);
+  const [selectedAuditorId, setSelectedAuditorId] = useState('');
 
   const [newPosition, setNewPosition] = useState({
     name: '',
@@ -127,9 +129,14 @@ export default function PositionManager() {
 
   const handleViewAuditors = async (position: Position) => {
     setSelectedPosition(position);
+    setSelectedAuditorId('');
     try {
-      const res = await api.get<{ id: string; user_id: string; name: string; username: string; phone: string; role: string }[]>(`/temp/positions/${position.id}/auditors`);
-      setAuditors(res);
+      const [auditorsRes, availableRes] = await Promise.all([
+        api.get<{ id: string; user_id: string; name: string; username: string; phone: string; role: string }[]>(`/temp/positions/${position.id}/auditors`),
+        api.get<{ id: string; name: string; username: string; phone: string; role: string }[]>('/temp/positions/available-auditors'),
+      ]);
+      setAuditors(auditorsRes);
+      setAvailableAuditors(availableRes);
       setShowAuditorModal(true);
     } catch (e) {
       setError((e as Error).message);
@@ -137,15 +144,16 @@ export default function PositionManager() {
   };
 
   const handleAddAuditor = async () => {
-    if (!selectedPosition) return;
-    const userId = prompt('请输入审核员用户ID:');
-    if (!userId) return;
+    if (!selectedPosition || !selectedAuditorId) {
+      setError('请选择审核员');
+      return;
+    }
     try {
-      await api.post(`/temp/positions/${selectedPosition.id}/auditors`, { user_id: userId.trim() });
+      await api.post(`/temp/positions/${selectedPosition.id}/auditors`, { user_id: selectedAuditorId });
       fetchData();
       handleViewAuditors(selectedPosition);
     } catch (e) {
-      alert((e as Error).message);
+      setError((e as Error).message);
     }
   };
 
@@ -468,10 +476,31 @@ export default function PositionManager() {
                 <X size={20} className="text-gray-500" />
               </button>
             </div>
-            <button onClick={handleAddAuditor} className="btn-primary w-full mb-4 flex items-center justify-center gap-2">
-              <Plus size={18} />
-              添加审核员
-            </button>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">选择审核员</label>
+              <div className="flex gap-2">
+                <select
+                  value={selectedAuditorId}
+                  onChange={(e) => setSelectedAuditorId(e.target.value)}
+                  className="flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                >
+                  <option value="">请选择审核员</option>
+                  {availableAuditors.map(auditor => (
+                    <option key={auditor.id} value={auditor.id}>
+                      {auditor.name} ({auditor.username}) {auditor.phone && `- ${auditor.phone}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAddAuditor}
+                  disabled={!selectedAuditorId}
+                  className="btn-primary flex items-center justify-center gap-1 disabled:opacity-50"
+                >
+                  <Plus size={18} />
+                  添加
+                </button>
+              </div>
+            </div>
             {auditors.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
                 <Users size={48} className="mx-auto mb-2 opacity-50" />
