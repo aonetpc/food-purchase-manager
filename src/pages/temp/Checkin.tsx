@@ -155,7 +155,7 @@ export default function TempCheckin() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
-      <div className="bg-gradient-to-br from-purple-600 to-blue-600 text-white px-4 pt-16 pb-8 rounded-b-3xl">
+      <div className="bg-gradient-to-br from-purple-600 to-blue-600 text-white px-4 pt-16 pb-16 rounded-b-3xl">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
