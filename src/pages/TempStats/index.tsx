@@ -96,12 +96,17 @@ export default function TempStats() {
 
   const handleExportSalary = async () => {
     try {
-      const response = await api.get(`/temp/stats/export-salary?month=${selectedMonth}`, {
+      const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+      const response = await fetch(`${BASE_URL}/temp/stats/export-salary?month=${selectedMonth}`, {
         headers: { Authorization: `Bearer ${token}` },
-        responseType: 'blob',
       });
 
-      const blob = new Blob([response], { type: 'application/pdf' });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: '请求失败' }));
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
