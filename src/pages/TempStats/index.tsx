@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Users, Activity, DollarSign, Building, Target, TrendingUp, TrendingDown } from 'lucide-react';
+import { Calendar, Users, Activity, DollarSign, Building, Target, TrendingUp, TrendingDown, Download } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -94,6 +94,28 @@ export default function TempStats() {
     };
   };
 
+  const handleExportSalary = async () => {
+    try {
+      const response = await api.get(`/temp/stats/export-salary?month=${selectedMonth}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: 'blob',
+      });
+
+      const blob = new Blob([response], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `工资表_${selectedMonth}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('导出工资表失败:', err);
+      setError(err.message || '导出失败');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -101,17 +123,26 @@ export default function TempStats() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">统计看板</h1>
           <p className="text-gray-500 mt-1">查看外请人员打卡统计数据</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Calendar size={18} className="text-gray-400" />
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleExportSalary}
+            className="btn-primary flex items-center gap-2"
           >
-            {generateMonthOptions().map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+            <Download size={18} />
+            导出工资表
+          </button>
+          <div className="flex items-center gap-2">
+            <Calendar size={18} className="text-gray-400" />
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+            >
+              {generateMonthOptions().map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -187,7 +218,7 @@ export default function TempStats() {
                 </div>
                 <div className="flex items-end gap-4">
                   <div>
-                    <p className="text-4xl font-bold text-gray-800">¥{overview.month_approved_amount}</p>
+                    <p className="text-4xl font-bold text-gray-800">¥{Number(overview.month_approved_amount).toFixed(2)}</p>
                     <p className="text-sm text-gray-500 mt-1">原始审核通过金额</p>
                   </div>
                 </div>
@@ -200,7 +231,7 @@ export default function TempStats() {
                 </div>
                 <div className="flex items-end gap-4">
                   <div>
-                    <p className="text-4xl font-bold text-red-600">¥{overview.month_final_amount}</p>
+                    <p className="text-4xl font-bold text-red-600">¥{Number(overview.month_final_amount).toFixed(2)}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <p className="text-sm text-gray-500">考核后最终结算金额</p>
                       {overview.month_approved_amount > 0 && (
@@ -251,11 +282,11 @@ export default function TempStats() {
                       <div className="border-t border-gray-200 pt-2 mt-2">
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-gray-500">通过金额</span>
-                          <span className="text-gray-700">¥{dept.approved_amount}</span>
+                          <span className="text-gray-700">¥{Number(dept.approved_amount).toFixed(2)}</span>
                         </div>
                         <div className="flex items-center justify-between mt-1">
                           <span className="text-gray-500">最终金额</span>
-                          <span className="font-semibold text-red-600">¥{dept.final_amount}</span>
+                          <span className="font-semibold text-red-600">¥{Number(dept.final_amount).toFixed(2)}</span>
                         </div>
                         {dept.approved_amount > 0 && (
                           <div className="flex items-center justify-end mt-1">
@@ -317,10 +348,10 @@ export default function TempStats() {
                           <div className="font-medium text-gray-700">{pos.total_checkins}</div>
                         </td>
                         <td className="py-4 px-4">
-                          <div className="text-gray-700">¥{pos.approved_amount}</div>
+                          <div className="text-gray-700">¥{Number(pos.approved_amount).toFixed(2)}</div>
                         </td>
                         <td className="py-4 px-4">
-                          <div className="font-semibold text-red-600">¥{pos.final_amount}</div>
+                          <div className="font-semibold text-red-600">¥{Number(pos.final_amount).toFixed(2)}</div>
                         </td>
                         <td className="py-4 px-4">
                           {pos.approved_amount > 0 ? (

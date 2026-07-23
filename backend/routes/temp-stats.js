@@ -13,6 +13,7 @@ const router = express.Router();
 const pool = require('../db');
 const { requireAuth } = require('../middleware/rbac');
 const { attachDataScope } = require('../middleware/tempDataScope');
+const PDFDocument = require('pdfkit');
 
 // 统计总览
 router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
@@ -256,6 +257,116 @@ router.get('/auditor', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('stats auditor error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { month } = req.query;
+    const targetMonth = month || new Date().toISOString().substring(0, 7);
+
+    if (!/^\d{4}-\d{2}$/.test(targetMonth)) {
+      return res.status(400).json({ error: '月份格式不正确，应为 YYYY-MM' });
+    }
+
+    const params = [targetMonth, ...req.dataScope.params];
+
+    const [rows] = await pool.query(`
+      SELECT
+        u.name as worker_name,
+        u.phone as worker_phone,
+        cr.position_name,
+        cr.department_name,
+        COUNT(*) as checkin_count,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
+      FROM checkin_records cr
+      JOIN temp_worker_users u ON cr.user_id = u.id
+      ${req.dataScope.join}
+      WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND cr.status = 'approved'
+        AND ${req.dataScope.sql}
+      GROUP BY cr.user_id, u.name, u.phone, cr.position_name, cr.department_name
+      ORDER BY cr.department_name ASC, cr.position_name ASC, u.name ASC
+    `, params);
+
+    const doc = new PDFDocument({
+      margin: 50,
+      size: 'A4',
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="工资表_${targetMonth}.pdf"`);
+
+    doc.pipe(res);
+
+    doc.fontSize(20).font('Helvetica-Bold').text('外请人员工资表', { align: 'center' });
+    doc.fontSize(12).font('Helvetica').text(`${targetMonth}月份`, { align: 'center' });
+    doc.moveDown();
+
+    const tableTop = 80;
+    const itemCodeX = 50;
+    const descriptionX = 130;
+    const quantityX = 280;
+    const priceX = 350;
+    const amountX = 430;
+
+    doc.fontSize(10).font('Helvetica-Bold');
+    doc.text('姓名', itemCodeX, tableTop);
+    doc.text('电话', descriptionX, tableTop);
+    doc.text('岗位', quantityX, tableTop);
+    doc.text('部门', priceX, tableTop);
+    doc.text('打卡次数', amountX, tableTop);
+    doc.text('审核金额', 520, tableTop);
+    doc.text('最终金额', 600, tableTop);
+
+    doc.moveTo(50, tableTop + 15).lineTo(680, tableTop + 15).stroke();
+
+    let i = 0;
+    let totalApproved = 0;
+    let totalFinal = 0;
+
+    rows.forEach(row => {
+      const y = tableTop + 30 + (i * 20);
+      const approved = parseFloat(row.approved_amount);
+      const final = parseFloat(row.final_amount);
+      totalApproved += approved;
+      totalFinal += final;
+
+      doc.fontSize(10).font('Helvetica');
+      doc.text(row.worker_name, itemCodeX, y);
+      doc.text(row.worker_phone || '-', descriptionX, y);
+      doc.text(row.position_name, quantityX, y);
+      doc.text(row.department_name, priceX, y);
+      doc.text(row.checkin_count.toString(), amountX, y);
+      doc.text('¥' + approved.toFixed(2), 520, y);
+      doc.text('¥' + final.toFixed(2), 600, y);
+
+      i++;
+    });
+
+    doc.moveTo(50, tableTop + 30 + (i * 20)).lineTo(680, tableTop + 30 + (i * 20)).stroke();
+
+    const totalY = tableTop + 45 + (i * 20);
+    doc.fontSize(10).font('Helvetica-Bold');
+    doc.text('合计', itemCodeX, totalY);
+    doc.text('-', descriptionX, totalY);
+    doc.text('-', quantityX, totalY);
+    doc.text('-', priceX, totalY);
+    doc.text(rows.length.toString(), amountX, totalY);
+    doc.text('¥' + totalApproved.toFixed(2), 520, totalY);
+    doc.text('¥' + totalFinal.toFixed(2), 600, totalY);
+
+    doc.moveDown(3);
+    doc.fontSize(10).font('Helvetica');
+    doc.text('导出时间: ' + new Date().toLocaleString('zh-CN'), 50);
+
+    doc.end();
+  } catch (err) {
+    console.error('export salary error:', err);
     res.status(500).json({ error: err.message });
   }
 });
