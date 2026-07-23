@@ -24,7 +24,7 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
       return res.status(400).json({ error: '月份格式不正确，应为 YYYY-MM' });
     }
     
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [checkinRows] = await pool.query(`
       SELECT
@@ -41,7 +41,7 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
     `, params);
 
     const today = new Date().toISOString().split('T')[0];
-    const todayParams = [...req.dataScope.params, today];
+    const todayParams = [today, ...req.dataScope.params];
 
     const [todayRows] = await pool.query(`
       SELECT COUNT(*) as today_checkins
@@ -76,7 +76,7 @@ router.get('/department', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT
@@ -117,7 +117,7 @@ router.get('/departments', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT
@@ -150,7 +150,7 @@ router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT
@@ -183,7 +183,7 @@ router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
 router.get('/today', requireAuth, attachDataScope, async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const params = [...req.dataScope.params, today];
+    const params = [today, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT

@@ -20,7 +20,7 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT
@@ -85,7 +85,7 @@ router.get('/done', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT
@@ -221,7 +221,7 @@ router.get('/', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT cr.*, p.need_assessment
@@ -303,7 +303,7 @@ router.get('/stats', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
-    const params = [...req.dataScope.params, targetMonth];
+    const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
       SELECT
