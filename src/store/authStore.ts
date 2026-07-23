@@ -196,7 +196,7 @@ export const useAuthStore = create<AuthStore>()(
       },
     }),
     {
-      name: 'auth-session',
+      name: 'auth-session-v2',
       partialize: (state) => ({ user: state.user }),
     }
   )

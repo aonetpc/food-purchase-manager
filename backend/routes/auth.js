@@ -199,6 +199,42 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.get('/debug-permissions', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const [userRoles] = await pool.query(`
+      SELECT r.code, r.name 
+      FROM user_roles ur 
+      JOIN roles r ON ur.role_id = r.id 
+      WHERE ur.user_id = ?
+    `, [userId]);
+    
+    const [permRows] = await pool.query(`
+      SELECT p.code, p.name, p.path, p.type, m.name AS module_name
+      FROM role_permissions rp 
+      JOIN permissions p ON rp.permission_id = p.id 
+      JOIN modules m ON p.module_id = m.id
+      WHERE rp.role_id IN (
+        SELECT DISTINCT role_id FROM (
+          SELECT role_id FROM user_roles WHERE user_id = ?
+          UNION
+          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+        ) t
+      ) AND p.type = 'menu' AND p.status = 1
+      ORDER BY m.sort_order, p.sort_order
+    `, [userId, userId]);
+    
+    res.json({
+      userId,
+      roles: userRoles,
+      menus: permRows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query(
