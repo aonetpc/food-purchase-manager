@@ -299,7 +299,7 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
     });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="工资表_${targetMonth}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`工资表_${targetMonth}.pdf`)}`);
 
     doc.pipe(res);
 
