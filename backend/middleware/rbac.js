@@ -125,15 +125,21 @@ function requireRole(...roles) {
       return res.status(401).json({ error: '未登录' });
     }
 
-    // 检查单角色（兼容旧字段）和多角色（user_roles 表）
-    let userRoleCodes = [];
-    if (req.user.role) {
-      userRoleCodes.push(req.user.role);
-    }
-    // 从 permissions 中已合并了多角色信息，但角色码需要额外查询
-    // 这里用已有信息：如果单角色匹配则通过
+    // 检查单角色（兼容旧字段）
     if (roles.includes(req.user.role)) {
       return next();
+    }
+
+    // 检查 role_id 对应的角色代码
+    if (req.user.role_id) {
+      try {
+        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [req.user.role_id]);
+        if (roleRows.length > 0 && roles.includes(roleRows[0].code)) {
+          return next();
+        }
+      } catch (e) {
+        // 查询失败，忽略
+      }
     }
 
     // 查多角色
