@@ -60,8 +60,32 @@ async function requireAuth(req, res, next) {
       return res.status(403).json({ error: '用户已被禁用' });
     }
 
-    // 查询角色代码（兼容 role 字段存储角色ID的情况）
-    if (user.role_id) {
+    // 直接从数据库查询用户的角色代码（不依赖 user.role 或 user.role_id 字段）
+    let roleCode = null;
+    try {
+      const [roleRows] = await pool.query(`
+        SELECT DISTINCT r.code
+        FROM (
+          SELECT role_id FROM user_roles WHERE user_id = ?
+          UNION
+          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+        ) t
+        JOIN roles r ON r.id = t.role_id
+        ORDER BY r.sort_order ASC
+        LIMIT 1
+      `, [userId, userId]);
+      if (roleRows.length > 0) {
+        roleCode = roleRows[0].code;
+      }
+    } catch (e) {
+      // 查询失败，忽略
+    }
+
+    // 如果查询到角色代码，更新 user.role 字段
+    if (roleCode) {
+      user.role = roleCode;
+    } else if (user.role_id) {
+      // 降级：尝试从 role_id 查询
       try {
         const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
         if (roleRows.length > 0) {
