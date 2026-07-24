@@ -122,6 +122,18 @@ export default function TempAudit() {
     }
   };
 
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  };
+
   const getStatusText = (status: string) => {
     switch (status) {
       case 'pending': return '待审核';
@@ -250,7 +262,7 @@ export default function TempAudit() {
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div>
                     <p className="text-xs text-gray-400">日期</p>
-                    <p className="text-gray-700">{record.checkin_date}</p>
+                    <p className="text-gray-700">{formatDate(record.checkin_date)}</p>
                   </div>
                   {record.hours && (
                     <div>
@@ -323,7 +335,7 @@ export default function TempAudit() {
                 <span className="font-medium">{selectedRecord.user_name}</span> · {selectedRecord.position_name}
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                {selectedRecord.checkin_date} {selectedRecord.hours && `· ${selectedRecord.hours}小时`} · ¥{selectedRecord.amount}
+                {formatDate(selectedRecord.checkin_date)} {selectedRecord.hours && `· ${selectedRecord.hours}小时`} · ¥{selectedRecord.amount}
               </p>
             </div>
 

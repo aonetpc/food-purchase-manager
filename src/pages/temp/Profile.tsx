@@ -102,6 +102,18 @@ export default function TempProfile() {
     }
   };
 
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  };
+
   const getAssessmentText = (status: string, discount: number) => {
     if (status === 'discounted') {
       return `${(discount * 100).toFixed(0)}%结算`;
@@ -265,7 +277,7 @@ export default function TempProfile() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-3">
-                          <span className="text-gray-500">{record.checkin_date}</span>
+                          <span className="text-gray-500">{formatDate(record.checkin_date)}</span>
                           {record.hours && (
                             <span className="text-gray-500">{record.hours}小时</span>
                           )}
