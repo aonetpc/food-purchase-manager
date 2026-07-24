@@ -303,6 +303,16 @@ export default function TempAudit() {
     return record.position_name?.trim() === '临时岗位';
   };
 
+  const getDisplayPositionName = (record: CheckinRecord) => {
+    if (isTempPosition(record)) return '待分配岗位';
+    return record.position_name || '未分配岗位';
+  };
+
+  const getDisplayDepartmentName = (record: CheckinRecord) => {
+    if (isTempPosition(record)) return '待分配部门';
+    return record.department_name || '未分配部门';
+  };
+
   const handleOpenAddRecord = () => {
     setAddRecordForm({
       user_name: '',
@@ -386,7 +396,7 @@ export default function TempAudit() {
   const groupByDepartment = (records: CheckinRecord[]) => {
     const groups: Record<string, CheckinRecord[]> = {};
     records.forEach(r => {
-      const dept = r.department_name || '未分配部门';
+      const dept = isTempPosition(r) ? '待分配部门' : (r.department_name || '未分配部门');
       if (!groups[dept]) groups[dept] = [];
       groups[dept].push(r);
     });
@@ -665,9 +675,9 @@ export default function TempAudit() {
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
                               <span>{formatCheckinTime(record.checkin_time)}</span>
                               <span className="hidden sm:inline">·</span>
-                              <span>{record.position_name}</span>
+                              <span>{getDisplayPositionName(record)}</span>
                               <span className="hidden sm:inline">·</span>
-                              <span className="truncate">{record.department_name}</span>
+                              <span className="truncate">{getDisplayDepartmentName(record)}</span>
                             </div>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm mt-1">
                               <span className="text-gray-600">
@@ -762,7 +772,7 @@ export default function TempAudit() {
                                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
                                         <span>{formatCheckinTime(record.checkin_time)}</span>
                                         <span className="hidden sm:inline">·</span>
-                                        <span>{record.position_name}</span>
+                                        <span>{getDisplayPositionName(record)}</span>
                                       </div>
                                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm mt-1">
                                         <span className="text-gray-600">
@@ -851,7 +861,7 @@ export default function TempAudit() {
                                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
                                         <span>{formatCheckinTime(record.checkin_time)}</span>
                                         <span className="hidden sm:inline">·</span>
-                                        <span>{record.position_name}</span>
+                                        <span>{getDisplayPositionName(record)}</span>
                                       </div>
                                       {record.audit_note && (
                                         <div className="mt-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-2.5 py-1.5">
@@ -915,7 +925,7 @@ export default function TempAudit() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-800">{selectedRecord.user_name}</p>
-                  <p className="text-xs text-gray-500 truncate">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
+                  <p className="text-xs text-gray-500 truncate">{getDisplayPositionName(selectedRecord)} · {getDisplayDepartmentName(selectedRecord)}</p>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 sm:gap-3 text-xs sm:text-sm">
@@ -1050,7 +1060,7 @@ export default function TempAudit() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-800">{selectedRecord.user_name}</p>
-                  <p className="text-xs text-gray-500 truncate">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
+                  <p className="text-xs text-gray-500 truncate">{getDisplayPositionName(selectedRecord)} · {getDisplayDepartmentName(selectedRecord)}</p>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 sm:gap-3 text-xs sm:text-sm">

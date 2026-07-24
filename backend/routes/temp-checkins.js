@@ -51,24 +51,19 @@ router.post('/', requireTempAuth, async (req, res) => {
         realPositionId = tempRows[0].id;
       } else {
         // 自动创建临时岗位
-        const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY id LIMIT 1`);
-        const fallbackDept = deptRows.length > 0 ? deptRows[0] : null;
-        if (!fallbackDept) {
-          return res.status(500).json({ error: '系统暂无部门数据，请先创建部门' });
-        }
         const newTempId = 'temp-position-default';
         try {
           await pool.query(
             `INSERT INTO positions (id, department_id, name, type, pay_type, rate, need_assessment, sort_order, status)
-             VALUES (?, ?, '临时岗位', 'external', 'per_time', 0, 0, 999, 1)`,
-            [newTempId, fallbackDept.id]
+             VALUES (?, NULL, '临时岗位', 'external', 'per_time', 0, 0, 999, 1)`,
+            [newTempId]
           );
         } catch (e) {
           // 已存在则忽略
         }
         const [newRows] = await pool.query(
           `SELECT p.*, d.full_path as department_name
-           FROM positions p JOIN departments d ON p.department_id = d.id
+           FROM positions p LEFT JOIN departments d ON p.department_id = d.id
            WHERE p.id = ?`,
           [newTempId]
         );
