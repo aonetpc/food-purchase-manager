@@ -2,7 +2,7 @@ const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 function getToken(): string | null {
   try {
-    const stored = localStorage.getItem('auth-session');
+    const stored = localStorage.getItem('auth-session-v2');
     if (stored) {
       const data = JSON.parse(stored);
       return data?.state?.user?.token || null;
