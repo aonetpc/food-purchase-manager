@@ -161,18 +161,8 @@ function requireRole(...roles) {
       return res.status(401).json({ error: '未登录' });
     }
 
-    console.log('[DEBUG requireRole] user:', {
-      id: req.user.id,
-      username: req.user.username,
-      role: req.user.role,
-      role_id: req.user.role_id,
-      permissionCodes: req.user.permissionCodes ? Array.from(req.user.permissionCodes) : null,
-      requiredRoles: roles
-    });
-
     // 检查单角色（兼容旧字段）
     if (roles.includes(req.user.role)) {
-      console.log('[DEBUG requireRole] 通过: req.user.role');
       return next();
     }
 
@@ -180,13 +170,11 @@ function requireRole(...roles) {
     if (req.user.role_id) {
       try {
         const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [req.user.role_id]);
-        console.log('[DEBUG requireRole] role_id查询结果:', roleRows);
         if (roleRows.length > 0 && roles.includes(roleRows[0].code)) {
-          console.log('[DEBUG requireRole] 通过: role_id查询');
           return next();
         }
       } catch (e) {
-        console.error('[DEBUG requireRole] role_id查询失败:', e);
+        // 查询失败，忽略
       }
     }
 
@@ -201,14 +189,12 @@ function requireRole(...roles) {
         ) t
         JOIN roles r ON r.id = t.role_id
       `, [req.user.id, req.user.id]);
-      console.log('[DEBUG requireRole] 多角色查询结果:', roleCodeRows);
       const multiRoleCodes = roleCodeRows.map(r => r.code);
       if (roles.some(r => multiRoleCodes.includes(r))) {
-        console.log('[DEBUG requireRole] 通过: 多角色查询');
         return next();
       }
     } catch (e) {
-      console.error('[DEBUG requireRole] 多角色查询失败:', e);
+      // 查询失败，忽略
     }
 
     // 降级：检查用户是否拥有管理员级别的权限码
@@ -216,14 +202,11 @@ function requireRole(...roles) {
     if (roles.includes('admin') && req.user.permissionCodes) {
       const adminPermCodes = ['menu:users', 'menu:roles', 'menu:categories', 'menu:departments'];
       const hasAdminPerm = adminPermCodes.some(code => req.user.permissionCodes.has(code));
-      console.log('[DEBUG requireRole] 权限码降级检查:', { adminPermCodes, hasAdminPerm });
       if (hasAdminPerm) {
-        console.log('[DEBUG requireRole] 通过: 权限码降级检查');
         return next();
       }
     }
 
-    console.log('[DEBUG requireRole] 拒绝: 所有检查都失败');
     return res.status(403).json({ error: '无权限访问' });
   };
 }
