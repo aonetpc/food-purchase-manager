@@ -318,6 +318,16 @@ export default function TempAudit() {
     return positions.find(p => p.id === addRecordForm.position_id);
   };
 
+  const getAuditPositionPayType = () => {
+    if (!selectedRecord) return null;
+    if (isTempPosition(selectedRecord) && assignPositionId) {
+      const pos = positions.find(p => p.id === assignPositionId);
+      return pos?.pay_type || null;
+    }
+    const pos = positions.find(p => p.id === selectedRecord.position_id);
+    return pos?.pay_type || (selectedRecord.hours !== null ? 'per_hour' : 'per_time');
+  };
+
   const getStatusText = (status: string) => {
     switch (status) {
       case 'pending': return '待审核';
@@ -735,20 +745,22 @@ export default function TempAudit() {
                     placeholder={`留空则使用岗位单价（当前¥${selectedRecord.amount}）`}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <Clock size={14} className="inline mr-1" />
-                    调整工时（小时）
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    value={adjustHours}
-                    onChange={(e) => setAdjustHours(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                    placeholder={`留空则保持原值（当前${selectedRecord.hours || '-'}小时）`}
-                  />
-                </div>
+                {getAuditPositionPayType() === 'per_hour' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <Clock size={14} className="inline mr-1" />
+                      调整工时（小时）
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={adjustHours}
+                      onChange={(e) => setAdjustHours(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                      placeholder={`留空则保持原值（当前${selectedRecord.hours || '-'}小时）`}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
