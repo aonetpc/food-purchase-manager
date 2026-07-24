@@ -276,6 +276,46 @@ router.get('/audit/historical-pending', requireAuth, attachDataScope, async (req
   }
 });
 
+// 打卡记录列表（支持按日期和状态筛选）
+router.get('/list', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { date, status } = req.query;
+    const params = [...req.dataScope.params];
+    let filters = '';
+
+    if (date) {
+      filters += ' AND cr.checkin_date = ?';
+      params.push(date);
+    }
+
+    if (status === 'pending') {
+      filters += ` AND cr.status = 'pending'`;
+    } else if (status === 'approved') {
+      filters += ` AND cr.status = 'approved'`;
+    } else if (status === 'rejected') {
+      filters += ` AND cr.status = 'rejected'`;
+    } else if (status === 'temp_pending') {
+      filters += ` AND cr.status = 'pending' AND p.name = '临时岗位'`;
+    }
+
+    const [rows] = await pool.query(`
+      SELECT cr.*, p.name as position_name, p.pay_type, d.full_path as department_name
+      FROM checkin_records cr
+      LEFT JOIN positions p ON cr.position_id = p.id
+      LEFT JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
+      WHERE ${req.dataScope.sql}
+      ${filters}
+      ORDER BY cr.checkin_time DESC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('checkin list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 已审核列表
 router.get('/approved', requireAuth, attachDataScope, async (req, res) => {
   try {

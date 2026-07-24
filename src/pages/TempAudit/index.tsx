@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, X, Calendar, Clock, DollarSign, User, Building, Filter, Search, Users, AlertTriangle, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { Check, X, Calendar, Clock, DollarSign, User, Building, Building2, Filter, Search, Users, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -68,10 +68,15 @@ export default function TempAudit() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [records, setRecords] = useState<CheckinRecord[]>([]);
+  const [approvedRecords, setApprovedRecords] = useState<CheckinRecord[]>([]);
+  const [rejectedRecords, setRejectedRecords] = useState<CheckinRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [historicalPending, setHistoricalPending] = useState<HistoricalPendingDay[]>([]);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
   const [selectedRecord, setSelectedRecord] = useState<CheckinRecord | null>(null);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
@@ -96,6 +101,10 @@ export default function TempAudit() {
     assign_position_id: '',
     audit_note: '',
   });
+  const [approvedExpanded, setApprovedExpanded] = useState(false);
+  const [rejectedExpanded, setRejectedExpanded] = useState(false);
+  const [approvedDeptExpanded, setApprovedDeptExpanded] = useState<Record<string, boolean>>({});
+  const [rejectedDeptExpanded, setRejectedDeptExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchData();
@@ -105,10 +114,18 @@ export default function TempAudit() {
     try {
       setLoading(true);
       setError('');
-      const [recordsRes, statsRes, positionsRes, historicalRes] = await Promise.all([
+      const [recordsRes, approvedRes, rejectedRes, statsRes, positionsRes, historicalRes] = await Promise.all([
         api.get<CheckinRecord[]>('/temp/checkins/pending', {
           headers: { Authorization: `Bearer ${token}` },
           params: { date: selectedDate },
+        }),
+        api.get<CheckinRecord[]>('/temp/checkins/list', {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { date: selectedDate, status: 'approved' },
+        }),
+        api.get<CheckinRecord[]>('/temp/checkins/list', {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { date: selectedDate, status: 'rejected' },
         }),
         api.get<Stats>('/temp/checkins/audit/stats', {
           headers: { Authorization: `Bearer ${token}` },
@@ -121,6 +138,8 @@ export default function TempAudit() {
         }),
       ]);
       setRecords(recordsRes || []);
+      setApprovedRecords(approvedRes || []);
+      setRejectedRecords(rejectedRes || []);
       setStats(statsRes);
       setPositions(positionsRes || []);
       setHistoricalPending(historicalRes || []);
@@ -133,9 +152,9 @@ export default function TempAudit() {
   };
 
   const changeDate = (days: number) => {
-    const d = new Date(selectedDate);
+    const d = new Date(selectedDate + 'T00:00:00');
     d.setDate(d.getDate() + days);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
   };
 
   const jumpToDate = (date: string) => {
@@ -143,17 +162,26 @@ export default function TempAudit() {
   };
 
   const isToday = () => {
-    return selectedDate === new Date().toISOString().split('T')[0];
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return selectedDate === today;
+  };
+
+  const getTodayStr = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
   const formatDateDisplay = (dateStr: string) => {
-    const d = new Date(dateStr);
+    const d = new Date(dateStr + 'T00:00:00');
     const today = new Date();
-    const yesterday = new Date(today);
+    const todayStr = getTodayStr();
+    const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
     
-    if (dateStr === today.toISOString().split('T')[0]) return '今天';
-    if (dateStr === yesterday.toISOString().split('T')[0]) return '昨天';
+    if (dateStr === todayStr) return '今天';
+    if (dateStr === yesterdayStr) return '昨天';
     
     const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     return `${d.getMonth() + 1}月${d.getDate()}日 ${weekDays[d.getDay()]}`;
@@ -355,6 +383,16 @@ export default function TempAudit() {
     }
   };
 
+  const groupByDepartment = (records: CheckinRecord[]) => {
+    const groups: Record<string, CheckinRecord[]> = {};
+    records.forEach(r => {
+      const dept = r.department_name || '未分配部门';
+      if (!groups[dept]) groups[dept] = [];
+      groups[dept].push(r);
+    });
+    return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
+  };
+
   const unassignedRecords = records.filter(r => isTempPosition(r));
   const pendingRecords = records.filter(r => !isTempPosition(r));
 
@@ -369,6 +407,21 @@ export default function TempAudit() {
     r.position_name.includes(searchKeyword) ||
     r.department_name.includes(searchKeyword)
   );
+
+  const filteredApproved = approvedRecords.filter(r => 
+    r.user_name.includes(searchKeyword) || 
+    (r.position_name || '').includes(searchKeyword) ||
+    (r.department_name || '').includes(searchKeyword)
+  );
+
+  const filteredRejected = rejectedRecords.filter(r => 
+    r.user_name.includes(searchKeyword) || 
+    (r.position_name || '').includes(searchKeyword) ||
+    (r.department_name || '').includes(searchKeyword)
+  );
+
+  const approvedByDept = groupByDepartment(filteredApproved);
+  const rejectedByDept = groupByDepartment(filteredRejected);
 
   const hasExpiredRecords = historicalPending.some(h => h.days_ago > 3);
 
@@ -489,12 +542,12 @@ export default function TempAudit() {
             <button
               onClick={() => changeDate(1)}
               className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
-              disabled={selectedDate >= new Date().toISOString().split('T')[0]}
+              disabled={selectedDate >= getTodayStr()}
             >
               <ChevronRight size={20} className="text-gray-600" />
             </button>
             <button
-              onClick={() => jumpToDate(new Date().toISOString().split('T')[0])}
+              onClick={() => jumpToDate(getTodayStr())}
               disabled={isToday()}
               className="ml-1 sm:ml-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
             >
@@ -652,13 +705,186 @@ export default function TempAudit() {
               </div>
             )}
 
-            {filteredUnassigned.length === 0 && filteredPending.length === 0 && (
+            {filteredApproved.length > 0 && (
+              <div>
+                <button
+                  onClick={() => setApprovedExpanded(!approvedExpanded)}
+                  className="flex items-center gap-2 mb-2 sm:mb-3 w-full text-left"
+                >
+                  <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full font-medium flex-shrink-0">
+                    已通过
+                  </span>
+                  <span className="text-xs sm:text-sm text-gray-500 flex-1">
+                    {filteredApproved.length}条打卡记录
+                  </span>
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-400 transition-transform flex-shrink-0 ${approvedExpanded ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {approvedExpanded && (
+                  <div className="space-y-2 sm:space-y-3">
+                    {approvedByDept.map(([deptName, deptRecords]) => (
+                      <div key={deptName}>
+                        <button
+                          onClick={() => setApprovedDeptExpanded(prev => ({ ...prev, [deptName]: !prev[deptName] }))}
+                          className="flex items-center gap-2 mb-1.5 text-left w-full"
+                        >
+                          <Building2 size={14} className="text-gray-400 flex-shrink-0" />
+                          <span className="text-xs sm:text-sm font-medium text-gray-600 flex-1 truncate">
+                            {deptName} ({deptRecords.length}条)
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            className={`text-gray-400 transition-transform flex-shrink-0 ${approvedDeptExpanded[deptName] !== false ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+                        {(approvedDeptExpanded[deptName] !== false) && (
+                          <div className="space-y-2 ml-4 sm:ml-5">
+                            {deptRecords.map(record => (
+                              <div key={record.id} className="bg-white border border-gray-100 rounded-xl p-3 sm:p-4 opacity-80">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                                    <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white font-medium flex-shrink-0 ${
+                                      record.position_type === 'external' ? 'bg-green-400' : 'bg-blue-400'
+                                    }`}>
+                                      {record.user_name.charAt(0)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-medium text-gray-700">{record.user_name}</span>
+                                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                          record.position_type === 'external' ? 'bg-orange-50 text-orange-600' : 'bg-blue-50 text-blue-600'
+                                        }`}>
+                                          {record.position_type === 'external' ? '外请' : '内部'}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
+                                        <span>{formatCheckinTime(record.checkin_time)}</span>
+                                        <span className="hidden sm:inline">·</span>
+                                        <span>{record.position_name}</span>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm mt-1">
+                                        <span className="text-gray-600">
+                                          {record.hours ? (
+                                            <span>{record.hours}小时</span>
+                                          ) : (
+                                            <span>每次¥{record.rate || record.amount}</span>
+                                          )}
+                                        </span>
+                                        <span className="font-semibold text-gray-700">¥{record.amount}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleReAudit(record)}
+                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors whitespace-nowrap"
+                                  >
+                                    重新审核
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {filteredRejected.length > 0 && (
+              <div>
+                <button
+                  onClick={() => setRejectedExpanded(!rejectedExpanded)}
+                  className="flex items-center gap-2 mb-2 sm:mb-3 w-full text-left"
+                >
+                  <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full font-medium flex-shrink-0">
+                    已驳回
+                  </span>
+                  <span className="text-xs sm:text-sm text-gray-500 flex-1">
+                    {filteredRejected.length}条打卡记录
+                  </span>
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-400 transition-transform flex-shrink-0 ${rejectedExpanded ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {rejectedExpanded && (
+                  <div className="space-y-2 sm:space-y-3">
+                    {rejectedByDept.map(([deptName, deptRecords]) => (
+                      <div key={deptName}>
+                        <button
+                          onClick={() => setRejectedDeptExpanded(prev => ({ ...prev, [deptName]: !prev[deptName] }))}
+                          className="flex items-center gap-2 mb-1.5 text-left w-full"
+                        >
+                          <Building2 size={14} className="text-gray-400 flex-shrink-0" />
+                          <span className="text-xs sm:text-sm font-medium text-gray-600 flex-1 truncate">
+                            {deptName} ({deptRecords.length}条)
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            className={`text-gray-400 transition-transform flex-shrink-0 ${rejectedDeptExpanded[deptName] !== false ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+                        {(rejectedDeptExpanded[deptName] !== false) && (
+                          <div className="space-y-2 ml-4 sm:ml-5">
+                            {deptRecords.map(record => (
+                              <div key={record.id} className="bg-white border border-red-100 rounded-xl p-3 sm:p-4 opacity-90">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                                    <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white font-medium flex-shrink-0 ${
+                                      record.position_type === 'external' ? 'bg-red-400' : 'bg-red-300'
+                                    }`}>
+                                      {record.user_name.charAt(0)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-medium text-gray-700">{record.user_name}</span>
+                                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                          record.position_type === 'external' ? 'bg-orange-50 text-orange-600' : 'bg-blue-50 text-blue-600'
+                                        }`}>
+                                          {record.position_type === 'external' ? '外请' : '内部'}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
+                                        <span>{formatCheckinTime(record.checkin_time)}</span>
+                                        <span className="hidden sm:inline">·</span>
+                                        <span>{record.position_name}</span>
+                                      </div>
+                                      {record.audit_note && (
+                                        <div className="mt-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-2.5 py-1.5">
+                                          驳回原因：{record.audit_note}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleReAudit(record)}
+                                    className="px-2 py-1 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors whitespace-nowrap"
+                                  >
+                                    重新审核
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {filteredUnassigned.length === 0 && filteredPending.length === 0 && filteredApproved.length === 0 && filteredRejected.length === 0 && (
               <div className="text-center py-12 text-gray-400">
                 <Filter size={48} className="mx-auto mb-2 opacity-50" />
-                <p>暂无{searchKeyword ? '匹配的' : ''}待审核记录</p>
+                <p>暂无{searchKeyword ? '匹配的' : ''}打卡记录</p>
                 {!isToday() && (
                   <button
-                    onClick={() => jumpToDate(new Date().toISOString().split('T')[0])}
+                    onClick={() => jumpToDate(getTodayStr())}
                     className="mt-4 px-4 py-2 bg-primary-50 text-primary-600 rounded-lg text-sm font-medium hover:bg-primary-100 transition-colors"
                   >
                     返回今天
