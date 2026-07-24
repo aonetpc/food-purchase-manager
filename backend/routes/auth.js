@@ -175,11 +175,25 @@ router.post('/login', async (req, res) => {
     const mergedPerms = await getUserMergedPermissions(user.id);
     const roleCodes = await getUserRoleCodes(user.id);
 
+    let roleCode = user.role;
+    if (roleCodes.length > 0) {
+      roleCode = roleCodes[0];
+    } else if (user.role_id) {
+      try {
+        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
+        if (roleRows.length > 0) {
+          roleCode = roleRows[0].code;
+        }
+      } catch (e) {
+        // 查询失败，使用原值
+      }
+    }
+
     res.json({
       id: user.id,
       username: user.username,
       name: user.name,
-      role: user.role,
+      role: roleCode,
       role_id: user.role_id,
       roles: roleCodes,
       wecom_userid: user.wecom_userid,
@@ -639,11 +653,25 @@ router.post('/wecom-login', async (req, res) => {
     const mergedPerms = await getUserMergedPermissions(user.id);
     const roleCodes = await getUserRoleCodes(user.id);
 
+    let roleCode = user.role;
+    if (roleCodes.length > 0) {
+      roleCode = roleCodes[0];
+    } else if (user.role_id) {
+      try {
+        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
+        if (roleRows.length > 0) {
+          roleCode = roleRows[0].code;
+        }
+      } catch (e) {
+        // 查询失败，使用原值
+      }
+    }
+
     res.json({
       id: user.id,
       username: user.username,
       name: user.name,
-      role: user.role,
+      role: roleCode,
       role_id: user.role_id,
       roles: roleCodes,
       wecom_userid: user.wecom_userid,
@@ -879,13 +907,27 @@ router.post('/wecom-callback', async (req, res) => {
     const mergedPerms = await getUserMergedPermissions(user.id);
     const roleCodes = await getUserRoleCodes(user.id);
 
+    let roleCode = user.role;
+    if (roleCodes.length > 0) {
+      roleCode = roleCodes[0];
+    } else if (user.role_id) {
+      try {
+        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
+        if (roleRows.length > 0) {
+          roleCode = roleRows[0].code;
+        }
+      } catch (e) {
+        // 查询失败，使用原值
+      }
+    }
+
     res.json({
       success: true,
       user: {
         id: user.id,
         username: user.username,
         name: user.name,
-        role: user.role,
+        role: roleCode,
         role_id: user.role_id,
         roles: roleCodes,
         wecom_userid: user.wecom_userid,
