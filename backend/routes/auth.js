@@ -217,12 +217,15 @@ router.get('/debug-permissions', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
     
+    const [userInfo] = await pool.query('SELECT id, username, name, role, role_id FROM users WHERE id = ?', [userId]);
     const [userRoles] = await pool.query(`
       SELECT r.code, r.name 
       FROM user_roles ur 
       JOIN roles r ON ur.role_id = r.id 
       WHERE ur.user_id = ?
     `, [userId]);
+    
+    const [roleInfo] = await pool.query('SELECT id, code, name FROM roles WHERE id = ? OR code = ?', [userInfo[0]?.role_id || '', 'admin']);
     
     const [permRows] = await pool.query(`
       SELECT p.code, p.name, p.path, p.type, m.name AS module_name
@@ -241,7 +244,17 @@ router.get('/debug-permissions', requireAuth, async (req, res) => {
     
     res.json({
       userId,
+      userFromDb: userInfo[0],
+      userFromReq: {
+        id: req.user.id,
+        username: req.user.username,
+        name: req.user.name,
+        role: req.user.role,
+        role_id: req.user.role_id,
+        hasPermissionCodes: req.user.permissionCodes ? Array.from(req.user.permissionCodes) : null
+      },
       roles: userRoles,
+      roleInfo,
       menus: permRows
     });
   } catch (err) {
