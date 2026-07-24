@@ -277,7 +277,7 @@ export default function TempProfile() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-3">
-                          <span className="text-gray-500">{formatDate(record.checkin_date)}</span>
+                          <span className="text-gray-500">{formatDate(record.checkin_time || record.checkin_date)}</span>
                           {record.hours && (
                             <span className="text-gray-500">{record.hours}小时</span>
                           )}

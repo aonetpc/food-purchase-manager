@@ -10,6 +10,7 @@ interface Position {
   type: 'internal' | 'external';
   pay_type: 'per_time' | 'per_hour';
   rate: number;
+  daily_limit: number;
 }
 
 interface CheckinRecord {
@@ -85,8 +86,8 @@ export default function TempCheckin() {
     }
   };
 
-  const hasCheckedToday = (positionId: string) => {
-    return todayRecords.some(r => r.position_id === positionId);
+  const getCheckedCountToday = (positionId: string) => {
+    return todayRecords.filter(r => r.position_id === positionId).length;
   };
 
   const isTempPosition = (position: Position) => {
@@ -206,9 +207,11 @@ export default function TempCheckin() {
 
               <div className="grid grid-cols-2 gap-3">
                 {positions.filter(p => p.name !== '临时岗位').map(pos => {
-                  const checked = hasCheckedToday(pos.id);
+                  const checkedCount = getCheckedCountToday(pos.id);
                   const isPerTime = pos.pay_type === 'per_time';
-                  const disabled = isPerTime && checked;
+                  const dailyLimit = pos.daily_limit || 1;
+                  const remaining = dailyLimit - checkedCount;
+                  const disabled = isPerTime && remaining <= 0;
 
                   return (
                     <button
@@ -225,12 +228,18 @@ export default function TempCheckin() {
                     >
                       <p className="font-semibold text-gray-800">{pos.name}</p>
                       <p className="text-xs text-gray-500 mt-0.5">¥{pos.rate}/{isPerTime ? '次' : '小时'}</p>
-                      {isPerTime && checked && (
-                        <span className="absolute top-2 right-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                          已打1次
+                      {isPerTime && (
+                        <span className={`absolute top-2 right-2 px-2 py-0.5 text-xs rounded-full ${
+                          remaining <= 0
+                            ? 'bg-gray-100 text-gray-500'
+                            : remaining < dailyLimit
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-green-100 text-green-700'
+                        }`}>
+                          {remaining <= 0 ? '已完成' : `${checkedCount}/${dailyLimit}次`}
                         </span>
                       )}
-                      {selectedPosition === pos.id && (
+                      {selectedPosition === pos.id && !disabled && (
                         <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-purple-500 flex items-center justify-center">
                           <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />

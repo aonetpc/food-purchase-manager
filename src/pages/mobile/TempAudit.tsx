@@ -262,7 +262,7 @@ export default function TempAudit() {
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div>
                     <p className="text-xs text-gray-400">日期</p>
-                    <p className="text-gray-700">{formatDate(record.checkin_date)}</p>
+                    <p className="text-gray-700">{formatDate(record.checkin_time || record.checkin_date)}</p>
                   </div>
                   {record.hours && (
                     <div>

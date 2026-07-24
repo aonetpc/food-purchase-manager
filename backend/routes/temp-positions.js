@@ -67,17 +67,18 @@ router.get('/', requireAuth, async (req, res) => {
 // 创建岗位（管理员）
 router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const { name, department_id, type, pay_type, rate, need_assessment = 0, sort_order = 0 } = req.body;
+    const { name, department_id, type, pay_type, rate, need_assessment = 0, sort_order = 0, daily_limit = 1 } = req.body;
 
     if (!name || !department_id || !type || !pay_type || rate === undefined) {
       return res.status(400).json({ error: '缺少必填字段' });
     }
 
     const id = uuidv4();
+    const limit = pay_type === 'per_hour' ? 0 : daily_limit;
     await pool.query(
-      `INSERT INTO positions (id, department_id, name, type, pay_type, rate, need_assessment, sort_order, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [id, department_id, name, type, pay_type, rate, need_assessment, sort_order]
+      `INSERT INTO positions (id, department_id, name, type, pay_type, rate, need_assessment, sort_order, status, daily_limit)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [id, department_id, name, type, pay_type, rate, need_assessment, sort_order, limit]
     );
 
     await logOperation(req.user.id, null, 'temp_position', 'create', { name, department_id, type, pay_type, rate }, req);
@@ -94,7 +95,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
 router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, department_id, type, pay_type, rate, need_assessment, sort_order, status } = req.body;
+    const { name, department_id, type, pay_type, rate, need_assessment, sort_order, status, daily_limit } = req.body;
 
     const fields = [];
     const values = [];
@@ -106,6 +107,7 @@ router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
     if (need_assessment !== undefined) { fields.push('need_assessment = ?'); values.push(need_assessment); }
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(sort_order); }
     if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+    if (daily_limit !== undefined) { fields.push('daily_limit = ?'); values.push(daily_limit); }
 
     if (fields.length === 0) {
       return res.status(400).json({ error: '没有更新字段' });

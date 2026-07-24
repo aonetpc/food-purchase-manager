@@ -102,18 +102,35 @@ router.post('/', requireTempAuth, async (req, res) => {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const checkinTime = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const id = uuidv4();
+
+    // 检查每日打卡次数限制（按次岗位）
+    if (position.pay_type === 'per_time') {
+      const dailyLimit = position.daily_limit || 1;
+      if (dailyLimit > 0) {
+        const [countRows] = await pool.query(`
+          SELECT COUNT(*) as cnt FROM checkin_records
+          WHERE user_source = 'temp' AND user_id = ?
+            AND position_id = ? AND checkin_date = ?
+        `, [req.tempUser.id, realPositionId, today]);
+        
+        if (countRows[0].cnt >= dailyLimit) {
+          return res.status(400).json({ error: `今日该岗位已打卡${dailyLimit}次，不能再打卡` });
+        }
+      }
+    }
 
     await pool.query(`
       INSERT INTO checkin_records
         (id, user_source, user_id, user_name, user_phone,
          position_id, position_name, position_type, department_id, department_name,
-         checkin_date, hours, amount, status)
-      VALUES (?, 'temp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+         checkin_date, checkin_time, hours, amount, status)
+      VALUES (?, 'temp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [
       id, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
       realPositionId, position.name, position.type, position.department_id, position.department_name,
-      today, hours || null, amount
+      today, checkinTime, hours || null, amount
     ]);
 
     const [records] = await pool.query('SELECT * FROM checkin_records WHERE id = ?', [id]);
@@ -155,9 +172,10 @@ router.get('/today', requireTempAuth, async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     const [rows] = await pool.query(`
-      SELECT position_id, position_name, checkin_date, status
+      SELECT position_id, position_name, checkin_date, checkin_time, status, hours, amount
       FROM checkin_records
       WHERE user_source = 'temp' AND user_id = ? AND checkin_date = ?
+      ORDER BY checkin_time DESC
     `, [req.tempUser.id, today]);
 
     res.json({ checked: rows.length > 0, records: rows });

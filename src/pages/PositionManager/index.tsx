@@ -21,6 +21,7 @@ interface Position {
   need_assessment: number;
   sort_order: number;
   status: number;
+  daily_limit: number;
   created_at: string;
   updated_at: string;
   auditor_count?: number;
@@ -49,6 +50,7 @@ export default function PositionManager() {
     rate: '',
     need_assessment: 0,
     sort_order: 0,
+    daily_limit: 1,
   });
 
   useEffect(() => {
@@ -87,9 +89,10 @@ export default function PositionManager() {
         rate: parseFloat(newPosition.rate),
         need_assessment: newPosition.need_assessment,
         sort_order: newPosition.sort_order,
+        daily_limit: newPosition.pay_type === 'per_hour' ? 0 : newPosition.daily_limit,
       });
       setShowAddModal(false);
-      setNewPosition({ name: '', department_id: '', type: 'external', pay_type: 'per_time', rate: '', need_assessment: 0, sort_order: 0 });
+      setNewPosition({ name: '', department_id: '', type: 'external', pay_type: 'per_time', rate: '', need_assessment: 0, sort_order: 0, daily_limit: 1 });
       fetchData();
     } catch (e) {
       setError((e as Error).message);
@@ -109,6 +112,7 @@ export default function PositionManager() {
         need_assessment: editingPosition.need_assessment,
         sort_order: editingPosition.sort_order,
         status: editingPosition.status,
+        daily_limit: editingPosition.pay_type === 'per_hour' ? 0 : editingPosition.daily_limit,
       });
       setEditingPosition(null);
       fetchData();
@@ -214,6 +218,7 @@ export default function PositionManager() {
                     <th className="text-left py-3 px-4 font-medium text-gray-600">所属部门</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-600">类型</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-600">薪资标准</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-600">每日次数</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-600">考核</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-600">审核员/人员</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-600">操作</th>
@@ -265,6 +270,16 @@ export default function PositionManager() {
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
                                 placeholder="单价"
                               />
+                              {editingPosition.pay_type === 'per_time' && (
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={editingPosition.daily_limit || 1}
+                                  onChange={(e) => setEditingPosition(p => p ? { ...p, daily_limit: parseInt(e.target.value) || 1 } : null)}
+                                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                  placeholder="每日打卡次数"
+                                />
+                              )}
                               <label className="flex items-center gap-2">
                                 <input
                                   type="checkbox"
@@ -304,6 +319,15 @@ export default function PositionManager() {
                               <span className="font-medium">¥{pos.rate}</span>
                               <span className="text-sm text-gray-400">/{pos.pay_type === 'per_time' ? '次' : '小时'}</span>
                             </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                              pos.pay_type === 'per_time'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-gray-100 text-gray-500'
+                            }`}>
+                              {pos.pay_type === 'per_time' ? `${pos.daily_limit || 1}次` : '不限'}
+                            </span>
                           </td>
                           <td className="py-4 px-4">
                             {pos.need_assessment === 1 ? (
@@ -448,6 +472,19 @@ export default function PositionManager() {
                   className="w-full border border-gray-200 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                 />
               </div>
+              {newPosition.pay_type === 'per_time' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">每日打卡次数</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newPosition.daily_limit}
+                    onChange={(e) => setNewPosition(p => ({ ...p, daily_limit: parseInt(e.target.value) || 1 }))}
+                    placeholder="如：1"
+                    className="w-full border border-gray-200 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  />
+                </div>
+              )}
               <div>
                 <label className="flex items-center gap-2">
                   <input
