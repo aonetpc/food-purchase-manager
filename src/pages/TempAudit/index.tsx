@@ -159,6 +159,15 @@ export default function TempAudit() {
     return `${d.getMonth() + 1}月${d.getDate()}日 ${weekDays[d.getDay()]}`;
   };
 
+  const formatCheckinDate = (dateVal: any) => {
+    if (!dateVal) return '-';
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) {
+      return String(dateVal).split('T')[0];
+    }
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
   const formatCheckinTime = (timeStr: string) => {
     if (!timeStr) return '-';
     if (timeStr.includes('T')) {
@@ -364,11 +373,11 @@ export default function TempAudit() {
   const hasExpiredRecords = historicalPending.some(h => h.days_ago > 3);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 px-3 sm:px-0">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-serif font-bold text-gray-800">打卡审核</h1>
-          <p className="text-gray-500 mt-1">审核外请人员的打卡记录</p>
+          <h1 className="text-xl sm:text-2xl font-serif font-bold text-gray-800">打卡审核</h1>
+          <p className="text-gray-500 mt-1 text-sm">审核外请人员的打卡记录</p>
         </div>
       </div>
 
@@ -380,48 +389,48 @@ export default function TempAudit() {
       )}
 
       {stats && (
-        <div className="grid grid-cols-4 gap-4">
-          <div className="card p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                <User size={20} className="text-blue-600" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          <div className="card p-3 sm:p-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                <User size={18} className="text-blue-600 sm:w-5 sm:h-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">{stats.today_checkins}</p>
-                <p className="text-sm text-gray-500">今日打卡</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-800">{stats.today_checkins}</p>
+                <p className="text-xs sm:text-sm text-gray-500">今日打卡</p>
               </div>
             </div>
           </div>
-          <div className="card p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-yellow-100 rounded-xl flex items-center justify-center">
-                <Clock size={20} className="text-yellow-600" />
+          <div className="card p-3 sm:p-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-yellow-100 rounded-xl flex items-center justify-center">
+                <Clock size={18} className="text-yellow-600 sm:w-5 sm:h-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">{stats.pending}</p>
-                <p className="text-sm text-gray-500">待审核</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-800">{stats.pending}</p>
+                <p className="text-xs sm:text-sm text-gray-500">待审核</p>
               </div>
             </div>
           </div>
-          <div className="card p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
-                <Check size={20} className="text-green-600" />
+          <div className="card p-3 sm:p-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                <Check size={18} className="text-green-600 sm:w-5 sm:h-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">{stats.approved}</p>
-                <p className="text-sm text-gray-500">已通过</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-800">{stats.approved}</p>
+                <p className="text-xs sm:text-sm text-gray-500">已通过</p>
               </div>
             </div>
           </div>
-          <div className="card p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
-                <AlertTriangle size={20} className="text-orange-600" />
+          <div className="card p-3 sm:p-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-orange-100 rounded-xl flex items-center justify-center">
+                <AlertTriangle size={18} className="text-orange-600 sm:w-5 sm:h-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">{stats.historical_pending}</p>
-                <p className="text-sm text-gray-500">历史待审核</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-800">{stats.historical_pending}</p>
+                <p className="text-xs sm:text-sm text-gray-500">历史待审核</p>
               </div>
             </div>
           </div>
@@ -429,30 +438,30 @@ export default function TempAudit() {
       )}
 
       {historicalPending.length > 0 && (
-        <div className={`rounded-xl p-4 flex items-center justify-between ${
+        <div className={`rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 ${
           hasExpiredRecords ? 'bg-orange-50 border border-orange-200' : 'bg-yellow-50 border border-yellow-200'
         }`}>
-          <div className="flex items-center gap-3">
-            <AlertTriangle size={20} className={`${hasExpiredRecords ? 'text-orange-600' : 'text-yellow-600'}`} />
-            <div>
-              <p className={`font-medium ${hasExpiredRecords ? 'text-orange-800' : 'text-yellow-800'}`}>
+          <div className="flex items-start gap-3 flex-1">
+            <AlertTriangle size={20} className={`${hasExpiredRecords ? 'text-orange-600' : 'text-yellow-600'} flex-shrink-0 mt-0.5`} />
+            <div className="flex-1">
+              <p className={`font-medium text-sm sm:text-base ${hasExpiredRecords ? 'text-orange-800' : 'text-yellow-800'}`}>
                 有{historicalPending.reduce((sum, h) => sum + h.count, 0)}条历史打卡未审核
               </p>
-              <p className="text-sm text-gray-600">
+              <p className="text-xs sm:text-sm text-gray-600 mt-1">
                 {historicalPending.map(h => (
                   <span key={h.date} className="mr-2">
                     {h.date.slice(5)} ({h.count}条)
                   </span>
                 ))}
                 {hasExpiredRecords && (
-                  <span className="text-orange-600 ml-2">· 超过3天未审将无法补录</span>
+                  <span className="text-orange-600 ml-2 block sm:inline">· 超过3天未审将无法补录</span>
                 )}
               </p>
             </div>
           </div>
           <button
             onClick={() => jumpToDate(historicalPending[0].date)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               hasExpiredRecords 
                 ? 'bg-orange-500 text-white hover:bg-orange-600' 
                 : 'bg-yellow-500 text-white hover:bg-yellow-600'
@@ -463,9 +472,9 @@ export default function TempAudit() {
         </div>
       )}
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
+      <div className="card p-3 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
+          <div className="flex items-center justify-between sm:justify-start gap-2 sm:gap-3">
             <button
               onClick={() => changeDate(-1)}
               className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
@@ -473,9 +482,9 @@ export default function TempAudit() {
             >
               <ChevronLeft size={20} className="text-gray-600" />
             </button>
-            <div className="text-center">
-              <p className="text-lg font-bold text-gray-800">{formatDateDisplay(selectedDate)}</p>
-              <p className="text-sm text-gray-500">{selectedDate}</p>
+            <div className="text-center flex-1 sm:flex-none">
+              <p className="text-base sm:text-lg font-bold text-gray-800">{formatDateDisplay(selectedDate)}</p>
+              <p className="text-xs sm:text-sm text-gray-500">{selectedDate}</p>
             </div>
             <button
               onClick={() => changeDate(1)}
@@ -487,27 +496,27 @@ export default function TempAudit() {
             <button
               onClick={() => jumpToDate(new Date().toISOString().split('T')[0])}
               disabled={isToday()}
-              className="px-3 py-1.5 text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ml-1 sm:ml-2 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
             >
               返回今天
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
             <button
               onClick={handleOpenAddRecord}
-              className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1.5"
+              className="w-full sm:w-auto px-3 sm:px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center justify-center gap-1.5"
             >
               <Plus size={16} />
               补录打卡
             </button>
-            <div className="relative">
+            <div className="relative flex-1">
               <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 placeholder="搜索姓名、岗位、部门..."
-                className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
               />
             </div>
           </div>
@@ -519,46 +528,46 @@ export default function TempAudit() {
           <div className="space-y-6">
             {filteredUnassigned.length > 0 && (
               <div>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-2 sm:mb-3">
                   <span className="px-2 py-1 bg-orange-100 text-orange-700 text-xs rounded-full font-medium">
                     待分配岗位
                   </span>
-                  <span className="text-sm text-gray-500">以下{filteredUnassigned.length}条为扫码打卡，需分配岗位</span>
+                  <span className="text-xs sm:text-sm text-gray-500">以下{filteredUnassigned.length}条为扫码打卡，需分配岗位</span>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   {filteredUnassigned.map(record => (
-                    <div key={record.id} className="bg-gray-50 rounded-xl p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
+                    <div key={record.id} className="bg-gray-50 rounded-xl p-3 sm:p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div className="w-9 h-9 sm:w-10 sm:h-10 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium flex-shrink-0">
                             {record.user_name.charAt(0)}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium text-gray-800">{record.user_name}</span>
                               {record.is_add_record === 1 && (
                                 <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">补录</span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-sm text-gray-500">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
                               <span>{formatCheckinTime(record.checkin_time)} 扫码</span>
-                              <span>·</span>
+                              <span className="hidden sm:inline">·</span>
                               <span className="text-orange-500">待分配岗位</span>
-                              <span>·</span>
+                              <span className="hidden sm:inline">·</span>
                               <span>{record.position_type === 'external' ? '外请' : '内部'}</span>
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-stretch gap-2 flex-shrink-0">
                           <button
                             onClick={() => handleAudit(record, 'reject')}
-                            className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
+                            className="px-2.5 sm:px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs sm:text-sm font-medium hover:bg-red-100 transition-colors whitespace-nowrap"
                           >
                             驳回
                           </button>
                           <button
                             onClick={() => handleAudit(record, 'approve')}
-                            className="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors"
+                            className="px-2.5 sm:px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs sm:text-sm font-medium hover:bg-orange-600 transition-colors whitespace-nowrap"
                           >
                             分配岗位
                           </button>
@@ -572,24 +581,24 @@ export default function TempAudit() {
 
             {filteredPending.length > 0 && (
               <div>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-2 sm:mb-3">
                   <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">
                     待确认审核
                   </span>
-                  <span className="text-sm text-gray-500">以下{filteredPending.length}条为小程序/已分配岗位打卡，需确认审核</span>
+                  <span className="text-xs sm:text-sm text-gray-500">以下{filteredPending.length}条为小程序/已分配岗位打卡，需确认审核</span>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   {filteredPending.map(record => (
-                    <div key={record.id} className="bg-white border border-gray-100 rounded-xl p-4 hover:border-gray-200 transition-colors">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${
+                    <div key={record.id} className="bg-white border border-gray-100 rounded-xl p-3 sm:p-4 hover:border-gray-200 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white font-medium flex-shrink-0 ${
                             record.position_type === 'external' ? 'bg-orange-500' : 'bg-blue-500'
                           }`}>
                             {record.user_name.charAt(0)}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium text-gray-800">{record.user_name}</span>
                               <span className={`text-xs px-1.5 py-0.5 rounded ${
                                 record.position_type === 'external' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
@@ -600,14 +609,14 @@ export default function TempAudit() {
                                 <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">补录</span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-sm text-gray-500">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-gray-500 mt-0.5">
                               <span>{formatCheckinTime(record.checkin_time)}</span>
-                              <span>·</span>
+                              <span className="hidden sm:inline">·</span>
                               <span>{record.position_name}</span>
-                              <span>·</span>
-                              <span>{record.department_name}</span>
+                              <span className="hidden sm:inline">·</span>
+                              <span className="truncate">{record.department_name}</span>
                             </div>
-                            <div className="flex items-center gap-4 text-sm mt-1">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm mt-1">
                               <span className="text-gray-600">
                                 {record.hours ? (
                                   <span>{record.hours}小时</span>
@@ -622,16 +631,16 @@ export default function TempAudit() {
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-stretch gap-2 flex-shrink-0">
                           <button
                             onClick={() => handleAudit(record, 'reject')}
-                            className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
+                            className="px-2.5 sm:px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs sm:text-sm font-medium hover:bg-red-100 transition-colors whitespace-nowrap"
                           >
                             驳回
                           </button>
                           <button
                             onClick={() => handleAudit(record, 'approve')}
-                            className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors"
+                            className="px-2.5 sm:px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs sm:text-sm font-medium hover:bg-green-600 transition-colors whitespace-nowrap"
                           >
                             通过
                           </button>
@@ -662,10 +671,10 @@ export default function TempAudit() {
       </div>
 
       {showAuditModal && selectedRecord && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAuditModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50" onClick={() => setShowAuditModal(false)}>
+          <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl p-4 sm:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">
+              <h3 className="text-base sm:text-lg font-bold text-gray-800">
                 {auditAction === 'approve' ? '确认通过' : '确认驳回'}
               </h3>
               <button onClick={() => setShowAuditModal(false)} className="text-gray-400 hover:text-gray-600">
@@ -673,32 +682,32 @@ export default function TempAudit() {
               </button>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-4 mb-4">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
+            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
                   {selectedRecord.user_name.charAt(0)}
                 </div>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-800">{selectedRecord.user_name}</p>
-                  <p className="text-xs text-gray-500">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
+                  <p className="text-xs text-gray-500 truncate">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3 text-sm">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3 text-xs sm:text-sm">
                 <div>
-                  <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{String(selectedRecord.checkin_date).split('T')[0]}</span>
+                  <span className="text-gray-400 block">日期</span>
+                  <span className="text-gray-700">{formatCheckinDate(selectedRecord.checkin_date)}</span>
                 </div>
                 <div>
-                  <span className="text-gray-400">时间：</span>
+                  <span className="text-gray-400 block">时间</span>
                   <span className="text-gray-700">{formatCheckinTime(selectedRecord.checkin_time)}</span>
                 </div>
                 <div>
-                  <span className="text-gray-400">金额：</span>
+                  <span className="text-gray-400 block">金额</span>
                   <span className="text-gray-700 font-semibold">¥{selectedRecord.amount}</span>
                 </div>
               </div>
               {selectedRecord.hours !== null && (
-                <div className="mt-2 text-sm">
+                <div className="mt-2 text-xs sm:text-sm">
                   <span className="text-gray-400">工时：</span>
                   <span className="text-gray-700">{selectedRecord.hours}小时</span>
                 </div>
@@ -799,36 +808,36 @@ export default function TempAudit() {
       )}
 
       {showReAuditModal && selectedRecord && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowReAuditModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50" onClick={() => setShowReAuditModal(false)}>
+          <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl p-4 sm:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">重新审核</h3>
+              <h3 className="text-base sm:text-lg font-bold text-gray-800">重新审核</h3>
               <button onClick={() => setShowReAuditModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X size={20} />
               </button>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-4 mb-4">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
+            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
                   {selectedRecord.user_name.charAt(0)}
                 </div>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-800">{selectedRecord.user_name}</p>
-                  <p className="text-xs text-gray-500">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
+                  <p className="text-xs text-gray-500 truncate">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3 text-sm">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3 text-xs sm:text-sm">
                 <div>
-                  <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{String(selectedRecord.checkin_date).split('T')[0]}</span>
+                  <span className="text-gray-400 block">日期</span>
+                  <span className="text-gray-700">{formatCheckinDate(selectedRecord.checkin_date)}</span>
                 </div>
                 <div>
-                  <span className="text-gray-400">时间：</span>
+                  <span className="text-gray-400 block">时间</span>
                   <span className="text-gray-700">{formatCheckinTime(selectedRecord.checkin_time)}</span>
                 </div>
                 <div>
-                  <span className="text-gray-400">当前金额：</span>
+                  <span className="text-gray-400 block">金额</span>
                   <span className="text-gray-700 font-semibold">¥{selectedRecord.amount}</span>
                 </div>
               </div>
