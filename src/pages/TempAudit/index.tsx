@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, X, Calendar, Clock, DollarSign, User, Building, Filter, Search, Users } from 'lucide-react';
+import { Check, X, Calendar, Clock, DollarSign, User, Building, Filter, Search, Users, AlertTriangle, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -15,6 +15,7 @@ interface CheckinRecord {
   department_id: string;
   department_name: string;
   checkin_date: string;
+  checkin_time: string;
   hours: number | null;
   amount: number;
   status: 'pending' | 'approved' | 'rejected';
@@ -30,12 +31,18 @@ interface CheckinRecord {
 }
 
 interface Stats {
-  total: number;
+  today_checkins: number;
   pending: number;
   approved: number;
-  rejected: number;
+  historical_pending: number;
   approved_amount: number;
   pending_amount: number;
+}
+
+interface HistoricalPendingDay {
+  date: string;
+  count: number;
+  days_ago: number;
 }
 
 interface Position {
@@ -63,7 +70,8 @@ export default function TempAudit() {
   const [records, setRecords] = useState<CheckinRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected'>('pending');
+  const [historicalPending, setHistoricalPending] = useState<HistoricalPendingDay[]>([]);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedRecord, setSelectedRecord] = useState<CheckinRecord | null>(null);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
@@ -89,16 +97,16 @@ export default function TempAudit() {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab]);
+  }, [selectedDate]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError('');
-      const [recordsRes, statsRes, positionsRes] = await Promise.all([
-        api.get<CheckinRecord[]>(`/temp/checkins/${activeTab === 'rejected' ? 'approved' : activeTab}`, {
+      const [recordsRes, statsRes, positionsRes, historicalRes] = await Promise.all([
+        api.get<CheckinRecord[]>('/temp/checkins/pending', {
           headers: { Authorization: `Bearer ${token}` },
-          params: activeTab === 'rejected' ? { status: 'rejected' } : activeTab === 'approved' ? { status: 'approved' } : {},
+          params: { date: selectedDate },
         }),
         api.get<Stats>('/temp/checkins/audit/stats', {
           headers: { Authorization: `Bearer ${token}` },
@@ -106,16 +114,59 @@ export default function TempAudit() {
         api.get<Position[]>('/temp/positions', {
           headers: { Authorization: `Bearer ${token}` },
         }),
+        api.get<HistoricalPendingDay[]>('/temp/checkins/audit/historical-pending', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ]);
       setRecords(recordsRes || []);
       setStats(statsRes);
       setPositions(positionsRes || []);
+      setHistoricalPending(historicalRes || []);
     } catch (err: any) {
       console.error('获取审核数据失败:', err);
       setError(err.message || '获取数据失败');
     } finally {
       setLoading(false);
     }
+  };
+
+  const changeDate = (days: number) => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + days);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  };
+
+  const jumpToDate = (date: string) => {
+    setSelectedDate(date);
+  };
+
+  const isToday = () => {
+    return selectedDate === new Date().toISOString().split('T')[0];
+  };
+
+  const formatDateDisplay = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (dateStr === today.toISOString().split('T')[0]) return '今天';
+    if (dateStr === yesterday.toISOString().split('T')[0]) return '昨天';
+    
+    const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${weekDays[d.getDay()]}`;
+  };
+
+  const formatCheckinTime = (timeStr: string) => {
+    if (!timeStr) return '-';
+    if (timeStr.includes('T')) {
+      const d = new Date(timeStr);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    if (timeStr.includes(' ')) {
+      return timeStr.split(' ')[1]?.substring(0, 5) || '-';
+    }
+    return timeStr.substring(0, 5) || '-';
   };
 
   const handleAudit = (record: CheckinRecord, action: 'approve' | 'reject') => {
@@ -203,22 +254,12 @@ export default function TempAudit() {
     return record.position_name?.trim() === '临时岗位';
   };
 
-  const formatCheckinDate = (dateStr: string) => {
-    if (!dateStr) return '-';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
   const handleOpenAddRecord = () => {
     setAddRecordForm({
       user_name: '',
       user_phone: '',
       position_id: '',
-      checkin_date: new Date().toISOString().split('T')[0],
+      checkin_date: selectedDate,
       hours: '',
       add_reason: '',
     });
@@ -249,7 +290,7 @@ export default function TempAudit() {
         user_name: '',
         user_phone: '',
         position_id: '',
-        checkin_date: new Date().toISOString().split('T')[0],
+        checkin_date: selectedDate,
         hours: '',
         add_reason: '',
       });
@@ -283,11 +324,22 @@ export default function TempAudit() {
     }
   };
 
-  const filteredRecords = records.filter(r => 
+  const unassignedRecords = records.filter(r => isTempPosition(r));
+  const pendingRecords = records.filter(r => !isTempPosition(r));
+
+  const filteredUnassigned = unassignedRecords.filter(r => 
     r.user_name.includes(searchKeyword) || 
     r.position_name.includes(searchKeyword) ||
     r.department_name.includes(searchKeyword)
   );
+
+  const filteredPending = pendingRecords.filter(r => 
+    r.user_name.includes(searchKeyword) || 
+    r.position_name.includes(searchKeyword) ||
+    r.department_name.includes(searchKeyword)
+  );
+
+  const hasExpiredRecords = historicalPending.some(h => h.days_ago > 3);
 
   return (
     <div className="space-y-6">
@@ -306,15 +358,15 @@ export default function TempAudit() {
       )}
 
       {stats && (
-        <div className="grid grid-cols-5 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <div className="card p-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
                 <User size={20} className="text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
-                <p className="text-sm text-gray-500">总记录</p>
+                <p className="text-2xl font-bold text-gray-800">{stats.today_checkins}</p>
+                <p className="text-sm text-gray-500">今日打卡</p>
               </div>
             </div>
           </div>
@@ -342,59 +394,88 @@ export default function TempAudit() {
           </div>
           <div className="card p-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
-                <X size={20} className="text-red-600" />
+              <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
+                <AlertTriangle size={20} className="text-orange-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">{stats.rejected}</p>
-                <p className="text-sm text-gray-500">已驳回</p>
-              </div>
-            </div>
-          </div>
-          <div className="card p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-                <DollarSign size={20} className="text-purple-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">¥{stats.approved_amount}</p>
-                <p className="text-sm text-gray-500">通过金额</p>
+                <p className="text-2xl font-bold text-gray-800">{stats.historical_pending}</p>
+                <p className="text-sm text-gray-500">历史待审核</p>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            {(['pending', 'approved', 'rejected'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === tab
-                    ? 'bg-primary-500 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {getStatusText(tab)}
-                {tab === 'pending' && stats && stats.pending > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 bg-red-500 text-white text-xs rounded-full">
-                    {stats.pending}
+      {historicalPending.length > 0 && (
+        <div className={`rounded-xl p-4 flex items-center justify-between ${
+          hasExpiredRecords ? 'bg-orange-50 border border-orange-200' : 'bg-yellow-50 border border-yellow-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            <AlertTriangle size={20} className={`${hasExpiredRecords ? 'text-orange-600' : 'text-yellow-600'}`} />
+            <div>
+              <p className={`font-medium ${hasExpiredRecords ? 'text-orange-800' : 'text-yellow-800'}`}>
+                有{historicalPending.reduce((sum, h) => sum + h.count, 0)}条历史打卡未审核
+              </p>
+              <p className="text-sm text-gray-600">
+                {historicalPending.map(h => (
+                  <span key={h.date} className="mr-2">
+                    {h.date.slice(5)} ({h.count}条)
                   </span>
+                ))}
+                {hasExpiredRecords && (
+                  <span className="text-orange-600 ml-2">· 超过3天未审将无法补录</span>
                 )}
-              </button>
-            ))}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => jumpToDate(historicalPending[0].date)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              hasExpiredRecords 
+                ? 'bg-orange-500 text-white hover:bg-orange-600' 
+                : 'bg-yellow-500 text-white hover:bg-yellow-600'
+            }`}
+          >
+            去审核
+          </button>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => changeDate(-1)}
+              className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+              disabled={selectedDate <= '2026-01-01'}
+            >
+              <ChevronLeft size={20} className="text-gray-600" />
+            </button>
+            <div className="text-center">
+              <p className="text-lg font-bold text-gray-800">{formatDateDisplay(selectedDate)}</p>
+              <p className="text-sm text-gray-500">{selectedDate}</p>
+            </div>
+            <button
+              onClick={() => changeDate(1)}
+              className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+              disabled={selectedDate >= new Date().toISOString().split('T')[0]}
+            >
+              <ChevronRight size={20} className="text-gray-600" />
+            </button>
+            <button
+              onClick={() => jumpToDate(new Date().toISOString().split('T')[0])}
+              disabled={isToday()}
+              className="px-3 py-1.5 text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              返回今天
+            </button>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={handleOpenAddRecord}
               className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors flex items-center gap-1.5"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
+              <Plus size={16} />
               补录打卡
             </button>
             <div className="relative">
@@ -412,98 +493,40 @@ export default function TempAudit() {
 
         {loading ? (
           <div className="text-center py-10 text-gray-500">加载中...</div>
-        ) : filteredRecords.length === 0 ? (
-          <div className="text-center py-12 text-gray-400">
-            <Filter size={48} className="mx-auto mb-2 opacity-50" />
-            <p>暂无{getStatusText(activeTab)}记录</p>
-          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">姓名</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">岗位</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">部门</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">日期</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">工时</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">金额</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">考核</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">状态</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">备注</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRecords.map(record => (
-                  <tr key={record.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-800">{record.user_name}</span>
-                        {record.is_add_record === 1 && (
-                          <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">补录</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-400">{record.user_phone || '-'}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="text-sm text-gray-700">{record.position_name}</div>
-                      <div className={`text-xs ${record.position_type === 'external' ? 'text-orange-500' : 'text-blue-500'}`}>
-                        {record.position_type === 'external' ? '外请' : '内部'}
-                      </div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="text-sm text-gray-600">{record.department_name}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-1 text-sm text-gray-700">
-                        <Calendar size={14} className="text-gray-400" />
-                        {formatCheckinDate(record.checkin_date)}
-                      </div>
-                    </td>
-                    <td className="py-4 px-4">
-                      {record.hours ? (
-                        <div className="flex items-center gap-1 text-sm text-gray-700">
-                          <Clock size={14} className="text-gray-400" />
-                          {record.hours}小时
+          <div className="space-y-6">
+            {filteredUnassigned.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="px-2 py-1 bg-orange-100 text-orange-700 text-xs rounded-full font-medium">
+                    待分配岗位
+                  </span>
+                  <span className="text-sm text-gray-500">以下{filteredUnassigned.length}条为扫码打卡，需分配岗位</span>
+                </div>
+                <div className="space-y-3">
+                  {filteredUnassigned.map(record => (
+                    <div key={record.id} className="bg-gray-50 rounded-xl p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center text-white font-medium">
+                            {record.user_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-gray-800">{record.user_name}</span>
+                              {record.is_add_record === 1 && (
+                                <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">补录</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 text-sm text-gray-500">
+                              <span>{formatCheckinTime(record.checkin_time)} 扫码</span>
+                              <span>·</span>
+                              <span className="text-orange-500">待分配岗位</span>
+                              <span>·</span>
+                              <span>{record.position_type === 'external' ? '外请' : '内部'}</span>
+                            </div>
+                          </div>
                         </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-1">
-                        <DollarSign size={14} className="text-gray-400" />
-                        <span className="font-medium">¥{record.amount}</span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4">
-                      {record.assessment_status === 'discounted' ? (
-                        <span className="text-sm text-orange-600">{(record.assessment_discount * 100).toFixed(0)}%结算</span>
-                      ) : record.assessment_status === 'passed' ? (
-                        <span className="text-sm text-green-600">考核通过</span>
-                      ) : record.assessment_status === 'pending' ? (
-                        <span className="text-sm text-yellow-600">待考核</span>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusColor(record.status)}`}>
-                        {getStatusText(record.status)}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4">
-                      {record.audit_note && record.status === 'rejected' ? (
-                        <div className="text-xs text-red-600 max-w-xs truncate">{record.audit_note}</div>
-                      ) : record.add_reason && record.is_add_record === 1 ? (
-                        <div className="text-xs text-orange-600 max-w-xs truncate">{record.add_reason}</div>
-                      ) : (
-                        <span className="text-xs text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4">
-                      {record.status === 'pending' && (
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleAudit(record, 'reject')}
@@ -513,25 +536,105 @@ export default function TempAudit() {
                           </button>
                           <button
                             onClick={() => handleAudit(record, 'approve')}
-                            className="px-3 py-1.5 bg-green-50 text-green-600 rounded-lg text-sm font-medium hover:bg-green-100 transition-colors"
+                            className="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors"
+                          >
+                            分配岗位
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {filteredPending.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">
+                    待确认审核
+                  </span>
+                  <span className="text-sm text-gray-500">以下{filteredPending.length}条为小程序/已分配岗位打卡，需确认审核</span>
+                </div>
+                <div className="space-y-3">
+                  {filteredPending.map(record => (
+                    <div key={record.id} className="bg-white border border-gray-100 rounded-xl p-4 hover:border-gray-200 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${
+                            record.position_type === 'external' ? 'bg-orange-500' : 'bg-blue-500'
+                          }`}>
+                            {record.user_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-gray-800">{record.user_name}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                record.position_type === 'external' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {record.position_type === 'external' ? '外请' : '内部'}
+                              </span>
+                              {record.is_add_record === 1 && (
+                                <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">补录</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 text-sm text-gray-500">
+                              <span>{formatCheckinTime(record.checkin_time)}</span>
+                              <span>·</span>
+                              <span>{record.position_name}</span>
+                              <span>·</span>
+                              <span>{record.department_name}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-sm mt-1">
+                              <span className="text-gray-600">
+                                {record.hours ? (
+                                  <span>{record.hours}小时</span>
+                                ) : (
+                                  <span>每次¥{record.rate || record.amount}</span>
+                                )}
+                              </span>
+                              <span className="font-semibold text-gray-800">¥{record.amount}</span>
+                              {record.assessment_status === 'discounted' && (
+                                <span className="text-orange-600">{(record.assessment_discount * 100).toFixed(0)}%结算</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleAudit(record, 'reject')}
+                            className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
+                          >
+                            驳回
+                          </button>
+                          <button
+                            onClick={() => handleAudit(record, 'approve')}
+                            className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 transition-colors"
                           >
                             通过
                           </button>
                         </div>
-                      )}
-                      {(record.status === 'approved' || record.status === 'rejected') && (
-                        <button
-                          onClick={() => handleReAudit(record)}
-                          className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors"
-                        >
-                          重新审核
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {filteredUnassigned.length === 0 && filteredPending.length === 0 && (
+              <div className="text-center py-12 text-gray-400">
+                <Filter size={48} className="mx-auto mb-2 opacity-50" />
+                <p>暂无{searchKeyword ? '匹配的' : ''}待审核记录</p>
+                {!isToday() && (
+                  <button
+                    onClick={() => jumpToDate(new Date().toISOString().split('T')[0])}
+                    className="mt-4 px-4 py-2 bg-primary-50 text-primary-600 rounded-lg text-sm font-medium hover:bg-primary-100 transition-colors"
+                  >
+                    返回今天
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -561,7 +664,7 @@ export default function TempAudit() {
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div>
                   <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{formatCheckinDate(selectedRecord.checkin_date)}</span>
+                  <span className="text-gray-700">{selectedRecord.checkin_date}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">工时：</span>
@@ -655,7 +758,7 @@ export default function TempAudit() {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{formatCheckinDate(selectedRecord.checkin_date)}</span>
+                  <span className="text-gray-700">{selectedRecord.checkin_date}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">当前金额：</span>

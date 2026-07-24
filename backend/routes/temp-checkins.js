@@ -221,8 +221,7 @@ router.get('/summary', requireTempAuth, async (req, res) => {
 // 待审核列表
 router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
   try {
-    const { page = 1, pageSize = 20, date } = req.query;
-    const offset = (page - 1) * pageSize;
+    const { date } = req.query;
     const params = [...req.dataScope.params];
     let dateFilter = '';
 
@@ -230,8 +229,6 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
       dateFilter = 'AND cr.checkin_date = ?';
       params.push(date);
     }
-
-    params.push(parseInt(pageSize), offset);
 
     const [rows] = await pool.query(`
       SELECT cr.*, pa.user_id as auditor_id, d.full_path as department_name
@@ -241,13 +238,40 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
       ${req.dataScope.join}
       WHERE cr.status = 'pending' AND ${req.dataScope.sql}
       ${dateFilter}
-      ORDER BY cr.created_at DESC
-      LIMIT ? OFFSET ?
+      ORDER BY cr.checkin_time DESC
     `, params);
 
     res.json(rows);
   } catch (err) {
     console.error('pending list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 历史未审核统计
+router.get('/audit/historical-pending', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const params = [...req.dataScope.params];
+
+    const [rows] = await pool.query(`
+      SELECT 
+        cr.checkin_date,
+        COUNT(*) as count,
+        DATEDIFF(CURDATE(), cr.checkin_date) as days_ago
+      FROM checkin_records cr
+      ${req.dataScope.join}
+      WHERE cr.status = 'pending' 
+        AND ${req.dataScope.sql}
+        AND cr.checkin_date < ?
+      GROUP BY cr.checkin_date
+      ORDER BY cr.checkin_date DESC
+      LIMIT 7
+    `, [...params, today]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('historical pending error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -665,18 +689,21 @@ router.post('/assign-position', requireAuth, async (req, res) => {
 // 审核统计
 router.get('/audit/stats', requireAuth, attachDataScope, async (req, res) => {
   try {
+    const today = new Date().toISOString().split('T')[0];
     const [rows] = await pool.query(`
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN cr.status = 'pending' THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved,
         SUM(CASE WHEN cr.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        SUM(CASE WHEN cr.checkin_date = ? THEN 1 ELSE 0 END) as today_checkins,
+        SUM(CASE WHEN cr.status = 'pending' AND cr.checkin_date < ? THEN 1 ELSE 0 END) as historical_pending,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
         COALESCE(SUM(CASE WHEN cr.status = 'pending' THEN cr.amount ELSE 0 END), 0) as pending_amount
       FROM checkin_records cr
       ${req.dataScope.join}
       WHERE ${req.dataScope.sql}
-    `, req.dataScope.params);
+    `, [...req.dataScope.params, today, today]);
 
     res.json(rows[0]);
   } catch (err) {
