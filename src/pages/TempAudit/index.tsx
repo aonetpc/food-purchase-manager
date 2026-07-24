@@ -686,7 +686,7 @@ export default function TempAudit() {
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div>
                   <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{selectedRecord.checkin_date}</span>
+                  <span className="text-gray-700">{String(selectedRecord.checkin_date).split('T')[0]}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">时间：</span>
@@ -818,10 +818,14 @@ export default function TempAudit() {
                   <p className="text-xs text-gray-500">{selectedRecord.position_name} · {selectedRecord.department_name}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-3 gap-3 text-sm">
                 <div>
                   <span className="text-gray-400">日期：</span>
-                  <span className="text-gray-700">{selectedRecord.checkin_date}</span>
+                  <span className="text-gray-700">{String(selectedRecord.checkin_date).split('T')[0]}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">时间：</span>
+                  <span className="text-gray-700">{formatCheckinTime(selectedRecord.checkin_time)}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">当前金额：</span>
