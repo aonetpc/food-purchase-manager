@@ -60,6 +60,18 @@ async function requireAuth(req, res, next) {
       return res.status(403).json({ error: '用户已被禁用' });
     }
 
+    // 查询角色代码（兼容 role 字段存储角色ID的情况）
+    if (user.role_id) {
+      try {
+        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
+        if (roleRows.length > 0) {
+          user.role = roleRows[0].code;
+        }
+      } catch (e) {
+        // 查询失败，忽略
+      }
+    }
+
     // 更新最后登录时间
     pool.query('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date(), userId]);
 
