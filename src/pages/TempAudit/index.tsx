@@ -78,6 +78,8 @@ export default function TempAudit() {
   const [auditAction, setAuditAction] = useState<'approve' | 'reject'>('approve');
   const [auditNote, setAuditNote] = useState('');
   const [assignPositionId, setAssignPositionId] = useState<string>('');
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustHours, setAdjustHours] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [addRecordForm, setAddRecordForm] = useState({
@@ -174,6 +176,8 @@ export default function TempAudit() {
     setAuditAction(action);
     setAuditNote('');
     setAssignPositionId('');
+    setAdjustAmount('');
+    setAdjustHours('');
     setShowAuditModal(true);
   };
 
@@ -194,6 +198,12 @@ export default function TempAudit() {
         if (assignPositionId) {
           body.assign_position_id = assignPositionId;
         }
+        if (adjustAmount) {
+          body.adjust_amount = parseFloat(adjustAmount);
+        }
+        if (adjustHours) {
+          body.adjust_hours = parseFloat(adjustHours);
+        }
         await api.post(`/temp/checkins/${selectedRecord.id}/approve`, body, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -207,6 +217,8 @@ export default function TempAudit() {
       setSelectedRecord(null);
       setAuditNote('');
       setAssignPositionId('');
+      setAdjustAmount('');
+      setAdjustHours('');
       fetchData();
     } catch (err: any) {
       setError(err.message || '审核失败');
@@ -667,14 +679,20 @@ export default function TempAudit() {
                   <span className="text-gray-700">{selectedRecord.checkin_date}</span>
                 </div>
                 <div>
-                  <span className="text-gray-400">工时：</span>
-                  <span className="text-gray-700">{selectedRecord.hours || '-'}小时</span>
+                  <span className="text-gray-400">时间：</span>
+                  <span className="text-gray-700">{formatCheckinTime(selectedRecord.checkin_time)}</span>
                 </div>
                 <div>
                   <span className="text-gray-400">金额：</span>
                   <span className="text-gray-700 font-semibold">¥{selectedRecord.amount}</span>
                 </div>
               </div>
+              {selectedRecord.hours !== null && (
+                <div className="mt-2 text-sm">
+                  <span className="text-gray-400">工时：</span>
+                  <span className="text-gray-700">{selectedRecord.hours}小时</span>
+                </div>
+              )}
             </div>
 
             {auditAction === 'approve' && isTempPosition(selectedRecord) && (
@@ -698,6 +716,39 @@ export default function TempAudit() {
                 <p className="text-xs text-gray-400 mt-1">
                   分配岗位后，用户下次打卡可直接选择该岗位
                 </p>
+              </div>
+            )}
+
+            {auditAction === 'approve' && (
+              <div className="space-y-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <DollarSign size={14} className="inline mr-1" />
+                    调整金额
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={adjustAmount}
+                    onChange={(e) => setAdjustAmount(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder={`留空则使用岗位单价（当前¥${selectedRecord.amount}）`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Clock size={14} className="inline mr-1" />
+                    调整工时（小时）
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={adjustHours}
+                    onChange={(e) => setAdjustHours(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder={`留空则保持原值（当前${selectedRecord.hours || '-'}小时）`}
+                  />
+                </div>
               </div>
             )}
 

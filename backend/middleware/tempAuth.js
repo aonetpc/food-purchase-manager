@@ -56,7 +56,7 @@ async function requireTempAuth(req, res, next) {
  */
 async function getTempUserPositions(tempUserId) {
   const [rows] = await pool.query(`
-    SELECT p.id, p.name, p.type, p.pay_type, p.rate, p.department_id, d.name as department_name,
+    SELECT p.id, p.name, p.type, p.pay_type, p.rate, p.daily_limit, p.department_id, d.name as department_name,
            up.is_primary
     FROM user_positions up
     JOIN positions p ON up.position_id = p.id

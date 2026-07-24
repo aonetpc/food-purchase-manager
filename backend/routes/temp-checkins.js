@@ -320,7 +320,7 @@ router.get('/approved', requireAuth, attachDataScope, async (req, res) => {
 router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { id } = req.params;
-    const { audit_note, adjust_amount, assign_position_id } = req.body;
+    const { audit_note, adjust_amount, adjust_hours, assign_position_id } = req.body;
 
     // 验证权限：审核员只能审核自己负责岗位的记录
     const [record] = await pool.query('SELECT * FROM checkin_records WHERE id = ?', [id]);
@@ -362,7 +362,6 @@ router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
         return res.status(403).json({ error: '无权分配此岗位' });
       }
 
-      // 获取岗位信息用于更新打卡记录
       const [posRows] = await pool.query(`
         SELECT p.*, d.name as department_name
         FROM positions p
@@ -375,26 +374,25 @@ router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
       }
 
       const position = posRows[0];
+      const newHours = adjust_hours !== undefined ? adjust_hours : record[0].hours;
 
-      // 更新打卡记录为新岗位
       const newAmount = adjust_amount !== undefined 
         ? adjust_amount 
         : (position.pay_type === 'per_hour' 
-            ? parseFloat(position.rate) * parseFloat(record[0].hours || 0) 
+            ? parseFloat(position.rate) * parseFloat(newHours || 0) 
             : parseFloat(position.rate));
 
       await pool.query(`
         UPDATE checkin_records
         SET status = 'approved', audit_by = ?, audit_note = ?, audited_at = NOW(),
-            amount = ?,
+            amount = ?, hours = ?,
             position_id = ?, position_name = ?, position_type = ?,
             department_id = ?, department_name = ?
         WHERE id = ?
-      `, [req.user.id, audit_note || null, newAmount,
+      `, [req.user.id, audit_note || null, newAmount, newHours,
           assign_position_id, position.name, position.type,
           position.department_id, position.department_name, id]);
 
-      // 分配岗位给用户（用户来源为temp时）
       if (record[0].user_source === 'temp') {
         await pool.query(
           `INSERT IGNORE INTO user_positions (id, user_source, user_id, position_id, is_primary, assigned_by)
@@ -403,17 +401,18 @@ router.post('/:id/approve', requireAuth, attachDataScope, async (req, res) => {
         );
       }
     } else {
+      const finalHours = adjust_hours !== undefined ? adjust_hours : record[0].hours;
       const finalAmount = adjust_amount !== undefined ? adjust_amount : record[0].amount;
 
       await pool.query(`
         UPDATE checkin_records
         SET status = 'approved', audit_by = ?, audit_note = ?, audited_at = NOW(),
-            amount = ?
+            amount = ?, hours = ?
         WHERE id = ?
-      `, [req.user.id, audit_note || null, finalAmount, id]);
+      `, [req.user.id, audit_note || null, finalAmount, finalHours, id]);
     }
 
-    await logOperation(req.user.id, id, 'temp_checkin', 'approve', { audit_note, adjust_amount, assign_position_id }, req);
+    await logOperation(req.user.id, id, 'temp_checkin', 'approve', { audit_note, adjust_amount, adjust_hours, assign_position_id }, req);
 
     res.json({ success: true });
   } catch (err) {

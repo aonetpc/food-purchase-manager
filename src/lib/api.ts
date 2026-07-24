@@ -13,8 +13,20 @@ function getToken(): string | null {
   return null;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const url = `${BASE_URL}${path}`;
+async function request<T>(path: string, options: RequestInit & { params?: Record<string, any> } = {}): Promise<T> {
+  let url = `${BASE_URL}${path}`;
+  
+  if (options.params) {
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(options.params)) {
+      if (value !== undefined && value !== null) {
+        searchParams.append(key, String(value));
+      }
+    }
+    if (searchParams.toString()) {
+      url += `?${searchParams.toString()}`;
+    }
+  }
   
   const token = getToken();
   const defaultHeaders: Record<string, string> = {
@@ -25,11 +37,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
+  const { params: _, ...restOptions } = options;
+
   const response = await fetch(url, {
-    ...options,
+    ...restOptions,
     headers: {
       ...defaultHeaders,
-      ...options.headers,
+      ...restOptions.headers,
     },
   });
 
@@ -42,7 +56,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string, options?: RequestInit) => request<T>(path, { ...options, method: 'GET' }),
+  get: <T>(path: string, options?: RequestInit & { params?: Record<string, any> }) => request<T>(path, { ...options, method: 'GET' }),
   post: <T>(path: string, data?: any, options?: RequestInit) =>
     request<T>(path, {
       ...options,
