@@ -262,7 +262,7 @@ router.get('/audit/historical-pending', requireAuth, attachDataScope, async (req
       GROUP BY cr.checkin_date
       ORDER BY cr.checkin_date DESC
       LIMIT 7
-    `, [...params, today]);
+    `, [today, ...params]);
 
     res.json(rows);
   } catch (err) {
@@ -737,7 +737,7 @@ router.get('/audit/stats', requireAuth, attachDataScope, async (req, res) => {
       FROM checkin_records cr
       ${req.dataScope.join}
       WHERE ${req.dataScope.sql}
-    `, [...req.dataScope.params, today, today]);
+    `, [today, today, ...req.dataScope.params]);
 
     res.json(rows[0]);
   } catch (err) {
