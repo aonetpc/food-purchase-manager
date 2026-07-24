@@ -47,10 +47,10 @@ async function buildTempDataScope(req) {
     return { sql: '1=1', params: [], join: '', joinAlias: '' };
   }
 
-  // 审核员：只看自己负责的岗位
+  // 审核员：只看自己负责的岗位 + 临时岗位（待分配的记录任何审核员都能看到）
   if (roleCodes.has('temp_auditor')) {
     return {
-      sql: `cr.position_id IN (SELECT pos_aud.position_id FROM position_auditors pos_aud WHERE pos_aud.user_id = ?)`,
+      sql: `(cr.position_id IN (SELECT pos_aud.position_id FROM position_auditors pos_aud WHERE pos_aud.user_id = ?) OR cr.position_id IN (SELECT id FROM positions WHERE name = '临时岗位'))`,
       params: [userId],
       join: '',
       joinAlias: '',

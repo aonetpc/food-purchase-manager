@@ -262,7 +262,7 @@ router.get('/audit/historical-pending', requireAuth, attachDataScope, async (req
       GROUP BY cr.checkin_date
       ORDER BY cr.checkin_date DESC
       LIMIT 7
-    `, [today, ...params]);
+    `, [...params, today]);
 
     res.json(rows);
   } catch (err) {
