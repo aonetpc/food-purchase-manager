@@ -178,20 +178,33 @@ function requireRole(...roles) {
       }
     }
 
-    // 查多角色
+    // 查多角色（user_roles 表 + users.role_id）
     try {
       const [roleCodeRows] = await pool.query(`
         SELECT DISTINCT r.code
-        FROM user_roles ur
-        JOIN roles r ON ur.role_id = r.id
-        WHERE ur.user_id = ?
-      `, [req.user.id]);
+        FROM (
+          SELECT role_id FROM user_roles WHERE user_id = ?
+          UNION
+          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+        ) t
+        JOIN roles r ON r.id = t.role_id
+      `, [req.user.id, req.user.id]);
       const multiRoleCodes = roleCodeRows.map(r => r.code);
       if (roles.some(r => multiRoleCodes.includes(r))) {
         return next();
       }
     } catch (e) {
       // 查询失败，忽略
+    }
+
+    // 降级：检查用户是否拥有管理员级别的权限码
+    // 如果用户拥有 menu:users 或 menu:roles 权限，说明是管理员
+    if (roles.includes('admin') && req.user.permissionCodes) {
+      const adminPermCodes = ['menu:users', 'menu:roles', 'menu:categories', 'menu:departments'];
+      const hasAdminPerm = adminPermCodes.some(code => req.user.permissionCodes.has(code));
+      if (hasAdminPerm) {
+        return next();
+      }
     }
 
     return res.status(403).json({ error: '无权限访问' });
