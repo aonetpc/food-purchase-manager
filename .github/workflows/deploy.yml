@@ -35,6 +35,8 @@ jobs:
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
+            sudo mkdir -p /opt/food-purchase/backend/utils
+            sudo cp -r backend/utils/. /opt/food-purchase/backend/utils/
             sudo cp -r backend/fonts /opt/food-purchase/backend/
             sudo chown -R ubuntu:ubuntu /opt/food-purchase/backend
             cd /opt/food-purchase/backend
