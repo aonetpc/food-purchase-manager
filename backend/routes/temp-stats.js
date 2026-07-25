@@ -306,7 +306,6 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       SELECT
         u.name as worker_name,
         u.phone as worker_phone,
-        cr.department_name as worker_department,
         COUNT(*) as checkin_count,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
         COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
@@ -320,8 +319,9 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       WHERE DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
         AND cr.status = 'approved'
         AND ${req.dataScope.sql}
-      GROUP BY cr.user_id, u.name, u.phone, cr.department_name
-      ORDER BY cr.department_name ASC, u.name ASC
+      GROUP BY cr.user_id, u.name, u.phone
+      HAVING final_amount > 0
+      ORDER BY u.name ASC
     `, params);
 
     const doc = new PDFDocument({
@@ -349,8 +349,8 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
     doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`${targetMonth}月份`, { align: 'center' });
     doc.moveDown(1);
 
-    const colWidths = [60, 90, 70, 50, 50, 50, 70];
-    const headers = ['姓名', '电话', '部门', '打卡次数', '正常考核', '折扣考核', '最终金额'];
+    const colWidths = [60, 100, 60, 60, 60, 80];
+    const headers = ['姓名', '电话', '打卡次数', '正常考核', '折扣考核', '最终金额'];
     
     let y = doc.y;
     
@@ -367,89 +367,35 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
 
     let totalApproved = 0;
     let totalFinal = 0;
-    let currentDepartment = '';
-    let deptTotalApproved = 0;
-    let deptTotalFinal = 0;
 
     doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
     rows.forEach((row, index) => {
       const approved = parseFloat(row.approved_amount);
       const final = parseFloat(row.final_amount);
-      const department = row.worker_department || '未分配';
-
-      if (department !== currentDepartment) {
-        if (currentDepartment !== '') {
-          y += 4;
-          doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ dash: [2, 2] });
-          y += 6;
-          doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
-          x = startX;
-          doc.text(`${currentDepartment}小计`, x, y, { width: colWidths[0] + colWidths[1] + colWidths[2] });
-          x += colWidths[0] + colWidths[1] + colWidths[2];
-          doc.text('', x, y, { width: colWidths[3] });
-          x += colWidths[3];
-          doc.text('', x, y, { width: colWidths[4] });
-          x += colWidths[4];
-          doc.text('', x, y, { width: colWidths[5] });
-          x += colWidths[5];
-          doc.text('¥' + deptTotalFinal.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
-          y += 12;
-          deptTotalApproved = 0;
-          deptTotalFinal = 0;
-        }
-        currentDepartment = department;
-        y += 4;
-        doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
-        doc.text(`【${department}】`, startX, y);
-        y += 10;
-        doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-      }
 
       x = startX;
       doc.text(row.worker_name, x, y, { width: colWidths[0], align: 'center' });
       x += colWidths[0];
       doc.text(row.worker_phone || '-', x, y, { width: colWidths[1], align: 'center' });
       x += colWidths[1];
-      doc.text(department, x, y, { width: colWidths[2], align: 'center' });
+      doc.text(row.checkin_count.toString(), x, y, { width: colWidths[2], align: 'center' });
       x += colWidths[2];
-      doc.text(row.checkin_count.toString(), x, y, { width: colWidths[3], align: 'center' });
+      doc.text(row.normal_count.toString(), x, y, { width: colWidths[3], align: 'center' });
       x += colWidths[3];
-      doc.text(row.normal_count.toString(), x, y, { width: colWidths[4], align: 'center' });
+      doc.text(row.discounted_count.toString(), x, y, { width: colWidths[4], align: 'center' });
       x += colWidths[4];
-      doc.text(row.discounted_count.toString(), x, y, { width: colWidths[5], align: 'center' });
-      x += colWidths[5];
-      doc.text('¥' + final.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
+      doc.text('¥' + final.toFixed(2), x, y, { width: colWidths[5], align: 'right' });
 
       y += 14;
 
       if (index < rows.length - 1) {
-        doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ color: '#eee' });
-        y += 2;
+        doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ dash: [2, 2], color: '#ddd' });
+        y += 4;
       }
 
       totalApproved += approved;
       totalFinal += final;
-      deptTotalApproved += approved;
-      deptTotalFinal += final;
     });
-
-    if (currentDepartment !== '') {
-      y += 4;
-      doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke({ dash: [2, 2] });
-      y += 6;
-      doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
-      x = startX;
-      doc.text(`${currentDepartment}小计`, x, y, { width: colWidths[0] + colWidths[1] + colWidths[2] });
-      x += colWidths[0] + colWidths[1] + colWidths[2];
-      doc.text('', x, y, { width: colWidths[3] });
-      x += colWidths[3];
-      doc.text('', x, y, { width: colWidths[4] });
-      x += colWidths[4];
-      doc.text('', x, y, { width: colWidths[5] });
-      x += colWidths[5];
-      doc.text('¥' + deptTotalFinal.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
-      y += 12;
-    }
 
     y += 8;
     doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke();
@@ -457,15 +403,15 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
 
     doc.fontSize(9).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
     x = startX;
-    doc.text('合计', x, y, { width: colWidths[0] + colWidths[1] + colWidths[2] });
-    x += colWidths[0] + colWidths[1] + colWidths[2];
-    doc.text(rows.length.toString(), x, y, { width: colWidths[3], align: 'center' });
+    doc.text('合计', x, y, { width: colWidths[0] + colWidths[1] });
+    x += colWidths[0] + colWidths[1];
+    doc.text(rows.length.toString(), x, y, { width: colWidths[2], align: 'center' });
+    x += colWidths[2];
+    doc.text('', x, y, { width: colWidths[3] });
     x += colWidths[3];
     doc.text('', x, y, { width: colWidths[4] });
     x += colWidths[4];
-    doc.text('', x, y, { width: colWidths[5] });
-    x += colWidths[5];
-    doc.text('¥' + totalFinal.toFixed(2), x, y, { width: colWidths[6], align: 'right' });
+    doc.text('¥' + totalFinal.toFixed(2), x, y, { width: colWidths[5], align: 'right' });
 
     y += 20;
     doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
