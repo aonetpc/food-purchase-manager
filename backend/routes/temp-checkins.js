@@ -251,7 +251,7 @@ router.get('/audit/historical-pending', requireAuth, attachDataScope, async (req
 
     const [rows] = await pool.query(`
       SELECT 
-        cr.checkin_date,
+        cr.checkin_date as date,
         COUNT(*) as count,
         DATEDIFF(CURDATE(), cr.checkin_date) as days_ago
       FROM checkin_records cr
