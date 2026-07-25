@@ -42,7 +42,10 @@ export default function TempAssessment() {
   const [error, setError] = useState('');
   const [records, setRecords] = useState<AssessmentRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [selectedRecord, setSelectedRecord] = useState<AssessmentRecord | null>(null);
   const [showAssessModal, setShowAssessModal] = useState(false);
   const [assessDiscount, setAssessDiscount] = useState(1.0);
@@ -110,7 +113,7 @@ export default function TempAssessment() {
     const now = new Date();
     for (let i = 0; i < 12; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStr = date.toISOString().substring(0, 7);
+      const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       const display = `${date.getFullYear()}年${date.getMonth() + 1}月`;
       options.push({ value: monthStr, label: display });
     }

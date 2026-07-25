@@ -11,6 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { getCurrentMonthStr } = require('../utils/date');
 const { requireAuth } = require('../middleware/rbac');
 const { attachDataScope } = require('../middleware/tempDataScope');
 const { logOperation } = require('../middleware/logger');
@@ -19,7 +20,7 @@ const { logOperation } = require('../middleware/logger');
 router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -84,7 +85,7 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
 router.get('/done', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -220,7 +221,7 @@ router.post('/:id/correct', requireAuth, async (req, res) => {
 router.get('/', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -258,7 +259,7 @@ router.post('/:id', requireAuth, async (req, res) => {
     }
 
     const { user_id, position_id, checkin_date } = records[0];
-    const month = new Date(checkin_date).toISOString().substring(0, 7);
+    const month = String(checkin_date).substring(0, 7);
     const assessment_status = parseFloat(discount) === 1.0 ? 'passed' : 'discounted';
     const assessment_discount = parseFloat(discount) || 1.00;
 
@@ -302,7 +303,7 @@ router.post('/:id', requireAuth, async (req, res) => {
 router.get('/stats', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`

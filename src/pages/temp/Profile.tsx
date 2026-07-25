@@ -42,7 +42,10 @@ export default function TempProfile() {
   const [records, setRecords] = useState<CheckinRecord[]>([]);
   const [summary, setSummary] = useState<MonthlySummary | null>(null);
   const [myPositions, setMyPositions] = useState<Position[]>([]);
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     if (!session) {
@@ -104,14 +107,20 @@ export default function TempProfile() {
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
+    if (dateStr.includes(' ')) {
+      return dateStr.substring(0, 16);
+    }
+    if (dateStr.includes('T')) {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}`;
+    }
+    return dateStr;
   };
 
   const getAssessmentText = (status: string, discount: number) => {
@@ -132,7 +141,7 @@ export default function TempProfile() {
     const now = new Date();
     for (let i = 0; i < 12; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStr = date.toISOString().substring(0, 7);
+      const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       const display = `${date.getFullYear()}年${date.getMonth() + 1}月`;
       options.push({ value: monthStr, label: display });
     }

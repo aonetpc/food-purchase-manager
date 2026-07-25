@@ -17,6 +17,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
+const { getTodayStr, getNowDateTimeStr, getCurrentMonthStr } = require('../utils/date');
 const { requireAuth } = require('../middleware/rbac');
 const { requireTempAuth, getTempUserPositions, getTempPositions } = require('../middleware/tempAuth');
 const { attachDataScope } = require('../middleware/tempDataScope');
@@ -96,37 +97,52 @@ router.post('/', requireTempAuth, async (req, res) => {
       amount = parseFloat(position.rate);
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const checkinTime = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const today = getTodayStr();
+    const checkinTime = getNowDateTimeStr();
     const id = uuidv4();
 
     // 检查每日打卡次数限制（按次岗位）
+    let dailyLimit = 0;
     if (position.pay_type === 'per_time') {
-      const dailyLimit = position.daily_limit || 1;
-      if (dailyLimit > 0) {
-        const [countRows] = await pool.query(`
-          SELECT COUNT(*) as cnt FROM checkin_records
-          WHERE user_source = 'temp' AND user_id = ?
-            AND position_id = ? AND checkin_date = ?
-        `, [req.tempUser.id, realPositionId, today]);
-        
-        if (countRows[0].cnt >= dailyLimit) {
-          return res.status(400).json({ error: `今日该岗位已打卡${dailyLimit}次，不能再打卡` });
-        }
-      }
+      dailyLimit = position.daily_limit || 1;
     }
 
-    await pool.query(`
-      INSERT INTO checkin_records
-        (id, user_source, user_id, user_name, user_phone,
-         position_id, position_name, position_type, department_id, department_name,
-         checkin_date, checkin_time, hours, amount, status)
-      VALUES (?, 'temp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    `, [
-      id, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
-      realPositionId, position.name, position.type, position.department_id, position.department_name,
-      today, checkinTime, hours || null, amount
-    ]);
+    if (dailyLimit > 0) {
+      const [result] = await pool.query(`
+        INSERT INTO checkin_records
+          (id, user_source, user_id, user_name, user_phone,
+           position_id, position_name, position_type, department_id, department_name,
+           checkin_date, checkin_time, hours, amount, status)
+        SELECT ?, 'temp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending'
+        FROM DUAL
+        WHERE (
+          SELECT COUNT(*) FROM checkin_records
+          WHERE user_source = 'temp' AND user_id = ?
+            AND position_id = ? AND checkin_date = ?
+        ) < ?
+      `, [
+        id, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
+        realPositionId, position.name, position.type, position.department_id, position.department_name,
+        today, checkinTime, hours || null, amount,
+        req.tempUser.id, realPositionId, today, dailyLimit
+      ]);
+
+      if (result.affectedRows === 0) {
+        return res.status(400).json({ error: `今日该岗位已打卡${dailyLimit}次，不能再打卡` });
+      }
+    } else {
+      await pool.query(`
+        INSERT INTO checkin_records
+          (id, user_source, user_id, user_name, user_phone,
+           position_id, position_name, position_type, department_id, department_name,
+           checkin_date, checkin_time, hours, amount, status)
+        VALUES (?, 'temp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      `, [
+        id, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
+        realPositionId, position.name, position.type, position.department_id, position.department_name,
+        today, checkinTime, hours || null, amount
+      ]);
+    }
 
     const [records] = await pool.query('SELECT * FROM checkin_records WHERE id = ?', [id]);
     res.json(records[0]);
@@ -165,7 +181,7 @@ router.get('/my', requireTempAuth, async (req, res) => {
 // 今日是否已打卡
 router.get('/today', requireTempAuth, async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayStr();
     const [rows] = await pool.query(`
       SELECT position_id, position_name, checkin_date, checkin_time, status, hours, amount
       FROM checkin_records
@@ -184,7 +200,7 @@ router.get('/today', requireTempAuth, async (req, res) => {
 router.get('/summary', requireTempAuth, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
 
     const [rows] = await pool.query(`
       SELECT
@@ -246,7 +262,7 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
 // 历史未审核统计
 router.get('/audit/historical-pending', requireAuth, attachDataScope, async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayStr();
     const params = [...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -723,7 +739,7 @@ router.post('/assign-position', requireAuth, async (req, res) => {
 // 审核统计
 router.get('/audit/stats', requireAuth, attachDataScope, async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayStr();
     const [rows] = await pool.query(`
       SELECT
         COUNT(*) as total,

@@ -41,7 +41,10 @@ export default function TempStats() {
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [departments, setDepartments] = useState<DepartmentStat[]>([]);
   const [positions, setPositions] = useState<PositionStat[]>([]);
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     if (!user) {
@@ -82,7 +85,7 @@ export default function TempStats() {
     const now = new Date();
     for (let i = 0; i < 12; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStr = date.toISOString().substring(0, 7);
+      const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       const display = `${date.getFullYear()}年${date.getMonth() + 1}月`;
       options.push({ value: monthStr, label: display });
     }

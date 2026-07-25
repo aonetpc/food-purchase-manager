@@ -11,6 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { getTodayStr, getCurrentMonthStr } = require('../utils/date');
 const { requireAuth } = require('../middleware/rbac');
 const { attachDataScope } = require('../middleware/tempDataScope');
 const PDFDocument = require('pdfkit');
@@ -48,7 +49,7 @@ function findChineseBoldFont() {
 router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     
     if (!/^\d{4}-\d{2}$/.test(targetMonth)) {
       return res.status(400).json({ error: '月份格式不正确，应为 YYYY-MM' });
@@ -70,7 +71,7 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
         AND ${req.dataScope.sql}
     `, params);
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayStr();
     const todayParams = [today, ...req.dataScope.params];
 
     const [todayRows] = await pool.query(`
@@ -105,7 +106,7 @@ router.get('/overview', requireAuth, attachDataScope, async (req, res) => {
 router.get('/department', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -146,7 +147,7 @@ router.get('/department', requireAuth, attachDataScope, async (req, res) => {
 router.get('/departments', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -179,7 +180,7 @@ router.get('/departments', requireAuth, attachDataScope, async (req, res) => {
 router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const params = [targetMonth, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -212,7 +213,7 @@ router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
 // 今日打卡概览（董事长看板）
 router.get('/today', requireAuth, attachDataScope, async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayStr();
     const params = [today, ...req.dataScope.params];
 
     const [rows] = await pool.query(`
@@ -259,7 +260,7 @@ router.get('/today', requireAuth, attachDataScope, async (req, res) => {
 router.get('/auditor', requireAuth, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
     const userId = req.user.id;
 
     const [rows] = await pool.query(`
@@ -293,7 +294,7 @@ router.get('/auditor', requireAuth, async (req, res) => {
 router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
-    const targetMonth = month || new Date().toISOString().substring(0, 7);
+    const targetMonth = month || getCurrentMonthStr();
 
     if (!/^\d{4}-\d{2}$/.test(targetMonth)) {
       return res.status(400).json({ error: '月份格式不正确，应为 YYYY-MM' });
