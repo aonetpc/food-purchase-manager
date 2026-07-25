@@ -154,6 +154,10 @@ export default function PurchaseConfirmPage() {
   const [bindUsername, setBindUsername] = useState('');
   const [bindPassword, setBindPassword] = useState('');
   const [binding, setBinding] = useState(false);
+  const [savedSignature, setSavedSignature] = useState<string | null>(null);
+  const [isReSigning, setIsReSigning] = useState(false);
+  const [userId, setUserId] = useState('');
+  const [userSource, setUserSource] = useState('');
 
   useEffect(() => {
     // 1. 检查 URL 中的企微授权 code（只要有 code 就尝试回调，不严格检查 state）
@@ -178,9 +182,15 @@ export default function PurchaseConfirmPage() {
           if (stored) {
             const data = JSON.parse(stored);
             const name = data?.state?.user?.name || '';
+            const uid = data?.state?.user?.id || '';
             if (name) {
               setUserName(name);
               setNameFromSession(true);
+            }
+            if (uid) {
+              setUserId(uid);
+              setUserSource('internal');
+              loadUserSignature(uid, 'internal');
             }
           }
         } catch (e) {}
@@ -203,9 +213,15 @@ export default function PurchaseConfirmPage() {
         if (stored) {
           const data = JSON.parse(stored);
           const name = data?.state?.user?.name || '';
+          const uid = data?.state?.user?.id || '';
           if (name) {
             setUserName(name);
             setNameFromSession(true);
+          }
+          if (uid) {
+            setUserId(uid);
+            setUserSource('internal');
+            loadUserSignature(uid, 'internal');
           }
         }
       } catch (e) {
@@ -361,6 +377,31 @@ export default function PurchaseConfirmPage() {
     }
   };
 
+  const loadUserSignature = async (uid: string, source: string) => {
+    try {
+      const result = await api.get(`/user/signature?user_id=${uid}&user_source=${source}`);
+      if (result.signature_data) {
+        setSavedSignature(result.signature_data);
+        setSignatureData(result.signature_data);
+      }
+    } catch (err) {
+      console.log('No saved signature found');
+    }
+  };
+
+  const saveUserSignature = async (uid: string, source: string, signature: string) => {
+    try {
+      await api.post('/user/signature', {
+        user_id: uid,
+        user_source: source,
+        signature_data: signature,
+      });
+      setSavedSignature(signature);
+    } catch (err) {
+      console.error('Failed to save signature:', err);
+    }
+  };
+
   const handleConfirm = async (deptId: string) => {
     if (!userName.trim()) {
       setError('请输入您的姓名');
@@ -374,6 +415,11 @@ export default function PurchaseConfirmPage() {
         confirmed_by: userName.trim(),
         signature_data: signatureData,
       });
+
+      if (userId && userSource && signatureData) {
+        await saveUserSignature(userId, userSource, signatureData);
+      }
+
       setSignatureData(null);
       setActiveDeptId(null);
       if (id) fetchData(id);
@@ -607,16 +653,57 @@ export default function PurchaseConfirmPage() {
                       <Pen size={14} className="inline mr-1" />
                       手写签名
                     </label>
-                    <SignatureCanvas onSignatureChange={setSignatureData} />
-                    <button
-                      onClick={() => handleConfirm(dept.id)}
-                      disabled={confirming || !userName.trim() || !signatureData}
-                      className="w-full mt-3 py-2.5 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:bg-gray-300 transition-colors"
-                    >
-                      {confirming ? '确认中...' : '确认采购入库'}
-                    </button>
-                    {!signatureData && (
-                      <p className="text-xs text-gray-400 mt-1 text-center">请先手写签名后再确认</p>
+                    {savedSignature && !isReSigning ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={savedSignature}
+                            alt="签名"
+                            className="h-16 w-auto rounded-lg border border-gray-200 bg-white"
+                          />
+                          <div className="flex-1">
+                            <p className="text-xs text-gray-500">已保存的签名</p>
+                          </div>
+                          <button
+                            onClick={() => setIsReSigning(true)}
+                            className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg hover:bg-gray-200 transition-colors"
+                          >
+                            重新签名
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => handleConfirm(dept.id)}
+                          disabled={confirming || !userName.trim()}
+                          className="w-full py-2.5 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:bg-gray-300 transition-colors"
+                        >
+                          {confirming ? '确认中...' : '确认采购入库'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <SignatureCanvas onSignatureChange={setSignatureData} />
+                        <button
+                          onClick={() => handleConfirm(dept.id)}
+                          disabled={confirming || !userName.trim() || !signatureData}
+                          className="w-full py-2.5 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:bg-gray-300 transition-colors"
+                        >
+                          {confirming ? '确认中...' : '确认采购入库'}
+                        </button>
+                        {!signatureData && (
+                          <p className="text-xs text-gray-400 mt-1 text-center">请先手写签名后再确认</p>
+                        )}
+                        {isReSigning && (
+                          <button
+                            onClick={() => {
+                              setIsReSigning(false);
+                              setSignatureData(savedSignature);
+                            }}
+                            className="w-full py-1.5 text-xs text-gray-400 hover:text-gray-600"
+                          >
+                            取消重新签名
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}

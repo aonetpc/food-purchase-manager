@@ -10,6 +10,7 @@ const departmentsRouter = require('./routes/departments');
 const suppliersRouter = require('./routes/suppliers');
 const wecomRouter = require('./routes/wecom');
 const purchaseConfirmationsRouter = require('./routes/purchase-confirmations');
+const userSignaturesRouter = require('./routes/user-signatures');
 
 // 外请人员打卡模块
 const tempAuthRouter = require('./routes/temp-auth');
@@ -49,6 +50,7 @@ app.use('/api/suppliers', requireAuth, suppliersRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
+app.use('/api/user/signature', userSignaturesRouter);
 
 // ================================================
 // 外请人员打卡模块
