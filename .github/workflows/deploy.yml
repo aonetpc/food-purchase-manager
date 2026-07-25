@@ -32,6 +32,7 @@ jobs:
             sudo cp backend/package-lock.json /opt/food-purchase/backend/
             sudo cp backend/server.js /opt/food-purchase/backend/
             sudo cp backend/db.js /opt/food-purchase/backend/
+            sudo cp backend/fix-checkin-dates.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
@@ -370,6 +371,11 @@ jobs:
               echo "Running migration: $sql_file"
               mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
             done
+
+            # 修复打卡记录的UTC时间（之前代码使用toISOString存储UTC时间，需+8小时转北京时间）
+            echo "🔧 Fixing checkin UTC dates to Beijing time..."
+            cd /opt/food-purchase/backend
+            node fix-checkin-dates.js || true
 
             sudo systemctl restart food-purchase-backend
             sleep 3
