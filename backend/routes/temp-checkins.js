@@ -242,9 +242,8 @@ router.get('/pending', requireAuth, attachDataScope, async (req, res) => {
     }
 
     const [rows] = await pool.query(`
-      SELECT cr.*, pa.user_id as auditor_id, d.full_path as department_name
+      SELECT cr.*, d.full_path as department_name
       FROM checkin_records cr
-      LEFT JOIN position_auditors pa ON cr.position_id = pa.position_id
       LEFT JOIN departments d ON cr.department_id = d.id
       ${req.dataScope.join}
       WHERE cr.status = 'pending' AND ${req.dataScope.sql}
