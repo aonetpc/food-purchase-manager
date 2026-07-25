@@ -98,6 +98,13 @@ router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
     values.push(id);
     await pool.query(`UPDATE temp_worker_users SET ${fields.join(', ')} WHERE id = ?`, values);
 
+    if (name !== undefined) {
+      await pool.query(
+        'UPDATE checkin_records SET user_name = ? WHERE user_source = ? AND user_id = ?',
+        [name, 'temp', id]
+      );
+    }
+
     await logOperation(req.user.id, id, 'temp_worker', 'update', req.body, req);
 
     res.json({ success: true });
