@@ -5,7 +5,12 @@ function getToken(): string | null {
     const stored = localStorage.getItem('auth-session-v2');
     if (stored) {
       const data = JSON.parse(stored);
-      return data?.state?.user?.token || null;
+      if (data?.state?.user?.token) return data.state.user.token;
+    }
+    const storedLegacy = localStorage.getItem('auth-session');
+    if (storedLegacy) {
+      const data = JSON.parse(storedLegacy);
+      if (data?.state?.user?.token) return data.state.user.token;
     }
   } catch (e) {
     console.error('Failed to get token:', e);
