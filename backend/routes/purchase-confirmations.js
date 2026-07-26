@@ -994,6 +994,20 @@ router.post('/:id/generate-pdf', async (req, res) => {
     let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
     let signaturesUpdated = false;
 
+    // === 调试信息 ===
+    console.log('\n=== PDF生成调试 ===');
+    console.log('确认单ID:', id);
+    console.log('purchase_date:', row.purchase_date);
+    console.log('部门数量:', departments.length);
+    console.log('签名keys:', Object.keys(signatures));
+    console.log('\n部门详情:');
+    departments.forEach(dept => {
+      const strKey = String(dept.id);
+      const hasSigStr = !!signatures[strKey];
+      const hasSigNum = !!signatures[dept.id];
+      console.log(`  ID: ${dept.id} (${typeof dept.id}), 名称: ${dept.name}, 确认人: ${dept.confirmed_by}, 有签名(string): ${hasSigStr}, 有签名(number): ${hasSigNum}`);
+    });
+
     // 自动补全缺失签名：已确认但没有签名数据的部门，从user_signatures表查找
     for (const dept of departments) {
       if (dept.confirmed && dept.confirmed_by) {
