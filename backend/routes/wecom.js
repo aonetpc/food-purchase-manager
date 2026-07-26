@@ -96,26 +96,20 @@ async function sendTextCardToUser(config, userid, { title, description, url, btn
 }
 
 // 通过自建应用发送个人消息（模板卡片 - 按钮交互型，可直接在企业微信内点按钮确认/驳回）
-async function sendTemplateCardToUser(config, userid, { card_type, main_title, sub_title_text,
-  emphasis_content, quote_content, horizontal_content_list, jump_list, card_action, button_list, task_id }) {
+// 注意：button_interaction 类型才支持 button_list 按钮点击回调
+async function sendTemplateCardToUser(config, userid, { card_type, main_title, source,
+  sub_title_text, emphasis_content, horizontal_content_list, button_list, task_id }) {
   const accessToken = await getAccessToken(config);
   const card = {
-    card_type: card_type || 'text_notice',
+    card_type: card_type || 'button_interaction',
     main_title: main_title || { title: '', desc: '' },
-    sub_title_text: sub_title_text || '',
-    emphasis_content: emphasis_content || undefined,
-    quote_area: quote_content ? { type: 1, url: quote_content.url || '', title: quote_content.title || '', quote_text: quote_content.text || '' } : undefined,
-    horizontal_content_list: horizontal_content_list || undefined,
-    jump_list: jump_list || undefined,
-    card_action: card_action || undefined,
-    button_list: button_list || undefined,
   };
-  if (!card.emphasis_content) delete card.emphasis_content;
-  if (!card.quote_area) delete card.quote_area;
-  if (!card.horizontal_content_list) delete card.horizontal_content_list;
-  if (!card.jump_list) delete card.jump_list;
-  if (!card.card_action) delete card.card_action;
-  if (!card.button_list) delete card.button_list;
+  if (source) card.source = source;
+  if (sub_title_text) card.sub_title_text = sub_title_text;
+  if (emphasis_content) card.emphasis_content = emphasis_content;
+  if (horizontal_content_list && horizontal_content_list.length > 0) card.horizontal_content_list = horizontal_content_list;
+  if (button_list && button_list.length > 0) card.button_list = button_list;
+  if (task_id) card.task_id = task_id;
 
   const body = {
     touser: userid,
@@ -124,7 +118,8 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
     template_card: card,
     safe: 0,
   };
-  if (task_id) body.template_card.task_id = task_id;
+
+  console.log(`[模板卡片] 发送给 ${userid}，卡片类型: ${card.card_type}，body:`, JSON.stringify(body).substring(0, 500));
 
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
     method: 'POST',
@@ -132,7 +127,12 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
     body: JSON.stringify(body)
   });
   const data = await res.json();
-  if (data.errcode !== 0) throw new Error(data.errmsg || '发送模板卡片消息失败');
+  console.log(`[模板卡片] API返回:`, JSON.stringify(data));
+
+  if (data.errcode !== 0) {
+    const errMsg = `errcode=${data.errcode}, errmsg=${data.errmsg || ''}${data.invaliduser ? ', invaliduser=' + data.invaliduser : ''}`;
+    throw new Error(errMsg);
+  }
   return data;
 }
 
@@ -687,7 +687,10 @@ router.post('/test-send-confirmation', async (req, res) => {
           }
 
           await sendTemplateCardToUser(config, userid, {
-            card_type: 'text_notice',
+            card_type: 'button_interaction',
+            source: {
+              desc: '食材采购管理系统',
+            },
             main_title: {
               title: '🧪 食材采购确认通知',
               desc: '此为测试消息，请确认或驳回',
