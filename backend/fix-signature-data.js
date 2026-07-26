@@ -11,7 +11,7 @@ async function fixSignature() {
   });
 
   try {
-    console.log('=== 开始修复7月25日确认单签名 ===');
+    console.log('=== 开始修复7月25日确认单签名（从早餐复制）===');
     
     // 1. 查找7月25日的确认单
     const [confirmations] = await pool.query(
@@ -36,56 +36,52 @@ async function fixSignature() {
     
     console.log('确认单ID:', confId);
     console.log('部门数量:', departments.length);
+    console.log('已有签名数:', Object.keys(signatures).length);
     
-    // 2. 查找wecom_DengYueZhen用户
-    const [users] = await pool.query(
-      'SELECT id, name FROM users WHERE username = ?',
-      ['wecom_DengYueZhen']
-    );
+    // 2. 打印所有部门和签名信息（调试用）
+    console.log('\n=== 部门列表 ===');
+    departments.forEach(dept => {
+      const deptKey = String(dept.id);
+      const hasSig = !!(signatures[deptKey] || signatures[dept.id]);
+      console.log(`ID: ${dept.id} (类型: ${typeof dept.id}), 名称: ${dept.name || '未知'}, 已确认: ${dept.confirmed}, 确认人: ${dept.confirmed_by || '-'}, 有签名: ${hasSig}`);
+    });
     
-    if (users.length === 0) {
-      console.log('❌ 未找到wecom_DengYueZhen用户');
+    console.log('\n=== 签名keys ===');
+    Object.keys(signatures).forEach(key => {
+      console.log(`key: ${key} (类型: ${typeof key}), name: ${signatures[key].name}`);
+    });
+    
+    // 3. 找到邓岳圳的签名（从已有签名中查找）
+    let dengSignature = null;
+    for (const key of Object.keys(signatures)) {
+      const sig = signatures[key];
+      if (sig.name === '邓岳圳' && sig.data) {
+        dengSignature = sig;
+        console.log('\n✅ 找到邓岳圳的签名，key:', key);
+        break;
+      }
+    }
+    
+    if (!dengSignature) {
+      console.log('\n❌ 未找到邓岳圳的签名');
       await pool.end();
       return;
     }
     
-    const userId = users[0].id;
-    const userName = users[0].name;
-    console.log('用户ID:', userId);
-    console.log('用户姓名:', userName);
-    
-    // 3. 查找用户签名
-    const [sigRows] = await pool.query(
-      'SELECT signature_data FROM user_signatures WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1',
-      [userId]
-    );
-    
-    if (sigRows.length === 0 || !sigRows[0].signature_data) {
-      console.log('❌ 未找到用户签名');
-      await pool.end();
-      return;
-    }
-    
-    const signatureData = sigRows[0].signature_data;
-    console.log('签名数据长度:', signatureData.length);
-    console.log('签名数据前50字符:', signatureData.substring(0, 50));
-    
-    // 4. 补全缺失签名
+    // 4. 把签名复制到所有邓岳圳已确认但没有签名的部门
     let updated = false;
     for (const dept of departments) {
-      if (dept.confirmed && dept.confirmed_by === userName) {
-        const deptKey = String(dept.id);
-        if (!signatures[deptKey] || !signatures[deptKey].data) {
-          signatures[deptKey] = {
-            name: dept.confirmed_by,
-            data: signatureData,
-            timestamp: dept.confirmed_at
-          };
-          console.log(`✅ 补全部门[${dept.name || dept.id}]的签名`);
-          updated = true;
-        } else {
-          console.log(`⏭️  部门[${dept.name || dept.id}]已有签名，跳过`);
-        }
+      const deptKey = String(dept.id);
+      const hasSig = !!(signatures[deptKey] || signatures[dept.id]);
+      
+      if (dept.confirmed && dept.confirmed_by === '邓岳圳' && !hasSig) {
+        signatures[deptKey] = {
+          name: '邓岳圳',
+          data: dengSignature.data,
+          timestamp: dept.confirmed_at || dengSignature.timestamp
+        };
+        console.log(`✅ 复制签名到部门[${dept.name || dept.id}]`);
+        updated = true;
       }
     }
     
@@ -96,20 +92,9 @@ async function fixSignature() {
         [JSON.stringify(signatures), confId]
       );
       console.log('\n✅ 数据库更新成功！');
+      console.log('更新后的签名keys:', Object.keys(signatures));
     } else {
       console.log('\n⏭️  没有需要更新的数据');
-    }
-    
-    // 6. 重新生成PDF
-    console.log('\n🔄 重新生成PDF...');
-    try {
-      const [pdfRes] = await pool.query('SELECT pdf_url FROM purchase_confirmations WHERE id = ?', [confId]);
-      if (pdfRes.length > 0) {
-        console.log('PDF URL:', pdfRes[0].pdf_url);
-        console.log('提示：请在系统中点击"重新生成PDF"按钮来更新PDF文件');
-      }
-    } catch (e) {
-      console.log('PDF生成需要通过API调用，请在系统中操作');
     }
     
   } catch (err) {
