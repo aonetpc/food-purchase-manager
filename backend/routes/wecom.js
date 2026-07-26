@@ -95,6 +95,47 @@ async function sendTextCardToUser(config, userid, { title, description, url, btn
   return data.msgid || 'sent';
 }
 
+// 通过自建应用发送个人消息（模板卡片 - 按钮交互型，可直接在企业微信内点按钮确认/驳回）
+async function sendTemplateCardToUser(config, userid, { card_type, main_title, sub_title_text,
+  emphasis_content, quote_content, horizontal_content_list, jump_list, card_action, button_list, task_id }) {
+  const accessToken = await getAccessToken(config);
+  const card = {
+    card_type: card_type || 'text_notice',
+    main_title: main_title || { title: '', desc: '' },
+    sub_title_text: sub_title_text || '',
+    emphasis_content: emphasis_content || undefined,
+    quote_area: quote_content ? { type: 1, url: quote_content.url || '', title: quote_content.title || '', quote_text: quote_content.text || '' } : undefined,
+    horizontal_content_list: horizontal_content_list || undefined,
+    jump_list: jump_list || undefined,
+    card_action: card_action || undefined,
+    button_list: button_list || undefined,
+  };
+  if (!card.emphasis_content) delete card.emphasis_content;
+  if (!card.quote_area) delete card.quote_area;
+  if (!card.horizontal_content_list) delete card.horizontal_content_list;
+  if (!card.jump_list) delete card.jump_list;
+  if (!card.card_action) delete card.card_action;
+  if (!card.button_list) delete card.button_list;
+
+  const body = {
+    touser: userid,
+    msgtype: 'template_card',
+    agentid: Number(config.agent_id),
+    template_card: card,
+    safe: 0,
+  };
+  if (task_id) body.template_card.task_id = task_id;
+
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '发送模板卡片消息失败');
+  return data;
+}
+
 async function sendViaWebhook(webhookUrl, content) {
   const res = await fetch(webhookUrl, {
     method: 'POST',
@@ -594,11 +635,6 @@ router.post('/test-send-confirmation', async (req, res) => {
         try {
           const userDeptNames = Array.from(data.depts).join('、');
           const userTotal = data.items.reduce((s, i) => s + i.amount, 0);
-          let userMdContent = `**🧪【测试】食材采购确认通知**\n\n`;
-          userMdContent += `📅 **采购日期**：${test_date}\n`;
-          userMdContent += `🏢 **您负责的部门**：${userDeptNames}\n`;
-          userMdContent += `💰 **总金额**：¥${userTotal.toFixed(2)}\n\n`;
-          userMdContent += `---\n\n`;
 
           const userGrouped = {};
           for (const item of data.items) {
@@ -606,23 +642,65 @@ router.post('/test-send-confirmation', async (req, res) => {
             if (!userGrouped[dn]) userGrouped[dn] = [];
             userGrouped[dn].push(item);
           }
+
+          let subTitle = `采购日期：${test_date}\n您负责的部门：${userDeptNames}`;
+
+          const horizontalContentList = [];
+          horizontalContentList.push({ keyname: '总金额', value: `¥${userTotal.toFixed(2)}` });
+          horizontalContentList.push({ keyname: '部门数', value: `${data.depts.size}个` });
+          horizontalContentList.push({ keyname: '食材项', value: `${data.items.length}项` });
+
+          const buttonList = [
+            {
+              text: '确认',
+              style: 1,
+              key: `confirm_${id}`,
+            },
+            {
+              text: '驳回',
+              style: 3,
+              key: `reject_${id}`,
+            }
+          ];
+
+          const jumpList = [
+            {
+              type: 1,
+              url: confirmUrl,
+              title: '查看详情并确认',
+            },
+            {
+              type: 1,
+              url: rejectUrl,
+              title: '查看详情并驳回',
+            }
+          ];
+
+          let detailText = '';
           for (const [deptName, deptItems] of Object.entries(userGrouped)) {
-            userMdContent += `**【${deptName}】**\n`;
+            detailText += `【${deptName}】\n`;
             for (const item of deptItems) {
-              userMdContent += `> ${item.ingredient_name}  ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
+              detailText += `${item.ingredient_name} ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
             }
             const subtotal = deptItems.reduce((s, i) => s + i.amount, 0);
-            userMdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
+            detailText += `小计：¥${subtotal.toFixed(2)}\n\n`;
           }
 
-          userMdContent += `---\n\n`;
-          userMdContent += `✅ **[点击确认](${confirmUrl})**　　❌ **[点击驳回](${rejectUrl})**\n`;
-          userMdContent += `> 此为测试消息，请确认或驳回。`;
+          await sendTemplateCardToUser(config, userid, {
+            card_type: 'text_notice',
+            main_title: {
+              title: '🧪 食材采购确认通知',
+              desc: '此为测试消息，请确认或驳回',
+            },
+            sub_title_text: subTitle,
+            horizontal_content_list: horizontalContentList,
+            button_list: buttonList,
+            task_id: id,
+          });
 
-          await sendMarkdownToUser(config, userid, userMdContent);
           sentToUsers.push({ userid, departments: userDeptNames, total: userTotal });
         } catch (sendErr) {
-          console.error(`发送个人消息失败 ${userid}:`, sendErr.message);
+          console.error(`发送个人模板卡片消息失败 ${userid}:`, sendErr.message);
           failedUsers.push({ userid, error: sendErr.message });
         }
       }
@@ -968,6 +1046,8 @@ router.post('/callback', async (req, res) => {
     const eventMatch = xmlContent.match(/<Event><!\[CDATA\[(.+?)\]\]><\/Event>/);
     const spNoMatch = xmlContent.match(/<SpNo><!\[CDATA\[(.+?)\]\]><\/SpNo>/);
     const spStatusMatch = xmlContent.match(/<SpStatus>(\d+)<\/SpStatus>/);
+    const eventKeyMatch = xmlContent.match(/<EventKey><!\[CDATA\[(.+?)\]\]><\/EventKey>/);
+    const taskIdMatch = xmlContent.match(/<TaskId><!\[CDATA\[(.+?)\]\]><\/TaskId>/);
 
     const fromUser = fromUserMatch ? fromUserMatch[1] : '';
     const toUser = toUserMatch ? toUserMatch[1] : '';
@@ -976,6 +1056,8 @@ router.post('/callback', async (req, res) => {
     const event = eventMatch ? eventMatch[1] : '';
     const spNo = spNoMatch ? spNoMatch[1] : '';
     const spStatus = spStatusMatch ? parseInt(spStatusMatch[1]) : null;
+    const eventKey = eventKeyMatch ? eventKeyMatch[1] : '';
+    const taskId = taskIdMatch ? taskIdMatch[1] : '';
 
     // 审批状态变更事件
     if (msgType === 'event' && event === 'open_approval_change' && spNo) {
@@ -1000,6 +1082,35 @@ router.post('/callback', async (req, res) => {
         }
       } catch (dbErr) {
         console.error('更新审批状态失败:', dbErr);
+      }
+    }
+
+    // 模板卡片按钮点击事件（测试消息的确认/驳回）
+    if (msgType === 'event' && event === 'template_card_event' && eventKey) {
+      try {
+        const parts = eventKey.split('_');
+        const action = parts[0];
+        const msgId = parts.slice(1).join('_');
+
+        if (msgId && (action === 'confirm' || action === 'reject')) {
+          const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msgId]);
+          if (rows.length > 0) {
+            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            if (action === 'confirm') {
+              await pool.query(
+                'UPDATE wecom_test_messages SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?',
+                ['confirmed', fromUser, now, msgId]
+              );
+            } else {
+              await pool.query(
+                'UPDATE wecom_test_messages SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?',
+                ['rejected', fromUser, now, msgId]
+              );
+            }
+          }
+        }
+      } catch (tcErr) {
+        console.error('处理模板卡片事件失败:', tcErr);
       }
     }
 
