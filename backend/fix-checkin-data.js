@@ -24,12 +24,12 @@ async function fixCheckinData() {
     // 2. 查看重复记录情况
     console.log('🔍 步骤2：查看重复记录情况...');
     const [duplicates] = await conn.query(`
-      SELECT user_id, user_name, checkin_date, checkin_time, position_name, COUNT(*) as cnt
+      SELECT user_id, MAX(user_name) as user_name, checkin_date, MAX(checkin_time) as checkin_time, MAX(position_name) as position_name, COUNT(*) as cnt
       FROM checkin_records
       WHERE status = 'pending'
       GROUP BY user_id, checkin_date, DATE_FORMAT(checkin_time, '%H:%i')
       HAVING COUNT(*) > 1
-      ORDER BY checkin_date DESC, checkin_time DESC
+      ORDER BY checkin_date DESC, MAX(checkin_time) DESC
     `);
     console.log(`   发现 ${duplicates.length} 组重复记录：`);
     duplicates.forEach(d => {
@@ -53,7 +53,7 @@ async function fixCheckinData() {
 
     // 4. 再次检查是否还有重复
     const [remainingDups] = await conn.query(`
-      SELECT user_id, user_name, checkin_date, checkin_time, COUNT(*) as cnt
+      SELECT user_id, MAX(user_name) as user_name, checkin_date, MAX(checkin_time) as checkin_time, COUNT(*) as cnt
       FROM checkin_records
       WHERE status = 'pending'
       GROUP BY user_id, checkin_date, DATE_FORMAT(checkin_time, '%H:%i')
@@ -61,17 +61,32 @@ async function fixCheckinData() {
     `);
     console.log(`   剩余重复记录：${remainingDups.length} 组\n`);
 
-    // 5. 修复UTC时间
+    // 5. 修复UTC时间（先检查是否需要修复）
     console.log('⌚ 步骤4：修复UTC时间 → 北京时间（+8小时）...');
-    const [timeResult] = await conn.query(`
-      UPDATE checkin_records
-      SET
-        checkin_date = DATE(DATE_ADD(checkin_time, INTERVAL 8 HOUR)),
-        checkin_time = DATE_ADD(checkin_time, INTERVAL 8 HOUR)
+    const [needFix] = await conn.query(`
+      SELECT COUNT(*) as cnt
+      FROM checkin_records
       WHERE checkin_time IS NOT NULL
-        AND checkin_time != '0000-00-00 00:00:00'
+        AND checkin_time > '1970-01-01 00:00:00'
+        AND checkin_time < '2100-01-01 00:00:00'
+        AND checkin_date != DATE(DATE_ADD(checkin_time, INTERVAL 8 HOUR))
     `);
-    console.log(`   ✅ 修复了 ${timeResult.affectedRows} 条记录的时间\n`);
+    
+    if (needFix[0].cnt > 0) {
+      const [timeResult] = await conn.query(`
+        UPDATE checkin_records
+        SET
+          checkin_date = DATE(DATE_ADD(checkin_time, INTERVAL 8 HOUR)),
+          checkin_time = DATE_ADD(checkin_time, INTERVAL 8 HOUR)
+        WHERE checkin_time IS NOT NULL
+          AND checkin_time > '1970-01-01 00:00:00'
+          AND checkin_time < '2100-01-01 00:00:00'
+          AND checkin_date != DATE(DATE_ADD(checkin_time, INTERVAL 8 HOUR))
+      `);
+      console.log(`   ✅ 修复了 ${timeResult.affectedRows} 条记录的时间\n`);
+    } else {
+      console.log(`   ⏭️  无需修复，时间已经是北京时间\n`);
+    }
 
     // 6. 统计结果
     console.log('📊 步骤5：修复后统计...');
