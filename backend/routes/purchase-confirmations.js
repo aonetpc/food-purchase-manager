@@ -232,7 +232,10 @@ router.post('/:id/confirm', async (req, res) => {
 
     dept.confirmed = true;
     dept.confirmed_by = confirmed_by;
-    dept.confirmed_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    // 使用本地时间格式，避免toISOString()导致的UTC时差问题
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    dept.confirmed_at = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
     // 保存签名数据
     let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});

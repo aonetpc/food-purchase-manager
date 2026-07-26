@@ -61,8 +61,17 @@ async function fixCheckinData() {
     `);
     console.log(`   剩余重复记录：${remainingDups.length} 组\n`);
 
-    // 5. 修复UTC时间（先检查是否需要修复）
-    console.log('⌚ 步骤4：修复UTC时间 → 北京时间（+8小时）...');
+    // 5. 清理无效的时间值（0000-00-00 00:00:00）
+    console.log('🧹 步骤4a：清理无效时间值...');
+    const [invalidResult] = await conn.query(`
+      UPDATE checkin_records
+      SET checkin_time = NULL
+      WHERE checkin_time = '0000-00-00 00:00:00' OR checkin_time < '1970-01-01 00:00:00'
+    `);
+    console.log(`   ✅ 清理了 ${invalidResult.affectedRows} 条无效时间记录\n`);
+
+    // 6. 修复UTC时间（先检查是否需要修复）
+    console.log('⌚ 步骤4b：修复UTC时间 → 北京时间（+8小时）...');
     const [needFix] = await conn.query(`
       SELECT COUNT(*) as cnt
       FROM checkin_records
@@ -71,7 +80,7 @@ async function fixCheckinData() {
         AND checkin_time < '2100-01-01 00:00:00'
         AND checkin_date != DATE(DATE_ADD(checkin_time, INTERVAL 8 HOUR))
     `);
-    
+
     if (needFix[0].cnt > 0) {
       const [timeResult] = await conn.query(`
         UPDATE checkin_records

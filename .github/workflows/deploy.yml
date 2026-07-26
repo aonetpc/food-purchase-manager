@@ -19,10 +19,9 @@ jobs:
           script: |
             set -e
             cd ~/food-purchase-manager
-            # 重试机制：处理网络不稳定
-            for i in 1 2 3; do
-              git pull origin main && break || sleep 5
-            done
+            # 强制同步远程分支（避免分支分歧导致pull失败）
+            git fetch origin main
+            git reset --hard origin/main
             npm ci
             npm run build
             sudo rm -rf /var/www/food-purchase/*
@@ -373,19 +372,15 @@ jobs:
               mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
             done
 
-            # 修复打卡记录数据：删除重复记录 + 修复UTC时间
+            # 修复打卡记录数据：删除重复记录 + 修复UTC时间（失败不中断部署）
             echo "🔧 Fixing checkin data (duplicates + UTC time)..."
             cd /opt/food-purchase/backend
-            for i in 1 2 3; do
-              node fix-checkin-data.js && break || sleep 2
-            done
+            node fix-checkin-data.js || echo "⚠️ fix-checkin-data failed, continuing..."
 
-            # 同步外请人员姓名到打卡记录
+            # 同步外请人员姓名到打卡记录（失败不中断部署）
             echo "🔧 Syncing worker names to checkin records..."
             cd /opt/food-purchase/backend
-            for i in 1 2 3; do
-              node fix-worker-names.js && break || sleep 2
-            done
+            node fix-worker-names.js || echo "⚠️ fix-worker-names failed, continuing..."
 
             sudo systemctl restart food-purchase-backend
             sleep 3
