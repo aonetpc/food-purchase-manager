@@ -33,6 +33,7 @@ jobs:
             sudo cp backend/db.js /opt/food-purchase/backend/
             sudo cp backend/fix-checkin-data.js /opt/food-purchase/backend/
             sudo cp backend/fix-worker-names.js /opt/food-purchase/backend/
+            sudo cp backend/fix-signature-data.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
