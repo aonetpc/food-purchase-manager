@@ -382,6 +382,11 @@ jobs:
             cd /opt/food-purchase/backend
             node fix-worker-names.js || echo "⚠️ fix-worker-names failed, continuing..."
 
+            # 补全7月25日确认单中邓岳圳的缺失签名（失败不中断部署）
+            echo "🔧 Fixing missing signatures for 2026-07-25 confirmation..."
+            cd /opt/food-purchase/backend
+            node fix-signature-data.js || echo "⚠️ fix-signature-data failed, continuing..."
+
             sudo systemctl restart food-purchase-backend
             sleep 3
             curl -s http://127.0.0.1:3001/api/health || exit 1
