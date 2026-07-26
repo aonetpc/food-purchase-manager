@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 
 async function getWecomConfig() {
@@ -29,6 +30,68 @@ async function sendWecomMessage(config, content) {
   });
   const data = await res.json();
   if (data.errcode !== 0) throw new Error(data.errmsg || '发送消息失败');
+  return data.msgid || 'sent';
+}
+
+// 通过自建应用发送个人消息（文本）
+async function sendTextToUser(config, userid, content) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      touser: userid,
+      msgtype: 'text',
+      agentid: Number(config.agent_id),
+      text: { content },
+      safe: 0
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '发送个人消息失败');
+  return data.msgid || 'sent';
+}
+
+// 通过自建应用发送个人消息（Markdown）
+async function sendMarkdownToUser(config, userid, content) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      touser: userid,
+      msgtype: 'markdown',
+      agentid: Number(config.agent_id),
+      markdown: { content },
+      safe: 0
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '发送个人Markdown消息失败');
+  return data.msgid || 'sent';
+}
+
+// 通过自建应用发送个人消息（文本卡片，带跳转链接，类似交互消息）
+async function sendTextCardToUser(config, userid, { title, description, url, btntxt }) {
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      touser: userid,
+      msgtype: 'textcard',
+      agentid: Number(config.agent_id),
+      textcard: {
+        title: title || '消息通知',
+        description: description || '',
+        url: url || '',
+        btntxt: btntxt || '点击查看'
+      },
+      safe: 0
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '发送文本卡片消息失败');
   return data.msgid || 'sent';
 }
 
@@ -248,7 +311,7 @@ router.get('/config/secret/:field', async (req, res) => {
 router.put('/config', async (req, res) => {
   try {
     const {
-      corp_id, app_secret, agent_id, chat_id, webhook_url,
+      corp_id, app_secret, agent_id, chat_id, webhook_url, test_webhook_url,
       approval_template_id, applicant_userid,
       payment_options, default_payment_key,
       payee_name, bank_name, bank_account,
@@ -268,6 +331,7 @@ router.put('/config', async (req, res) => {
     if (agent_id !== undefined) { fields.push('agent_id = ?'); values.push(agent_id || null); }
     if (chat_id !== undefined) { fields.push('chat_id = ?'); values.push(chat_id || null); }
     if (webhook_url !== undefined) { fields.push('webhook_url = ?'); values.push(webhook_url || null); }
+    if (test_webhook_url !== undefined) { fields.push('test_webhook_url = ?'); values.push(test_webhook_url || null); }
     if (approval_template_id !== undefined) { fields.push('approval_template_id = ?'); values.push(approval_template_id || null); }
     if (applicant_userid !== undefined) { fields.push('applicant_userid = ?'); values.push(applicant_userid || null); }
     if (payment_options !== undefined) { fields.push('payment_options = ?'); values.push(JSON.stringify(payment_options)); }
@@ -342,6 +406,447 @@ router.post('/test-message', async (req, res) => {
     res.json({ success: true, message: '测试消息已发送' });
   } catch (err) {
     console.error(err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 发送消息到测试群（使用 test_webhook_url，与生产 webhook_url 完全隔离）
+router.post('/test-group-send', async (req, res) => {
+  try {
+    const config = await getWecomConfig();
+    const testWebhookUrl = config && config.test_webhook_url;
+    if (!testWebhookUrl) {
+      return res.status(400).json({ error: '请先保存测试群机器人 Webhook URL' });
+    }
+
+    // 支持自定义内容，未提供则发送默认测试消息
+    let content = req.body && req.body.content;
+    if (!content || !String(content).trim()) {
+      content = '**【测试群消息】**\n\n这是一条来自食材采购管理系统的测试消息，发送到测试群。\n\n> 发送时间：' + new Date().toLocaleString('zh-CN');
+    }
+
+    // 支持指定消息类型：text 或 markdown（默认 markdown）
+    const msgType = (req.body && req.body.msg_type) === 'text' ? 'text' : 'markdown';
+    if (msgType === 'text') {
+      await sendViaWebhook(testWebhookUrl, String(content).replace(/\*\*/g, '').replace(/^> /gm, ''));
+    } else {
+      await sendMarkdownViaWebhook(testWebhookUrl, String(content));
+    }
+
+    res.json({ success: true, message: '消息已发送到测试群，请检查企业微信测试群' });
+  } catch (err) {
+    console.error('发送测试群消息失败:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ================================================
+// 测试消息相关接口（完全独立，不影响生产数据）
+// ================================================
+
+// 获取测试消息列表
+router.get('/test-messages', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM wecom_test_messages ORDER BY created_at DESC LIMIT 20'
+    );
+    const result = rows.map(row => ({
+      ...row,
+      total_amount: parseFloat(row.total_amount || 0),
+      departments: typeof row.departments === 'string' ? JSON.parse(row.departments || '[]') : row.departments || [],
+      purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items || '[]') : row.purchase_items || [],
+    }));
+    res.json(result);
+  } catch (err) {
+    console.error('获取测试消息列表失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取单条测试消息详情
+router.get('/test-messages/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '测试消息不存在' });
+    }
+    const row = rows[0];
+    res.json({
+      ...row,
+      total_amount: parseFloat(row.total_amount || 0),
+      departments: typeof row.departments === 'string' ? JSON.parse(row.departments || '[]') : row.departments || [],
+      purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items || '[]') : row.purchase_items || [],
+    });
+  } catch (err) {
+    console.error('获取测试消息详情失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 根据指定日期的采购记录生成测试确认单并发送到测试群
+router.post('/test-send-confirmation', async (req, res) => {
+  try {
+    const { test_date } = req.body;
+    const config = await getWecomConfig();
+    const testWebhookUrl = config && config.test_webhook_url;
+    if (!testWebhookUrl) {
+      return res.status(400).json({ error: '请先保存测试群机器人 Webhook URL' });
+    }
+    if (!test_date) {
+      return res.status(400).json({ error: '请指定测试日期' });
+    }
+
+    // 读取指定日期的采购数据
+    const [records] = await pool.query(
+      'SELECT * FROM purchase_records WHERE date = ? ORDER BY department_name, ingredient_name',
+      [test_date]
+    );
+    if (records.length === 0) {
+      return res.status(400).json({ error: `日期 ${test_date} 没有采购数据` });
+    }
+
+    // 提取部门和明细
+    const deptMap = {};
+    const items = [];
+    let totalAmount = 0;
+    for (const r of records) {
+      const deptName = r.department_name || '未分类';
+      if (!deptMap[deptName]) {
+        deptMap[deptName] = { id: r.department_id || deptName, name: deptName, confirmed: false };
+      }
+      const amount = parseFloat(r.amount || 0);
+      totalAmount += amount;
+      items.push({
+        ingredient_id: r.ingredient_id,
+        ingredient_name: r.ingredient_name,
+        department_id: r.department_id,
+        department_name: deptName,
+        purchase_unit: r.purchase_unit,
+        purchase_quantity: parseFloat(r.purchase_quantity),
+        purchase_unit_price: parseFloat(r.purchase_unit_price),
+        amount: amount,
+      });
+    }
+    const departments = Object.values(deptMap);
+
+    const id = uuidv4();
+    const domain = (config && config.app_domain) ? config.app_domain : '';
+    const confirmUrl = domain ? `${domain}/wecom-test-confirm/${id}` : `/wecom-test-confirm/${id}`;
+    const rejectUrl = domain ? `${domain}/wecom-test-reject/${id}` : `/wecom-test-reject/${id}`;
+
+    // 构建 Markdown 消息
+    const deptNames = departments.map(d => d.name).join('、');
+    let mdContent = `**🧪【测试】食材采购确认通知**\n\n`;
+    mdContent += `📅 **采购日期**：${test_date}\n`;
+    mdContent += `🏢 **涉及部门**：${deptNames}\n`;
+    mdContent += `💰 **总金额**：¥${totalAmount.toFixed(2)}\n\n`;
+    mdContent += `---\n\n`;
+
+    const groupedItems = {};
+    for (const item of items) {
+      const dn = item.department_name || '未分类';
+      if (!groupedItems[dn]) groupedItems[dn] = [];
+      groupedItems[dn].push(item);
+    }
+    for (const [deptName, deptItems] of Object.entries(groupedItems)) {
+      mdContent += `**【${deptName}】**\n`;
+      for (const item of deptItems) {
+        mdContent += `> ${item.ingredient_name}  ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
+      }
+      const subtotal = deptItems.reduce((s, i) => s + i.amount, 0);
+      mdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
+    }
+
+    mdContent += `---\n\n`;
+    mdContent += `✅ **[点击确认](${confirmUrl})**　　❌ **[点击驳回](${rejectUrl})**\n`;
+    mdContent += `> 此为测试消息，用于验证确认/驳回交互流程。`;
+
+    // 发送到测试群
+    await sendMarkdownViaWebhook(testWebhookUrl, mdContent);
+
+    // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
+    const sentToUsers = [];
+    const failedUsers = [];
+    if (config && config.corp_id && config.app_secret && config.agent_id) {
+      const [deptRows] = await pool.query('SELECT id, name, confirmer_userid FROM departments');
+      const deptConfirmerMap = {};
+      for (const d of deptRows) {
+        if (d.confirmer_userid) {
+          deptConfirmerMap[d.id] = d.confirmer_userid;
+          deptConfirmerMap[d.name] = d.confirmer_userid;
+        }
+      }
+
+      const userDeptMap = {};
+      for (const item of items) {
+        const deptId = item.department_id;
+        const deptName = item.department_name;
+        const confirmer = deptConfirmerMap[deptId] || deptConfirmerMap[deptName];
+        if (confirmer) {
+          if (!userDeptMap[confirmer]) userDeptMap[confirmer] = { items: [], depts: new Set() };
+          userDeptMap[confirmer].items.push(item);
+          userDeptMap[confirmer].depts.add(deptName);
+        }
+      }
+
+      for (const [userid, data] of Object.entries(userDeptMap)) {
+        try {
+          const userDeptNames = Array.from(data.depts).join('、');
+          const userTotal = data.items.reduce((s, i) => s + i.amount, 0);
+          let userMdContent = `**🧪【测试】食材采购确认通知**\n\n`;
+          userMdContent += `📅 **采购日期**：${test_date}\n`;
+          userMdContent += `🏢 **您负责的部门**：${userDeptNames}\n`;
+          userMdContent += `💰 **总金额**：¥${userTotal.toFixed(2)}\n\n`;
+          userMdContent += `---\n\n`;
+
+          const userGrouped = {};
+          for (const item of data.items) {
+            const dn = item.department_name || '未分类';
+            if (!userGrouped[dn]) userGrouped[dn] = [];
+            userGrouped[dn].push(item);
+          }
+          for (const [deptName, deptItems] of Object.entries(userGrouped)) {
+            userMdContent += `**【${deptName}】**\n`;
+            for (const item of deptItems) {
+              userMdContent += `> ${item.ingredient_name}  ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
+            }
+            const subtotal = deptItems.reduce((s, i) => s + i.amount, 0);
+            userMdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
+          }
+
+          userMdContent += `---\n\n`;
+          userMdContent += `✅ **[点击确认](${confirmUrl})**　　❌ **[点击驳回](${rejectUrl})**\n`;
+          userMdContent += `> 此为测试消息，请确认或驳回。`;
+
+          await sendMarkdownToUser(config, userid, userMdContent);
+          sentToUsers.push({ userid, departments: userDeptNames, total: userTotal });
+        } catch (sendErr) {
+          console.error(`发送个人消息失败 ${userid}:`, sendErr.message);
+          failedUsers.push({ userid, error: sendErr.message });
+        }
+      }
+    }
+
+    // 保存到测试表
+    await pool.query(
+      `INSERT INTO wecom_test_messages 
+       (id, test_date, total_amount, departments, purchase_items, message_content, status, wecom_sent, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, NOW())`,
+      [id, test_date, totalAmount, JSON.stringify(departments), JSON.stringify(items), mdContent]
+    );
+
+    const msgParts = ['测试确认通知已发送到测试群'];
+    if (sentToUsers.length > 0) {
+      msgParts.push(`同时发送个人消息给 ${sentToUsers.length} 位确认人`);
+    }
+    if (failedUsers.length > 0) {
+      msgParts.push(`${failedUsers.length} 位发送失败`);
+    }
+
+    res.json({
+      success: true,
+      message: msgParts.join('；'),
+      id,
+      test_date,
+      total_amount: totalAmount,
+      departments_count: departments.length,
+      items_count: items.length,
+      sent_to_users: sentToUsers,
+      failed_users: failedUsers,
+    });
+  } catch (err) {
+    console.error('发送测试确认通知失败:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 测试消息确认（公共接口，无需登录，模拟用户从企微点击确认）
+router.post('/test-messages/:id/confirm', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { confirmed_by } = req.body || {};
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '测试消息不存在' });
+    }
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    await pool.query(
+      'UPDATE wecom_test_messages SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?',
+      ['confirmed', confirmed_by || '测试用户', now, id]
+    );
+    res.json({ success: true, message: '已确认', status: 'confirmed', confirmed_at: now });
+  } catch (err) {
+    console.error('确认测试消息失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 测试消息驳回（公共接口，无需登录）
+router.post('/test-messages/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejected_by, reject_reason } = req.body || {};
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '测试消息不存在' });
+    }
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    await pool.query(
+      'UPDATE wecom_test_messages SET status = ?, rejected_by = ?, rejected_at = ?, reject_reason = ? WHERE id = ?',
+      ['rejected', rejected_by || '测试用户', now, reject_reason || '', id]
+    );
+    res.json({ success: true, message: '已驳回', status: 'rejected', rejected_at: now });
+  } catch (err) {
+    console.error('驳回测试消息失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 测试：通过自建应用发送个人消息（支持 text/markdown/textcard 三种类型）
+router.post('/test-send-to-user', async (req, res) => {
+  try {
+    const { userid, msg_type, content, title, description, url, btntxt } = req.body;
+    const config = await getWecomConfig();
+
+    if (!config || !config.corp_id || !config.app_secret || !config.agent_id) {
+      return res.status(400).json({ error: '请先在企业微信管理页面完成应用配置（CorpID + Secret + AgentID）' });
+    }
+    if (!userid) {
+      return res.status(400).json({ error: '请填写接收人企业微信 UserID' });
+    }
+    if (!msg_type || !['text', 'markdown', 'textcard'].includes(msg_type)) {
+      return res.status(400).json({ error: '消息类型必须是 text、markdown 或 textcard' });
+    }
+
+    let msgid;
+    if (msg_type === 'text') {
+      msgid = await sendTextToUser(config, userid, content || '【测试消息】来自食材采购管理系统的个人消息');
+    } else if (msg_type === 'markdown') {
+      msgid = await sendMarkdownToUser(config, userid, content || '**【测试消息】**\n\n这是一条来自食材采购管理系统的Markdown个人消息。');
+    } else {
+      msgid = await sendTextCardToUser(config, userid, {
+        title: title || '测试通知',
+        description: description || '这是一条文本卡片测试消息',
+        url: url || '',
+        btntxt: btntxt || '点击查看'
+      });
+    }
+
+    res.json({ success: true, message: '个人消息已发送，请在企业微信中查看', msgid });
+  } catch (err) {
+    console.error('发送个人测试消息失败:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 测试：通过自建应用发送采购确认通知到个人（只发送该人所属部门的内容）
+router.post('/test-send-confirmation-to-user', async (req, res) => {
+  try {
+    const { test_date, userid, department_name } = req.body;
+    const config = await getWecomConfig();
+
+    if (!config || !config.corp_id || !config.app_secret || !config.agent_id) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+    if (!userid) {
+      return res.status(400).json({ error: '请填写接收人 UserID' });
+    }
+    if (!test_date) {
+      return res.status(400).json({ error: '请指定测试日期' });
+    }
+
+    // 读取采购数据
+    const [records] = await pool.query(
+      'SELECT * FROM purchase_records WHERE date = ? ORDER BY department_name, ingredient_name',
+      [test_date]
+    );
+    if (records.length === 0) {
+      return res.status(400).json({ error: `日期 ${test_date} 没有采购数据` });
+    }
+
+    // 如果指定了部门，只保留该部门的明细
+    let filtered = records;
+    if (department_name) {
+      filtered = records.filter(r => r.department_name === department_name);
+      if (filtered.length === 0) {
+        return res.status(400).json({ error: `部门「${department_name}」在该日期没有采购数据` });
+      }
+    }
+
+    const deptMap = {};
+    const items = [];
+    let totalAmount = 0;
+    for (const r of filtered) {
+      const dn = r.department_name || '未分类';
+      if (!deptMap[dn]) deptMap[dn] = { id: r.department_id || dn, name: dn };
+      const amount = parseFloat(r.amount || 0);
+      totalAmount += amount;
+      items.push({
+        ingredient_name: r.ingredient_name,
+        department_name: dn,
+        purchase_unit: r.purchase_unit,
+        purchase_quantity: parseFloat(r.purchase_quantity),
+        purchase_unit_price: parseFloat(r.purchase_unit_price),
+        amount,
+      });
+    }
+
+    const id = uuidv4();
+    const domain = config.app_domain ? config.app_domain : '';
+    const confirmUrl = domain ? `${domain}/wecom-test-confirm/${id}` : `/wecom-test-confirm/${id}`;
+    const rejectUrl = domain ? `${domain}/wecom-test-reject/${id}` : `/wecom-test-reject/${id}`;
+
+    // 构建 Markdown 消息（仅包含该用户相关部门的内容）
+    const deptNames = Object.keys(deptMap).join('、');
+    let mdContent = `**🧪【测试】食材采购确认通知**\n\n`;
+    mdContent += `📅 **采购日期**：${test_date}\n`;
+    mdContent += `🏢 **涉及部门**：${deptNames}\n`;
+    mdContent += `💰 **总金额**：¥${totalAmount.toFixed(2)}\n\n`;
+    mdContent += `---\n\n`;
+
+    const grouped = {};
+    for (const item of items) {
+      if (!grouped[item.department_name]) grouped[item.department_name] = [];
+      grouped[item.department_name].push(item);
+    }
+    for (const [deptName, deptItems] of Object.entries(grouped)) {
+      mdContent += `**【${deptName}】**\n`;
+      for (const item of deptItems) {
+        mdContent += `> ${item.ingredient_name}  ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
+      }
+      const subtotal = deptItems.reduce((s, i) => s + i.amount, 0);
+      mdContent += `> *小计：¥${subtotal.toFixed(2)}*\n\n`;
+    }
+
+    mdContent += `---\n\n`;
+    mdContent += `✅ **[点击确认](${confirmUrl})**　　❌ **[点击驳回](${rejectUrl})**\n`;
+    mdContent += `> 此为测试消息，请确认或驳回。`;
+
+    // 发送到个人
+    const msgid = await sendMarkdownToUser(config, userid, mdContent);
+
+    // 保存到测试表
+    const departments = Object.values(deptMap).map(d => ({ ...d, confirmed: false }));
+    await pool.query(
+      `INSERT INTO wecom_test_messages 
+       (id, test_date, total_amount, departments, purchase_items, message_content, status, wecom_sent, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, NOW())`,
+      [id, test_date, totalAmount, JSON.stringify(departments), JSON.stringify(items), mdContent]
+    );
+
+    res.json({
+      success: true,
+      message: `已发送到 ${userid}，请在企业微信中查看`,
+      id,
+      msgid,
+      test_date,
+      total_amount: totalAmount,
+      departments_count: departments.length,
+      items_count: items.length,
+    });
+  } catch (err) {
+    console.error('发送个人确认通知失败:', err);
     res.status(400).json({ error: err.message });
   }
 });

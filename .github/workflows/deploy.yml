@@ -231,6 +231,48 @@ jobs:
               DEALLOCATE PREPARE alterIfNotExists;
             " 2>/dev/null || true
 
+            # 数据库迁移：给 wecom_config 表添加 test_webhook_url 字段（测试群机器人URL，与生产webhook_url隔离）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'wecom_config';
+              SET @columnname = 'test_webhook_url';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(500)')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：创建 wecom_test_messages 表（测试消息表，与生产数据完全隔离）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              CREATE TABLE IF NOT EXISTS wecom_test_messages (
+                id VARCHAR(36) PRIMARY KEY,
+                test_date DATE NOT NULL,
+                total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                departments JSON,
+                purchase_items JSON,
+                message_content TEXT,
+                status VARCHAR(20) DEFAULT 'pending',
+                confirmed_by VARCHAR(100),
+                confirmed_at DATETIME,
+                rejected_by VARCHAR(100),
+                rejected_at DATETIME,
+                reject_reason TEXT,
+                wecom_sent TINYINT DEFAULT 0,
+                sent_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_test_date (test_date),
+                INDEX idx_status (status)
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            " 2>/dev/null || true
+
             # 数据库迁移：创建 wecom_callback_logs 表（如果不存在）
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
               CREATE TABLE IF NOT EXISTS wecom_callback_logs (

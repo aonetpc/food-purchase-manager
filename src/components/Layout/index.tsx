@@ -29,6 +29,7 @@ import {
   Shield,
   ChevronLeft,
   ChevronRight,
+  FlaskConical,
 } from 'lucide-react';
 import { useAuthStore, type MenuItem } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
@@ -57,13 +58,14 @@ const iconMap: Record<string, any> = {
   ShieldCheck,
   Shield,
   Users,
+  FlaskConical,
 };
 
 const menuGroups = [
   { name: '常用', paths: ['/daily', '/purchase-entry', '/reimbursement'] },
   { name: '统计', paths: ['/monthly', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
-  { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom'] },
+  { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
 ];
 
 export default function Layout() {
@@ -155,16 +157,24 @@ export default function Layout() {
 
   const visibleNavItems = useMemo(() => {
     const userMenus = getUserMenus();
-    const pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
-    
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
+    let pcMenus = userMenus.filter(m => !m.path.startsWith('/m/'));
+
+    // 管理员：手动注入"企业微信测试"菜单（该菜单仅前端注册，不依赖后端RBAC数据）
+    if (isAdmin()) {
+      const hasTestMenu = pcMenus.some(m => m.path === '/wecom-test');
+      if (!hasTestMenu) {
+        pcMenus = [...pcMenus, { code: 'menu:wecom-test', name: '企业微信测试', path: '/wecom-test', icon: 'FlaskConical' }];
+      }
+    }
+
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
 
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
       const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
       return aIdx - bIdx;
     });
-  }, [getUserMenus]);
+  }, [getUserMenus, isAdmin]);
 
   const handlePrint = () => {
     window.print();

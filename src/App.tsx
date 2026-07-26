@@ -15,6 +15,8 @@ import RoleManager from '@/pages/RoleManager';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ReimbursementManager from '@/pages/ReimbursementManager';
 import WecomManager from '@/pages/WecomManager';
+import WecomTest from '@/pages/WecomTest';
+import WecomTestConfirmPage from '@/pages/WecomTest/TestConfirmPage';
 import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
 import PositionManager from '@/pages/PositionManager';
 import TempWorkerManager from '@/pages/TempWorkerManager';
@@ -58,6 +60,8 @@ export default function App() {
 
         <Route path="/login" element={<Login />} />
         <Route path="/confirm/:id" element={<PurchaseConfirmPage />} />
+        <Route path="/wecom-test-confirm/:id" element={<WecomTestConfirmPage />} />
+        <Route path="/wecom-test-reject/:id" element={<WecomTestConfirmPage />} />
         
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/daily" replace />} />
@@ -112,6 +116,11 @@ export default function App() {
           <Route path="wecom" element={
             <ProtectedRoute requiredRole="admin">
               <WecomManager />
+            </ProtectedRoute>
+          } />
+          <Route path="wecom-test" element={
+            <ProtectedRoute requiredRole="admin">
+              <WecomTest />
             </ProtectedRoute>
           } />
           <Route path="temp-positions" element={
