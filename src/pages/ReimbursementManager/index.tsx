@@ -494,7 +494,7 @@ export default function ReimbursementManager() {
               {/* 操作按钮 */}
               <div className="flex gap-3 pt-2 justify-between">
                 <div className="flex gap-3 flex-wrap">
-                  {detailConfirmation.pdf_url ? (
+                  {detailConfirmation.pdf_url && (
                     <button
                       onClick={() => handleDownloadPDF(detailConfirmation.id)}
                       className="btn-primary flex items-center gap-2 bg-green-500 hover:bg-green-600"
@@ -502,15 +502,14 @@ export default function ReimbursementManager() {
                       <Download size={16} />
                       下载PDF
                     </button>
-                  ) : (
-                    <button
-                      onClick={() => handleGeneratePDF(detailConfirmation.id)}
-                      className="btn-secondary flex items-center gap-2"
-                    >
-                      <FileDown size={16} />
-                      生成PDF
-                    </button>
                   )}
+                  <button
+                    onClick={() => handleGeneratePDF(detailConfirmation.id)}
+                    className="btn-secondary flex items-center gap-2"
+                  >
+                    <FileDown size={16} />
+                    {detailConfirmation.pdf_url ? '重新生成PDF' : '生成PDF'}
+                  </button>
                   {detailConfirmation.reimbursement_sp_no && (
                     <button
                       onClick={() => handleRefreshStatus(detailConfirmation.id)}

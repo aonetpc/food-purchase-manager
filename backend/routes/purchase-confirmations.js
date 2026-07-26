@@ -225,7 +225,8 @@ router.post('/:id/confirm', async (req, res) => {
     const row = rows[0];
     const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
 
-    const dept = departments.find(d => d.id === department_id);
+    // 类型不敏感的部门查找（前端可能传字符串或数字）
+    const dept = departments.find(d => String(d.id) === String(department_id));
     if (!dept) {
       return res.status(400).json({ error: '部门不存在于本确认单' });
     }
@@ -237,10 +238,10 @@ router.post('/:id/confirm', async (req, res) => {
     const pad = (n) => String(n).padStart(2, '0');
     dept.confirmed_at = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    // 保存签名数据
+    // 保存签名数据（统一使用字符串类型的部门ID作为key）
     let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
     if (signature_data) {
-      signatures[department_id] = {
+      signatures[String(department_id)] = {
         name: confirmed_by,
         data: signature_data,
         timestamp: dept.confirmed_at
@@ -890,7 +891,8 @@ async function generateConfirmationPDF(confirmationId) {
       const infoText = `确认人：${dept.confirmed_by || '-'}    确认时间：${dept.confirmed_at || '-'}`;
       doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
 
-      const sigData = signatures[dept.id];
+      // 兼容字符串和数字类型的部门ID
+      const sigData = signatures[String(dept.id)] || signatures[dept.id];
       if (sigData && sigData.data) {
         try {
           const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
@@ -977,7 +979,7 @@ async function generateConfirmationPDF(confirmationId) {
   });
 }
 
-// 手动生成PDF（可随时重新生成）
+// 手动生成PDF（可随时重新生成，自动补全缺失签名）
 router.post('/:id/generate-pdf', async (req, res) => {
   try {
     const { id } = req.params;
@@ -985,6 +987,59 @@ router.post('/:id/generate-pdf', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: '确认单不存在' });
+    }
+
+    const row = rows[0];
+    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+    let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
+    let signaturesUpdated = false;
+
+    // 自动补全缺失签名：已确认但没有签名数据的部门，从user_signatures表查找
+    for (const dept of departments) {
+      if (dept.confirmed && dept.confirmed_by) {
+        const deptKey = String(dept.id);
+        const existingSig = signatures[deptKey] || signatures[dept.id];
+        if (!existingSig || !existingSig.data) {
+          // 通过确认人姓名查找签名（先查users表，再查temp_worker_users表）
+          let sigRows = [];
+          try {
+            [sigRows] = await pool.query(
+              `SELECT us.signature_data FROM user_signatures us
+               JOIN users u ON us.user_id = u.id
+               WHERE u.name = ? AND us.user_source = 'system'
+               ORDER BY us.updated_at DESC LIMIT 1`,
+              [dept.confirmed_by]
+            );
+            if (sigRows.length === 0) {
+              [sigRows] = await pool.query(
+                `SELECT us.signature_data FROM user_signatures us
+                 JOIN temp_worker_users tw ON us.user_id = tw.id
+                 WHERE tw.name = ? AND us.user_source = 'temp'
+                 ORDER BY us.updated_at DESC LIMIT 1`,
+                [dept.confirmed_by]
+              );
+            }
+          } catch (e) {
+            // 查找失败忽略
+          }
+          if (sigRows.length > 0 && sigRows[0].signature_data) {
+            signatures[deptKey] = {
+              name: dept.confirmed_by,
+              data: sigRows[0].signature_data,
+              timestamp: dept.confirmed_at
+            };
+            signaturesUpdated = true;
+          }
+        }
+      }
+    }
+
+    // 如果补全了签名，先更新数据库
+    if (signaturesUpdated) {
+      await pool.query(
+        'UPDATE purchase_confirmations SET confirmed_signatures = ? WHERE id = ?',
+        [JSON.stringify(signatures), id]
+      );
     }
 
     const pdfPath = await generateConfirmationPDF(id);

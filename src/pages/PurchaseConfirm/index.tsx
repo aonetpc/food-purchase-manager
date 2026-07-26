@@ -407,20 +407,27 @@ export default function PurchaseConfirmPage() {
       setError('请输入您的姓名');
       return;
     }
+    // 优先使用当前签名，如果没有则使用已保存的签名
+    const sigToSend = signatureData || savedSignature;
+    if (!sigToSend) {
+      setError('请先手写签名后再确认');
+      return;
+    }
     setConfirming(true);
     setError('');
     try {
       await api.post(`/purchase-confirmations/${id}/confirm`, {
         department_id: deptId,
         confirmed_by: userName.trim(),
-        signature_data: signatureData,
+        signature_data: sigToSend,
       });
 
-      if (userId && userSource && signatureData) {
-        await saveUserSignature(userId, userSource, signatureData);
+      if (userId && userSource && sigToSend) {
+        await saveUserSignature(userId, userSource, sigToSend);
       }
 
-      setSignatureData(null);
+      // 确认成功后保留签名数据，避免连续确认多个部门时签名丢失
+      setSignatureData(sigToSend);
       setActiveDeptId(null);
       if (id) fetchData(id);
     } catch (err: any) {
