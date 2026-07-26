@@ -136,6 +136,42 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
   return data;
 }
 
+// 更新模板卡片消息（用户点击按钮后更新卡片状态）
+async function updateTemplateCard(config, userid, cardType, taskId, { main_title, sub_title_text,
+  horizontal_content_list, button_list, replace_original }) {
+  const accessToken = await getAccessToken(config);
+  const card = {
+    card_type: cardType || 'button_interaction',
+  };
+  if (main_title) card.main_title = main_title;
+  if (sub_title_text) card.sub_title_text = sub_title_text;
+  if (horizontal_content_list && horizontal_content_list.length > 0) card.horizontal_content_list = horizontal_content_list;
+  if (button_list && button_list.length > 0) card.button_list = button_list;
+
+  const body = {
+    userids: [userid],
+    agentid: Number(config.agent_id),
+    response_code: taskId,
+    template_card: card,
+  };
+
+  console.log(`[更新模板卡片] taskId=${taskId}, userid=${userid}`);
+
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/update_template_card?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  console.log(`[更新模板卡片] API返回:`, JSON.stringify(data));
+
+  if (data.errcode !== 0) {
+    const errMsg = `errcode=${data.errcode}, errmsg=${data.errmsg || ''}`;
+    throw new Error(errMsg);
+  }
+  return data;
+}
+
 async function sendViaWebhook(webhookUrl, content) {
   const res = await fetch(webhookUrl, {
     method: 'POST',
@@ -650,6 +686,28 @@ router.post('/test-send-confirmation', async (req, res) => {
           horizontalContentList.push({ keyname: '部门数', value: `${data.depts.size}个` });
           horizontalContentList.push({ keyname: '食材项', value: `${data.items.length}项` });
 
+          let detailLines = [];
+          for (const [deptName, deptItems] of Object.entries(userGrouped)) {
+            for (const item of deptItems) {
+              const line = `${item.ingredient_name} ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit}×${item.purchase_quantity}=¥${item.amount.toFixed(2)}`;
+              detailLines.push(line);
+              if (detailLines.length >= 6) break;
+            }
+            if (detailLines.length >= 6) break;
+          }
+          if (detailLines.length > 0) {
+            horizontalContentList.push({
+              keyname: '明细',
+              value: detailLines.join('\n')
+            });
+          }
+          if (data.items.length > 6) {
+            horizontalContentList.push({
+              keyname: '更多',
+              value: `等${data.items.length}项食材，点击查看详情`
+            });
+          }
+
           const buttonList = [
             {
               text: '确认',
@@ -662,29 +720,6 @@ router.post('/test-send-confirmation', async (req, res) => {
               key: `reject_${id}`,
             }
           ];
-
-          const jumpList = [
-            {
-              type: 1,
-              url: confirmUrl,
-              title: '查看详情并确认',
-            },
-            {
-              type: 1,
-              url: rejectUrl,
-              title: '查看详情并驳回',
-            }
-          ];
-
-          let detailText = '';
-          for (const [deptName, deptItems] of Object.entries(userGrouped)) {
-            detailText += `【${deptName}】\n`;
-            for (const item of deptItems) {
-              detailText += `${item.ingredient_name} ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
-            }
-            const subtotal = deptItems.reduce((s, i) => s + i.amount, 0);
-            detailText += `小计：¥${subtotal.toFixed(2)}\n\n`;
-          }
 
           await sendTemplateCardToUser(config, userid, {
             card_type: 'button_interaction',
@@ -1091,6 +1126,7 @@ router.post('/callback', async (req, res) => {
     // 模板卡片按钮点击事件（测试消息的确认/驳回）
     if (msgType === 'event' && event === 'template_card_event' && eventKey) {
       try {
+        console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, taskId=${taskId}`);
         const parts = eventKey.split('_');
         const action = parts[0];
         const msgId = parts.slice(1).join('_');
@@ -1099,16 +1135,58 @@ router.post('/callback', async (req, res) => {
           const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msgId]);
           if (rows.length > 0) {
             const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const config = await getWecomConfig();
+            const msg = rows[0];
+            const totalAmount = parseFloat(msg.total_amount || 0);
+            const deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
+            const itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
+
             if (action === 'confirm') {
               await pool.query(
                 'UPDATE wecom_test_messages SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?',
                 ['confirmed', fromUser, now, msgId]
               );
+              try {
+                await updateTemplateCard(config, fromUser, 'button_interaction', msgId, {
+                  main_title: {
+                    title: '✅ 已确认',
+                    desc: `确认人：${fromUser}　时间：${now}`,
+                  },
+                  horizontal_content_list: [
+                    { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                    { keyname: '部门数', value: `${deptCount}个` },
+                    { keyname: '食材项', value: `${itemCount}项` },
+                  ],
+                  button_list: [
+                    { text: '已确认', style: 1, key: 'confirmed', type: 'disabled' },
+                  ],
+                });
+              } catch (updErr) {
+                console.error('更新确认卡片失败:', updErr.message);
+              }
             } else {
               await pool.query(
                 'UPDATE wecom_test_messages SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?',
                 ['rejected', fromUser, now, msgId]
               );
+              try {
+                await updateTemplateCard(config, fromUser, 'button_interaction', msgId, {
+                  main_title: {
+                    title: '❌ 已驳回',
+                    desc: `驳回人：${fromUser}　时间：${now}`,
+                  },
+                  horizontal_content_list: [
+                    { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                    { keyname: '部门数', value: `${deptCount}个` },
+                    { keyname: '食材项', value: `${itemCount}项` },
+                  ],
+                  button_list: [
+                    { text: '已驳回', style: 3, key: 'rejected', type: 'disabled' },
+                  ],
+                });
+              } catch (updErr) {
+                console.error('更新驳回卡片失败:', updErr.message);
+              }
             }
           }
         }
