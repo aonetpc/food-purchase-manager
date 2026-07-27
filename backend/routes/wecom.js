@@ -137,6 +137,34 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
   return data;
 }
 
+// 更新模板卡片按钮文案（按钮变灰不可点击）
+async function updateTemplateCardButton(config, userid, responseCode, replaceName) {
+  const accessToken = await getAccessToken(config);
+  const body = {
+    userids: [userid],
+    agentid: Number(config.agent_id),
+    response_code: responseCode,
+    button: {
+      replace_name: replaceName
+    }
+  };
+
+  console.log(`[更新按钮文案] userid=${userid}, replaceName=${replaceName}`);
+
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/update_template_card?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  console.log(`[更新按钮文案] API返回:`, JSON.stringify(data));
+
+  if (data.errcode !== 0) {
+    throw new Error(`errcode=${data.errcode}, errmsg=${data.errmsg || ''}`);
+  }
+  return data;
+}
+
 // 更新模板卡片消息（用户点击按钮后更新卡片状态）
 async function updateTemplateCard(config, userid, cardType, taskId, { main_title, sub_title_text,
   horizontal_content_list, button_list, button_selection, replace_original }) {
@@ -150,10 +178,11 @@ async function updateTemplateCard(config, userid, cardType, taskId, { main_title
   if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
 
-  // text_notice类型必须有card_action字段
+  // text_notice类型必须有card_action字段，且type只能是1或2
   if (cardType === 'text_notice') {
     card.card_action = {
-      type: 0  // 0: 不跳转
+      type: 1,  // 1: 跳转url
+      url: 'https://work.weixin.qq.com'  // 必填
     };
   }
 
@@ -1423,39 +1452,54 @@ router.post('/callback', async (req, res) => {
 
               console.log(`[模板卡片回调] 准备更新卡片: deptCount=${deptCount}, itemCount=${itemCount}`);
 
+              // 优先使用简单的按钮文案更新方式（按钮变灰不可点击）
               if (action === 'confirm') {
                 try {
-                  await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
-                    main_title: {
-                      title: '✅ 已确认',
-                      desc: `确认人：${fromUser}　时间：${now}`,
-                    },
-                    horizontal_content_list: [
-                      { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
-                      { keyname: '部门数', value: `${deptCount}个` },
-                      { keyname: '食材项', value: `${itemCount}项` },
-                    ],
-                  });
-                  console.log(`[模板卡片回调] 确认卡片更新成功`);
+                  await updateTemplateCardButton(config, fromUser, responseCode, `✅ 已确认 by ${fromUser}`);
+                  console.log(`[模板卡片回调] 确认按钮更新成功`);
                 } catch (updErr) {
-                  console.error('更新确认卡片失败:', updErr.message);
+                  console.error('更新确认按钮失败:', updErr.message);
+                  // 失败后尝试替换整张卡片
+                  try {
+                    await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
+                      main_title: {
+                        title: '✅ 已确认',
+                        desc: `确认人：${fromUser}　时间：${now}`,
+                      },
+                      horizontal_content_list: [
+                        { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                        { keyname: '部门数', value: `${deptCount}个` },
+                        { keyname: '食材项', value: `${itemCount}项` },
+                      ],
+                    });
+                    console.log(`[模板卡片回调] 确认卡片更新成功`);
+                  } catch (updErr2) {
+                    console.error('更新确认卡片也失败:', updErr2.message);
+                  }
                 }
               } else {
                 try {
-                  await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
-                    main_title: {
-                      title: '❌ 已驳回',
-                      desc: `驳回人：${fromUser}　时间：${now}`,
-                    },
-                    horizontal_content_list: [
-                      { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
-                      { keyname: '部门数', value: `${deptCount}个` },
-                      { keyname: '食材项', value: `${itemCount}项` },
-                    ],
-                  });
-                  console.log(`[模板卡片回调] 驳回卡片更新成功`);
+                  await updateTemplateCardButton(config, fromUser, responseCode, `❌ 已驳回 by ${fromUser}`);
+                  console.log(`[模板卡片回调] 驳回按钮更新成功`);
                 } catch (updErr) {
-                  console.error('更新驳回卡片失败:', updErr.message);
+                  console.error('更新驳回按钮失败:', updErr.message);
+                  // 失败后尝试替换整张卡片
+                  try {
+                    await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
+                      main_title: {
+                        title: '❌ 已驳回',
+                        desc: `驳回人：${fromUser}　时间：${now}`,
+                      },
+                      horizontal_content_list: [
+                        { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                        { keyname: '部门数', value: `${deptCount}个` },
+                        { keyname: '食材项', value: `${itemCount}项` },
+                      ],
+                    });
+                    console.log(`[模板卡片回调] 驳回卡片更新成功`);
+                  } catch (updErr2) {
+                    console.error('更新驳回卡片也失败:', updErr2.message);
+                  }
                 }
               }
             } catch (tcErr) {
