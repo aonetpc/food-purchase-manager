@@ -1129,8 +1129,8 @@ async function handleJsonCallback(body, res) {
       // button_list 模式：event_key=button_key
       const targetId = eventKey;
       
-      // 匹配 confirm_数字_userid 或 reject_数字_userid
-      const match = targetId.match(/^(confirm|reject)_(\d+)_/i);
+      // 匹配 confirm_UUID_userid 或 reject_UUID_userid
+      const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})_/i);
       console.log(`[企微回调-JSON] match结果:`, match);
       
       const action = match ? match[1].toLowerCase() : '';
@@ -1349,8 +1349,8 @@ router.post('/callback', async (req, res) => {
         
         console.log(`[模板卡片回调] targetId=${targetId}`);
         
-        // 匹配 confirm_数字_userid 或 reject_数字_userid（id是数据库自增ID）
-        const match = targetId.match(/^(confirm|reject)_(\d+)_/i);
+        // 匹配 confirm_UUID_userid 或 reject_UUID_userid（id是UUID格式）
+        const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})_/i);
         console.log(`[模板卡片回调] match结果:`, match);
         
         const action = match ? match[1].toLowerCase() : '';
