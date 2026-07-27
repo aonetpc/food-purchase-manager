@@ -1256,12 +1256,18 @@ router.post('/callback', async (req, res) => {
       return handleJsonCallback(jsonBody, res);
     }
 
-    // 检查是否是加密XML格式
+    // 检查是否是加密XML格式（从JSON或XML中提取Encrypt）
     let encrypt = null;
     if (jsonBody && jsonBody.Encrypt) {
       encrypt = jsonBody.Encrypt;
     } else if (jsonBody && jsonBody.encrypt) {
       encrypt = jsonBody.encrypt;
+    } else if (rawBodyStr.includes('<Encrypt>')) {
+      // 从XML字符串中提取Encrypt字段
+      const encryptMatch = rawBodyStr.match(/<Encrypt><!\[CDATA\[(.+?)\]\]><\/Encrypt>/);
+      if (encryptMatch) {
+        encrypt = encryptMatch[1];
+      }
     }
 
     console.log('[企微回调] Encrypt字段存在:', !!encrypt);
