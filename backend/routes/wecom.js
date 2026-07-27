@@ -150,6 +150,13 @@ async function updateTemplateCard(config, userid, cardType, taskId, { main_title
   if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
 
+  // text_notice类型必须有card_action字段
+  if (cardType === 'text_notice') {
+    card.card_action = {
+      type: 0  // 0: 不跳转
+    };
+  }
+
   const body = {
     userids: [userid],
     agentid: Number(config.agent_id),
