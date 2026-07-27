@@ -98,7 +98,7 @@ async function sendTextCardToUser(config, userid, { title, description, url, btn
 // 通过自建应用发送个人消息（模板卡片 - 按钮交互型，可直接在企业微信内点按钮确认/驳回）
 // button_interaction 类型支持 button_list（按钮列表）或 button_selection（下拉选择器）
 async function sendTemplateCardToUser(config, userid, { card_type, main_title, source,
-  sub_title_text, emphasis_content, horizontal_content_list, button_list, button_selection, task_id }) {
+  sub_title_text, emphasis_content, horizontal_content_list, button_list, button_selection, task_id, card_action }) {
   const accessToken = await getAccessToken(config);
   const card = {
     card_type: card_type || 'button_interaction',
@@ -111,6 +111,7 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
   if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
   if (task_id) card.task_id = task_id;
+  if (card_action) card.card_action = card_action;
 
   const body = {
     touser: userid,
@@ -764,28 +765,6 @@ router.post('/test-send-confirmation', async (req, res) => {
           horizontalContentList.push({ keyname: '部门数', value: `${data.depts.size}个` });
           horizontalContentList.push({ keyname: '食材项', value: `${data.items.length}项` });
 
-          let detailLines = [];
-          for (const [deptName, deptItems] of Object.entries(userGrouped)) {
-            for (const item of deptItems) {
-              const line = `${item.ingredient_name} ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit}×${item.purchase_quantity}=¥${item.amount.toFixed(2)}`;
-              detailLines.push(line);
-              if (detailLines.length >= 6) break;
-            }
-            if (detailLines.length >= 6) break;
-          }
-          if (detailLines.length > 0) {
-            horizontalContentList.push({
-              keyname: '明细',
-              value: detailLines.join('\n')
-            });
-          }
-          if (data.items.length > 6) {
-            horizontalContentList.push({
-              keyname: '更多',
-              value: `等${data.items.length}项食材，点击查看详情`
-            });
-          }
-
           const userTaskId = `${id}_${userid}`;
 
           await sendTemplateCardToUser(config, userid, {
@@ -795,7 +774,7 @@ router.post('/test-send-confirmation', async (req, res) => {
             },
             main_title: {
               title: '🧪 食材采购确认通知',
-              desc: '此为测试消息，请确认或驳回',
+              desc: '请确认或驳回您负责部门的采购内容',
             },
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
@@ -804,6 +783,10 @@ router.post('/test-send-confirmation', async (req, res) => {
               { text: '驳回', style: 3, key: `reject_${userTaskId}` }
             ],
             task_id: userTaskId,
+            card_action: {
+              type: 1,
+              url: `https://hywellness.com/wecom-test?date=${test_date}`
+            },
           });
 
           sentToUsers.push({ userid, departments: userDeptNames, total: userTotal });
