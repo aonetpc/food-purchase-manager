@@ -190,7 +190,7 @@ async function updateTemplateCard(config, userid, cardType, taskId, { main_title
   const body = {
     userids: [userid],
     agentid: Number(config.agent_id),
-    response_code: taskId,
+    task_id: taskId,
     template_card: card,
   };
 
@@ -780,7 +780,12 @@ router.post('/test-send-confirmation', async (req, res) => {
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
             button_list: [
-              { text: '去确认', style: 1, key: `go_confirm_${userTaskId}` }
+              { 
+                text: '去确认', 
+                style: 1, 
+                key: `go_confirm_${userTaskId}`,
+                url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
+              }
             ],
             task_id: userTaskId,
             card_action: {
@@ -1601,17 +1606,7 @@ router.post('/callback', async (req, res) => {
         const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})_/i);
         console.log(`[模板卡片回调] match结果:`, match, 'goMatch:', goMatch);
         
-        // "去确认"按钮：更新按钮文案提示用户点击卡片跳转
-        if (goMatch) {
-          const goMsgId = goMatch[1];
-          const config = await getWecomConfig();
-          try {
-            await updateTemplateCardButton(config, fromUser, responseCode, '请点击卡片标题查看详情并确认');
-            console.log(`[模板卡片回调] 去确认按钮更新成功`);
-          } catch (updErr) {
-            console.error('更新去确认按钮失败:', updErr.message);
-          }
-        }
+        // "去确认"按钮：由于按钮已配置url，点击会直接跳转，不需要修改按钮文案
         
         const action = match ? match[1].toLowerCase() : '';
         const msgId = match ? match[2] : '';
