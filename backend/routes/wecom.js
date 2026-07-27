@@ -1391,16 +1391,30 @@ router.post('/callback', async (req, res) => {
               const totalAmount = parseFloat(msg.total_amount || 0);
               let deptCount = 0;
               let itemCount = 0;
-              try {
-                deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
-              } catch (e) {
-                console.error(`[模板卡片回调] 解析departments失败:`, e.message);
+
+              // 检查departments字段类型并处理
+              if (Array.isArray(msg.departments)) {
+                deptCount = msg.departments.length;
+              } else if (typeof msg.departments === 'string' && msg.departments) {
+                try {
+                  deptCount = JSON.parse(msg.departments).length;
+                } catch (e) {
+                  console.error(`[模板卡片回调] 解析departments失败:`, e.message);
+                }
               }
-              try {
-                itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
-              } catch (e) {
-                console.error(`[模板卡片回调] 解析purchase_items失败:`, e.message);
+
+              // 检查purchase_items字段类型并处理
+              if (Array.isArray(msg.purchase_items)) {
+                itemCount = msg.purchase_items.length;
+              } else if (typeof msg.purchase_items === 'string' && msg.purchase_items) {
+                try {
+                  itemCount = JSON.parse(msg.purchase_items).length;
+                } catch (e) {
+                  console.error(`[模板卡片回调] 解析purchase_items失败:`, e.message);
+                }
               }
+
+              console.log(`[模板卡片回调] 准备更新卡片: deptCount=${deptCount}, itemCount=${itemCount}`);
 
               if (action === 'confirm') {
                 try {
