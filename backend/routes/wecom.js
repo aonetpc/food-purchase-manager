@@ -95,8 +95,10 @@ async function sendTextCardToUser(config, userid, { title, description, url, btn
   return data.msgid || 'sent';
 }
 
+// 通过自建应用发送个人消息（模板卡片 - 按钮交互型，可直接在企业微信内点按钮确认/驳回）
+// button_interaction 类型支持 button_list（按钮列表）或 button_selection（下拉选择器）
 async function sendTemplateCardToUser(config, userid, { card_type, main_title, source,
-  sub_title_text, emphasis_content, horizontal_content_list, button_selection, task_id }) {
+  sub_title_text, emphasis_content, horizontal_content_list, button_list, button_selection, task_id }) {
   const accessToken = await getAccessToken(config);
   const card = {
     card_type: card_type || 'button_interaction',
@@ -106,6 +108,7 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
   if (sub_title_text) card.sub_title_text = sub_title_text;
   if (emphasis_content) card.emphasis_content = emphasis_content;
   if (horizontal_content_list && horizontal_content_list.length > 0) card.horizontal_content_list = horizontal_content_list;
+  if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
   if (task_id) card.task_id = task_id;
 
@@ -136,7 +139,7 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
 
 // 更新模板卡片消息（用户点击按钮后更新卡片状态）
 async function updateTemplateCard(config, userid, cardType, taskId, { main_title, sub_title_text,
-  horizontal_content_list, button_selection, replace_original }) {
+  horizontal_content_list, button_list, button_selection, replace_original }) {
   const accessToken = await getAccessToken(config);
   const card = {
     card_type: cardType || 'button_interaction',
@@ -144,6 +147,7 @@ async function updateTemplateCard(config, userid, cardType, taskId, { main_title
   if (main_title) card.main_title = main_title;
   if (sub_title_text) card.sub_title_text = sub_title_text;
   if (horizontal_content_list && horizontal_content_list.length > 0) card.horizontal_content_list = horizontal_content_list;
+  if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
 
   const body = {
@@ -189,8 +193,24 @@ async function sendMarkdownViaWebhook(webhookUrl, content, mentionedList = []) {
     msgtype: 'markdown',
     markdown: { content }
   };
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || 'Webhook发送失败');
+  return 'sent';
+}
+
+// 发送文本消息到群（支持真正的@提醒）
+async function sendTextViaWebhook(webhookUrl, content, mentionedList = []) {
+  const body = {
+    msgtype: 'text',
+    text: { content }
+  };
   if (mentionedList && mentionedList.length > 0) {
-    body.mentioned_list = mentionedList;
+    body.text.mentioned_list = mentionedList;
   }
   const res = await fetch(webhookUrl, {
     method: 'POST',
@@ -664,8 +684,14 @@ router.post('/test-send-confirmation', async (req, res) => {
     mdContent += `---\n\n`;
     mdContent += `💡 **温馨提示**：相关部门确认人请前往OA应用进行确认或驳回操作。`;
 
-    // 发送到测试群（带@人员）
-    await sendMarkdownViaWebhook(testWebhookUrl, mdContent, mentionedUsers);
+    // 发送到测试群（先发markdown消息，再发text消息实现真正的@提醒）
+    await sendMarkdownViaWebhook(testWebhookUrl, mdContent);
+
+    // 发送@提醒（使用text类型才能实现真正的红色提醒）
+    if (mentionedUsers.length > 0) {
+      const atContent = `📢 请以下人员尽快审批：${mentionedUsers.map(uid => `<@${uid}>`).join(' ')}`;
+      await sendTextViaWebhook(testWebhookUrl, atContent, mentionedUsers);
+    }
 
     // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
     const sentToUsers = [];
@@ -725,19 +751,6 @@ router.post('/test-send-confirmation', async (req, res) => {
           }
 
           const userTaskId = `${id}_${userid}`;
-          const buttonSelection = {
-            question_key: `confirm_${userTaskId}`,
-            option_list: [
-              {
-                id: `confirm_${userTaskId}`,
-                text: '确认',
-              },
-              {
-                id: `reject_${userTaskId}`,
-                text: '驳回',
-              }
-            ],
-          };
 
           await sendTemplateCardToUser(config, userid, {
             card_type: 'button_interaction',
@@ -750,7 +763,10 @@ router.post('/test-send-confirmation', async (req, res) => {
             },
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
-            button_selection: buttonSelection,
+            button_list: [
+              { text: '确认', style: 1, key: `confirm_${userTaskId}` },
+              { text: '驳回', style: 3, key: `reject_${userTaskId}` }
+            ],
             task_id: userTaskId,
           });
 
@@ -1187,9 +1203,12 @@ router.post('/callback', async (req, res) => {
     if (msgType === 'event' && event === 'template_card_event') {
       try {
         console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, selectedId=${selectedId}, taskId=${taskId}`);
-        // button_selection 模式下，EventKey=question_key, SelectedId=option_id=confirm_${msgId}_${userid}
-        const targetId = selectedId || eventKey;
-        const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})/i);
+        // button_list 模式：EventKey=button_key，格式为 confirm_${id}_${userid} 或 reject_${id}_${userid}
+        // button_selection 模式：SelectedId=option_id，格式为 confirm_${id}_${userid} 或 reject_${id}_${userid}
+        const targetId = eventKey || selectedId;
+        
+        // 匹配 confirm_xxx-xxx-xxx_userid 或 reject_xxx-xxx-xxx_userid
+        const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})_/i);
         const action = match ? match[1].toLowerCase() : '';
         const msgId = match ? match[2] : '';
 
