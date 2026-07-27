@@ -29,6 +29,27 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// 为企微回调添加raw body解析
+app.use('/api/wecom/callback', express.raw({ type: '*/*' }));
+app.use('/api/wecom/callback', (req, res, next) => {
+  req.rawBody = req.body;
+  try {
+    req.body = JSON.parse(req.body.toString());
+  } catch (e) {
+    try {
+      const xmlStr = req.body.toString();
+      if (xmlStr.includes('<xml>')) {
+        req.body = { xml: xmlStr };
+      } else {
+        req.body = {};
+      }
+    } catch (e2) {
+      req.body = {};
+    }
+  }
+  next();
+});
+
 app.use('/api/auth', authRouter);
 app.use('/api/wecom', wecomRouter);
 

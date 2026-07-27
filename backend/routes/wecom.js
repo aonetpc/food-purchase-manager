@@ -1231,34 +1231,53 @@ router.post('/callback', async (req, res) => {
     const { msg_signature, timestamp, nonce } = req.query;
     const config = await getWecomConfig();
 
-    console.log('[企微回调] 收到POST请求:', { msg_signature, timestamp, nonce, body: req.body });
+    console.log('[企微回调] 收到POST请求:', { msg_signature, timestamp, nonce, body: req.body, rawBody: req.rawBody ? req.rawBody.toString().substring(0, 500) : null, contentType: req.headers['content-type'] });
 
     if (!config || !config.callback_token || !config.callback_aes_key) {
       console.log('[企微回调] 回调未配置');
       return res.send('success');
     }
 
-    // 检查是否是JSON格式回调（没有Encrypt字段时，可能是JSON格式）
-    if (req.body && !req.body.Encrypt && !req.body.encrypt) {
-      console.log('[企微回调] 收到JSON格式回调');
-      return handleJsonCallback(req.body, res);
+    // 获取原始body内容
+    const rawBodyStr = req.rawBody ? req.rawBody.toString() : '';
+    console.log('[企微回调] 原始body:', rawBodyStr.substring(0, 500));
+
+    // 检查是否是JSON格式回调
+    let jsonBody = null;
+    try {
+      jsonBody = JSON.parse(rawBodyStr);
+      console.log('[企微回调] 解析为JSON:', jsonBody);
+    } catch (e) {
+      console.log('[企微回调] 不是JSON格式');
     }
 
-    const { Encrypt } = req.body;
-    console.log('[企微回调] Encrypt字段存在:', !!Encrypt);
+    if (jsonBody && !jsonBody.Encrypt && !jsonBody.encrypt) {
+      console.log('[企微回调] 收到JSON格式回调');
+      return handleJsonCallback(jsonBody, res);
+    }
+
+    // 检查是否是加密XML格式
+    let encrypt = null;
+    if (jsonBody && jsonBody.Encrypt) {
+      encrypt = jsonBody.Encrypt;
+    } else if (jsonBody && jsonBody.encrypt) {
+      encrypt = jsonBody.encrypt;
+    }
+
+    console.log('[企微回调] Encrypt字段存在:', !!encrypt);
     
-    if (!Encrypt) {
+    if (!encrypt) {
       console.log('[企微回调] 无Encrypt字段，直接返回success');
       return res.send('success');
     }
     
-    const isValid = verifySignature(config.callback_token, timestamp, nonce, Encrypt, msg_signature);
+    const isValid = verifySignature(config.callback_token, timestamp, nonce, encrypt, msg_signature);
     if (!isValid) {
       console.log('[企微回调] 签名验证失败');
       return res.status(403).send('签名验证失败');
     }
 
-    const xmlContent = decryptMsg(config.callback_aes_key, Encrypt, config.corp_id);
+    const xmlContent = decryptMsg(config.callback_aes_key, encrypt, config.corp_id);
     console.log('[企微回调] 原始XML:', xmlContent);
 
     // 解析XML
