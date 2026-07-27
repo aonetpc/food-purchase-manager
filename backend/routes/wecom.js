@@ -726,16 +726,17 @@ router.post('/test-send-confirmation', async (req, res) => {
             });
           }
 
+          const userTaskId = `${id}_${userid}`;
           const buttonList = [
             {
               text: '确认',
               style: 1,
-              key: `confirm_${id}`,
+              key: `confirm_${userTaskId}`,
             },
             {
               text: '驳回',
               style: 3,
-              key: `reject_${id}`,
+              key: `reject_${userTaskId}`,
             }
           ];
 
@@ -751,7 +752,7 @@ router.post('/test-send-confirmation', async (req, res) => {
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
             button_list: buttonList,
-            task_id: id,
+            task_id: userTaskId,
           });
 
           sentToUsers.push({ userid, departments: userDeptNames, total: userTotal });
@@ -1145,9 +1146,9 @@ router.post('/callback', async (req, res) => {
     if (msgType === 'event' && event === 'template_card_event' && eventKey) {
       try {
         console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, taskId=${taskId}`);
-        const parts = eventKey.split('_');
-        const action = parts[0];
-        const msgId = parts.slice(1).join('_');
+        const match = eventKey.match(/^(confirm|reject)_([a-f0-9-]{36})/i);
+        const action = match ? match[1] : '';
+        const msgId = match ? match[2] : '';
 
         if (msgId && (action === 'confirm' || action === 'reject')) {
           const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msgId]);
@@ -1165,7 +1166,7 @@ router.post('/callback', async (req, res) => {
                 ['confirmed', fromUser, now, msgId]
               );
               try {
-                await updateTemplateCard(config, fromUser, 'button_interaction', msgId, {
+                await updateTemplateCard(config, fromUser, 'button_interaction', taskId, {
                   main_title: {
                     title: '✅ 已确认',
                     desc: `确认人：${fromUser}　时间：${now}`,
@@ -1188,7 +1189,7 @@ router.post('/callback', async (req, res) => {
                 ['rejected', fromUser, now, msgId]
               );
               try {
-                await updateTemplateCard(config, fromUser, 'button_interaction', msgId, {
+                await updateTemplateCard(config, fromUser, 'button_interaction', taskId, {
                   main_title: {
                     title: '❌ 已驳回',
                     desc: `驳回人：${fromUser}　时间：${now}`,
