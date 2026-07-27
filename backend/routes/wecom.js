@@ -733,8 +733,9 @@ router.post('/test-send-confirmation', async (req, res) => {
     // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
     const sentToUsers = [];
     const failedUsers = [];
+    // userDeptMap: 每个用户负责的部门和明细
+    const userDeptMap = {};
     if (config && config.corp_id && config.app_secret && config.agent_id) {
-      const userDeptMap = {};
       for (const item of items) {
         const deptId = item.department_id;
         const deptName = item.department_name;
@@ -779,13 +780,12 @@ router.post('/test-send-confirmation', async (req, res) => {
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
             button_list: [
-              { text: '确认', style: 1, key: `confirm_${userTaskId}` },
-              { text: '驳回', style: 3, key: `reject_${userTaskId}` }
+              { text: '去确认', style: 1, key: `go_confirm_${userTaskId}` }
             ],
             task_id: userTaskId,
             card_action: {
               type: 1,
-              url: `https://food.hywellness.com/wecom-test?date=${test_date}`
+              url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
             },
           });
 
@@ -797,12 +797,18 @@ router.post('/test-send-confirmation', async (req, res) => {
       }
     }
 
-    // 保存到测试表
+    // 构造 user_departments 映射（用于后续确认页面判断该用户负责哪些部门）
+    const userDepartmentsMap = {};
+    for (const [userid, data] of Object.entries(userDeptMap)) {
+      userDepartmentsMap[userid] = Array.from(data.depts);
+    }
+
+    // 保存到测试表（同时保存 user_departments，便于确认页面根据 user 参数过滤）
     await pool.query(
-      `INSERT INTO wecom_test_messages 
-       (id, test_date, total_amount, departments, purchase_items, message_content, status, wecom_sent, sent_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, NOW())`,
-      [id, test_date, totalAmount, JSON.stringify(departments), JSON.stringify(items), mdContent]
+      `INSERT INTO wecom_test_messages
+       (id, test_date, total_amount, departments, purchase_items, message_content, status, wecom_sent, sent_at, user_departments)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, NOW(), ?)`,
+      [id, test_date, totalAmount, JSON.stringify(departments), JSON.stringify(items), mdContent, JSON.stringify(userDepartmentsMap)]
     );
 
     const msgParts = ['测试确认通知已发送到测试群'];
@@ -868,6 +874,207 @@ router.post('/test-messages/:id/reject', async (req, res) => {
     res.json({ success: true, message: '已驳回', status: 'rejected', rejected_at: now });
   } catch (err) {
     console.error('驳回测试消息失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
+// 新流程：模板卡片「去确认」按钮跳转的确认页面接口
+// 不同用户只看到/确认自己负责的部门，避免越权确认
+// ================================================
+
+// 工具：解析测试消息中的 JSON 字段
+function parseJsonField(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch (e) { return null; }
+}
+
+// 工具：格式化本地时间（避免 UTC 偏差）
+function formatLocalNow() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+// GET /wecom/confirm-page?id=xxx&user=userid
+// 返回该用户负责部门的数据（仅包含自己负责的明细），以及该用户当前的确认状态
+router.get('/confirm-page', async (req, res) => {
+  try {
+    const { id, user } = req.query;
+    if (!id || !user) {
+      return res.status(400).json({ error: '缺少参数 id 或 user' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在或已失效' });
+    }
+
+    const row = rows[0];
+    const allItems = parseJsonField(row.purchase_items) || [];
+    const userDepartments = parseJsonField(row.user_departments) || {};
+    const userConfirmations = parseJsonField(row.user_confirmations) || {};
+
+    // 该用户负责的部门列表
+    const myDeptNames = userDepartments[user] || [];
+    if (myDeptNames.length === 0) {
+      return res.status(403).json({ error: '您不是本确认单的指定确认人' });
+    }
+
+    // 过滤出该用户负责部门的明细
+    const myItems = allItems.filter(item => myDeptNames.includes(item.department_name));
+
+    // 用户当前的确认状态
+    const myConfirmation = userConfirmations[user] || null;
+
+    // 所有用户的确认情况（只返回 userid + 是否已确认 + 部门数，便于前端展示进度）
+    const allConfirmations = Object.entries(userConfirmations).map(([userid, info]) => ({
+      userid,
+      confirmed: !!(info && info.confirmed),
+      confirmed_at: info && info.confirmed_at,
+    }));
+
+    const myTotal = myItems.reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+
+    res.json({
+      id: row.id,
+      test_date: row.test_date,
+      user,
+      my_departments: myDeptNames,
+      my_items: myItems,
+      my_total: myTotal,
+      my_confirmation: myConfirmation,
+      all_confirmations: allConfirmations,
+      total_users: Object.keys(userDepartments).length,
+      confirmed_users: allConfirmations.filter(c => c.confirmed).length,
+      created_at: row.created_at,
+    });
+  } catch (err) {
+    console.error('获取确认页面数据失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /wecom/confirm-submit
+// body: { id, user, signature_data, name }
+// 提交后：更新 user_confirmations + 同时更新卡片按钮文案
+router.post('/confirm-submit', async (req, res) => {
+  try {
+    const { id, user, signature_data, name } = req.body || {};
+    if (!id || !user) {
+      return res.status(400).json({ error: '缺少参数 id 或 user' });
+    }
+    if (!signature_data) {
+      return res.status(400).json({ error: '请先手写签名后再确认' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在或已失效' });
+    }
+
+    const row = rows[0];
+    const userDepartments = parseJsonField(row.user_departments) || {};
+    const userConfirmations = parseJsonField(row.user_confirmations) || {};
+
+    const myDeptNames = userDepartments[user] || [];
+    if (myDeptNames.length === 0) {
+      return res.status(403).json({ error: '您不是本确认单的指定确认人' });
+    }
+
+    // 已确认过则禁止重复确认
+    if (userConfirmations[user] && userConfirmations[user].confirmed) {
+      return res.status(400).json({ error: '您已确认过，无需重复确认' });
+    }
+
+    const now = formatLocalNow();
+    userConfirmations[user] = {
+      confirmed: true,
+      confirmed_at: now,
+      confirmed_by: name || user,
+      departments: myDeptNames,
+      signature_data,
+    };
+
+    await pool.query(
+      'UPDATE wecom_test_messages SET user_confirmations = ? WHERE id = ?',
+      [JSON.stringify(userConfirmations), id]
+    );
+
+    // 同步保存/更新用户签名到 user_signatures 表（user_source='wecom'）
+    try {
+      const [sigRows] = await pool.query(
+        'SELECT id FROM user_signatures WHERE user_id = ? AND user_source = ?',
+        [user, 'wecom']
+      );
+      if (sigRows.length > 0) {
+        await pool.query(
+          'UPDATE user_signatures SET signature_data = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND user_source = ?',
+          [signature_data, user, 'wecom']
+        );
+      } else {
+        await pool.query(
+          'INSERT INTO user_signatures (id, user_id, user_source, signature_data) VALUES (?, ?, ?, ?)',
+          [uuidv4(), user, 'wecom', signature_data]
+        );
+      }
+    } catch (sigErr) {
+      console.error('保存用户签名失败（不影响主流程）:', sigErr.message);
+    }
+
+    // 尝试更新企微卡片按钮文案为「已确认」（无 response_code 时跳过）
+    let cardUpdated = false;
+    let cardError = '';
+    try {
+      const config = await getWecomConfig();
+      if (config && config.corp_id && config.app_secret && config.agent_id) {
+        // 注：response_code 是用户点击按钮时由企微回调下发的一次性凭证，
+        // 确认页面是从 card_action URL 跳转进来的，没有 response_code，
+        // 因此改用「主动给用户发送一条文本通知」的方式提醒已确认成功。
+        try {
+          await sendTextToUser(config, user,
+            `✅ 您已成功确认【${row.test_date}】采购单\n负责部门：${myDeptNames.join('、')}\n确认时间：${now}\n\n感谢您的配合！`
+          );
+          cardUpdated = true;
+        } catch (notifyErr) {
+          console.error('发送确认成功通知失败:', notifyErr.message);
+          cardError = notifyErr.message;
+        }
+      }
+    } catch (cfgErr) {
+      console.error('读取企微配置失败:', cfgErr.message);
+      cardError = cfgErr.message;
+    }
+
+    // 计算整体进度
+    const totalUsers = Object.keys(userDepartments).length;
+    const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
+    const allConfirmed = confirmedUsers === totalUsers;
+
+    // 全部用户都已确认时，更新整张测试单状态
+    if (allConfirmed) {
+      await pool.query(
+        "UPDATE wecom_test_messages SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE id = ?",
+        [name || user, now, id]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: '确认成功',
+      confirmed_at: now,
+      confirmed_departments: myDeptNames,
+      progress: {
+        confirmed_users: confirmedUsers,
+        total_users: totalUsers,
+        all_confirmed: allConfirmed,
+      },
+      card_updated: cardUpdated,
+      card_error: cardError,
+    });
+  } catch (err) {
+    console.error('提交确认失败:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1369,8 +1576,21 @@ router.post('/callback', async (req, res) => {
         console.log(`[模板卡片回调] targetId=${targetId}`);
         
         // 匹配 confirm_UUID_userid 或 reject_UUID_userid（id是UUID格式）
+        const goMatch = targetId.match(/^go_confirm_([a-f0-9-]{36})_/i);
         const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})_/i);
-        console.log(`[模板卡片回调] match结果:`, match);
+        console.log(`[模板卡片回调] match结果:`, match, 'goMatch:', goMatch);
+        
+        // "去确认"按钮：更新按钮文案提示用户点击卡片跳转
+        if (goMatch) {
+          const goMsgId = goMatch[1];
+          const config = await getWecomConfig();
+          try {
+            await updateTemplateCardButton(config, fromUser, responseCode, '请点击卡片标题查看详情并确认');
+            console.log(`[模板卡片回调] 去确认按钮更新成功`);
+          } catch (updErr) {
+            console.error('更新去确认按钮失败:', updErr.message);
+          }
+        }
         
         const action = match ? match[1].toLowerCase() : '';
         const msgId = match ? match[2] : '';

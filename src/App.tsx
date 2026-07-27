@@ -17,6 +17,7 @@ import ReimbursementManager from '@/pages/ReimbursementManager';
 import WecomManager from '@/pages/WecomManager';
 import WecomTest from '@/pages/WecomTest';
 import WecomTestConfirmPage from '@/pages/WecomTest/TestConfirmPage';
+import WecomConfirmPage from '@/pages/WecomTest/WecomConfirmPage';
 import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
 import PositionManager from '@/pages/PositionManager';
 import TempWorkerManager from '@/pages/TempWorkerManager';
@@ -62,6 +63,7 @@ export default function App() {
         <Route path="/confirm/:id" element={<PurchaseConfirmPage />} />
         <Route path="/wecom-test-confirm/:id" element={<WecomTestConfirmPage />} />
         <Route path="/wecom-test-reject/:id" element={<WecomTestConfirmPage />} />
+        <Route path="/wecom-confirm" element={<WecomConfirmPage />} />
         
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/daily" replace />} />

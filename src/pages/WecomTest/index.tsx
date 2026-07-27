@@ -334,7 +334,8 @@ export default function WecomTest() {
               <li>采购日期、涉及部门、总金额</li>
               <li>按部门分组的采购明细（含单价、数量、小计）</li>
               <li><strong>群消息</strong>：@相关部门确认人，底部提示去OA应用审批</li>
-              <li><strong>个人消息</strong>：模板卡片，含确认/驳回按钮，直接在企业微信内操作</li>
+              <li><strong>个人消息</strong>：模板卡片含「去确认」按钮，点击卡片跳转到确认页（手写签名+确认）</li>
+              <li><strong>权限隔离</strong>：每位确认人只能看到/确认自己负责的部门，互不影响</li>
               <li>操作结果会回显到下方消息列表的 confirmed/rejected 字段</li>
             </ul>
           </div>
