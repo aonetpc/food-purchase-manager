@@ -1368,21 +1368,8 @@ router.post('/callback', async (req, res) => {
             const msg = rows[0];
             console.log(`[模板卡片回调] msg对象存在:`, !!msg, typeof msg, Object.keys(msg || {}));
             console.log(`[模板卡片回调] total_amount:`, msg && msg.total_amount);
-            console.log(`[模板卡片回调] 获取消息记录:`, { total_amount: msg && msg.total_amount, departments: msg && msg.departments ? msg.departments.substring(0, 50) : null, purchase_items: msg && msg.purchase_items ? msg.purchase_items.substring(0, 50) : null });
-            const totalAmount = parseFloat(msg.total_amount || 0);
-            let deptCount = 0;
-            let itemCount = 0;
-            try {
-              deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
-            } catch (e) {
-              console.error(`[模板卡片回调] 解析departments失败:`, e.message);
-            }
-            try {
-              itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
-            } catch (e) {
-              console.error(`[模板卡片回调] 解析purchase_items失败:`, e.message);
-            }
-
+            
+            // 先执行数据库UPDATE，不依赖其他字段
             if (action === 'confirm') {
               console.log(`[模板卡片回调] 执行确认UPDATE`);
               const [updateResult] = await pool.query(
@@ -1390,21 +1377,6 @@ router.post('/callback', async (req, res) => {
                 ['confirmed', fromUser, now, msgId]
               );
               console.log(`[模板卡片回调] 确认UPDATE结果:`, updateResult);
-              try {
-                await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
-                  main_title: {
-                    title: '✅ 已确认',
-                    desc: `确认人：${fromUser}　时间：${now}`,
-                  },
-                  horizontal_content_list: [
-                    { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
-                    { keyname: '部门数', value: `${deptCount}个` },
-                    { keyname: '食材项', value: `${itemCount}项` },
-                  ],
-                });
-              } catch (updErr) {
-                console.error('更新确认卡片失败:', updErr.message);
-              }
             } else {
               console.log(`[模板卡片回调] 执行驳回UPDATE`);
               const [updateResult] = await pool.query(
@@ -1412,21 +1384,61 @@ router.post('/callback', async (req, res) => {
                 ['rejected', fromUser, now, msgId]
               );
               console.log(`[模板卡片回调] 驳回UPDATE结果:`, updateResult);
+            }
+            
+            // 然后再处理卡片更新（放在try-catch里）
+            try {
+              const totalAmount = parseFloat(msg.total_amount || 0);
+              let deptCount = 0;
+              let itemCount = 0;
               try {
-                await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
-                  main_title: {
-                    title: '❌ 已驳回',
-                    desc: `驳回人：${fromUser}　时间：${now}`,
-                  },
-                  horizontal_content_list: [
-                    { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
-                    { keyname: '部门数', value: `${deptCount}个` },
-                    { keyname: '食材项', value: `${itemCount}项` },
-                  ],
-                });
-              } catch (updErr) {
-                console.error('更新驳回卡片失败:', updErr.message);
+                deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
+              } catch (e) {
+                console.error(`[模板卡片回调] 解析departments失败:`, e.message);
               }
+              try {
+                itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
+              } catch (e) {
+                console.error(`[模板卡片回调] 解析purchase_items失败:`, e.message);
+              }
+
+              if (action === 'confirm') {
+                try {
+                  await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
+                    main_title: {
+                      title: '✅ 已确认',
+                      desc: `确认人：${fromUser}　时间：${now}`,
+                    },
+                    horizontal_content_list: [
+                      { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                      { keyname: '部门数', value: `${deptCount}个` },
+                      { keyname: '食材项', value: `${itemCount}项` },
+                    ],
+                  });
+                  console.log(`[模板卡片回调] 确认卡片更新成功`);
+                } catch (updErr) {
+                  console.error('更新确认卡片失败:', updErr.message);
+                }
+              } else {
+                try {
+                  await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
+                    main_title: {
+                      title: '❌ 已驳回',
+                      desc: `驳回人：${fromUser}　时间：${now}`,
+                    },
+                    horizontal_content_list: [
+                      { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                      { keyname: '部门数', value: `${deptCount}个` },
+                      { keyname: '食材项', value: `${itemCount}项` },
+                    ],
+                  });
+                  console.log(`[模板卡片回调] 驳回卡片更新成功`);
+                } catch (updErr) {
+                  console.error('更新驳回卡片失败:', updErr.message);
+                }
+              }
+            } catch (tcErr) {
+              console.error(`[模板卡片回调] 更新卡片失败:`, tcErr.message);
             }
           } else {
             console.log(`[模板卡片回调] 未找到记录: id=${msgId}`);
