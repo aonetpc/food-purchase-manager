@@ -95,10 +95,8 @@ async function sendTextCardToUser(config, userid, { title, description, url, btn
   return data.msgid || 'sent';
 }
 
-// 通过自建应用发送个人消息（模板卡片 - 按钮交互型，可直接在企业微信内点按钮确认/驳回）
-// 注意：button_interaction 类型才支持 button_list 按钮点击回调
 async function sendTemplateCardToUser(config, userid, { card_type, main_title, source,
-  sub_title_text, emphasis_content, horizontal_content_list, button_list, button_selection, task_id }) {
+  sub_title_text, emphasis_content, horizontal_content_list, button_selection, task_id }) {
   const accessToken = await getAccessToken(config);
   const card = {
     card_type: card_type || 'button_interaction',
@@ -108,7 +106,6 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
   if (sub_title_text) card.sub_title_text = sub_title_text;
   if (emphasis_content) card.emphasis_content = emphasis_content;
   if (horizontal_content_list && horizontal_content_list.length > 0) card.horizontal_content_list = horizontal_content_list;
-  if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
   if (task_id) card.task_id = task_id;
 
@@ -139,7 +136,7 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
 
 // 更新模板卡片消息（用户点击按钮后更新卡片状态）
 async function updateTemplateCard(config, userid, cardType, taskId, { main_title, sub_title_text,
-  horizontal_content_list, button_list, replace_original }) {
+  horizontal_content_list, button_selection, replace_original }) {
   const accessToken = await getAccessToken(config);
   const card = {
     card_type: cardType || 'button_interaction',
@@ -147,7 +144,7 @@ async function updateTemplateCard(config, userid, cardType, taskId, { main_title
   if (main_title) card.main_title = main_title;
   if (sub_title_text) card.sub_title_text = sub_title_text;
   if (horizontal_content_list && horizontal_content_list.length > 0) card.horizontal_content_list = horizontal_content_list;
-  if (button_list && button_list.length > 0) card.button_list = button_list;
+  if (button_selection) card.button_selection = button_selection;
 
   const body = {
     userids: [userid],
@@ -193,7 +190,7 @@ async function sendMarkdownViaWebhook(webhookUrl, content, mentionedList = []) {
     markdown: { content }
   };
   if (mentionedList && mentionedList.length > 0) {
-    body.markdown.mentioned_list = mentionedList;
+    body.mentioned_list = mentionedList;
   }
   const res = await fetch(webhookUrl, {
     method: 'POST',
@@ -729,11 +726,16 @@ router.post('/test-send-confirmation', async (req, res) => {
 
           const userTaskId = `${id}_${userid}`;
           const buttonSelection = {
-            question_key: `action_${userTaskId}`,
-            title: '请确认或驳回',
+            question_key: `confirm_${userTaskId}`,
             option_list: [
-              { id: `confirm_${userTaskId}`, text: '✅ 确认' },
-              { id: `reject_${userTaskId}`, text: '❌ 驳回' },
+              {
+                id: `confirm_${userTaskId}`,
+                text: '确认',
+              },
+              {
+                id: `reject_${userTaskId}`,
+                text: '驳回',
+              }
             ],
           };
 
@@ -1188,7 +1190,7 @@ router.post('/callback', async (req, res) => {
         // button_selection 模式下，EventKey=question_key, SelectedId=option_id=confirm_${msgId}_${userid}
         const targetId = selectedId || eventKey;
         const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})/i);
-        const action = match ? match[1] : '';
+        const action = match ? match[1].toLowerCase() : '';
         const msgId = match ? match[2] : '';
 
         if (msgId && (action === 'confirm' || action === 'reject')) {
@@ -1207,7 +1209,7 @@ router.post('/callback', async (req, res) => {
                 ['confirmed', fromUser, now, msgId]
               );
               try {
-                await updateTemplateCard(config, fromUser, 'button_interaction', taskId, {
+                await updateTemplateCard(config, fromUser, 'text_notice', taskId, {
                   main_title: {
                     title: '✅ 已确认',
                     desc: `确认人：${fromUser}　时间：${now}`,
@@ -1216,9 +1218,6 @@ router.post('/callback', async (req, res) => {
                     { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
                     { keyname: '部门数', value: `${deptCount}个` },
                     { keyname: '食材项', value: `${itemCount}项` },
-                  ],
-                  button_list: [
-                    { text: '已确认', style: 1, key: 'confirmed', type: 'disabled' },
                   ],
                 });
               } catch (updErr) {
@@ -1230,7 +1229,7 @@ router.post('/callback', async (req, res) => {
                 ['rejected', fromUser, now, msgId]
               );
               try {
-                await updateTemplateCard(config, fromUser, 'button_interaction', taskId, {
+                await updateTemplateCard(config, fromUser, 'text_notice', taskId, {
                   main_title: {
                     title: '❌ 已驳回',
                     desc: `驳回人：${fromUser}　时间：${now}`,
@@ -1239,9 +1238,6 @@ router.post('/callback', async (req, res) => {
                     { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
                     { keyname: '部门数', value: `${deptCount}个` },
                     { keyname: '食材项', value: `${itemCount}项` },
-                  ],
-                  button_list: [
-                    { text: '已驳回', style: 3, key: 'rejected', type: 'disabled' },
                   ],
                 });
               } catch (updErr) {
