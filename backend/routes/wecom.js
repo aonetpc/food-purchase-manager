@@ -1364,6 +1364,7 @@ router.post('/callback', async (req, res) => {
             const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
             console.log(`[模板卡片回调] 准备更新数据库: action=${action}, msgId=${msgId}, fromUser=${fromUser}`);
             const config = await getWecomConfig();
+            console.log(`[模板卡片回调] getWecomConfig结果:`, config ? '成功' : '失败');
             const msg = rows[0];
             const totalAmount = parseFloat(msg.total_amount || 0);
             const deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
