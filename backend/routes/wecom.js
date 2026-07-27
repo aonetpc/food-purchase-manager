@@ -1366,7 +1366,8 @@ router.post('/callback', async (req, res) => {
             const config = await getWecomConfig();
             console.log(`[模板卡片回调] getWecomConfig结果:`, config ? '成功' : '失败');
             const msg = rows[0];
-            console.log(`[模板卡片回调] 获取消息记录:`, { total_amount: msg.total_amount, departments: msg.departments?.substring(0, 50), purchase_items: msg.purchase_items?.substring(0, 50) });
+            console.log(`[模板卡片回调] msg对象存在:`, !!msg, typeof msg);
+            console.log(`[模板卡片回调] 获取消息记录:`, { total_amount: msg?.total_amount, departments: msg?.departments?.substring(0, 50), purchase_items: msg?.purchase_items?.substring(0, 50) });
             const totalAmount = parseFloat(msg.total_amount || 0);
             let deptCount = 0;
             let itemCount = 0;
