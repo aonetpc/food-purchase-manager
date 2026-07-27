@@ -1357,10 +1357,12 @@ router.post('/callback', async (req, res) => {
         const msgId = match ? match[2] : '';
 
         if (msgId && (action === 'confirm' || action === 'reject')) {
+          console.log(`[模板卡片回调] 开始查询数据库: id=${msgId}`);
           const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msgId]);
           console.log(`[模板卡片回调] 查询结果:`, rows.length);
           if (rows.length > 0) {
             const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            console.log(`[模板卡片回调] 准备更新数据库: action=${action}, msgId=${msgId}, fromUser=${fromUser}`);
             const config = await getWecomConfig();
             const msg = rows[0];
             const totalAmount = parseFloat(msg.total_amount || 0);
@@ -1368,10 +1370,12 @@ router.post('/callback', async (req, res) => {
             const itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
 
             if (action === 'confirm') {
-              await pool.query(
+              console.log(`[模板卡片回调] 执行确认UPDATE`);
+              const [updateResult] = await pool.query(
                 'UPDATE wecom_test_messages SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?',
                 ['confirmed', fromUser, now, msgId]
               );
+              console.log(`[模板卡片回调] 确认UPDATE结果:`, updateResult);
               try {
                 await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
                   main_title: {
@@ -1388,10 +1392,12 @@ router.post('/callback', async (req, res) => {
                 console.error('更新确认卡片失败:', updErr.message);
               }
             } else {
-              await pool.query(
+              console.log(`[模板卡片回调] 执行驳回UPDATE`);
+              const [updateResult] = await pool.query(
                 'UPDATE wecom_test_messages SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?',
                 ['rejected', fromUser, now, msgId]
               );
+              console.log(`[模板卡片回调] 驳回UPDATE结果:`, updateResult);
               try {
                 await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
                   main_title: {
@@ -1408,7 +1414,11 @@ router.post('/callback', async (req, res) => {
                 console.error('更新驳回卡片失败:', updErr.message);
               }
             }
+          } else {
+            console.log(`[模板卡片回调] 未找到记录: id=${msgId}`);
           }
+        } else {
+          console.log(`[模板卡片回调] 参数不匹配: msgId=${msgId}, action=${action}`);
         }
       } catch (tcErr) {
         console.error('处理模板卡片事件失败:', tcErr);
