@@ -797,10 +797,14 @@ router.post('/test-send-confirmation', async (req, res) => {
       }
     }
 
-    // 构造 user_departments 映射（用于后续确认页面判断该用户负责哪些部门）
+    // 构造 user_departments 映射（用于后续确认页面判断该用户负责哪些部门，包含 task_id 用于更新卡片）
     const userDepartmentsMap = {};
     for (const [userid, data] of Object.entries(userDeptMap)) {
-      userDepartmentsMap[userid] = Array.from(data.depts);
+      const userTaskId = `${id}_${userid}`;
+      userDepartmentsMap[userid] = {
+        departments: Array.from(data.depts),
+        task_id: userTaskId,
+      };
     }
 
     // 保存到测试表（同时保存 user_departments，便于确认页面根据 user 参数过滤）
@@ -916,8 +920,11 @@ router.get('/confirm-page', async (req, res) => {
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
-    // 该用户负责的部门列表
-    const myDeptNames = userDepartments[user] || [];
+    // 该用户负责的部门列表（兼容新旧格式）
+    const userDeptData = userDepartments[user];
+    const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments)) 
+      ? userDeptData.departments 
+      : (Array.isArray(userDeptData) ? userDeptData : []);
     if (myDeptNames.length === 0) {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
@@ -978,7 +985,12 @@ router.post('/confirm-submit', async (req, res) => {
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
-    const myDeptNames = userDepartments[user] || [];
+    // 兼容新旧格式获取部门列表和 task_id
+    const userDeptData = userDepartments[user];
+    const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments)) 
+      ? userDeptData.departments 
+      : (Array.isArray(userDeptData) ? userDeptData : []);
+    const taskId = (userDeptData && userDeptData.task_id) || `${id}_${user}`;
     if (myDeptNames.length === 0) {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
@@ -1023,23 +1035,32 @@ router.post('/confirm-submit', async (req, res) => {
       console.error('保存用户签名失败（不影响主流程）:', sigErr.message);
     }
 
-    // 尝试更新企微卡片按钮文案为「已确认」（无 response_code 时跳过）
+    // 更新企微模板卡片：将按钮改为灰色「已确认」，不再发送新消息
     let cardUpdated = false;
     let cardError = '';
     try {
       const config = await getWecomConfig();
       if (config && config.corp_id && config.app_secret && config.agent_id) {
-        // 注：response_code 是用户点击按钮时由企微回调下发的一次性凭证，
-        // 确认页面是从 card_action URL 跳转进来的，没有 response_code，
-        // 因此改用「主动给用户发送一条文本通知」的方式提醒已确认成功。
         try {
-          await sendTextToUser(config, user,
-            `✅ 您已成功确认【${row.test_date}】采购单\n负责部门：${myDeptNames.join('、')}\n确认时间：${now}\n\n感谢您的配合！`
-          );
+          await updateTemplateCard(config, user, 'button_interaction', taskId, {
+            main_title: {
+              title: '✅ 已确认',
+              desc: `确认人：${name || user}　时间：${now}`,
+            },
+            sub_title_text: `采购日期：${row.test_date}\n您负责的部门：${myDeptNames.join('、')}`,
+            horizontal_content_list: [
+              { keyname: '总金额', value: `¥${Number(row.total_amount || 0).toFixed(2)}` },
+              { keyname: '部门数', value: `${myDeptNames.length}个` },
+            ],
+            button_list: [
+              { text: '已确认', style: 0, key: `confirmed_${taskId}` },
+            ],
+          });
           cardUpdated = true;
-        } catch (notifyErr) {
-          console.error('发送确认成功通知失败:', notifyErr.message);
-          cardError = notifyErr.message;
+          console.log(`[确认提交] 卡片更新成功，taskId=${taskId}`);
+        } catch (updateErr) {
+          console.error('更新模板卡片失败:', updateErr.message);
+          cardError = updateErr.message;
         }
       }
     } catch (cfgErr) {
