@@ -732,10 +732,9 @@ router.post('/test-send-confirmation', async (req, res) => {
             question_key: `action_${userTaskId}`,
             title: '请确认或驳回',
             option_list: [
-              { id: `confirm_${userTaskId}`, text: '✅ 确认', style: 1 },
-              { id: `reject_${userTaskId}`, text: '❌ 驳回', style: 3 },
+              { id: `confirm_${userTaskId}`, text: '✅ 确认' },
+              { id: `reject_${userTaskId}`, text: '❌ 驳回' },
             ],
-            selected_id: '',
           };
 
           await sendTemplateCardToUser(config, userid, {
