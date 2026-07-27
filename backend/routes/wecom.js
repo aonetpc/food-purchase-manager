@@ -684,14 +684,14 @@ router.post('/test-send-confirmation', async (req, res) => {
     mdContent += `---\n\n`;
     mdContent += `💡 **温馨提示**：相关部门确认人请前往OA应用进行确认或驳回操作。`;
 
-    // 发送到测试群（先发markdown消息，再发text消息实现真正的@提醒）
-    await sendMarkdownViaWebhook(testWebhookUrl, mdContent);
+    // 发送到测试群（先发markdown消息，再发text消息实现真正的@提醒）- 暂时注释，避免测试时群消息过多
+    // await sendMarkdownViaWebhook(testWebhookUrl, mdContent);
 
-    // 发送@提醒（使用text类型才能实现真正的红色提醒）
-    if (mentionedUsers.length > 0) {
-      const atContent = `📢 请以下人员尽快审批：${mentionedUsers.map(uid => `<@${uid}>`).join(' ')}`;
-      await sendTextViaWebhook(testWebhookUrl, atContent, mentionedUsers);
-    }
+    // 发送@提醒（使用text类型才能实现真正的红色提醒）- 暂时注释
+    // if (mentionedUsers.length > 0) {
+    //   const atContent = `📢 请以下人员尽快审批：${mentionedUsers.map(uid => `<@${uid}>`).join(' ')}`;
+    //   await sendTextViaWebhook(testWebhookUrl, atContent, mentionedUsers);
+    // }
 
     // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
     const sentToUsers = [];
@@ -1137,18 +1137,29 @@ router.post('/callback', async (req, res) => {
     const { msg_signature, timestamp, nonce } = req.query;
     const config = await getWecomConfig();
 
+    console.log('[企微回调] 收到POST请求:', { msg_signature, timestamp, nonce, bodyKeys: Object.keys(req.body || {}) });
+
     if (!config || !config.callback_token || !config.callback_aes_key) {
+      console.log('[企微回调] 回调未配置');
       return res.send('success');
     }
 
     const { Encrypt } = req.body;
+    console.log('[企微回调] Encrypt字段存在:', !!Encrypt);
+    
+    if (!Encrypt) {
+      console.log('[企微回调] 无Encrypt字段，直接返回success');
+      return res.send('success');
+    }
+    
     const isValid = verifySignature(config.callback_token, timestamp, nonce, Encrypt, msg_signature);
     if (!isValid) {
+      console.log('[企微回调] 签名验证失败');
       return res.status(403).send('签名验证失败');
     }
 
     const xmlContent = decryptMsg(config.callback_aes_key, Encrypt, config.corp_id);
-    console.log('[企微回调] 原始XML:', xmlContent.substring(0, 800));
+    console.log('[企微回调] 原始XML:', xmlContent);
 
     // 解析XML
     const fromUserMatch = xmlContent.match(/<FromUserName><!\[CDATA\[(.+?)\]\]><\/FromUserName>/);
@@ -1174,6 +1185,8 @@ router.post('/callback', async (req, res) => {
     const taskId = taskIdMatch ? taskIdMatch[1] : '';
     const selectedId = selectedIdMatch ? selectedIdMatch[1] : '';
     const responseCode = responseCodeMatch ? responseCodeMatch[1] : '';
+
+    console.log('[企微回调] 解析结果:', { msgType, event, fromUser, eventKey, taskId, selectedId, responseCode });
 
     // 审批状态变更事件
     if (msgType === 'event' && event === 'open_approval_change' && spNo) {
@@ -1209,13 +1222,18 @@ router.post('/callback', async (req, res) => {
         // button_selection 模式：SelectedId=option_id，格式为 confirm_${id}_${userid} 或 reject_${id}_${userid}
         const targetId = eventKey || selectedId;
         
+        console.log(`[模板卡片回调] targetId=${targetId}`);
+        
         // 匹配 confirm_数字_userid 或 reject_数字_userid（id是数据库自增ID）
         const match = targetId.match(/^(confirm|reject)_(\d+)_/i);
+        console.log(`[模板卡片回调] match结果:`, match);
+        
         const action = match ? match[1].toLowerCase() : '';
         const msgId = match ? match[2] : '';
 
         if (msgId && (action === 'confirm' || action === 'reject')) {
           const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msgId]);
+          console.log(`[模板卡片回调] 查询结果:`, rows.length);
           if (rows.length > 0) {
             const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const config = await getWecomConfig();
