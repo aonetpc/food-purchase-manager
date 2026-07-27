@@ -785,7 +785,7 @@ router.post('/test-send-confirmation', async (req, res) => {
             task_id: userTaskId,
             card_action: {
               type: 1,
-              url: `http://hywellness.com/wecom-test?date=${test_date}`
+              url: `https://food.hywellness.com/wecom-test?date=${test_date}`
             },
           });
 
