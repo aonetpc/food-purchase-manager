@@ -774,7 +774,7 @@ router.post('/test-send-confirmation', async (req, res) => {
             },
             main_title: {
               title: '🧪 食材采购确认通知',
-              desc: '请确认或驳回您负责部门的采购内容',
+              desc: '请认真确认您负责部门的采购内容',
             },
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
@@ -785,7 +785,7 @@ router.post('/test-send-confirmation', async (req, res) => {
             task_id: userTaskId,
             card_action: {
               type: 1,
-              url: `https://hywellness.com/wecom-test?date=${test_date}`
+              url: `http://hywellness.com/wecom-test?date=${test_date}`
             },
           });
 
