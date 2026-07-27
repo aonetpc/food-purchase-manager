@@ -727,18 +727,15 @@ router.post('/test-send-confirmation', async (req, res) => {
           }
 
           const userTaskId = `${id}_${userid}`;
-          const buttonList = [
-            {
-              text: '确认',
-              style: 1,
-              key: `confirm_${userTaskId}`,
-            },
-            {
-              text: '驳回',
-              style: 3,
-              key: `reject_${userTaskId}`,
-            }
-          ];
+          const buttonSelection = {
+            question_key: `action_${userTaskId}`,
+            title: '请确认或驳回',
+            option_list: [
+              { id: `confirm_${userTaskId}`, text: '✅ 确认', style: 1 },
+              { id: `reject_${userTaskId}`, text: '❌ 驳回', style: 3 },
+            ],
+            selected_id: '',
+          };
 
           await sendTemplateCardToUser(config, userid, {
             card_type: 'button_interaction',
@@ -751,7 +748,7 @@ router.post('/test-send-confirmation', async (req, res) => {
             },
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
-            button_list: buttonList,
+            button_selection: buttonSelection,
             task_id: userTaskId,
           });
 
@@ -1053,6 +1050,46 @@ router.get('/callback-logs', async (req, res) => {
   }
 });
 
+// 测试模板卡片回调（手动触发，方便调试）
+router.post('/test-callback', async (req, res) => {
+  try {
+    const { msg_id, action, userid } = req.body;
+    if (!msg_id || !action || !userid) {
+      return res.status(400).json({ error: '缺少参数：msg_id, action, userid' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msg_id]);
+    if (rows.length === 0) {
+      return res.status(400).json({ error: '消息不存在' });
+    }
+
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const msg = rows[0];
+    const totalAmount = parseFloat(msg.total_amount || 0);
+    const deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
+    const itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
+
+    if (action === 'confirm') {
+      await pool.query(
+        'UPDATE wecom_test_messages SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?',
+        ['confirmed', userid, now, msg_id]
+      );
+    } else if (action === 'reject') {
+      await pool.query(
+        'UPDATE wecom_test_messages SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?',
+        ['rejected', userid, now, msg_id]
+      );
+    } else {
+      return res.status(400).json({ error: 'action 必须是 confirm 或 reject' });
+    }
+
+    res.json({ success: true, message: `${action === 'confirm' ? '已确认' : '已驳回'}，状态已更新` });
+  } catch (err) {
+    console.error('测试回调失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 企微回调处理 - URL验证
 router.get('/callback', async (req, res) => {
   try {
@@ -1105,6 +1142,7 @@ router.post('/callback', async (req, res) => {
     const spStatusMatch = xmlContent.match(/<SpStatus>(\d+)<\/SpStatus>/);
     const eventKeyMatch = xmlContent.match(/<EventKey><!\[CDATA\[(.+?)\]\]><\/EventKey>/);
     const taskIdMatch = xmlContent.match(/<TaskId><!\[CDATA\[(.+?)\]\]><\/TaskId>/);
+    const selectedIdMatch = xmlContent.match(/<SelectedId><!\[CDATA\[(.+?)\]\]><\/SelectedId>/);
 
     const fromUser = fromUserMatch ? fromUserMatch[1] : '';
     const toUser = toUserMatch ? toUserMatch[1] : '';
@@ -1115,6 +1153,7 @@ router.post('/callback', async (req, res) => {
     const spStatus = spStatusMatch ? parseInt(spStatusMatch[1]) : null;
     const eventKey = eventKeyMatch ? eventKeyMatch[1] : '';
     const taskId = taskIdMatch ? taskIdMatch[1] : '';
+    const selectedId = selectedIdMatch ? selectedIdMatch[1] : '';
 
     // 审批状态变更事件
     if (msgType === 'event' && event === 'open_approval_change' && spNo) {
@@ -1143,10 +1182,12 @@ router.post('/callback', async (req, res) => {
     }
 
     // 模板卡片按钮点击事件（测试消息的确认/驳回）
-    if (msgType === 'event' && event === 'template_card_event' && eventKey) {
+    if (msgType === 'event' && event === 'template_card_event') {
       try {
-        console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, taskId=${taskId}`);
-        const match = eventKey.match(/^(confirm|reject)_([a-f0-9-]{36})/i);
+        console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, selectedId=${selectedId}, taskId=${taskId}`);
+        // button_selection 模式下，EventKey=question_key, SelectedId=option_id=confirm_${msgId}_${userid}
+        const targetId = selectedId || eventKey;
+        const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})/i);
         const action = match ? match[1] : '';
         const msgId = match ? match[2] : '';
 
