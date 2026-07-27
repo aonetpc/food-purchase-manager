@@ -1207,8 +1207,8 @@ router.post('/callback', async (req, res) => {
         // button_selection 模式：SelectedId=option_id，格式为 confirm_${id}_${userid} 或 reject_${id}_${userid}
         const targetId = eventKey || selectedId;
         
-        // 匹配 confirm_xxx-xxx-xxx_userid 或 reject_xxx-xxx-xxx_userid
-        const match = targetId.match(/^(confirm|reject)_([a-f0-9-]{36})_/i);
+        // 匹配 confirm_数字_userid 或 reject_数字_userid（id是数据库自增ID）
+        const match = targetId.match(/^(confirm|reject)_(\d+)_/i);
         const action = match ? match[1].toLowerCase() : '';
         const msgId = match ? match[2] : '';
 
