@@ -1161,6 +1161,7 @@ router.post('/callback', async (req, res) => {
     const eventKeyMatch = xmlContent.match(/<EventKey><!\[CDATA\[(.+?)\]\]><\/EventKey>/);
     const taskIdMatch = xmlContent.match(/<TaskId><!\[CDATA\[(.+?)\]\]><\/TaskId>/);
     const selectedIdMatch = xmlContent.match(/<SelectedId><!\[CDATA\[(.+?)\]\]><\/SelectedId>/);
+    const responseCodeMatch = xmlContent.match(/<ResponseCode><!\[CDATA\[(.+?)\]\]><\/ResponseCode>/);
 
     const fromUser = fromUserMatch ? fromUserMatch[1] : '';
     const toUser = toUserMatch ? toUserMatch[1] : '';
@@ -1172,6 +1173,7 @@ router.post('/callback', async (req, res) => {
     const eventKey = eventKeyMatch ? eventKeyMatch[1] : '';
     const taskId = taskIdMatch ? taskIdMatch[1] : '';
     const selectedId = selectedIdMatch ? selectedIdMatch[1] : '';
+    const responseCode = responseCodeMatch ? responseCodeMatch[1] : '';
 
     // 审批状态变更事件
     if (msgType === 'event' && event === 'open_approval_change' && spNo) {
@@ -1202,7 +1204,7 @@ router.post('/callback', async (req, res) => {
     // 模板卡片按钮点击事件（测试消息的确认/驳回）
     if (msgType === 'event' && event === 'template_card_event') {
       try {
-        console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, selectedId=${selectedId}, taskId=${taskId}`);
+        console.log(`[模板卡片回调] fromUser=${fromUser}, eventKey=${eventKey}, selectedId=${selectedId}, taskId=${taskId}, responseCode=${responseCode}`);
         // button_list 模式：EventKey=button_key，格式为 confirm_${id}_${userid} 或 reject_${id}_${userid}
         // button_selection 模式：SelectedId=option_id，格式为 confirm_${id}_${userid} 或 reject_${id}_${userid}
         const targetId = eventKey || selectedId;
@@ -1228,7 +1230,7 @@ router.post('/callback', async (req, res) => {
                 ['confirmed', fromUser, now, msgId]
               );
               try {
-                await updateTemplateCard(config, fromUser, 'text_notice', taskId, {
+                await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
                   main_title: {
                     title: '✅ 已确认',
                     desc: `确认人：${fromUser}　时间：${now}`,
@@ -1248,7 +1250,7 @@ router.post('/callback', async (req, res) => {
                 ['rejected', fromUser, now, msgId]
               );
               try {
-                await updateTemplateCard(config, fromUser, 'text_notice', taskId, {
+                await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
                   main_title: {
                     title: '❌ 已驳回',
                     desc: `驳回人：${fromUser}　时间：${now}`,
