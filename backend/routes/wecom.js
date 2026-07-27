@@ -1366,9 +1366,20 @@ router.post('/callback', async (req, res) => {
             const config = await getWecomConfig();
             console.log(`[模板卡片回调] getWecomConfig结果:`, config ? '成功' : '失败');
             const msg = rows[0];
+            console.log(`[模板卡片回调] 获取消息记录:`, { total_amount: msg.total_amount, departments: msg.departments?.substring(0, 50), purchase_items: msg.purchase_items?.substring(0, 50) });
             const totalAmount = parseFloat(msg.total_amount || 0);
-            const deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
-            const itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
+            let deptCount = 0;
+            let itemCount = 0;
+            try {
+              deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
+            } catch (e) {
+              console.error(`[模板卡片回调] 解析departments失败:`, e.message);
+            }
+            try {
+              itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
+            } catch (e) {
+              console.error(`[模板卡片回调] 解析purchase_items失败:`, e.message);
+            }
 
             if (action === 'confirm') {
               console.log(`[模板卡片回调] 执行确认UPDATE`);
