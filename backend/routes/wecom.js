@@ -1108,6 +1108,100 @@ router.post('/test-callback', async (req, res) => {
   }
 });
 
+// 处理JSON格式的模板卡片回调（智能机器人）
+async function handleJsonCallback(body, res) {
+  try {
+    console.log('[企微回调-JSON] 收到事件:', JSON.stringify(body, null, 2));
+    
+    const { event, from, msgid, response_url } = body;
+    const eventType = event?.eventtype;
+    
+    if (eventType === 'template_card_event') {
+      const tcEvent = event?.template_card_event || {};
+      const cardType = tcEvent.card_type;
+      const eventKey = tcEvent.event_key;
+      const taskId = tcEvent.task_id;
+      const responseCode = tcEvent.response_code;
+      const fromUser = from?.userid;
+      
+      console.log(`[企微回调-JSON] 模板卡片事件: cardType=${cardType}, eventKey=${eventKey}, taskId=${taskId}, responseCode=${responseCode}, fromUser=${fromUser}`);
+      
+      // button_list 模式：event_key=button_key
+      const targetId = eventKey;
+      
+      // 匹配 confirm_数字_userid 或 reject_数字_userid
+      const match = targetId.match(/^(confirm|reject)_(\d+)_/i);
+      console.log(`[企微回调-JSON] match结果:`, match);
+      
+      const action = match ? match[1].toLowerCase() : '';
+      const msgId = match ? match[2] : '';
+
+      if (msgId && (action === 'confirm' || action === 'reject')) {
+        const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [msgId]);
+        console.log(`[企微回调-JSON] 查询结果:`, rows.length);
+        
+        if (rows.length > 0) {
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          const config = await getWecomConfig();
+          const msg = rows[0];
+          const totalAmount = parseFloat(msg.total_amount || 0);
+          const deptCount = msg.departments ? JSON.parse(msg.departments).length : 0;
+          const itemCount = msg.purchase_items ? JSON.parse(msg.purchase_items).length : 0;
+
+          if (action === 'confirm') {
+            await pool.query(
+              'UPDATE wecom_test_messages SET status = ?, confirmed_by = ?, confirmed_at = ? WHERE id = ?',
+              ['confirmed', fromUser, now, msgId]
+            );
+            try {
+              await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
+                main_title: {
+                  title: '✅ 已确认',
+                  desc: `确认人：${fromUser}　时间：${now}`,
+                },
+                horizontal_content_list: [
+                  { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                  { keyname: '部门数', value: `${deptCount}个` },
+                  { keyname: '食材项', value: `${itemCount}项` },
+                ],
+              });
+              console.log(`[企微回调-JSON] 确认卡片更新成功`);
+            } catch (updErr) {
+              console.error('更新确认卡片失败:', updErr.message);
+            }
+          } else {
+            await pool.query(
+              'UPDATE wecom_test_messages SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?',
+              ['rejected', fromUser, now, msgId]
+            );
+            try {
+              await updateTemplateCard(config, fromUser, 'text_notice', responseCode, {
+                main_title: {
+                  title: '❌ 已驳回',
+                  desc: `驳回人：${fromUser}　时间：${now}`,
+                },
+                horizontal_content_list: [
+                  { keyname: '总金额', value: `¥${totalAmount.toFixed(2)}` },
+                  { keyname: '部门数', value: `${deptCount}个` },
+                  { keyname: '食材项', value: `${itemCount}项` },
+                ],
+              });
+              console.log(`[企微回调-JSON] 驳回卡片更新成功`);
+            } catch (updErr) {
+              console.error('更新驳回卡片失败:', updErr.message);
+            }
+          }
+        }
+      }
+    }
+    
+    return res.send('success');
+  } catch (err) {
+    console.error('[企微回调-JSON] 处理失败:', err);
+    return res.send('success');
+  }
+}
+
 // 企微回调处理 - URL验证
 router.get('/callback', async (req, res) => {
   try {
@@ -1137,11 +1231,17 @@ router.post('/callback', async (req, res) => {
     const { msg_signature, timestamp, nonce } = req.query;
     const config = await getWecomConfig();
 
-    console.log('[企微回调] 收到POST请求:', { msg_signature, timestamp, nonce, bodyKeys: Object.keys(req.body || {}) });
+    console.log('[企微回调] 收到POST请求:', { msg_signature, timestamp, nonce, body: req.body });
 
     if (!config || !config.callback_token || !config.callback_aes_key) {
       console.log('[企微回调] 回调未配置');
       return res.send('success');
+    }
+
+    // 检查是否是JSON格式回调（没有Encrypt字段时，可能是JSON格式）
+    if (req.body && !req.body.Encrypt && !req.body.encrypt) {
+      console.log('[企微回调] 收到JSON格式回调');
+      return handleJsonCallback(req.body, res);
     }
 
     const { Encrypt } = req.body;
