@@ -186,14 +186,18 @@ async function sendViaWebhook(webhookUrl, content) {
   return 'sent';
 }
 
-async function sendMarkdownViaWebhook(webhookUrl, content) {
+async function sendMarkdownViaWebhook(webhookUrl, content, mentionedList = []) {
+  const body = {
+    msgtype: 'markdown',
+    markdown: { content }
+  };
+  if (mentionedList && mentionedList.length > 0) {
+    body.markdown.mentioned_list = mentionedList;
+  }
   const res = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      msgtype: 'markdown',
-      markdown: { content }
-    })
+    body: JSON.stringify(body)
   });
   const data = await res.json();
   if (data.errcode !== 0) throw new Error(data.errmsg || 'Webhook发送失败');
@@ -612,12 +616,34 @@ router.post('/test-send-confirmation', async (req, res) => {
     const confirmUrl = domain ? `${domain}/wecom-test-confirm/${id}` : `/wecom-test-confirm/${id}`;
     const rejectUrl = domain ? `${domain}/wecom-test-reject/${id}` : `/wecom-test-reject/${id}`;
 
+    // 获取各部门确认人（用于群消息@）
+    const [deptRows] = await pool.query('SELECT id, name, confirmer_userid FROM departments');
+    const deptConfirmerMap = {};
+    const confirmerSet = new Set();
+    for (const d of deptRows) {
+      if (d.confirmer_userid) {
+        deptConfirmerMap[d.id] = d.confirmer_userid;
+        deptConfirmerMap[d.name] = d.confirmer_userid;
+        confirmerSet.add(d.confirmer_userid);
+      }
+    }
+    const mentionedUsers = Array.from(confirmerSet);
+
     // 构建 Markdown 消息
     const deptNames = departments.map(d => d.name).join('、');
     let mdContent = `**🧪【测试】食材采购确认通知**\n\n`;
     mdContent += `📅 **采购日期**：${test_date}\n`;
     mdContent += `🏢 **涉及部门**：${deptNames}\n`;
     mdContent += `💰 **总金额**：¥${totalAmount.toFixed(2)}\n\n`;
+
+    if (mentionedUsers.length > 0) {
+      mdContent += `📢 **请以下人员尽快审批**：`;
+      for (const userid of mentionedUsers) {
+        mdContent += ` @${userid}`;
+      }
+      mdContent += `\n\n`;
+    }
+
     mdContent += `---\n\n`;
 
     const groupedItems = {};
@@ -628,6 +654,8 @@ router.post('/test-send-confirmation', async (req, res) => {
     }
     for (const [deptName, deptItems] of Object.entries(groupedItems)) {
       mdContent += `**【${deptName}】**\n`;
+      const confirmer = deptConfirmerMap[deptName] || deptConfirmerMap[deptItems[0]?.department_id] || '';
+      if (confirmer) mdContent += `> 确认人：${confirmer}\n`;
       for (const item of deptItems) {
         mdContent += `> ${item.ingredient_name}  ${item.purchase_unit_price.toFixed(2)}/${item.purchase_unit} ×${item.purchase_quantity}${item.purchase_unit} = ¥${item.amount.toFixed(2)}\n`;
       }
@@ -636,25 +664,15 @@ router.post('/test-send-confirmation', async (req, res) => {
     }
 
     mdContent += `---\n\n`;
-    mdContent += `✅ **[点击确认](${confirmUrl})**　　❌ **[点击驳回](${rejectUrl})**\n`;
-    mdContent += `> 此为测试消息，用于验证确认/驳回交互流程。`;
+    mdContent += `💡 **温馨提示**：相关部门确认人请前往OA应用进行确认或驳回操作。`;
 
-    // 发送到测试群
-    await sendMarkdownViaWebhook(testWebhookUrl, mdContent);
+    // 发送到测试群（带@人员）
+    await sendMarkdownViaWebhook(testWebhookUrl, mdContent, mentionedUsers);
 
     // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
     const sentToUsers = [];
     const failedUsers = [];
     if (config && config.corp_id && config.app_secret && config.agent_id) {
-      const [deptRows] = await pool.query('SELECT id, name, confirmer_userid FROM departments');
-      const deptConfirmerMap = {};
-      for (const d of deptRows) {
-        if (d.confirmer_userid) {
-          deptConfirmerMap[d.id] = d.confirmer_userid;
-          deptConfirmerMap[d.name] = d.confirmer_userid;
-        }
-      }
-
       const userDeptMap = {};
       for (const item of items) {
         const deptId = item.department_id;
@@ -1074,7 +1092,7 @@ router.post('/callback', async (req, res) => {
     }
 
     const xmlContent = decryptMsg(config.callback_aes_key, Encrypt, config.corp_id);
-    console.log('收到企微回调:', xmlContent.substring(0, 500));
+    console.log('[企微回调] 原始XML:', xmlContent.substring(0, 800));
 
     // 解析XML
     const fromUserMatch = xmlContent.match(/<FromUserName><!\[CDATA\[(.+?)\]\]><\/FromUserName>/);

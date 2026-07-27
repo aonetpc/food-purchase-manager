@@ -199,6 +199,26 @@ export default function WecomTest() {
     window.open(`${base}/wecom-test-confirm/${id}`, '_blank');
   };
 
+  const handleManualConfirm = async (id: string) => {
+    try {
+      await api.post(`/wecom/test-messages/${id}/confirm`);
+      setSuccess('已手动确认，状态已更新');
+      await fetchMessages();
+    } catch (err: any) {
+      setError(err.message || '确认失败');
+    }
+  };
+
+  const handleManualReject = async (id: string) => {
+    try {
+      await api.post(`/wecom/test-messages/${id}/reject`, { reason: '手动测试驳回' });
+      setSuccess('已手动驳回，状态已更新');
+      await fetchMessages();
+    } catch (err: any) {
+      setError(err.message || '驳回失败');
+    }
+  };
+
   if (loading) {
     return <div className="text-center py-10 text-gray-500">加载中...</div>;
   }
@@ -313,8 +333,9 @@ export default function WecomTest() {
             <ul className="list-disc list-inside space-y-0.5 text-gray-600">
               <li>采购日期、涉及部门、总金额</li>
               <li>按部门分组的采购明细（含单价、数量、小计）</li>
-              <li><strong>✅点击确认</strong> 和 <strong>❌点击驳回</strong> 两个交互链接</li>
-              <li>点击后跳转确认页面，操作结果会回显到下方消息列表</li>
+              <li><strong>群消息</strong>：@相关部门确认人，底部提示去OA应用审批</li>
+              <li><strong>个人消息</strong>：模板卡片，含确认/驳回按钮，直接在企业微信内操作</li>
+              <li>操作结果会回显到下方消息列表的 confirmed/rejected 字段</li>
             </ul>
           </div>
         </div>
@@ -491,6 +512,23 @@ export default function WecomTest() {
                     {msg.reject_reason && (
                       <div className="bg-red-50 border border-red-100 rounded-lg p-2 text-xs text-red-700">
                         <span className="font-medium">驳回原因：</span>{msg.reject_reason}
+                      </div>
+                    )}
+
+                    {msg.status === 'pending' && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleManualConfirm(msg.id); }}
+                          className="flex-1 btn-primary text-xs py-2"
+                        >
+                          ✅ 手动确认
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleManualReject(msg.id); }}
+                          className="flex-1 btn-danger text-xs py-2"
+                        >
+                          ❌ 手动驳回
+                        </button>
                       </div>
                     )}
 
