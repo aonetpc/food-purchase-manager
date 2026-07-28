@@ -1277,12 +1277,18 @@ router.get('/confirm-page', async (req, res) => {
     // 用户当前的确认状态
     const myConfirmation = userConfirmations[user] || null;
 
-    // 所有用户的确认情况（只返回 userid + 是否已确认 + 部门数，便于前端展示进度）
-    const allConfirmations = Object.entries(userConfirmations).map(([userid, info]) => ({
-      userid,
-      confirmed: !!(info && info.confirmed),
-      confirmed_at: info && info.confirmed_at,
-    }));
+    // 获取当前用户的真实姓名
+    const userName = await getWecomUserName(user);
+
+    // 所有用户的确认情况（将 userid 转换为真实姓名）
+    const allConfirmations = await Promise.all(
+      Object.entries(userConfirmations).map(async ([userid, info]) => ({
+        userid,
+        name: await getWecomUserName(userid),
+        confirmed: !!(info && info.confirmed),
+        confirmed_at: info && info.confirmed_at,
+      }))
+    );
 
     const myTotal = myItems.reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
@@ -1290,6 +1296,7 @@ router.get('/confirm-page', async (req, res) => {
       id: row.id,
       test_date: row.test_date,
       user,
+      user_name: userName,
       my_departments: myDeptNames,
       my_items: myItems,
       my_total: myTotal,

@@ -25,6 +25,7 @@ interface UserConfirmation {
 
 interface AllConfirmation {
   userid: string;
+  name: string;
   confirmed: boolean;
   confirmed_at?: string;
 }
@@ -33,6 +34,7 @@ interface ConfirmPageData {
   id: string;
   test_date: string;
   user: string;
+  user_name: string;
   my_departments: string[];
   my_items: PurchaseItem[];
   my_total: number;
@@ -384,7 +386,7 @@ export default function WecomConfirmPage() {
             </span>
             <span className="flex items-center gap-1">
               <User size={12} />
-              当前用户：{user}
+              当前用户：{data.user_name || user}
             </span>
           </div>
           {allConfirmed && (
@@ -555,7 +557,7 @@ export default function WecomConfirmPage() {
             <div className="space-y-1.5">
               {data.all_confirmations.map(c => (
                 <div key={c.userid} className="flex items-center justify-between text-xs py-1">
-                  <span className="text-gray-600">{c.userid}</span>
+                  <span className="text-gray-600">{c.name || c.userid}</span>
                   {c.confirmed ? (
                     <span className="flex items-center gap-1 text-green-600">
                       <CheckCircle2 size={12} /> 已确认 · {formatDate(c.confirmed_at)}
