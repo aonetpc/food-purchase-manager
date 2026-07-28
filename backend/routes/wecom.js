@@ -98,7 +98,7 @@ async function sendTextCardToUser(config, userid, { title, description, url, btn
 // 通过自建应用发送个人消息（模板卡片 - 按钮交互型，可直接在企业微信内点按钮确认/驳回）
 // button_interaction 类型支持 button_list（按钮列表）或 button_selection（下拉选择器）
 async function sendTemplateCardToUser(config, userid, { card_type, main_title, source,
-  sub_title_text, emphasis_content, horizontal_content_list, button_list, button_selection, task_id, card_action }) {
+  sub_title_text, emphasis_content, horizontal_content_list, button_list, button_selection, task_id, card_action, action_menu }) {
   const accessToken = await getAccessToken(config);
   const card = {
     card_type: card_type || 'button_interaction',
@@ -112,6 +112,7 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
   if (button_selection) card.button_selection = button_selection;
   if (task_id) card.task_id = task_id;
   if (card_action) card.card_action = card_action;
+  if (action_menu) card.action_menu = action_menu;
 
   const body = {
     touser: userid,
