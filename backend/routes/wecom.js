@@ -784,7 +784,9 @@ router.post('/test-send-confirmation', async (req, res) => {
               { 
                 text: '去确认', 
                 style: 1, 
-                key: `go_confirm_${userTaskId}`
+                type: 1,
+                key: `go_confirm_${userTaskId}`,
+                url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
               }
             ],
             task_id: userTaskId,
@@ -993,6 +995,7 @@ router.post('/confirm-submit', async (req, res) => {
     const row = rows[0];
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
+    const allItems = parseJsonField(row.purchase_items) || [];
 
     // 兼容新旧格式获取部门列表和 response_code
     const userDeptData = userDepartments[user];
@@ -1000,6 +1003,10 @@ router.post('/confirm-submit', async (req, res) => {
       ? userDeptData.departments 
       : (Array.isArray(userDeptData) ? userDeptData : []);
     const responseCode = (userDeptData && userDeptData.response_code) || null;
+    
+    // 计算用户负责部门的金额和食材项数量
+    const myItems = allItems.filter(item => myDeptNames.includes(item.department_name));
+    const myTotal = myItems.reduce((s, i) => s + parseFloat(i.amount || 0), 0);
     if (myDeptNames.length === 0) {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
@@ -1062,11 +1069,12 @@ router.post('/confirm-submit', async (req, res) => {
               },
               sub_title_text: `采购日期：${row.test_date}\n您负责的部门：${myDeptNames.join('、')}`,
               horizontal_content_list: [
-                { keyname: '总金额', value: `¥${Number(row.total_amount || 0).toFixed(2)}` },
+                { keyname: '总金额', value: `¥${Number(myTotal || 0).toFixed(2)}` },
                 { keyname: '部门数', value: `${myDeptNames.length}个` },
+                { keyname: '食材项', value: `${myItems.length}项` },
               ],
               button_list: [
-                { text: '已确认', style: 0, key: `confirmed_${responseCode}` },
+                { text: '已确认', style: 0, type: 0, key: `confirmed_${responseCode}` },
               ],
             });
             cardUpdated = true;
