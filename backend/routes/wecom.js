@@ -62,6 +62,63 @@ async function getAccessToken(config) {
   return data.access_token;
 }
 
+// ================================================
+// 获取企微用户真实姓名（优先从数据库缓存读取）
+// ================================================
+async function getWecomUserName(userid) {
+  if (!userid) return userid;
+
+  // 1. 查数据库缓存
+  try {
+    const [rows] = await pool.query('SELECT name FROM wecom_users WHERE userid = ?', [userid]);
+    if (rows.length > 0 && rows[0].name) {
+      console.log(`[getWecomUserName] 从缓存获取姓名：${userid} → ${rows[0].name}`);
+      return rows[0].name;
+    }
+  } catch (e) {
+    console.error(`[getWecomUserName] 查询缓存失败:`, e.message);
+  }
+
+  // 2. 调用企微 API 获取用户信息
+  try {
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      console.warn(`[getWecomUserName] 企微配置缺失，返回 userid: ${userid}`);
+      return userid;
+    }
+
+    const token = await getAccessToken(config);
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token=${token}&userid=${userid}`);
+    const data = await res.json();
+
+    if (data.errcode === 0 && data.name) {
+      // 3. 存入数据库缓存
+      try {
+        await pool.query(
+          `INSERT INTO wecom_users (userid, name, position, avatar, mobile, email, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE name = ?, position = ?, avatar = ?, mobile = ?, email = ?, status = ?, updated_at = CURRENT_TIMESTAMP`,
+          [
+            userid, data.name, data.position || null, data.avatar || null, data.mobile || null, data.email || null, data.status || 1,
+            data.name, data.position || null, data.avatar || null, data.mobile || null, data.email || null, data.status || 1
+          ]
+        );
+        console.log(`[getWecomUserName] API获取并缓存姓名：${userid} → ${data.name}`);
+      } catch (insertErr) {
+        console.error(`[getWecomUserName] 缓存用户信息失败:`, insertErr.message);
+      }
+      return data.name;
+    } else {
+      console.warn(`[getWecomUserName] API返回错误:`, data.errmsg || '未知错误');
+    }
+  } catch (apiErr) {
+    console.error(`[getWecomUserName] 调用企微API失败:`, apiErr.message);
+  }
+
+  // 4. 失败时返回 userid 作为 fallback
+  return userid;
+}
+
 async function sendWecomMessage(config, content) {
   const accessToken = await getAccessToken(config);
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${accessToken}`, {
@@ -1290,11 +1347,15 @@ router.post('/confirm-submit', async (req, res) => {
       return res.status(400).json({ error: '您已确认过，无需重复确认' });
     }
 
+    // 获取用户真实姓名（优先从缓存，否则调用企微API）
+    const realName = await getWecomUserName(user);
+    console.log(`[确认提交] 用户姓名：${user} → ${realName}`);
+
     const now = formatLocalNow();
     userConfirmations[user] = {
       confirmed: true,
       confirmed_at: now,
-      confirmed_by: name || user,
+      confirmed_by: realName,
       departments: myDeptNames,
       signature_data,
     };
@@ -1359,7 +1420,7 @@ router.post('/confirm-submit', async (req, res) => {
     if (allConfirmed) {
       await pool.query(
         "UPDATE wecom_test_messages SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE id = ?",
-        [name || user, now, id]
+        [realName, now, id]
       );
 
       // 自动生成PDF
