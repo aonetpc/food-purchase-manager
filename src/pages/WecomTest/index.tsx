@@ -224,11 +224,14 @@ export default function WecomTest() {
 
   const handleGeneratePDF = async (id: string) => {
     try {
-      await api.post(`/wecom/test-messages/${id}/generate-pdf`);
+      console.log(`[PDF生成] 点击生成PDF，id=${id}`);
+      const result = await api.post(`/wecom/test-messages/${id}/generate-pdf`);
+      console.log(`[PDF生成] 响应结果:`, result);
       setSuccess('PDF生成成功');
       await fetchMessages();
     } catch (err: any) {
-      setError(err.message || 'PDF生成失败');
+      console.error('[PDF生成] 失败:', err);
+      setError(err.message || 'PDF生成失败，请刷新页面重试');
     }
   };
 
