@@ -36,6 +36,9 @@ import TempStats from '@/pages/TempStats';
 import MobileTempAudit from '@/pages/mobile/TempAudit';
 import MobileTempAssessment from '@/pages/mobile/TempAssessment';
 import MobileTempStats from '@/pages/mobile/TempStats';
+import WarehouseManager from '@/pages/WarehouseManager';
+import InventoryManager from '@/pages/InventoryManager';
+import StockMovement from '@/pages/StockMovement';
 
 export default function App() {
   return (
@@ -113,6 +116,21 @@ export default function App() {
           <Route path="reimbursement" element={
             <ProtectedRoute requiredPermission="action:reimbursement:manage">
               <ReimbursementManager />
+            </ProtectedRoute>
+          } />
+          <Route path="warehouse" element={
+            <ProtectedRoute requiredPermission="action:warehouse:manage">
+              <WarehouseManager />
+            </ProtectedRoute>
+          } />
+          <Route path="inventory" element={
+            <ProtectedRoute requiredPermission="menu:inventory">
+              <InventoryManager />
+            </ProtectedRoute>
+          } />
+          <Route path="stock-movement" element={
+            <ProtectedRoute requiredPermission="menu:stock-movement">
+              <StockMovement />
             </ProtectedRoute>
           } />
           <Route path="wecom" element={

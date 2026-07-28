@@ -12,6 +12,11 @@ const wecomRouter = require('./routes/wecom');
 const purchaseConfirmationsRouter = require('./routes/purchase-confirmations');
 const userSignaturesRouter = require('./routes/user-signatures');
 
+// 仓库管理模块
+const warehousesRouter = require('./routes/warehouses');
+const inventoryRouter = require('./routes/inventory');
+const stockMovementsRouter = require('./routes/stock-movements');
+
 // 外请人员打卡模块
 const tempAuthRouter = require('./routes/temp-auth');
 const tempPositionsRouter = require('./routes/temp-positions');
@@ -68,6 +73,11 @@ app.use('/api/ingredients', requireAuth, ingredientsRouter);
 app.use('/api/purchase', requireAuth, purchaseRouter);
 app.use('/api/departments', requireAuth, departmentsRouter);
 app.use('/api/suppliers', requireAuth, suppliersRouter);
+
+// 仓库管理接口（需登录）
+app.use('/api/warehouses', requireAuth, warehousesRouter);
+app.use('/api/inventory', requireAuth, inventoryRouter);
+app.use('/api/stock-movements', requireAuth, stockMovementsRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
