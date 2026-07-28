@@ -18,6 +18,7 @@ import WecomManager from '@/pages/WecomManager';
 import WecomTest from '@/pages/WecomTest';
 import WecomTestConfirmPage from '@/pages/WecomTest/TestConfirmPage';
 import WecomConfirmPage from '@/pages/WecomTest/WecomConfirmPage';
+import WarehouseConfirmPage from '@/pages/WecomTest/WarehouseConfirmPage';
 import PurchaseConfirmPage from '@/pages/PurchaseConfirm';
 import PositionManager from '@/pages/PositionManager';
 import TempWorkerManager from '@/pages/TempWorkerManager';
@@ -37,6 +38,8 @@ import MobileTempAudit from '@/pages/mobile/TempAudit';
 import MobileTempAssessment from '@/pages/mobile/TempAssessment';
 import MobileTempStats from '@/pages/mobile/TempStats';
 import WarehouseManager from '@/pages/WarehouseManager';
+import WarehousePurchase from '@/pages/WarehousePurchase';
+import WarehousePurchaseCreate from '@/pages/WarehousePurchase/Create';
 import InventoryManager from '@/pages/InventoryManager';
 import StockMovement from '@/pages/StockMovement';
 
@@ -67,6 +70,7 @@ export default function App() {
         <Route path="/wecom-test-confirm/:id" element={<WecomTestConfirmPage />} />
         <Route path="/wecom-test-reject/:id" element={<WecomTestConfirmPage />} />
         <Route path="/wecom-confirm" element={<WecomConfirmPage />} />
+        <Route path="/warehouse-confirm" element={<WarehouseConfirmPage />} />
         
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/daily" replace />} />
@@ -131,6 +135,21 @@ export default function App() {
           <Route path="stock-movement" element={
             <ProtectedRoute requiredPermission="menu:stock-movement">
               <StockMovement />
+            </ProtectedRoute>
+          } />
+          <Route path="warehouse-purchase" element={
+            <ProtectedRoute requiredPermission="menu:warehouse-purchase">
+              <WarehousePurchase />
+            </ProtectedRoute>
+          } />
+          <Route path="warehouse-purchase/create" element={
+            <ProtectedRoute requiredPermission="action:warehouse:create">
+              <WarehousePurchaseCreate />
+            </ProtectedRoute>
+          } />
+          <Route path="warehouse-purchase/edit/:id" element={
+            <ProtectedRoute requiredPermission="action:warehouse:create">
+              <WarehousePurchaseCreate />
             </ProtectedRoute>
           } />
           <Route path="wecom" element={

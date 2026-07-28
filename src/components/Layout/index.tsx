@@ -69,7 +69,7 @@ const iconMap: Record<string, any> = {
 
 const menuGroups = [
   { name: '常用', paths: ['/daily', '/purchase-entry', '/reimbursement'] },
-  { name: '仓库', paths: ['/warehouse', '/inventory', '/stock-movement'] },
+  { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement'] },
   { name: '统计', paths: ['/monthly', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
   { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
@@ -174,7 +174,7 @@ export default function Layout() {
       }
     }
 
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/inventory', '/stock-movement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
 
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;

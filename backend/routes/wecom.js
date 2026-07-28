@@ -2236,6 +2236,7 @@ router.post('/callback', async (req, res) => {
     // 审批状态变更事件
     if (msgType === 'event' && event === 'open_approval_change' && spNo) {
       try {
+        // 先查食材采购确认单
         const [rows] = await pool.query(
           'SELECT id FROM purchase_confirmations WHERE reimbursement_sp_no = ?',
           [spNo]
@@ -2253,6 +2254,46 @@ router.post('/callback', async (req, res) => {
             'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ? WHERE reimbursement_sp_no = ?',
             [reimburseStatus, status, spNo]
           );
+        } else {
+          // 再查仓库采购单（包括采购审批和报销审批）
+          const [whRows] = await pool.query(
+            'SELECT id, approval_sp_no, reimbursement_sp_no FROM warehouse_purchases WHERE approval_sp_no = ? OR reimbursement_sp_no = ?',
+            [spNo, spNo]
+          );
+          if (whRows.length > 0) {
+            const wh = whRows[0];
+            if (wh.approval_sp_no === spNo) {
+              // 采购审批状态变更
+              let approvalStatus = 'pending';
+              let newStatus = 'pending_approval';
+              if (spStatus === 2) {
+                approvalStatus = 'approved';
+                newStatus = 'approved';
+              } else if (spStatus === 3) {
+                approvalStatus = 'rejected';
+                newStatus = 'rejected';
+              }
+              await pool.query(
+                'UPDATE warehouse_purchases SET approval_status = ?, status = ? WHERE id = ?',
+                [approvalStatus, newStatus, wh.id]
+              );
+            }
+            if (wh.reimbursement_sp_no === spNo) {
+              // 报销审批状态变更
+              let reimburseStatus = 'processing';
+              let newStatus = 'reimbursing';
+              if (spStatus === 2) {
+                reimburseStatus = 'approved';
+                newStatus = 'reimbursed';
+              } else if (spStatus === 3) {
+                reimburseStatus = 'rejected';
+              }
+              await pool.query(
+                'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ? WHERE id = ?',
+                [reimburseStatus, newStatus, wh.id]
+              );
+            }
+          }
         }
       } catch (dbErr) {
         console.error('更新审批状态失败:', dbErr);
