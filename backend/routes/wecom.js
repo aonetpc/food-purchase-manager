@@ -211,6 +211,33 @@ async function updateTemplateCard(config, userid, cardType, identifier, { main_t
   return data;
 }
 
+async function updateTemplateCardButton(config, userid, responseCode, replaceName) {
+  const accessToken = await getAccessToken(config);
+  
+  const body = {
+    userids: [userid],
+    agentid: Number(config.agent_id),
+    response_code: responseCode,
+    button: {
+      replace_name: replaceName
+    }
+  };
+
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/update_template_card?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  console.log(`[更新按钮为不可点击] API返回:`, JSON.stringify(data));
+
+  if (data.errcode !== 0) {
+    const errMsg = `errcode=${data.errcode}, errmsg=${data.errmsg || ''}`;
+    throw new Error(errMsg);
+  }
+  return data;
+}
+
 async function sendViaWebhook(webhookUrl, content) {
   const res = await fetch(webhookUrl, {
     method: 'POST',
@@ -1062,23 +1089,9 @@ router.post('/confirm-submit', async (req, res) => {
           console.warn(`[确认提交] ${cardError}，user=${user}`);
         } else {
           try {
-            await updateTemplateCard(config, user, 'button_interaction', responseCode, {
-              main_title: {
-                title: '✅ 已确认',
-                desc: `确认人：${name || user}　时间：${now}`,
-              },
-              sub_title_text: `采购日期：${row.test_date}\n您负责的部门：${myDeptNames.join('、')}`,
-              horizontal_content_list: [
-                { keyname: '总金额', value: `¥${Number(myTotal || 0).toFixed(2)}` },
-                { keyname: '部门数', value: `${myDeptNames.length}个` },
-                { keyname: '食材项', value: `${myItems.length}项` },
-              ],
-              button_list: [
-                { text: '已确认', style: 0, type: 0, key: `confirmed_${responseCode}` },
-              ],
-            });
+            await updateTemplateCardButton(config, user, responseCode, `已确认 (${now})`);
             cardUpdated = true;
-            console.log(`[确认提交] 卡片更新成功，user=${user}`);
+            console.log(`[确认提交] 按钮更新为不可点击成功，user=${user}`);
           } catch (updateErr) {
             console.error('更新模板卡片失败:', updateErr.message);
             cardError = updateErr.message;
