@@ -787,6 +787,7 @@ router.post('/test-send-confirmation', async (req, res) => {
                 key: `go_confirm_${userTaskId}`
               }
             ],
+            task_id: userTaskId,
             card_action: {
               type: 1,
               url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
