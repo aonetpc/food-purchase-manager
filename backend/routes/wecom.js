@@ -784,8 +784,7 @@ router.post('/test-send-confirmation', async (req, res) => {
               { 
                 text: '去确认', 
                 style: 1, 
-                key: `go_confirm_${userTaskId}`,
-                url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
+                key: `go_confirm_${userTaskId}`
               }
             ],
             card_action: {
@@ -1055,7 +1054,7 @@ router.post('/confirm-submit', async (req, res) => {
           console.warn(`[确认提交] ${cardError}，user=${user}`);
         } else {
           try {
-            await updateTemplateCard(config, user, 'text_notice', responseCode, {
+            await updateTemplateCard(config, user, 'button_interaction', responseCode, {
               main_title: {
                 title: '✅ 已确认',
                 desc: `确认人：${name || user}　时间：${now}`,
