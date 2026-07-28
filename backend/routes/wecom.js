@@ -769,7 +769,7 @@ router.post('/test-send-confirmation', async (req, res) => {
           const userTaskId = `${id}_${userid}`;
 
           await sendTemplateCardToUser(config, userid, {
-            card_type: 'button_interaction',
+            card_type: 'text_notice',
             source: {
               desc: '食材采购管理系统',
             },
@@ -1047,7 +1047,7 @@ router.post('/confirm-submit', async (req, res) => {
       const config = await getWecomConfig();
       if (config && config.corp_id && config.app_secret && config.agent_id) {
         try {
-          await updateTemplateCard(config, user, 'button_interaction', taskId, {
+          await updateTemplateCard(config, user, 'text_notice', taskId, {
             main_title: {
               title: '✅ 已确认',
               desc: `确认人：${name || user}　时间：${now}`,
