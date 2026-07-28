@@ -314,33 +314,6 @@ async function updateTemplateCard(config, userid, cardType, identifier, { main_t
   return data;
 }
 
-async function updateTemplateCardButton(config, userid, responseCode, replaceName) {
-  const accessToken = await getAccessToken(config);
-  
-  const body = {
-    userids: [userid],
-    agentid: Number(config.agent_id),
-    response_code: responseCode,
-    button: {
-      replace_name: replaceName
-    }
-  };
-
-  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/update_template_card?access_token=${accessToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  console.log(`[更新按钮为不可点击] API返回:`, JSON.stringify(data));
-
-  if (data.errcode !== 0) {
-    const errMsg = `errcode=${data.errcode}, errmsg=${data.errmsg || ''}`;
-    throw new Error(errMsg);
-  }
-  return data;
-}
-
 async function sendViaWebhook(webhookUrl, content) {
   const res = await fetch(webhookUrl, {
     method: 'POST',
@@ -2458,3 +2431,7 @@ module.exports.getApprovalTemplateDetail = getApprovalTemplateDetail;
 module.exports.submitApproval = submitApproval;
 module.exports.getApprovalDetail = getApprovalDetail;
 module.exports.uploadMedia = uploadMedia;
+module.exports.getWecomUserName = getWecomUserName;
+module.exports.sendTemplateCardToUser = sendTemplateCardToUser;
+module.exports.updateTemplateCardButton = updateTemplateCardButton;
+module.exports.sendTextViaWebhook = sendTextViaWebhook;

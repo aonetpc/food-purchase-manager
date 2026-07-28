@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Receipt, CheckCircle2, Clock, XCircle, FileText, ExternalLink, RefreshCw, X, Trash2, Download, FileDown } from 'lucide-react';
+import { Receipt, CheckCircle2, Clock, XCircle, ExternalLink, RefreshCw, X, Trash2, Download, FileDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
 
@@ -33,6 +33,8 @@ interface PurchaseConfirmation {
   rejection_reason?: string;
   pdf_url?: string;
   created_at: string;
+  user_confirmations?: Record<string, { confirmed: boolean; confirmed_at?: string; confirmed_by?: string }>;
+  user_departments?: Record<string, { departments: string[] } | string[]>;
 }
 
 export default function ReimbursementManager() {
@@ -45,6 +47,7 @@ export default function ReimbursementManager() {
   });
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<PurchaseConfirmation | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchConfirmations();
@@ -306,96 +309,240 @@ export default function ReimbursementManager() {
           <p className="text-gray-400 text-sm">当月没有采购确认记录</p>
         </div>
       ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="px-4 py-3 text-left font-medium">日期</th>
-                  <th className="px-4 py-3 text-left font-medium">付款事由</th>
-                  <th className="px-4 py-3 text-right font-medium">金额</th>
-                  <th className="px-4 py-3 text-center font-medium">状态</th>
-                  <th className="px-4 py-3 text-center font-medium">部门确认</th>
-                  <th className="px-4 py-3 text-center font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {confirmations.map(c => {
-                  const confirmedDepts = c.departments?.filter(d => d.confirmed).length || 0;
-                  const totalDepts = c.departments?.length || 0;
-                  return (
-                    <tr key={c.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-gray-700">{formatDate(c.purchase_date)}</td>
-                      <td className="px-4 py-3 text-gray-700">{formatDate(c.purchase_date)}食材采购费用</td>
-                      <td className="px-4 py-3 text-right font-medium text-gray-800">{formatCurrency(safeParseFloat(c.total_amount))}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(c.reimbursement_status)}`}>
+        <div className="space-y-2">
+          {confirmations.map(c => {
+            const confirmedDepts = c.departments?.filter(d => d.confirmed).length || 0;
+            const totalDepts = c.departments?.length || 0;
+            const totalUsers = c.user_departments ? Object.keys(c.user_departments).length : totalDepts;
+            const confirmedUsers = c.user_confirmations ? Object.values(c.user_confirmations).filter(uc => uc.confirmed).length : confirmedDepts;
+            return (
+              <div key={c.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                {/* 卡片头部 - 点击展开 */}
+                <div
+                  className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                  onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    {expandedId === c.id ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-800">{formatDate(c.purchase_date)}</span>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(c.reimbursement_status)}`}>
                           {getStatusIcon(c.reimbursement_status)}
                           {getStatusText(c.reimbursement_status)}
                         </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-xs text-gray-500">
-                        {confirmedDepts}/{totalDepts} 已确认
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => showDetail(c.id)}
-                            className="text-primary-500 hover:text-primary-600 text-sm flex items-center gap-1"
-                          >
-                            <FileText size={14} />
-                            详情
-                          </button>
-                          {c.pdf_url ? (
-                            <button
-                              onClick={() => handleDownloadPDF(c.id)}
-                              className="text-green-500 hover:text-green-600 transition-colors"
-                              title="下载PDF"
-                            >
-                              <Download size={14} />
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleGeneratePDF(c.id)}
-                              className="text-gray-400 hover:text-green-500 transition-colors"
-                              title="生成PDF"
-                            >
-                              <FileDown size={14} />
-                            </button>
-                          )}
-                          {c.reimbursement_sp_no && (
-                            <button
-                              onClick={() => handleRefreshStatus(c.id)}
-                              className="text-gray-400 hover:text-primary-500 transition-colors"
-                              title="刷新审批状态"
-                            >
-                              <RefreshCw size={14} />
-                            </button>
-                          )}
-                          {(c.status === 'pending' || c.status === 'confirmed') && (
-                            <button
-                              onClick={() => handleResetConfirmations(c.id)}
-                              className="text-gray-400 hover:text-orange-500 transition-colors"
-                              title="重置确认"
-                            >
-                              <RefreshCw size={14} />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDelete(c.id)}
-                            className="text-gray-400 hover:text-red-500 transition-colors"
-                            title="删除"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {formatCurrency(safeParseFloat(c.total_amount))} · {totalDepts}个部门 · {c.purchase_items?.length || 0}项
+                        {totalUsers > 0 && (
+                          <span className="ml-2 text-primary-600">
+                            · {confirmedUsers}/{totalUsers} 已确认
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {c.pdf_url ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDownloadPDF(c.id); }}
+                        className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1"
+                      >
+                        <Download size={14} />
+                        下载PDF
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleGeneratePDF(c.id); }}
+                        className="text-xs text-gray-500 hover:text-green-600 flex items-center gap-1"
+                      >
+                        <FileDown size={14} />
+                        生成PDF
+                      </button>
+                    )}
+                    <span className="text-xs text-gray-400">{c.created_at?.substring(5, 16)}</span>
+                  </div>
+                </div>
+
+                {/* 展开详情 */}
+                {expandedId === c.id && (
+                  <div className="px-4 py-3 border-t border-gray-200 space-y-3">
+                    {/* 基本信息 */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div className="bg-gray-50 rounded-lg p-2">
+                        <p className="text-gray-500">状态</p>
+                        <p className="font-medium text-gray-800 mt-0.5">{getStatusText(c.reimbursement_status)}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-2">
+                        <p className="text-gray-500">报销单号</p>
+                        <p className="font-medium text-gray-800 mt-0.5 text-xs">{c.reimbursement_sp_no || c.reimbursement_no || '未生成'}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-2">
+                        <p className="text-gray-500">确认进度</p>
+                        <p className="font-medium text-gray-800 mt-0.5">{confirmedUsers}/{totalUsers} 已确认</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-2">
+                        <p className="text-gray-500">金额</p>
+                        <p className="font-medium text-primary-600 mt-0.5">{formatCurrency(safeParseFloat(c.total_amount))}</p>
+                      </div>
+                    </div>
+
+                    {c.rejection_reason && (
+                      <div className="bg-red-50 border border-red-100 rounded-lg p-2 text-xs text-red-700">
+                        <span className="font-medium">拒绝原因：</span>{c.rejection_reason}
+                      </div>
+                    )}
+
+                    {/* 确认进度（新流程） */}
+                    {c.user_departments && Object.keys(c.user_departments).length > 0 && (
+                      <div className="bg-primary-50 border border-primary-100 rounded-lg p-2">
+                        <p className="text-xs text-primary-700 font-medium mb-1">确认进度</p>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(c.user_departments).map(([userid, deptData]) => {
+                            const deptNames = Array.isArray(deptData) ? deptData : (deptData as any).departments || [];
+                            const conf = (c.user_confirmations || {})[userid];
+                            return (
+                              <div key={userid} className="flex items-center gap-1 text-xs">
+                                {conf?.confirmed ? (
+                                  <CheckCircle2 size={12} className="text-green-500" />
+                                ) : (
+                                  <Clock size={12} className="text-gray-400" />
+                                )}
+                                <span className={conf?.confirmed ? 'text-green-700' : 'text-gray-600'}>{userid}</span>
+                                <span className="text-gray-400">({deptNames.join('、')})</span>
+                                {conf?.confirmed && conf.confirmed_at && (
+                                  <span className="text-gray-400">{conf.confirmed_at.substring(5, 16)}</span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    )}
+
+                    {/* 部门确认记录（旧流程兼容） */}
+                    {!c.user_departments && c.departments && c.departments.length > 0 && (
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">部门确认记录</p>
+                        <div className="space-y-1">
+                          {c.departments.map(dept => (
+                            <div key={dept.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
+                              <div className="flex items-center gap-2">
+                                {dept.confirmed ? (
+                                  <CheckCircle2 size={14} className="text-green-500" />
+                                ) : (
+                                  <Clock size={14} className="text-gray-400" />
+                                )}
+                                <span className="text-gray-700">{dept.name}</span>
+                              </div>
+                              <span className="text-gray-500">
+                                {dept.confirmed ? `${dept.confirmed_by} ${dept.confirmed_at}` : '待确认'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 采购明细 */}
+                    {c.purchase_items && c.purchase_items.length > 0 && (
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">采购明细</p>
+                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead className="bg-gray-100 text-gray-600">
+                              <tr>
+                                <th className="px-3 py-2 text-left">食材</th>
+                                <th className="px-3 py-2 text-left">部门</th>
+                                <th className="px-3 py-2 text-right">单价</th>
+                                <th className="px-3 py-2 text-right">数量</th>
+                                <th className="px-3 py-2 text-right">金额</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {c.purchase_items.map((item, idx) => (
+                                <tr key={idx}>
+                                  <td className="px-3 py-2 text-gray-700">{item.ingredient_name}</td>
+                                  <td className="px-3 py-2 text-gray-500">{item.department_name}</td>
+                                  <td className="px-3 py-2 text-right text-gray-700">{safeParseFloat(item.purchase_unit_price).toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-right text-gray-700">{item.purchase_quantity}</td>
+                                  <td className="px-3 py-2 text-right font-medium text-gray-800">{safeParseFloat(item.amount).toFixed(2)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 操作按钮 */}
+                    <div className="flex gap-2 flex-wrap">
+                      {c.pdf_url ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownloadPDF(c.id); }}
+                          className="btn-primary text-xs flex items-center gap-1 bg-green-500 hover:bg-green-600"
+                        >
+                          <Download size={14} />
+                          下载PDF
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleGeneratePDF(c.id); }}
+                          className="btn-secondary text-xs flex items-center gap-1"
+                        >
+                          <FileDown size={14} />
+                          生成PDF
+                        </button>
+                      )}
+                      {c.reimbursement_sp_no && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRefreshStatus(c.id); }}
+                          className="btn-secondary text-xs flex items-center gap-1"
+                        >
+                          <RefreshCw size={14} />
+                          刷新状态
+                        </button>
+                      )}
+                      {c.reimbursement_status === 'rejected' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleResubmit(c.id); }}
+                          className="btn-primary text-xs flex items-center gap-1"
+                        >
+                          <RefreshCw size={14} />
+                          重新发起
+                        </button>
+                      )}
+                      {!c.reimbursement_sp_no && c.status === 'confirmed' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleInitiateReimbursement(c.id); }}
+                          className="btn-primary text-xs flex items-center gap-1"
+                        >
+                          <ExternalLink size={14} />
+                          发起报销
+                        </button>
+                      )}
+                      {(c.status === 'pending' || c.status === 'confirmed') && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleResetConfirmations(c.id); }}
+                          className="btn-secondary text-xs flex items-center gap-1 text-orange-500 hover:bg-orange-50"
+                        >
+                          <RefreshCw size={14} />
+                          重置确认
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }}
+                        className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto"
+                      >
+                        <Trash2 size={14} />
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
