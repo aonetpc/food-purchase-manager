@@ -32,7 +32,8 @@ interface AllConfirmation {
 
 interface ConfirmPageData {
   id: string;
-  test_date: string;
+  test_date?: string;
+  purchase_date?: string;
   user: string;
   user_name: string;
   my_departments: string[];
@@ -360,7 +361,7 @@ export default function WecomConfirmPage() {
           <div className="flex justify-between items-start mb-3">
             <div>
               <p className="text-sm text-gray-500">采购日期</p>
-              <p className="font-medium text-gray-800">{data.test_date}</p>
+              <p className="font-medium text-gray-800">{data.test_date || data.purchase_date}</p>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-500">您负责金额</p>

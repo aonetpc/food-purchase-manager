@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const pool = require('../db');
-const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, submitApproval, getApprovalDetail, uploadMedia } = require('./wecom');
+const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, sendTextViaWebhook, submitApproval, getApprovalDetail, uploadMedia, sendTemplateCardToUser, updateTemplateCardButton, getWecomUserName } = require('./wecom');
 
 // PDF存储目录
 const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
@@ -104,6 +104,8 @@ router.get('/:id', async (req, res) => {
       total_amount: toNum(row.total_amount),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
+      user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments) : row.user_departments,
+      user_confirmations: typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations) : row.user_confirmations,
     });
   } catch (err) {
     console.error(err);
@@ -132,9 +134,34 @@ router.post('/', async (req, res) => {
 
     // 构建确认链接（优先使用配置的域名，避免IP安全提示）
     const domain = config && config.app_domain ? config.app_domain : (req.headers.origin || req.protocol + '://' + req.get('host'));
-    const confirmUrl = `${domain}/confirm/${id}`;
 
-    // 构建 Markdown 消息内容（引用格式）
+    // 获取各部门确认人（用于群消息@和个人消息发送）
+    const [deptRows] = await pool.query('SELECT id, name, confirmer_userid FROM departments');
+    const deptConfirmerMap = {};
+    const confirmerSet = new Set();
+    for (const d of deptRows) {
+      if (d.confirmer_userid) {
+        deptConfirmerMap[d.id] = d.confirmer_userid;
+        deptConfirmerMap[d.name] = d.confirmer_userid;
+        confirmerSet.add(d.confirmer_userid);
+      }
+    }
+    const mentionedUsers = Array.from(confirmerSet);
+
+    // 构建 userDeptMap: 每个用户负责的部门和明细
+    const userDeptMap = {};
+    for (const item of purchase_items) {
+      const deptId = item.department_id;
+      const deptName = item.department_name;
+      const confirmer = deptConfirmerMap[deptId] || deptConfirmerMap[deptName];
+      if (confirmer) {
+        if (!userDeptMap[confirmer]) userDeptMap[confirmer] = { items: [], depts: new Set() };
+        userDeptMap[confirmer].items.push(item);
+        userDeptMap[confirmer].depts.add(deptName);
+      }
+    }
+
+    // 构建 Markdown 群消息内容
     const deptNames = departments.map(d => d.name).join('、');
     let mdContent = `**📋 食材采购确认通知**\n\n`;
     mdContent += `📅 **采购日期**：${displayDate}\n`;
@@ -142,7 +169,6 @@ router.post('/', async (req, res) => {
     mdContent += `💰 **总金额**：¥${Number(total_amount).toFixed(2)}\n\n`;
     mdContent += `---\n\n`;
 
-    // 按部门分组显示明细（引用格式）
     const groupedItems = {};
     for (const item of purchase_items) {
       const deptName = item.department_name || '未分类';
@@ -160,8 +186,14 @@ router.post('/', async (req, res) => {
     }
 
     mdContent += `---\n\n`;
-    mdContent += `👉 **[点击此处进入确认页面](${confirmUrl})**\n`;
-    mdContent += `> 各部门负责人请进入确认页面，核对清单并手写签名确认。`;
+
+    // 获取确认人姓名用于显示
+    let mentionText = '📢 请以下人员尽快确认：';
+    for (const userid of mentionedUsers) {
+      const name = await getWecomUserName(userid);
+      mentionText += ` @${name}`;
+    }
+    mdContent += mentionText;
 
     // 保存确认单（先保存，发送失败可以删除，或者让用户重试）
     await connection.query(
@@ -170,7 +202,7 @@ router.post('/', async (req, res) => {
       [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items)]
     );
 
-    // 发送企微消息（优先使用 Webhook）
+    // 发送群消息（优先使用 Webhook）
     let wecomMsgId = null;
     try {
       if (hasWebhook) {
@@ -187,10 +219,76 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: `企业微信消息发送失败：${sendErr.message}` });
     }
 
-    // 更新消息ID
+    // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
+    const sentToUsers = [];
+    const failedUsers = [];
+    const sentResponseCodes = [];
+    if (config && config.corp_id && config.app_secret && config.agent_id) {
+      for (const [userid, data] of Object.entries(userDeptMap)) {
+        try {
+          const userDeptNames = Array.from(data.depts).join('、');
+          const userTotal = data.items.reduce((s, i) => s + Number(i.amount), 0);
+
+          let subTitle = `采购日期：${displayDate}\n您负责的部门：${userDeptNames}`;
+
+          const horizontalContentList = [];
+          horizontalContentList.push({ keyname: '总金额', value: `¥${userTotal.toFixed(2)}` });
+          horizontalContentList.push({ keyname: '部门数', value: `${data.depts.size}个` });
+          horizontalContentList.push({ keyname: '食材项', value: `${data.items.length}项` });
+
+          const userTaskId = `${id}_${userid}`;
+          const userConfirmUrl = `${domain}/wecom-confirm?id=${id}&user=${userid}`;
+
+          const sendResult = await sendTemplateCardToUser(config, userid, {
+            card_type: 'button_interaction',
+            source: {
+              desc: '食材采购管理系统',
+            },
+            main_title: {
+              title: '📋 食材采购确认通知',
+              desc: '请认真确认您负责部门的采购内容',
+            },
+            sub_title_text: subTitle,
+            horizontal_content_list: horizontalContentList,
+            button_list: [
+              { 
+                text: '去确认', 
+                style: 1, 
+                type: 1,
+                key: `go_confirm_${userTaskId}`,
+                url: userConfirmUrl
+              }
+            ],
+            task_id: userTaskId,
+            card_action: {
+              type: 1,
+              url: userConfirmUrl
+            },
+          });
+
+          sentResponseCodes.push({ userid, responseCode: sendResult.response_code });
+          sentToUsers.push({ userid, departments: userDeptNames, total: userTotal });
+        } catch (sendErr) {
+          console.error(`发送个人模板卡片消息失败 ${userid}:`, sendErr.message);
+          failedUsers.push({ userid, error: sendErr.message });
+        }
+      }
+    }
+
+    // 构造 user_departments 映射（包含 response_code 用于更新卡片）
+    const userDepartmentsMap = {};
+    for (const [userid, data] of Object.entries(userDeptMap)) {
+      const sentItem = sentResponseCodes.find(s => s.userid === userid);
+      userDepartmentsMap[userid] = {
+        departments: Array.from(data.depts),
+        response_code: sentItem ? sentItem.responseCode : null,
+      };
+    }
+
+    // 更新消息ID和 user_departments
     await connection.query(
-      'UPDATE purchase_confirmations SET wecom_msg_id = ? WHERE id = ?',
-      [wecomMsgId, id]
+      'UPDATE purchase_confirmations SET wecom_msg_id = ?, user_departments = ? WHERE id = ?',
+      [wecomMsgId, JSON.stringify(userDepartmentsMap), id]
     );
 
     await connection.commit();
@@ -201,6 +299,9 @@ router.post('/', async (req, res) => {
       ...row,
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
+      user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments) : row.user_departments,
+      sent_to_users: sentToUsers,
+      failed_users: failedUsers,
     });
   } catch (err) {
     await connection.rollback();
@@ -211,11 +312,11 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 部门确认
+// 用户确认（新流程）
 router.post('/:id/confirm', async (req, res) => {
   try {
     const { id } = req.params;
-    const { department_id, confirmed_by, signature_data } = req.body;
+    const { user, signature_data } = req.body;
 
     const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
     if (rows.length === 0) {
@@ -223,45 +324,51 @@ router.post('/:id/confirm', async (req, res) => {
     }
 
     const row = rows[0];
-    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
-
-    // 类型不敏感的部门查找（前端可能传字符串或数字）
-    const dept = departments.find(d => String(d.id) === String(department_id));
-    if (!dept) {
-      return res.status(400).json({ error: '部门不存在于本确认单' });
+    
+    const userDepartments = typeof row.user_departments === 'string' ? JSON.parse(row.user_departments) : row.user_departments;
+    if (!userDepartments || !userDepartments[user]) {
+      return res.status(400).json({ error: '该用户没有需要确认的部门' });
     }
 
-    dept.confirmed = true;
-    dept.confirmed_by = confirmed_by;
-    // 使用本地时间格式，避免toISOString()导致的UTC时差问题
+    const realName = await getWecomUserName(user);
+    const userDeptNames = userDepartments[user].departments;
+
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
-    dept.confirmed_at = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    // 保存签名数据（统一使用字符串类型的部门ID作为key）
-    let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
-    if (signature_data) {
-      signatures[String(department_id)] = {
-        name: confirmed_by,
-        data: signature_data,
-        timestamp: dept.confirmed_at
-      };
-    }
+    let userConfirmations = typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : (row.user_confirmations || {});
+    
+    userConfirmations[user] = {
+      confirmed: true,
+      confirmed_at: nowStr,
+      confirmed_by: realName,
+      departments: userDeptNames,
+      signature_data,
+    };
 
-    const allConfirmed = departments.every(d => d.confirmed);
+    const allConfirmed = Object.keys(userDepartments).every(uid => userConfirmations[uid]?.confirmed);
     let newStatus = allConfirmed ? 'confirmed' : 'pending';
     let reimbursementInitiated = false;
     let reimbursementSpNo = null;
     let pdfUrl = row.pdf_url;
 
-    // 先保存当前确认状态，确保后续PDF生成能读取到最新数据
     await pool.query(
-      'UPDATE purchase_confirmations SET departments = ?, status = ?, confirmed_signatures = ? WHERE id = ?',
-      [JSON.stringify(departments), newStatus, JSON.stringify(signatures), id]
+      'UPDATE purchase_confirmations SET user_confirmations = ?, status = ? WHERE id = ?',
+      [JSON.stringify(userConfirmations), newStatus, id]
     );
 
+    try {
+      const config = await getWecomConfig();
+      const responseCode = userDepartments[user].response_code;
+      if (config && responseCode) {
+        await updateTemplateCardButton(config, user, responseCode, `已确认 (${nowStr})`);
+      }
+    } catch (updateErr) {
+      console.error('更新模板卡片按钮失败:', updateErr.message);
+    }
+
     if (allConfirmed) {
-      // 自动生成PDF（必须在数据库保存之后，否则读取不到最新确认数据）
       try {
         const pdfPath = await generateConfirmationPDF(id);
         pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
@@ -294,7 +401,6 @@ router.post('/:id/confirm', async (req, res) => {
             }
           }
 
-          // 获取模板详情以确定控件实际类型
           const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
           const tokenData = await tokenRes.json();
           let controlTypeMap = {};
@@ -319,6 +425,7 @@ router.post('/:id/confirm', async (req, res) => {
             return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
           }
 
+          const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
           const contents = [];
           if (fieldMapping.date) {
             let purchaseDate;
@@ -388,7 +495,6 @@ router.post('/:id/confirm', async (req, res) => {
             contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
           }
 
-          // 上传PDF附件（自动查找File类型控件）
           try {
             const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
             const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([cid, ctype]) => ctype === 'File')?.[0];
@@ -430,8 +536,8 @@ router.post('/:id/confirm', async (req, res) => {
       }
     }
 
-    const updateFields = ['departments = ?', 'status = ?', 'confirmed_signatures = ?'];
-    const updateValues = [JSON.stringify(departments), newStatus, JSON.stringify(signatures)];
+    const updateFields = ['user_confirmations = ?', 'status = ?'];
+    const updateValues = [JSON.stringify(userConfirmations), newStatus];
 
     if (pdfUrl) {
       updateFields.push('pdf_url = ?');
@@ -453,7 +559,7 @@ router.post('/:id/confirm', async (req, res) => {
       all_confirmed: allConfirmed,
       reimbursement_initiated: reimbursementInitiated,
       reimbursement_sp_no: reimbursementSpNo,
-      departments
+      user_confirmations: userConfirmations,
     });
   } catch (err) {
     console.error(err);

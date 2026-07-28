@@ -1244,6 +1244,7 @@ function formatLocalNow() {
 
 // GET /wecom/confirm-page?id=xxx&user=userid
 // 返回该用户负责部门的数据（仅包含自己负责的明细），以及该用户当前的确认状态
+// 支持测试消息表和正式确认单表
 router.get('/confirm-page', async (req, res) => {
   try {
     const { id, user } = req.query;
@@ -1251,17 +1252,29 @@ router.get('/confirm-page', async (req, res) => {
       return res.status(400).json({ error: '缺少参数 id 或 user' });
     }
 
-    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
-    if (rows.length === 0) {
+    let row = null;
+    let tableName = 'wecom_test_messages';
+
+    const [testRows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (testRows.length > 0) {
+      row = testRows[0];
+      tableName = 'wecom_test_messages';
+    } else {
+      const [confRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+      if (confRows.length > 0) {
+        row = confRows[0];
+        tableName = 'purchase_confirmations';
+      }
+    }
+
+    if (!row) {
       return res.status(404).json({ error: '确认单不存在或已失效' });
     }
 
-    const row = rows[0];
     const allItems = parseJsonField(row.purchase_items) || [];
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
-    // 该用户负责的部门列表（兼容新旧格式）
     const userDeptData = userDepartments[user];
     const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments)) 
       ? userDeptData.departments 
@@ -1271,16 +1284,10 @@ router.get('/confirm-page', async (req, res) => {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
 
-    // 过滤出该用户负责部门的明细
     const myItems = allItems.filter(item => myDeptNames.includes(item.department_name));
-
-    // 用户当前的确认状态
     const myConfirmation = userConfirmations[user] || null;
-
-    // 获取当前用户的真实姓名
     const userName = await getWecomUserName(user);
 
-    // 所有用户的确认情况（将 userid 转换为真实姓名）
     const allConfirmations = await Promise.all(
       Object.entries(userConfirmations).map(async ([userid, info]) => ({
         userid,
@@ -1295,6 +1302,7 @@ router.get('/confirm-page', async (req, res) => {
     res.json({
       id: row.id,
       test_date: row.test_date,
+      purchase_date: row.purchase_date,
       user,
       user_name: userName,
       my_departments: myDeptNames,
@@ -1315,6 +1323,7 @@ router.get('/confirm-page', async (req, res) => {
 // POST /wecom/confirm-submit
 // body: { id, user, signature_data, name }
 // 提交后：更新 user_confirmations + 同时更新卡片按钮文案
+// 支持测试消息表和正式确认单表
 router.post('/confirm-submit', async (req, res) => {
   try {
     const { id, user, signature_data, name } = req.body || {};
@@ -1325,36 +1334,45 @@ router.post('/confirm-submit', async (req, res) => {
       return res.status(400).json({ error: '请先手写签名后再确认' });
     }
 
-    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
-    if (rows.length === 0) {
+    let row = null;
+    let tableName = 'wecom_test_messages';
+
+    const [testRows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (testRows.length > 0) {
+      row = testRows[0];
+      tableName = 'wecom_test_messages';
+    } else {
+      const [confRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+      if (confRows.length > 0) {
+        row = confRows[0];
+        tableName = 'purchase_confirmations';
+      }
+    }
+
+    if (!row) {
       return res.status(404).json({ error: '确认单不存在或已失效' });
     }
 
-    const row = rows[0];
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
     const allItems = parseJsonField(row.purchase_items) || [];
 
-    // 兼容新旧格式获取部门列表和 response_code
     const userDeptData = userDepartments[user];
     const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments)) 
       ? userDeptData.departments 
       : (Array.isArray(userDeptData) ? userDeptData : []);
     const responseCode = (userDeptData && userDeptData.response_code) || null;
     
-    // 计算用户负责部门的金额和食材项数量
     const myItems = allItems.filter(item => myDeptNames.includes(item.department_name));
     const myTotal = myItems.reduce((s, i) => s + parseFloat(i.amount || 0), 0);
     if (myDeptNames.length === 0) {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
 
-    // 已确认过则禁止重复确认
     if (userConfirmations[user] && userConfirmations[user].confirmed) {
       return res.status(400).json({ error: '您已确认过，无需重复确认' });
     }
 
-    // 获取用户真实姓名（优先从缓存，否则调用企微API）
     const realName = await getWecomUserName(user);
     console.log(`[确认提交] 用户姓名：${user} → ${realName}`);
 
@@ -1368,11 +1386,10 @@ router.post('/confirm-submit', async (req, res) => {
     };
 
     await pool.query(
-      'UPDATE wecom_test_messages SET user_confirmations = ? WHERE id = ?',
+      `UPDATE ${tableName} SET user_confirmations = ? WHERE id = ?`,
       [JSON.stringify(userConfirmations), id]
     );
 
-    // 同步保存/更新用户签名到 user_signatures 表（user_source='wecom'）
     try {
       const [sigRows] = await pool.query(
         'SELECT id FROM user_signatures WHERE user_id = ? AND user_source = ?',
@@ -1393,7 +1410,6 @@ router.post('/confirm-submit', async (req, res) => {
       console.error('保存用户签名失败（不影响主流程）:', sigErr.message);
     }
 
-    // 更新企微模板卡片：将按钮改为灰色「已确认」，不再发送新消息
     let cardUpdated = false;
     let cardError = '';
     try {
@@ -1418,184 +1434,350 @@ router.post('/confirm-submit', async (req, res) => {
       cardError = cfgErr.message;
     }
 
-    // 计算整体进度
     const totalUsers = Object.keys(userDepartments).length;
     const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
     const allConfirmed = confirmedUsers === totalUsers;
 
-    // 全部用户都已确认时，更新整张测试单状态并自动生成PDF
     if (allConfirmed) {
       await pool.query(
-        "UPDATE wecom_test_messages SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE id = ?",
+        `UPDATE ${tableName} SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE id = ?`,
         [realName, now, id]
       );
 
-      // 自动生成PDF
-      try {
-        console.log(`[确认提交] 所有用户已确认，开始自动生成PDF，id=${id}`);
-        
-        const pdfPath = path.join(PDF_DIR, `wecom_test_${id}.pdf`);
-        const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
-        const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
-        
-        const doc = new PDFDocument({ size: 'A4', margin: 40 });
-        const writeStream = fs.createWriteStream(pdfPath);
-        doc.pipe(writeStream);
-
-        const chineseFont = findChineseFont();
-        const chineseBoldFont = findChineseBoldFont();
-        const hasChineseFont = !!chineseFont;
-        if (hasChineseFont) {
-          doc.registerFont('Chinese-Regular', chineseFont);
-          doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
+      if (tableName === 'purchase_confirmations') {
+        try {
+          const pdfPath = await generateConfirmationPDF(id);
+          const pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
+          await pool.query('UPDATE purchase_confirmations SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+        } catch (pdfErr) {
+          console.error('PDF生成失败:', pdfErr);
         }
 
-        doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('食材采购确认单', { align: 'center' });
-        doc.moveDown(0.5);
+        const config = await getWecomConfig();
+        if (config && config.corp_id && config.app_secret && config.approval_template_id && config.applicant_userid) {
+          try {
+            const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
+            const reasonTemplate = config.payment_reason_template || '{date}食材采购费用';
+            let displayDate = '';
+            if (row.purchase_date instanceof Date) {
+              const d = row.purchase_date;
+              displayDate = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+            } else if (typeof row.purchase_date === 'string') {
+              displayDate = row.purchase_date.substring(0, 10);
+            } else {
+              displayDate = String(row.purchase_date).substring(0, 10);
+            }
+            const reason = reasonTemplate.replace('{date}', displayDate);
 
-        doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-        let purchaseDateStr = '';
-        if (row.test_date instanceof Date) {
-          const d = row.test_date;
-          purchaseDateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-        } else if (typeof row.test_date === 'string') {
-          purchaseDateStr = row.test_date.substring(0, 10);
-        }
-        const statusLabel = '已确认';
-        doc.text(`采购日期：${purchaseDateStr}    总金额：¥${toNum(row.total_amount).toFixed(2)}    状态：${statusLabel}`);
-        doc.moveDown(0.5);
-
-        const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-        const tableX = doc.page.margins.left;
-        const tableWidth = pageWidth;
-
-        const groupedItems = {};
-        for (const item of purchaseItems) {
-          const deptName = item.department_name || '未分类';
-          if (!groupedItems[deptName]) groupedItems[deptName] = [];
-          groupedItems[deptName].push(item);
-        }
-
-        const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
-        const colWidths = [tableWidth * 0.32, tableWidth * 0.20, tableWidth * 0.12, tableWidth * 0.10, tableWidth * 0.26];
-        const fixedRowHeight = 11;
-        const signatureHeight = 28;
-
-        function checkPageBreak(y, extraHeight = 0) {
-          const pageBottom = doc.page.height - doc.page.margins.bottom;
-          if (y + extraHeight > pageBottom) {
-            doc.addPage();
-            return doc.page.margins.top;
-          }
-          return y;
-        }
-
-        function drawTableRow(y, cells, isHeader = false) {
-          const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
-          const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
-          doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
-          const lineHeight = doc.currentLineHeight();
-          let x = tableX;
-          for (let i = 0; i < cells.length; i++) {
-            const text = String(cells[i]);
-            const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
-            const textY = y + (fixedRowHeight - lineHeight) / 2;
-            doc.text(text, x + 2, textY, { width: colWidths[i] - 4, align });
-            x += colWidths[i];
-          }
-          return fixedRowHeight;
-        }
-
-        function drawDepartmentSignature(y, deptName) {
-          const sigTop = y;
-          const sigWidth = tableWidth;
-
-          doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-          const deptConf = Object.entries(userConfirmations).find(([, conf]) => 
-            conf.departments && conf.departments.includes(deptName)
-          );
-          if (deptConf) {
-            const infoText = `确认人：${deptConf[1].confirmed_by || '-'}    确认时间：${deptConf[1].confirmed_at || '-'}`;
-            doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
-
-            if (deptConf[1].signature_data) {
-              try {
-                const base64Data = deptConf[1].signature_data.replace(/^data:image\/\w+;base64,/, '');
-                const buffer = Buffer.from(base64Data, 'base64');
-                doc.image(buffer, tableX + 2, sigTop + 12, { width: sigWidth - 4, height: signatureHeight - 14, fit: [sigWidth - 4, signatureHeight - 14] });
-              } catch (e) {
-                console.error(`[PDF生成] 签名图片处理失败，dept=${deptName}:`, e.message);
+            let fieldMapping = {};
+            if (config.approval_field_mapping) {
+              if (typeof config.approval_field_mapping === 'string') {
+                try { fieldMapping = JSON.parse(config.approval_field_mapping); } catch (e) { fieldMapping = {}; }
+              } else if (typeof config.approval_field_mapping === 'object') {
+                fieldMapping = config.approval_field_mapping;
               }
             }
-          } else {
-            doc.text('状态：待确认', tableX + 2, sigTop + 8);
+
+            const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+            const tokenData = await tokenRes.json();
+            let controlTypeMap = {};
+            if (tokenData.access_token) {
+              const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ template_id: config.approval_template_id })
+              });
+              const tplData = await tplRes.json();
+              if (tplData.errcode === 0 && tplData.template_content && tplData.template_content.controls) {
+                for (const ctrl of tplData.template_content.controls) {
+                  if (ctrl.property && ctrl.property.id && ctrl.property.control) {
+                    controlTypeMap[ctrl.property.id] = ctrl.property.control;
+                  }
+                }
+              }
+            }
+
+            function getControlType(fieldKey, fallback) {
+              const mappedId = fieldMapping[fieldKey];
+              return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
+            }
+
+            const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+            const contents = [];
+            if (fieldMapping.date) {
+              let purchaseDate;
+              if (row.purchase_date instanceof Date) {
+                purchaseDate = row.purchase_date;
+              } else if (typeof row.purchase_date === 'string') {
+                const parts = row.purchase_date.substring(0, 10).split('-');
+                purchaseDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+              } else {
+                purchaseDate = new Date(row.purchase_date);
+              }
+              purchaseDate.setHours(0, 0, 0, 0);
+              const sTimestamp = Math.floor(purchaseDate.getTime() / 1000);
+              contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(sTimestamp) } } });
+            }
+            if (fieldMapping.amount) {
+              const amountVal = toNum(row.total_amount);
+              contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: amountVal.toFixed(2) } });
+            }
+            if (fieldMapping.reason) {
+              contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: String(reason) } });
+            }
+            if (fieldMapping.department) {
+              const deptNames = departments.map(d => String(d.name)).join('、');
+              contents.push({ control: getControlType('department', 'Text'), id: fieldMapping.department, value: { text: deptNames } });
+            }
+            if (fieldMapping.payee_name && config.payee_name) {
+              contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: String(config.payee_name) } });
+            }
+            if (fieldMapping.bank_name && config.bank_name) {
+              contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { text: String(config.bank_name) } });
+            }
+            if (fieldMapping.bank_account && config.bank_account) {
+              contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
+            }
+            if (fieldMapping.payment_method && config.default_payment_key) {
+              let paymentOptions = {};
+              if (config.payment_options) {
+                if (typeof config.payment_options === 'string') {
+                  try { paymentOptions = JSON.parse(config.payment_options); } catch (e) { paymentOptions = {}; }
+                } else if (typeof config.payment_options === 'object') {
+                  paymentOptions = config.payment_options;
+                }
+              }
+              const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
+              contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
+            } else {
+              paymentLabel = '转账';
+            }
+            if (fieldMapping.details) {
+              let detailText = '';
+              const grouped = {};
+              for (const item of purchaseItems) {
+                const dn = item.department_name || '未分类';
+                if (!grouped[dn]) grouped[dn] = [];
+                grouped[dn].push(item);
+              }
+              for (const [dn, items] of Object.entries(grouped)) {
+                detailText += `【${dn}】\n`;
+                for (const item of items) {
+                  const price = toNum(item.purchase_unit_price);
+                  const qty = toNum(item.purchase_quantity);
+                  const amt = toNum(item.amount);
+                  detailText += `${item.ingredient_name} ${price}/${item.purchase_unit} ×${qty} = ¥${amt.toFixed(2)}\n`;
+                }
+              }
+              contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
+            }
+
+            try {
+              const pdfPath = path.join(PDF_DIR, `${id}.pdf`);
+              const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([cid, ctype]) => ctype === 'File')?.[0];
+              if (fileControlId && fs.existsSync(pdfPath)) {
+                const mediaId = await uploadMedia(config, pdfPath, `采购确认单_${id}.pdf`);
+                contents.push({
+                  control: controlTypeMap[fileControlId] || 'File',
+                  id: fileControlId,
+                  value: {
+                    files: [{
+                      file_id: mediaId,
+                      filename: `采购确认单_${id}.pdf`
+                    }]
+                  }
+                });
+              }
+            } catch (uploadErr) {
+              console.error('上传PDF附件失败:', uploadErr);
+            }
+
+            const applyData = {
+              creator_userid: config.applicant_userid,
+              template_id: config.approval_template_id,
+              use_template_approver: 1,
+              apply_data: { contents },
+              summary_list: [
+                { summary_info: [{ text: `付款事由：${reason}`, lang: 'zh_CN' }] },
+                { summary_info: [{ text: `付款金额：¥${Number(row.total_amount).toFixed(2)}`, lang: 'zh_CN' }] },
+                { summary_info: [{ text: `付款方式：${paymentLabel || '转账'}`, lang: 'zh_CN' }] }
+              ]
+            };
+
+            const spNo = await submitApproval(config, applyData);
+            await pool.query('UPDATE purchase_confirmations SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?', ['pending', spNo, 'reimbursing', id]);
+            console.log(`[确认提交] 报销审批已发起，sp_no=${spNo}`);
+          } catch (approvalErr) {
+            console.error('自动发起报销失败:', approvalErr);
+          }
+        }
+      } else {
+        try {
+          console.log(`[确认提交] 所有用户已确认，开始自动生成PDF，id=${id}`);
+          
+          const pdfPath = path.join(PDF_DIR, `wecom_test_${id}.pdf`);
+          const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
+          const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+          
+          const doc = new PDFDocument({ size: 'A4', margin: 40 });
+          const writeStream = fs.createWriteStream(pdfPath);
+          doc.pipe(writeStream);
+
+          const chineseFont = findChineseFont();
+          const chineseBoldFont = findChineseBoldFont();
+          const hasChineseFont = !!chineseFont;
+          if (hasChineseFont) {
+            doc.registerFont('Chinese-Regular', chineseFont);
+            doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
           }
 
-          return signatureHeight;
-        }
+          doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('食材采购确认单', { align: 'center' });
+          doc.moveDown(0.5);
 
-        let currentY = doc.y;
-
-        doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
-        doc.moveDown(0.3);
-        currentY = doc.y;
-
-        currentY += drawTableRow(currentY, headers, true);
-        doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
-
-        doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-        let grandTotal = 0;
-
-        for (const [deptName, items] of Object.entries(groupedItems)) {
-          const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + signatureHeight + 15;
-          currentY = checkPageBreak(currentY, deptNeededHeight);
-
-          doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, tableX, currentY + 1);
-          currentY += fixedRowHeight;
-
-          doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7);
-          let subtotal = 0;
-          for (const item of items) {
-            const cells = [
-              item.ingredient_name,
-              `${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`,
-              String(item.purchase_quantity),
-              item.purchase_unit,
-              `¥${toNum(item.amount).toFixed(2)}`
-            ];
-            currentY += drawTableRow(currentY, cells);
-            subtotal += toNum(item.amount);
+          doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+          let purchaseDateStr = '';
+          if (row.test_date instanceof Date) {
+            const d = row.test_date;
+            purchaseDateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+          } else if (typeof row.test_date === 'string') {
+            purchaseDateStr = row.test_date.substring(0, 10);
           }
-          grandTotal += subtotal;
+          const statusLabel = '已确认';
+          doc.text(`采购日期：${purchaseDateStr}    总金额：¥${toNum(row.total_amount).toFixed(2)}    状态：${statusLabel}`);
+          doc.moveDown(0.5);
 
-          doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY, { width: tableWidth, align: 'right' });
-          currentY += 10;
+          const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+          const tableX = doc.page.margins.left;
+          const tableWidth = pageWidth;
 
-          doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+          const groupedItems = {};
+          for (const item of purchaseItems) {
+            const deptName = item.department_name || '未分类';
+            if (!groupedItems[deptName]) groupedItems[deptName] = [];
+            groupedItems[deptName].push(item);
+          }
 
-          currentY += drawDepartmentSignature(currentY, deptName);
-          currentY += 15;
+          const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
+          const colWidths = [tableWidth * 0.32, tableWidth * 0.20, tableWidth * 0.12, tableWidth * 0.10, tableWidth * 0.26];
+          const fixedRowHeight = 11;
+          const signatureHeight = 28;
+
+          function checkPageBreak(y, extraHeight = 0) {
+            const pageBottom = doc.page.height - doc.page.margins.bottom;
+            if (y + extraHeight > pageBottom) {
+              doc.addPage();
+              return doc.page.margins.top;
+            }
+            return y;
+          }
+
+          function drawTableRow(y, cells, isHeader = false) {
+            const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
+            const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
+            doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
+            const lineHeight = doc.currentLineHeight();
+            let x = tableX;
+            for (let i = 0; i < cells.length; i++) {
+              const text = String(cells[i]);
+              const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
+              const textY = y + (fixedRowHeight - lineHeight) / 2;
+              doc.text(text, x + 2, textY, { width: colWidths[i] - 4, align });
+              x += colWidths[i];
+            }
+            return fixedRowHeight;
+          }
+
+          function drawDepartmentSignature(y, deptName) {
+            const sigTop = y;
+            const sigWidth = tableWidth;
+
+            doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+            const deptConf = Object.entries(userConfirmations).find(([, conf]) => 
+              conf.departments && conf.departments.includes(deptName)
+            );
+            if (deptConf) {
+              const infoText = `确认人：${deptConf[1].confirmed_by || '-'}    确认时间：${deptConf[1].confirmed_at || '-'}`;
+              doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
+
+              if (deptConf[1].signature_data) {
+                try {
+                  const base64Data = deptConf[1].signature_data.replace(/^data:image\/\w+;base64,/, '');
+                  const buffer = Buffer.from(base64Data, 'base64');
+                  doc.image(buffer, tableX + 2, sigTop + 12, { width: sigWidth - 4, height: signatureHeight - 14, fit: [sigWidth - 4, signatureHeight - 14] });
+                } catch (e) {
+                  console.error(`[PDF生成] 签名图片处理失败，dept=${deptName}:`, e.message);
+                }
+              }
+            } else {
+              doc.text('状态：待确认', tableX + 2, sigTop + 8);
+            }
+
+            return signatureHeight;
+          }
+
+          let currentY = doc.y;
+
+          doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
+          doc.moveDown(0.3);
+          currentY = doc.y;
+
+          currentY += drawTableRow(currentY, headers, true);
+          doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
+
+          doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+          let grandTotal = 0;
+
+          for (const [deptName, items] of Object.entries(groupedItems)) {
+            const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + signatureHeight + 15;
+            currentY = checkPageBreak(currentY, deptNeededHeight);
+
+            doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, tableX, currentY + 1);
+            currentY += fixedRowHeight;
+
+            doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7);
+            let subtotal = 0;
+            for (const item of items) {
+              const cells = [
+                item.ingredient_name,
+                `${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`,
+                String(item.purchase_quantity),
+                item.purchase_unit,
+                `¥${toNum(item.amount).toFixed(2)}`
+              ];
+              currentY += drawTableRow(currentY, cells);
+              subtotal += toNum(item.amount);
+            }
+            grandTotal += subtotal;
+
+            doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY, { width: tableWidth, align: 'right' });
+            currentY += 10;
+
+            doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+
+            currentY += drawDepartmentSignature(currentY, deptName);
+            currentY += 15;
+          }
+
+          if (Object.keys(groupedItems).length === 0) {
+            doc.fontSize(10).text('暂无采购明细', { align: 'center' });
+          }
+
+          doc.moveDown(0.5);
+          doc.fontSize(11).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`合计金额：¥${grandTotal.toFixed(2)}`, { align: 'right' });
+
+          doc.end();
+
+          await new Promise((resolve, reject) => {
+            writeStream.on('finish', resolve);
+            writeStream.on('error', reject);
+          });
+
+          const pdfUrl = `/api/wecom/test-messages/${id}/pdf`;
+          await pool.query('UPDATE wecom_test_messages SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+          console.log(`[确认提交] PDF自动生成成功，id=${id}`);
+        } catch (pdfErr) {
+          console.error(`[确认提交] PDF自动生成失败，id=${id}:`, pdfErr.message);
         }
-
-        if (Object.keys(groupedItems).length === 0) {
-          doc.fontSize(10).text('暂无采购明细', { align: 'center' });
-        }
-
-        doc.moveDown(0.5);
-        doc.fontSize(11).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`合计金额：¥${grandTotal.toFixed(2)}`, { align: 'right' });
-
-        doc.end();
-
-        await new Promise((resolve, reject) => {
-          writeStream.on('finish', resolve);
-          writeStream.on('error', reject);
-        });
-
-        const pdfUrl = `/api/wecom/test-messages/${id}/pdf`;
-        await pool.query('UPDATE wecom_test_messages SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
-        console.log(`[确认提交] PDF自动生成成功，id=${id}`);
-      } catch (pdfErr) {
-        console.error(`[确认提交] PDF自动生成失败，id=${id}:`, pdfErr.message);
       }
     }
 
