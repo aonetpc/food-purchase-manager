@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Send, Save, AlertCircle, CheckCircle2, FlaskConical,
   Link2, MessageSquare, RefreshCw, Calendar, Clock, XCircle,
-  ChevronDown, ChevronUp, Eye
+  ChevronDown, ChevronUp, Eye, FileDown, Download
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -34,6 +34,9 @@ interface TestMessage {
   wecom_sent: number;
   sent_at?: string;
   created_at: string;
+  user_confirmations?: Record<string, { confirmed: boolean; confirmed_at?: string; confirmed_by?: string }>;
+  user_departments?: Record<string, { departments: string[] } | string[]>;
+  pdf_url?: string;
 }
 
 export default function WecomTest() {
@@ -216,6 +219,49 @@ export default function WecomTest() {
       await fetchMessages();
     } catch (err: any) {
       setError(err.message || '驳回失败');
+    }
+  };
+
+  const handleGeneratePDF = async (id: string) => {
+    try {
+      await api.post(`/wecom/test-messages/${id}/generate-pdf`);
+      setSuccess('PDF生成成功');
+      await fetchMessages();
+    } catch (err: any) {
+      setError(err.message || 'PDF生成失败');
+    }
+  };
+
+  const handleDownloadPDF = async (id: string) => {
+    try {
+      const token = localStorage.getItem('auth-session');
+      let authToken = '';
+      if (token) {
+        const data = JSON.parse(token);
+        authToken = data?.state?.user?.token || '';
+      }
+      
+      const response = await fetch(`${api.getBaseUrl()}/wecom/test-messages/${id}/pdf`, {
+        headers: {
+          'Authorization': authToken ? `Bearer ${authToken}` : '',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('下载失败');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `采购确认单_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message || '下载失败');
     }
   };
 
@@ -465,10 +511,34 @@ export default function WecomTest() {
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5">
                         ¥{Number(msg.total_amount || 0).toFixed(2)} · {msg.departments?.length || 0}个部门 · {msg.purchase_items?.length || 0}项
+                        {msg.user_departments && Object.keys(msg.user_departments).length > 0 && (
+                          <span className="ml-2 text-primary-500">
+                            · {Object.values(msg.user_confirmations || {}).filter((c: any) => c?.confirmed).length}/{Object.keys(msg.user_departments).length} 已确认
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {msg.pdf_url ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDownloadPDF(msg.id); }}
+                        className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1"
+                        title="下载PDF"
+                      >
+                        <Download size={14} />
+                        下载PDF
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleGeneratePDF(msg.id); }}
+                        className="text-xs text-gray-500 hover:text-green-600 flex items-center gap-1"
+                        title="生成PDF"
+                      >
+                        <FileDown size={14} />
+                        生成PDF
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); openConfirmPage(msg.id); }}
                       className="text-xs text-primary-600 hover:text-primary-700 hover:underline"
@@ -532,6 +602,57 @@ export default function WecomTest() {
                         </button>
                       </div>
                     )}
+
+                    {/* 确认进度 */}
+                    {msg.user_departments && Object.keys(msg.user_departments).length > 0 && (
+                      <div className="bg-primary-50 border border-primary-100 rounded-lg p-2">
+                        <p className="text-xs text-primary-700 font-medium mb-1">确认进度</p>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(msg.user_departments).map(([userid, deptData]) => {
+                            const deptNames = Array.isArray(deptData) ? deptData : (deptData as any).departments || [];
+                            const conf = (msg.user_confirmations || {})[userid];
+                            return (
+                              <div key={userid} className="flex items-center gap-1 text-xs">
+                                {conf?.confirmed ? (
+                                  <CheckCircle2 size={12} className="text-green-500" />
+                                ) : (
+                                  <Clock size={12} className="text-gray-400" />
+                                )}
+                                <span className={conf?.confirmed ? 'text-green-700' : 'text-gray-600'}>{userid}</span>
+                                <span className="text-gray-400">({deptNames.join('、')})</span>
+                                {conf?.confirmed && conf.confirmed_at && (
+                                  <span className="text-gray-400">{conf.confirmed_at.substring(5, 16)}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-1 text-xs text-primary-600">
+                          {Object.values(msg.user_confirmations || {}).filter((c: any) => c?.confirmed).length}/{Object.keys(msg.user_departments).length} 人已确认
+                        </div>
+                      </div>
+                    )}
+
+                    {/* PDF操作 */}
+                    <div className="flex gap-2">
+                      {msg.pdf_url ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownloadPDF(msg.id); }}
+                          className="btn-primary text-xs flex-1 flex items-center justify-center gap-1"
+                        >
+                          <Download size={14} />
+                          下载PDF
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleGeneratePDF(msg.id); }}
+                          className="btn-secondary text-xs flex-1 flex items-center justify-center gap-1"
+                        >
+                          <FileDown size={14} />
+                          生成PDF
+                        </button>
+                      )}
+                    </div>
 
                     <div>
                       <p className="text-xs text-gray-500 mb-1">涉及部门</p>

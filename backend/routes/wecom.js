@@ -2,7 +2,53 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
+const PDFDocument = require('pdfkit');
 const pool = require('../db');
+
+const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
+if (!fs.existsSync(PDF_DIR)) {
+  fs.mkdirSync(PDF_DIR, { recursive: true });
+}
+
+function findChineseFont() {
+  const paths = [
+    path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Regular.otf'),
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Regular.otf'),
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttf',
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.ttf'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p) && !p.endsWith('.ttc')) return p;
+  }
+  return null;
+}
+
+function findChineseBoldFont() {
+  const paths = [
+    path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Bold.otf'),
+    path.join(__dirname, '..', 'node_modules', '@fontpkg', 'source-han-sans-sc', 'SourceHanSansSC-Bold.otf'),
+    '/usr/share/fonts/truetype/wqy/wqy-microhei-bold.ttf',
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSansCJKsc-Bold.ttf'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p) && !p.endsWith('.ttc')) return p;
+  }
+  return null;
+}
+
+function toNum(val) {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val === 'object' && val !== null) {
+    val = val.String || val.string || JSON.stringify(val);
+  }
+  const n = parseFloat(String(val));
+  return isNaN(n) ? 0 : n;
+}
 
 async function getWecomConfig() {
   const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
@@ -618,6 +664,8 @@ router.get('/test-messages', async (req, res) => {
       total_amount: parseFloat(row.total_amount || 0),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments || '[]') : row.departments || [],
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items || '[]') : row.purchase_items || [],
+      user_confirmations: typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : row.user_confirmations || {},
+      user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments || '{}') : row.user_departments || {},
     }));
     res.json(result);
   } catch (err) {
@@ -640,6 +688,8 @@ router.get('/test-messages/:id', async (req, res) => {
       total_amount: parseFloat(row.total_amount || 0),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments || '[]') : row.departments || [],
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items || '[]') : row.purchase_items || [],
+      user_confirmations: typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : row.user_confirmations || {},
+      user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments || '{}') : row.user_departments || {},
     });
   } catch (err) {
     console.error('获取测试消息详情失败:', err);
@@ -916,6 +966,191 @@ router.post('/test-messages/:id/reject', async (req, res) => {
   } catch (err) {
     console.error('驳回测试消息失败:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/test-messages/:id/generate-pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '测试消息不存在' });
+    }
+
+    const row = rows[0];
+    const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
+    const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
+    const userConfirmations = typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : (row.user_confirmations || {});
+
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    const pdfPath = path.join(PDF_DIR, `wecom_test_${id}.pdf`);
+    const writeStream = fs.createWriteStream(pdfPath);
+    doc.pipe(writeStream);
+
+    const chineseFont = findChineseFont();
+    const chineseBoldFont = findChineseBoldFont();
+    const hasChineseFont = !!chineseFont;
+    if (hasChineseFont) {
+      doc.registerFont('Chinese-Regular', chineseFont);
+      doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
+    }
+
+    doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('食材采购确认单', { align: 'center' });
+    doc.moveDown(0.5);
+
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+    let purchaseDateStr = '';
+    if (row.test_date instanceof Date) {
+      const d = row.test_date;
+      purchaseDateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+    } else if (typeof row.test_date === 'string') {
+      purchaseDateStr = row.test_date.substring(0, 10);
+    }
+    const statusLabel = row.status === 'confirmed' ? '已确认' : row.status === 'completed' ? '已完成' : row.status;
+    doc.text(`采购日期：${purchaseDateStr}    总金额：¥${toNum(row.total_amount).toFixed(2)}    状态：${statusLabel}`);
+    doc.moveDown(0.5);
+
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const tableX = doc.page.margins.left;
+    const tableWidth = pageWidth;
+
+    const groupedItems = {};
+    for (const item of purchaseItems) {
+      const deptName = item.department_name || '未分类';
+      if (!groupedItems[deptName]) groupedItems[deptName] = [];
+      groupedItems[deptName].push(item);
+    }
+
+    const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
+    const colWidths = [tableWidth * 0.32, tableWidth * 0.20, tableWidth * 0.12, tableWidth * 0.10, tableWidth * 0.26];
+    const fixedRowHeight = 11;
+    const signatureHeight = 28;
+
+    function checkPageBreak(y, extraHeight = 0) {
+      const pageBottom = doc.page.height - doc.page.margins.bottom;
+      if (y + extraHeight > pageBottom) {
+        doc.addPage();
+        return doc.page.margins.top;
+      }
+      return y;
+    }
+
+    function drawTableRow(y, cells, isHeader = false) {
+      const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
+      const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
+      doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
+      const lineHeight = doc.currentLineHeight();
+      let x = tableX;
+      for (let i = 0; i < cells.length; i++) {
+        const text = String(cells[i]);
+        const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
+        const textY = y + (fixedRowHeight - lineHeight) / 2;
+        doc.text(text, x + 2, textY, { width: colWidths[i] - 4, align });
+        x += colWidths[i];
+      }
+      return fixedRowHeight;
+    }
+
+    function drawDepartmentSignature(y, dept) {
+      const sigTop = y;
+      const sigWidth = tableWidth;
+
+      doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+      const deptConf = Object.entries(userConfirmations).find(([, conf]) => 
+        conf.departments && conf.departments.includes(dept.name)
+      );
+      if (deptConf) {
+        const infoText = `确认人：${deptConf[1].confirmed_by || '-'}    确认时间：${deptConf[1].confirmed_at || '-'}`;
+        doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
+      } else {
+        doc.text('状态：待确认', tableX + 2, sigTop + 8);
+      }
+
+      return signatureHeight;
+    }
+
+    let currentY = doc.y;
+
+    doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
+    doc.moveDown(0.3);
+    currentY = doc.y;
+
+    currentY += drawTableRow(currentY, headers, true);
+    doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
+
+    doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+    let grandTotal = 0;
+
+    for (const [deptName, items] of Object.entries(groupedItems)) {
+      const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + signatureHeight + 15;
+      currentY = checkPageBreak(currentY, deptNeededHeight);
+
+      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, tableX, currentY + 1);
+      currentY += fixedRowHeight;
+
+      doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7);
+      let subtotal = 0;
+      for (const item of items) {
+        const cells = [
+          item.ingredient_name,
+          `${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`,
+          String(item.purchase_quantity),
+          item.purchase_unit,
+          `¥${toNum(item.amount).toFixed(2)}`
+        ];
+        currentY += drawTableRow(currentY, cells);
+        subtotal += toNum(item.amount);
+      }
+      grandTotal += subtotal;
+
+      doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY, { width: tableWidth, align: 'right' });
+      currentY += 10;
+
+      doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+
+      const dept = departments.find(d => d.name === deptName);
+      currentY += drawDepartmentSignature(currentY, dept || { name: deptName, confirmed: false });
+      currentY += 15;
+    }
+
+    if (Object.keys(groupedItems).length === 0) {
+      doc.fontSize(10).text('暂无采购明细', { align: 'center' });
+    }
+
+    doc.moveDown(0.5);
+    doc.fontSize(11).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`合计金额：¥${grandTotal.toFixed(2)}`, { align: 'right' });
+
+    doc.end();
+
+    await new Promise((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    const pdfUrl = `/api/wecom/test-messages/${id}/pdf`;
+    await pool.query('UPDATE wecom_test_messages SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+
+    res.json({ success: true, pdf_url: pdfUrl });
+  } catch (err) {
+    console.error('测试消息PDF生成失败:', err);
+    res.status(500).json({ error: err.message || 'PDF生成失败' });
+  }
+});
+
+router.get('/test-messages/:id/pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pdfPath = path.join(PDF_DIR, `wecom_test_${id}.pdf`);
+
+    if (!fs.existsSync(pdfPath)) {
+      return res.status(404).json({ error: 'PDF文件不存在' });
+    }
+
+    res.download(pdfPath, `采购确认单_${id}.pdf`);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '下载失败' });
   }
 });
 
