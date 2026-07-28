@@ -770,7 +770,7 @@ router.post('/test-send-confirmation', async (req, res) => {
           const userTaskId = `${id}_${userid}`;
 
           const sendResult = await sendTemplateCardToUser(config, userid, {
-            card_type: 'text_notice',
+            card_type: 'button_interaction',
             source: {
               desc: '食材采购管理系统',
             },
@@ -780,13 +780,6 @@ router.post('/test-send-confirmation', async (req, res) => {
             },
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
-            // action_menu 让 text_notice 类型能返回 response_code，用于后续更新卡片
-            action_menu: {
-              desc: '操作菜单',
-              action_list: [
-                { text: '已查看', key: `viewed_${userTaskId}` }
-              ]
-            },
             button_list: [
               { 
                 text: '去确认', 
@@ -795,6 +788,10 @@ router.post('/test-send-confirmation', async (req, res) => {
                 url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
               }
             ],
+            card_action: {
+              type: 1,
+              url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
+            },
           });
 
           // 保存 response_code（用于后续更新卡片）
