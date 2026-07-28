@@ -444,13 +444,25 @@ export default function ReimbursementManager() {
                       </div>
                     )}
 
+                    {/* 涉及部门 */}
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">涉及部门</p>
+                      <div className="flex flex-wrap gap-1">
+                        {c.departments?.map((d: any) => (
+                          <span key={d.id} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+                            {d.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
                     {/* 采购明细 */}
                     {c.purchase_items && c.purchase_items.length > 0 && (
                       <div>
                         <p className="text-xs text-gray-500 mb-1">采购明细</p>
-                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                        <div className="bg-gray-50 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
                           <table className="w-full text-xs">
-                            <thead className="bg-gray-100 text-gray-600">
+                            <thead className="bg-gray-100 text-gray-600 sticky top-0">
                               <tr>
                                 <th className="px-3 py-2 text-left">食材</th>
                                 <th className="px-3 py-2 text-left">部门</th>
