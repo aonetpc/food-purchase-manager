@@ -167,11 +167,12 @@ async function updateTemplateCardButton(config, userid, responseCode, replaceNam
 }
 
 // 更新模板卡片消息（用户点击按钮后更新卡片状态）
-async function updateTemplateCard(config, userid, cardType, taskId, { main_title, sub_title_text,
-  horizontal_content_list, button_list, button_selection, replace_original }) {
+// 入参 identifier: response_code（从发送时返回的或回调中拿到的）
+async function updateTemplateCard(config, userid, cardType, identifier, { main_title, sub_title_text,
+  horizontal_content_list, button_list, button_selection, replace_original, use_response_code }) {
   const accessToken = await getAccessToken(config);
   const card = {
-    card_type: cardType || 'button_interaction',
+    card_type: cardType || 'text_notice',
   };
   if (main_title) card.main_title = main_title;
   if (sub_title_text) card.sub_title_text = sub_title_text;
@@ -179,22 +180,20 @@ async function updateTemplateCard(config, userid, cardType, taskId, { main_title
   if (button_list && button_list.length > 0) card.button_list = button_list;
   if (button_selection) card.button_selection = button_selection;
 
-  // text_notice类型必须有card_action字段，且type只能是1或2
-  if (cardType === 'text_notice') {
-    card.card_action = {
-      type: 1,  // 1: 跳转url
-      url: 'https://work.weixin.qq.com'  // 必填
-    };
-  }
-
   const body = {
     userids: [userid],
     agentid: Number(config.agent_id),
-    task_id: taskId,
     template_card: card,
   };
 
-  console.log(`[更新模板卡片] taskId=${taskId}, userid=${userid}`);
+  // 默认使用 response_code（text_notice 类型必须用 response_code）
+  if (use_response_code === false) {
+    body.task_id = identifier;
+    console.log(`[更新模板卡片] task_id=${identifier}, userid=${userid}`);
+  } else {
+    body.response_code = identifier;
+    console.log(`[更新模板卡片] response_code=${identifier}, userid=${userid}`);
+  }
 
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/update_template_card?access_token=${accessToken}`, {
     method: 'POST',
@@ -733,6 +732,7 @@ router.post('/test-send-confirmation', async (req, res) => {
     // 发送个人消息到各部门确认人（只发送TA负责部门的内容）
     const sentToUsers = [];
     const failedUsers = [];
+    const sentResponseCodes = []; // 保存每个用户发送后的 response_code
     // userDeptMap: 每个用户负责的部门和明细
     const userDeptMap = {};
     if (config && config.corp_id && config.app_secret && config.agent_id) {
@@ -768,7 +768,7 @@ router.post('/test-send-confirmation', async (req, res) => {
 
           const userTaskId = `${id}_${userid}`;
 
-          await sendTemplateCardToUser(config, userid, {
+          const sendResult = await sendTemplateCardToUser(config, userid, {
             card_type: 'text_notice',
             source: {
               desc: '食材采购管理系统',
@@ -779,6 +779,13 @@ router.post('/test-send-confirmation', async (req, res) => {
             },
             sub_title_text: subTitle,
             horizontal_content_list: horizontalContentList,
+            // action_menu 让 text_notice 类型能返回 response_code，用于后续更新卡片
+            action_menu: {
+              desc: '操作菜单',
+              action_list: [
+                { text: '已查看', key: `viewed_${userTaskId}` }
+              ]
+            },
             button_list: [
               { 
                 text: '去确认', 
@@ -787,12 +794,10 @@ router.post('/test-send-confirmation', async (req, res) => {
                 url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
               }
             ],
-            task_id: userTaskId,
-            card_action: {
-              type: 1,
-              url: `https://food.hywellness.com/wecom-confirm?id=${id}&user=${userid}`
-            },
           });
+
+          // 保存 response_code（用于后续更新卡片）
+          sentResponseCodes.push({ userid, responseCode: sendResult.response_code });
 
           sentToUsers.push({ userid, departments: userDeptNames, total: userTotal });
         } catch (sendErr) {
@@ -802,13 +807,13 @@ router.post('/test-send-confirmation', async (req, res) => {
       }
     }
 
-    // 构造 user_departments 映射（用于后续确认页面判断该用户负责哪些部门，包含 task_id 用于更新卡片）
+    // 构造 user_departments 映射（用于后续确认页面判断该用户负责哪些部门，包含 response_code 用于更新卡片）
     const userDepartmentsMap = {};
     for (const [userid, data] of Object.entries(userDeptMap)) {
-      const userTaskId = `${id}_${userid}`;
+      const sentItem = sentResponseCodes.find(s => s.userid === userid);
       userDepartmentsMap[userid] = {
         departments: Array.from(data.depts),
-        task_id: userTaskId,
+        response_code: sentItem ? sentItem.responseCode : null,
       };
     }
 
@@ -930,6 +935,7 @@ router.get('/confirm-page', async (req, res) => {
     const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments)) 
       ? userDeptData.departments 
       : (Array.isArray(userDeptData) ? userDeptData : []);
+    const responseCode = (userDeptData && userDeptData.response_code) || null;
     if (myDeptNames.length === 0) {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
@@ -990,12 +996,12 @@ router.post('/confirm-submit', async (req, res) => {
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
-    // 兼容新旧格式获取部门列表和 task_id
+    // 兼容新旧格式获取部门列表和 response_code
     const userDeptData = userDepartments[user];
     const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments)) 
       ? userDeptData.departments 
       : (Array.isArray(userDeptData) ? userDeptData : []);
-    const taskId = (userDeptData && userDeptData.task_id) || `${id}_${user}`;
+    const responseCode = (userDeptData && userDeptData.response_code) || null;
     if (myDeptNames.length === 0) {
       return res.status(403).json({ error: '您不是本确认单的指定确认人' });
     }
@@ -1046,26 +1052,31 @@ router.post('/confirm-submit', async (req, res) => {
     try {
       const config = await getWecomConfig();
       if (config && config.corp_id && config.app_secret && config.agent_id) {
-        try {
-          await updateTemplateCard(config, user, 'text_notice', taskId, {
-            main_title: {
-              title: '✅ 已确认',
-              desc: `确认人：${name || user}　时间：${now}`,
-            },
-            sub_title_text: `采购日期：${row.test_date}\n您负责的部门：${myDeptNames.join('、')}`,
-            horizontal_content_list: [
-              { keyname: '总金额', value: `¥${Number(row.total_amount || 0).toFixed(2)}` },
-              { keyname: '部门数', value: `${myDeptNames.length}个` },
-            ],
-            button_list: [
-              { text: '已确认', style: 0, key: `confirmed_${taskId}` },
-            ],
-          });
-          cardUpdated = true;
-          console.log(`[确认提交] 卡片更新成功，taskId=${taskId}`);
-        } catch (updateErr) {
-          console.error('更新模板卡片失败:', updateErr.message);
-          cardError = updateErr.message;
+        if (!responseCode) {
+          cardError = '该用户没有 response_code（卡片可能已更新或发送时未返回），跳过更新';
+          console.warn(`[确认提交] ${cardError}，user=${user}`);
+        } else {
+          try {
+            await updateTemplateCard(config, user, 'text_notice', responseCode, {
+              main_title: {
+                title: '✅ 已确认',
+                desc: `确认人：${name || user}　时间：${now}`,
+              },
+              sub_title_text: `采购日期：${row.test_date}\n您负责的部门：${myDeptNames.join('、')}`,
+              horizontal_content_list: [
+                { keyname: '总金额', value: `¥${Number(row.total_amount || 0).toFixed(2)}` },
+                { keyname: '部门数', value: `${myDeptNames.length}个` },
+              ],
+              button_list: [
+                { text: '已确认', style: 0, key: `confirmed_${responseCode}` },
+              ],
+            });
+            cardUpdated = true;
+            console.log(`[确认提交] 卡片更新成功，user=${user}`);
+          } catch (updateErr) {
+            console.error('更新模板卡片失败:', updateErr.message);
+            cardError = updateErr.message;
+          }
         }
       }
     } catch (cfgErr) {
