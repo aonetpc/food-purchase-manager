@@ -533,15 +533,7 @@ export default function ReimbursementManager() {
                           发起报销
                         </button>
                       )}
-                      {(c.status === 'pending' || c.status === 'confirmed') && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleResetConfirmations(c.id); }}
-                          className="btn-secondary text-xs flex items-center gap-1 text-orange-500 hover:bg-orange-50"
-                        >
-                          <RefreshCw size={14} />
-                          重置确认
-                        </button>
-                      )}
+                      {/* 重置确认按钮已隐藏：新流程 user_confirmations 与旧流程逻辑不同，重置功能暂不可用 */}
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }}
                         className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto"

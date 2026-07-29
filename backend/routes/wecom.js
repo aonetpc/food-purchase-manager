@@ -1533,7 +1533,7 @@ router.post('/confirm-submit', async (req, res) => {
                 }
               }
               paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
-              contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
+              contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: paymentLabel, value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
             }
             if (fieldMapping.details) {
               let detailText = '';
