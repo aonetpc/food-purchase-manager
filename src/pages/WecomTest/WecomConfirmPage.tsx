@@ -58,6 +58,8 @@ interface SubmitResult {
   };
   card_updated: boolean;
   card_error: string;
+  pdf_url?: string;
+  pdf_error?: string;
 }
 
 // 手写签名画布
@@ -351,6 +353,22 @@ export default function WecomConfirmPage() {
             {!submitResult.card_updated && submitResult.card_error && (
               <div className="mt-1 text-xs text-yellow-600">
                 提醒消息发送失败：{submitResult.card_error}（不影响确认结果）
+              </div>
+            )}
+            {submitResult.progress.all_confirmed && submitResult.pdf_url && (
+              <div className="mt-2 pt-2 border-t border-green-100">
+                <a
+                  href={submitResult.pdf_url}
+                  download
+                  className="inline-flex items-center gap-1 text-xs text-green-700 hover:text-green-800 font-medium"
+                >
+                  <span>📄</span> 下载自动生成的采购确认单PDF
+                </a>
+              </div>
+            )}
+            {submitResult.progress.all_confirmed && submitResult.pdf_error && (
+              <div className="mt-1 text-xs text-red-600">
+                PDF自动生成失败：{submitResult.pdf_error}
               </div>
             )}
           </div>

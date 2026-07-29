@@ -59,6 +59,7 @@ async function generateConfirmationPDF(confirmationId) {
   const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
   const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
   const signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
+  const userConfirmations = typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : (row.user_confirmations || {});
 
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
   const pdfPath = path.join(PDF_DIR, `${confirmationId}.pdf`);
@@ -132,17 +133,38 @@ async function generateConfirmationPDF(confirmationId) {
     return fixedRowHeight;
   }
 
-  function drawDepartmentSignature(y, dept) {
+  function drawDepartmentSignature(y, deptName) {
     const sigTop = y;
     const sigWidth = tableWidth;
 
-    // 确认信息行
     doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-    if (dept.confirmed) {
+
+    // 新流程：从 user_confirmations 中查找负责该部门且已确认的用户
+    const confirmedUser = Object.entries(userConfirmations).find(([, conf]) =>
+      conf && conf.confirmed && Array.isArray(conf.departments) && conf.departments.includes(deptName)
+    );
+
+    if (confirmedUser) {
+      const conf = confirmedUser[1];
+      const infoText = `确认人：${conf.confirmed_by || '-'}    确认时间：${conf.confirmed_at || '-'}`;
+      doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
+
+      if (conf.signature_data) {
+        try {
+          const base64Data = conf.signature_data.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          doc.image(buffer, tableX + 2, sigTop + 12, { width: sigWidth - 4, height: signatureHeight - 14, fit: [sigWidth - 4, signatureHeight - 14] });
+        } catch (e) {}
+      }
+      return signatureHeight;
+    }
+
+    // 兼容旧流程：从 departments 数组和 confirmed_signatures 中读取
+    const dept = Array.isArray(departments) && departments.find(d => d && d.name === deptName);
+    if (dept && dept.confirmed) {
       const infoText = `确认人：${dept.confirmed_by || '-'}    确认时间：${dept.confirmed_at || '-'}`;
       doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
 
-      // 兼容字符串和数字类型的部门ID
       const sigData = signatures[String(dept.id)] || signatures[dept.id];
       if (sigData && sigData.data) {
         try {
@@ -201,14 +223,10 @@ async function generateConfirmationPDF(confirmationId) {
     currentY += 10;
 
     // 部门签字区
-    const dept = departments.find(d => d.name === deptName);
-    if (dept) {
-      // 签字区背景框
-      doc.save();
-      doc.rect(tableX, currentY, tableWidth, signatureHeight).stroke('#cccccc');
-      doc.restore();
-      currentY += drawDepartmentSignature(currentY, dept);
-    }
+    doc.save();
+    doc.rect(tableX, currentY, tableWidth, signatureHeight).stroke('#cccccc');
+    doc.restore();
+    currentY += drawDepartmentSignature(currentY, deptName);
 
     // 部门之间分隔
     currentY += 15;

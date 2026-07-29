@@ -1411,20 +1411,28 @@ router.post('/confirm-submit', async (req, res) => {
     const totalUsers = Object.keys(userDepartments).length;
     const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
     const allConfirmed = confirmedUsers === totalUsers;
+    console.log(`[确认提交] 确认进度统计，id=${id}, totalUsers=${totalUsers}, confirmedUsers=${confirmedUsers}, allConfirmed=${allConfirmed}`);
+
+    let generatedPdfUrl = null;
+    let pdfError = null;
 
     if (allConfirmed) {
       await pool.query(
         `UPDATE ${tableName} SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE id = ?`,
         [realName, now, id]
       );
+      console.log(`[确认提交] 全部确认，已将 ${tableName} 状态更新为 confirmed，id=${id}`);
 
       if (tableName === 'purchase_confirmations') {
         try {
+          console.log(`[确认提交] 开始自动生成PDF，id=${id}`);
           const pdfPath = await generatePDF(id);
-          const pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
-          await pool.query('UPDATE purchase_confirmations SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+          generatedPdfUrl = `/api/purchase-confirmations/${id}/pdf`;
+          await pool.query('UPDATE purchase_confirmations SET pdf_url = ? WHERE id = ?', [generatedPdfUrl, id]);
+          console.log(`[确认提交] PDF自动生成成功，id=${id}, path=${pdfPath}, url=${generatedPdfUrl}`);
         } catch (pdfErr) {
-          console.error('PDF生成失败:', pdfErr);
+          pdfError = pdfErr && pdfErr.message ? pdfErr.message : String(pdfErr);
+          console.error(`[确认提交] PDF自动生成失败，id=${id}:`, pdfError);
         }
 
         const config = await getWecomConfig();
@@ -1578,11 +1586,24 @@ router.post('/confirm-submit', async (req, res) => {
               ]
             };
 
+            console.log(`[确认提交] 开始发起报销审批，id=${id}`);
             const spNo = await submitApproval(config, applyData);
-            await pool.query('UPDATE purchase_confirmations SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?', ['pending', spNo, 'reimbursing', id]);
+            await pool.query(
+              'UPDATE purchase_confirmations SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ?, reimbursement_error = NULL WHERE id = ?',
+              ['pending', spNo, 'reimbursing', id]
+            );
             console.log(`[确认提交] 报销审批已发起，sp_no=${spNo}`);
           } catch (approvalErr) {
-            console.error('自动发起报销失败:', approvalErr);
+            const errMsg = approvalErr && approvalErr.message ? approvalErr.message : String(approvalErr);
+            console.error('[确认提交] 自动发起报销失败:', errMsg);
+            try {
+              await pool.query(
+                'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ?, reimbursement_error = ? WHERE id = ?',
+                ['pending', 'confirmed', errMsg, id]
+              );
+            } catch (saveErr) {
+              console.error('[确认提交] 保存报销错误信息失败:', saveErr.message);
+            }
           }
         }
       } else {
@@ -1746,11 +1767,12 @@ router.post('/confirm-submit', async (req, res) => {
             writeStream.on('error', reject);
           });
 
-          const pdfUrl = `/api/wecom/test-messages/${id}/pdf`;
-          await pool.query('UPDATE wecom_test_messages SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
-          console.log(`[确认提交] PDF自动生成成功，id=${id}`);
+          generatedPdfUrl = `/api/wecom/test-messages/${id}/pdf`;
+          await pool.query('UPDATE wecom_test_messages SET pdf_url = ? WHERE id = ?', [generatedPdfUrl, id]);
+          console.log(`[确认提交] PDF自动生成成功，id=${id}, url=${generatedPdfUrl}`);
         } catch (pdfErr) {
-          console.error(`[确认提交] PDF自动生成失败，id=${id}:`, pdfErr.message);
+          pdfError = pdfErr && pdfErr.message ? pdfErr.message : String(pdfErr);
+          console.error(`[确认提交] PDF自动生成失败，id=${id}:`, pdfError);
         }
       }
     }
@@ -1767,6 +1789,8 @@ router.post('/confirm-submit', async (req, res) => {
       },
       card_updated: cardUpdated,
       card_error: cardError,
+      pdf_url: generatedPdfUrl,
+      pdf_error: pdfError,
     });
   } catch (err) {
     console.error('提交确认失败:', err);
