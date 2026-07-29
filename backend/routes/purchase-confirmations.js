@@ -188,7 +188,7 @@ router.post('/', async (req, res) => {
     mdContent += `---\n\n`;
 
     // 获取确认人姓名用于显示
-    let mentionText = '📢 请以下人员尽快确认：';
+    let mentionText = '📢 请相关人员核对清单并确认入库：';
     for (const userid of mentionedUsers) {
       const name = await getWecomUserName(userid);
       mentionText += ` @${name}`;

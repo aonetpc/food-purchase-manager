@@ -1305,7 +1305,7 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
 
     mdContent += `---\n\n`;
     if (mentionedUsers.length > 0) {
-      mdContent += `📢 **请以下人员尽快确认**：`;
+      mdContent += `📢 **请相关人员核对清单并确认入库**：`;
       for (const userid of mentionedUsers) {
         mdContent += ` @${userid}`;
       }
