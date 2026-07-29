@@ -1090,8 +1090,8 @@ router.post('/test-messages/:id/generate-pdf', async (req, res) => {
       const sigWidth = tableWidth;
 
       doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-      const deptConf = Object.entries(userConfirmations).find(([, conf]) => 
-        conf.departments && conf.departments.includes(deptName)
+      const deptConf = Object.entries(userConfirmations).find(([, conf]) =>
+        conf && conf.confirmed && conf.departments && Array.isArray(conf.departments) && conf.departments.includes(deptName)
       );
       if (deptConf) {
         const infoText = `确认人：${deptConf[1].confirmed_by || '-'}    确认时间：${deptConf[1].confirmed_at || '-'}`;
@@ -1227,17 +1227,18 @@ router.get('/confirm-page', async (req, res) => {
     }
 
     let row = null;
-    let tableName = 'wecom_test_messages';
+    let tableName = 'purchase_confirmations';
 
-    const [testRows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
-    if (testRows.length > 0) {
-      row = testRows[0];
-      tableName = 'wecom_test_messages';
+    // 生产环境优先查询 purchase_confirmations 表
+    const [confRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (confRows.length > 0) {
+      row = confRows[0];
+      tableName = 'purchase_confirmations';
     } else {
-      const [confRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
-      if (confRows.length > 0) {
-        row = confRows[0];
-        tableName = 'purchase_confirmations';
+      const [testRows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+      if (testRows.length > 0) {
+        row = testRows[0];
+        tableName = 'wecom_test_messages';
       }
     }
 
@@ -1309,17 +1310,18 @@ router.post('/confirm-submit', async (req, res) => {
     }
 
     let row = null;
-    let tableName = 'wecom_test_messages';
+    let tableName = 'purchase_confirmations';
 
-    const [testRows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
-    if (testRows.length > 0) {
-      row = testRows[0];
-      tableName = 'wecom_test_messages';
+    // 生产环境优先查询 purchase_confirmations 表
+    const [confRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (confRows.length > 0) {
+      row = confRows[0];
+      tableName = 'purchase_confirmations';
     } else {
-      const [confRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
-      if (confRows.length > 0) {
-        row = confRows[0];
-        tableName = 'purchase_confirmations';
+      const [testRows] = await pool.query('SELECT * FROM wecom_test_messages WHERE id = ?', [id]);
+      if (testRows.length > 0) {
+        row = testRows[0];
+        tableName = 'wecom_test_messages';
       }
     }
 
@@ -1486,6 +1488,7 @@ router.post('/confirm-submit', async (req, res) => {
 
             const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
             const contents = [];
+            let paymentLabel = '转账';
             if (fieldMapping.date) {
               let purchaseDate;
               if (row.purchase_date instanceof Date) {
@@ -1529,10 +1532,8 @@ router.post('/confirm-submit', async (req, res) => {
                   paymentOptions = config.payment_options;
                 }
               }
-              const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
+              paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
               contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
-            } else {
-              paymentLabel = '转账';
             }
             if (fieldMapping.details) {
               let detailText = '';
@@ -1687,8 +1688,8 @@ router.post('/confirm-submit', async (req, res) => {
             const sigWidth = tableWidth;
 
             doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-            const deptConf = Object.entries(userConfirmations).find(([, conf]) => 
-              conf.departments && conf.departments.includes(deptName)
+            const deptConf = Object.entries(userConfirmations).find(([, conf]) =>
+              conf && conf.confirmed && conf.departments && Array.isArray(conf.departments) && conf.departments.includes(deptName)
             );
             if (deptConf) {
               const infoText = `确认人：${deptConf[1].confirmed_by || '-'}    确认时间：${deptConf[1].confirmed_at || '-'}`;

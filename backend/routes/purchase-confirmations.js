@@ -3,8 +3,8 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
-const PDFDocument = require('pdfkit');
 const pool = require('../db');
+const { generateConfirmationPDF } = require('../utils/pdf');
 const { getWecomConfig, sendWecomMessage, sendMarkdownViaWebhook, sendTextViaWebhook, submitApproval, getApprovalDetail, uploadMedia, sendTemplateCardToUser, updateTemplateCardButton, getWecomUserName } = require('./wecom');
 
 // PDF存储目录
@@ -83,6 +83,8 @@ router.get('/', async (req, res) => {
       total_amount: toNum(row.total_amount),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
+      user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments || '{}') : (row.user_departments || {}),
+      user_confirmations: typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : (row.user_confirmations || {}),
     })));
   } catch (err) {
     console.error(err);
@@ -461,6 +463,7 @@ router.post('/:id/confirm', async (req, res) => {
           if (fieldMapping.bank_account && config.bank_account) {
             contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
           }
+          let paymentLabel = '转账';
           if (fieldMapping.payment_method && config.default_payment_key) {
             let paymentOptions = {};
             if (config.payment_options) {
@@ -470,10 +473,8 @@ router.post('/:id/confirm', async (req, res) => {
                 paymentOptions = config.payment_options;
               }
             }
-            const paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
+            paymentLabel = String(paymentOptions[config.default_payment_key] || config.default_payment_key);
             contents.push({ control: getControlType('payment_method', 'Selector'), id: fieldMapping.payment_method, value: { selector: { type: 'single', options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } } });
-          } else {
-            paymentLabel = '转账';
           }
           if (fieldMapping.details) {
             let detailText = '';
@@ -905,186 +906,6 @@ router.post('/:id/resubmit', async (req, res) => {
   }
 });
 
-// 生成PDF确认单
-async function generateConfirmationPDF(confirmationId) {
-  const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [confirmationId]);
-  if (rows.length === 0) throw new Error('确认单不存在');
-
-  const row = rows[0];
-  const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
-  const purchaseItems = typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items;
-  const signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
-
-  const doc = new PDFDocument({ size: 'A4', margin: 40 });
-  const pdfPath = path.join(PDF_DIR, `${confirmationId}.pdf`);
-  const writeStream = fs.createWriteStream(pdfPath);
-  doc.pipe(writeStream);
-
-  const chineseFont = findChineseFont();
-  const chineseBoldFont = findChineseBoldFont();
-  const hasChineseFont = !!chineseFont;
-  if (hasChineseFont) {
-    doc.registerFont('Chinese-Regular', chineseFont);
-    doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
-  }
-
-  doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('食材采购确认单', { align: 'center' });
-  doc.moveDown(0.5);
-
-  doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-  let purchaseDateStr = '';
-  if (row.purchase_date instanceof Date) {
-    const d = row.purchase_date;
-    purchaseDateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-  } else if (typeof row.purchase_date === 'string') {
-    purchaseDateStr = row.purchase_date.substring(0, 10);
-  } else {
-    purchaseDateStr = String(row.purchase_date).substring(0, 10);
-  }
-  const statusLabel = row.status === 'confirmed' ? '已确认' : row.status === 'completed' ? '已完成' : row.status;
-  doc.text(`采购日期：${purchaseDateStr}    总金额：¥${toNum(row.total_amount).toFixed(2)}    状态：${statusLabel}`);
-  doc.moveDown(0.5);
-
-  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const tableX = doc.page.margins.left;
-  const tableWidth = pageWidth;
-
-  // 按部门分组
-  const groupedItems = {};
-  for (const item of purchaseItems) {
-    const deptName = item.department_name || '未分类';
-    if (!groupedItems[deptName]) groupedItems[deptName] = [];
-    groupedItems[deptName].push(item);
-  }
-
-  const headers = ['食材名称', '单价/单位', '数量', '单位', '金额'];
-  const colWidths = [tableWidth * 0.32, tableWidth * 0.20, tableWidth * 0.12, tableWidth * 0.10, tableWidth * 0.26];
-  const fixedRowHeight = 11;
-  const signatureHeight = 28;
-
-  function checkPageBreak(y, extraHeight = 0) {
-    const pageBottom = doc.page.height - doc.page.margins.bottom;
-    if (y + extraHeight > pageBottom) {
-      doc.addPage();
-      return doc.page.margins.top;
-    }
-    return y;
-  }
-
-  function drawTableRow(y, cells, isHeader = false) {
-    const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
-    const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
-    doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
-    const lineHeight = doc.currentLineHeight();
-    let x = tableX;
-    for (let i = 0; i < cells.length; i++) {
-      const text = String(cells[i]);
-      const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
-      const textY = y + (fixedRowHeight - lineHeight) / 2;
-      doc.text(text, x + 2, textY, { width: colWidths[i] - 4, align });
-      x += colWidths[i];
-    }
-    return fixedRowHeight;
-  }
-
-  function drawDepartmentSignature(y, dept) {
-    const sigTop = y;
-    const sigWidth = tableWidth;
-
-    // 确认信息行
-    doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-    if (dept.confirmed) {
-      const infoText = `确认人：${dept.confirmed_by || '-'}    确认时间：${dept.confirmed_at || '-'}`;
-      doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
-
-      // 兼容字符串和数字类型的部门ID
-      const sigData = signatures[String(dept.id)] || signatures[dept.id];
-      if (sigData && sigData.data) {
-        try {
-          const base64Data = sigData.data.replace(/^data:image\/\w+;base64,/, '');
-          const buffer = Buffer.from(base64Data, 'base64');
-          doc.image(buffer, tableX + 2, sigTop + 12, { width: sigWidth - 4, height: signatureHeight - 14, fit: [sigWidth - 4, signatureHeight - 14] });
-        } catch (e) {}
-      }
-    } else {
-      doc.text('状态：待确认', tableX + 2, sigTop + 8);
-    }
-
-    return signatureHeight;
-  }
-
-  let currentY = doc.y;
-
-  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
-  doc.moveDown(0.3);
-  currentY = doc.y;
-
-  // 表头
-  currentY += drawTableRow(currentY, headers, true);
-  doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
-
-  doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-  let grandTotal = 0;
-
-  for (const [deptName, items] of Object.entries(groupedItems)) {
-    // 估算当前部门所需高度（标题行 + 物品行 + 小计行 + 签字区 + 间距）
-    const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + signatureHeight + 15;
-    currentY = checkPageBreak(currentY, deptNeededHeight);
-
-    // 部门标题
-    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, tableX, currentY + 1);
-    currentY += fixedRowHeight;
-
-    // 部门物品明细
-    doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7);
-    let subtotal = 0;
-    for (const item of items) {
-      const cells = [
-        item.ingredient_name,
-        `${toNum(item.purchase_unit_price).toFixed(2)}/${item.purchase_unit}`,
-        String(item.purchase_quantity),
-        item.purchase_unit,
-        `¥${toNum(item.amount).toFixed(2)}`
-      ];
-      currentY += drawTableRow(currentY, cells);
-      subtotal += toNum(item.amount);
-    }
-    grandTotal += subtotal;
-
-    // 部门小计
-    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY, { width: tableWidth, align: 'right' });
-    currentY += 10;
-
-    // 部门签字区
-    const dept = departments.find(d => d.name === deptName);
-    if (dept) {
-      // 签字区背景框
-      doc.save();
-      doc.rect(tableX, currentY, tableWidth, signatureHeight).stroke('#cccccc');
-      doc.restore();
-      currentY += drawDepartmentSignature(currentY, dept);
-    }
-
-    // 部门之间分隔
-    currentY += 15;
-  }
-
-  // 总计
-  currentY = checkPageBreak(currentY, 30);
-  doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
-  doc.fontSize(9).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`总计：¥${grandTotal.toFixed(2)}`, tableX, currentY + 3, { width: tableWidth, align: 'right' });
-
-  doc.moveDown(0.5);
-  doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
-
-  doc.end();
-
-  return new Promise((resolve, reject) => {
-    writeStream.on('finish', () => resolve(pdfPath));
-    writeStream.on('error', reject);
-  });
-}
-
 // 手动生成PDF（可随时重新生成，自动补全缺失签名）
 router.post('/:id/generate-pdf', async (req, res) => {
   try {
@@ -1098,28 +919,22 @@ router.post('/:id/generate-pdf', async (req, res) => {
     const row = rows[0];
     const departments = typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments;
     let signatures = typeof row.confirmed_signatures === 'string' ? JSON.parse(row.confirmed_signatures || '{}') : (row.confirmed_signatures || {});
+    let userConfirmations = typeof row.user_confirmations === 'string' ? JSON.parse(row.user_confirmations || '{}') : (row.user_confirmations || {});
     let signaturesUpdated = false;
 
     // === 调试信息 ===
-    console.log('\n=== PDF生成调试 ===');
+    console.log('\n=== PDF生成调试（新流程）===');
     console.log('确认单ID:', id);
     console.log('purchase_date:', row.purchase_date);
-    console.log('部门数量:', departments.length);
-    console.log('签名keys:', Object.keys(signatures));
-    console.log('\n部门详情:');
-    departments.forEach(dept => {
-      const strKey = String(dept.id);
-      const hasSigStr = !!signatures[strKey];
-      const hasSigNum = !!signatures[dept.id];
-      console.log(`  ID: ${dept.id} (${typeof dept.id}), 名称: ${dept.name}, 确认人: ${dept.confirmed_by}, 有签名(string): ${hasSigStr}, 有签名(number): ${hasSigNum}`);
-    });
+    console.log('部门数量:', departments ? departments.length : 0);
+    console.log('user_confirmations keys:', Object.keys(userConfirmations));
+    console.log('confirmed_signatures keys:', Object.keys(signatures));
 
     // 自动补全缺失签名：已确认但没有签名数据的部门，从user_signatures表查找
-    for (const dept of departments) {
-      if (dept.confirmed && dept.confirmed_by) {
-        const deptKey = String(dept.id);
-        const existingSig = signatures[deptKey] || signatures[dept.id];
-        if (!existingSig || !existingSig.data) {
+    // 新流程：优先从 user_confirmations 中读取用户
+    for (const [userid, conf] of Object.entries(userConfirmations)) {
+      if (conf && conf.confirmed && conf.confirmed_by) {
+        if (!conf.signature_data) {
           // 通过确认人姓名查找签名（先查users表，再查temp_worker_users表）
           let sigRows = [];
           try {
@@ -1128,7 +943,7 @@ router.post('/:id/generate-pdf', async (req, res) => {
                JOIN users u ON us.user_id = u.id
                WHERE u.name = ? AND us.user_source = 'system'
                ORDER BY us.updated_at DESC LIMIT 1`,
-              [dept.confirmed_by]
+              [conf.confirmed_by]
             );
             if (sigRows.length === 0) {
               [sigRows] = await pool.query(
@@ -1136,29 +951,75 @@ router.post('/:id/generate-pdf', async (req, res) => {
                  JOIN temp_worker_users tw ON us.user_id = tw.id
                  WHERE tw.name = ? AND us.user_source = 'temp'
                  ORDER BY us.updated_at DESC LIMIT 1`,
-                [dept.confirmed_by]
+                [conf.confirmed_by]
+              );
+            }
+            // 也尝试从 wecom userid 查
+            if (sigRows.length === 0) {
+              [sigRows] = await pool.query(
+                `SELECT signature_data FROM user_signatures
+                 WHERE user_id = ? AND user_source = 'wecom'
+                 ORDER BY updated_at DESC LIMIT 1`,
+                [userid]
               );
             }
           } catch (e) {
             // 查找失败忽略
           }
           if (sigRows.length > 0 && sigRows[0].signature_data) {
-            signatures[deptKey] = {
-              name: dept.confirmed_by,
-              data: sigRows[0].signature_data,
-              timestamp: dept.confirmed_at
-            };
+            conf.signature_data = sigRows[0].signature_data;
             signaturesUpdated = true;
           }
         }
       }
     }
 
-    // 如果补全了签名，先更新数据库
+    // 兼容旧流程：从 departments 数组和 confirmed_signatures 中补全
+    if (departments) {
+      for (const dept of departments) {
+        if (dept.confirmed && dept.confirmed_by) {
+          const deptKey = String(dept.id);
+          const existingSig = signatures[deptKey] || signatures[dept.id];
+          if (!existingSig || !existingSig.data) {
+            let sigRows = [];
+            try {
+              [sigRows] = await pool.query(
+                `SELECT us.signature_data FROM user_signatures us
+                 JOIN users u ON us.user_id = u.id
+                 WHERE u.name = ? AND us.user_source = 'system'
+                 ORDER BY us.updated_at DESC LIMIT 1`,
+                [dept.confirmed_by]
+              );
+              if (sigRows.length === 0) {
+                [sigRows] = await pool.query(
+                  `SELECT us.signature_data FROM user_signatures us
+                   JOIN temp_worker_users tw ON us.user_id = tw.id
+                   WHERE tw.name = ? AND us.user_source = 'temp'
+                   ORDER BY us.updated_at DESC LIMIT 1`,
+                  [dept.confirmed_by]
+                );
+              }
+            } catch (e) {
+              // 忽略
+            }
+            if (sigRows.length > 0 && sigRows[0].signature_data) {
+              signatures[deptKey] = {
+                name: dept.confirmed_by,
+                data: sigRows[0].signature_data,
+                timestamp: dept.confirmed_at
+              };
+              signaturesUpdated = true;
+            }
+          }
+        }
+      }
+    }
+
+    // 如果补全了签名/数据，先更新数据库
     if (signaturesUpdated) {
       await pool.query(
-        'UPDATE purchase_confirmations SET confirmed_signatures = ? WHERE id = ?',
-        [JSON.stringify(signatures), id]
+        'UPDATE purchase_confirmations SET user_confirmations = ?, confirmed_signatures = ? WHERE id = ?',
+        [JSON.stringify(userConfirmations), JSON.stringify(signatures), id]
       );
     }
 
