@@ -81,6 +81,7 @@ router.get('/', async (req, res) => {
     res.json(rows.map(row => ({
       ...row,
       total_amount: toNum(row.total_amount),
+      prepay_amount: toNum(row.prepay_amount),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
       user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments || '{}') : (row.user_departments || {}),
@@ -104,6 +105,7 @@ router.get('/:id', async (req, res) => {
     res.json({
       ...row,
       total_amount: toNum(row.total_amount),
+      prepay_amount: toNum(row.prepay_amount),
       departments: typeof row.departments === 'string' ? JSON.parse(row.departments) : row.departments,
       purchase_items: typeof row.purchase_items === 'string' ? JSON.parse(row.purchase_items) : row.purchase_items,
       user_departments: typeof row.user_departments === 'string' ? JSON.parse(row.user_departments) : row.user_departments,
@@ -120,7 +122,7 @@ router.post('/', async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const { purchase_date, total_amount, departments, purchase_items } = req.body;
+    const { purchase_date, total_amount, departments, purchase_items, purchase_type = 'normal', supplier_id = null, supplier_name = null, prepay_amount = 0 } = req.body;
 
     const id = uuidv4();
     const config = await getWecomConfig();
@@ -130,6 +132,17 @@ router.post('/', async (req, res) => {
     const hasApiConfig = config && config.corp_id && config.app_secret && config.chat_id;
     if (!hasWebhook && !hasApiConfig) {
       return res.status(400).json({ error: '请先在企业微信管理页面完成群聊配置（Webhook URL 或应用配置）' });
+    }
+
+    // 预付款采购：如果供应商有预付余额，自动抵扣
+    let finalPrepayAmount = toNum(prepay_amount);
+    let prepayDeductFromBalance = 0;
+    if (purchase_type === 'prepay' && supplier_id) {
+      const [suppRows] = await connection.query('SELECT prepay_balance FROM suppliers WHERE id = ?', [supplier_id]);
+      if (suppRows.length > 0 && toNum(suppRows[0].prepay_balance) > 0) {
+        prepayDeductFromBalance = Math.min(toNum(suppRows[0].prepay_balance), finalPrepayAmount);
+        finalPrepayAmount = finalPrepayAmount - prepayDeductFromBalance;
+      }
     }
 
     const displayDate = purchase_date.substring(0, 10);
@@ -199,10 +212,22 @@ router.post('/', async (req, res) => {
 
     // 保存确认单（先保存，发送失败可以删除，或者让用户重试）
     await connection.query(
-      `INSERT INTO purchase_confirmations (id, purchase_date, total_amount, departments, purchase_items, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items)]
+      `INSERT INTO purchase_confirmations (id, purchase_date, total_amount, departments, purchase_items, status, purchase_type, supplier_id, supplier_name, prepay_amount)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+      [id, displayDate, total_amount, JSON.stringify(departments), JSON.stringify(purchase_items), purchase_type, supplier_id, supplier_name, finalPrepayAmount]
     );
+
+    // 预付款余额抵扣：记录抵扣并更新供应商余额
+    if (prepayDeductFromBalance > 0) {
+      await connection.query(
+        'UPDATE suppliers SET prepay_balance = prepay_balance - ? WHERE id = ?',
+        [prepayDeductFromBalance, supplier_id]
+      );
+      await connection.query(
+        `INSERT INTO prepay_records (id, supplier_id, purchase_id, amount, type, remark) VALUES (?, ?, ?, ?, 'deduct', '预付款采购自动抵扣余额')`,
+        [uuidv4(), supplier_id, id, prepayDeductFromBalance]
+      );
+    }
 
     // 发送群消息（优先使用 Webhook）
     let wecomMsgId = null;
@@ -1096,6 +1121,305 @@ router.delete('/:id', async (req, res) => {
 
     await pool.query('DELETE FROM purchase_confirmations WHERE id = ?', [id]);
     res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
+// 预付款采购流程接口
+// ================================================
+
+// 发起预付款审批
+router.post('/:id/submit-prepay', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+    const row = rows[0];
+
+    if (row.purchase_type !== 'prepay') {
+      return res.status(400).json({ error: '该确认单不是预付款类型' });
+    }
+    if (row.prepay_status === 'approved') {
+      return res.status(400).json({ error: '预付款已审批通过' });
+    }
+    if (row.prepay_sp_no) {
+      return res.status(400).json({ error: '预付款审批已发起，请勿重复提交' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret || !config.prepay_approval_template_id || !config.applicant_userid) {
+      return res.status(400).json({ error: '请先在企业微信管理页面完成预付款审批配置（模板ID和申请人用户ID）' });
+    }
+
+    // 解析字段映射
+    let fieldMapping = {};
+    const rawMapping = config.prepay_field_mapping;
+    if (rawMapping) {
+      if (typeof rawMapping === 'string') {
+        try { fieldMapping = JSON.parse(rawMapping); } catch (e) { fieldMapping = {}; }
+      } else if (typeof rawMapping === 'object') {
+        fieldMapping = rawMapping;
+      }
+    }
+
+    // 获取模板控件类型
+    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) {
+      return res.status(400).json({ error: '获取企微Token失败: ' + tokenData.errmsg });
+    }
+    const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: config.prepay_approval_template_id })
+    });
+    const tplData = await tplRes.json();
+    if (tplData.errcode !== 0) {
+      return res.status(400).json({ error: '获取预付款审批模板详情失败: ' + tplData.errmsg });
+    }
+
+    const controlTypeMap = {};
+    if (tplData.template_content && tplData.template_content.controls) {
+      for (const ctrl of tplData.template_content.controls) {
+        if (ctrl.property && ctrl.property.id && ctrl.property.control) {
+          controlTypeMap[ctrl.property.id] = ctrl.property.control;
+        }
+      }
+    }
+
+    const prepayAmount = toNum(row.prepay_amount);
+    const supplierName = row.supplier_name || '未指定供应商';
+    const displayDate = row.purchase_date instanceof Date
+      ? `${(row.purchase_date.getMonth() + 1).toString().padStart(2, '0')}月${row.purchase_date.getDate().toString().padStart(2, '0')}日`
+      : String(row.purchase_date).substring(0, 10);
+
+    function getControlType(fieldKey, fallback) {
+      const mappedId = fieldMapping[fieldKey];
+      return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
+    }
+
+    const contents = [];
+
+    // 供应商名称
+    if (fieldMapping.supplier_name) {
+      contents.push({ control: getControlType('supplier_name', 'Text'), id: fieldMapping.supplier_name, value: { text: supplierName } });
+    }
+    // 预付金额
+    if (fieldMapping.amount) {
+      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: prepayAmount.toFixed(2) } });
+    }
+    // 采购日期
+    if (fieldMapping.date) {
+      let d;
+      if (row.purchase_date instanceof Date) {
+        d = row.purchase_date;
+      } else {
+        const parts = String(row.purchase_date).substring(0, 10).split('-');
+        d = parts.length === 3 ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])) : new Date(row.purchase_date);
+      }
+      d.setHours(0, 0, 0, 0);
+      contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(Math.floor(d.getTime() / 1000)) } } });
+    }
+    // 事由
+    if (fieldMapping.reason) {
+      contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: `${displayDate}预付采购款` } });
+    }
+    // 收款方信息（复用报销配置）
+    if (fieldMapping.payee_name && config.payee_name) {
+      contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: String(config.payee_name) } });
+    }
+    if (fieldMapping.bank_name && config.bank_name) {
+      contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { text: String(config.bank_name) } });
+    }
+    if (fieldMapping.bank_account && config.bank_account) {
+      contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
+    }
+
+    const applyData = {
+      creator_userid: String(config.applicant_userid),
+      template_id: String(config.prepay_approval_template_id),
+      use_template_approver: 1,
+      apply_data: { contents },
+      summary_list: [
+        { summary_info: [{ text: `供应商：${supplierName}`, lang: 'zh_CN' }] },
+        { summary_info: [{ text: `预付金额：¥${prepayAmount.toFixed(2)}`, lang: 'zh_CN' }] },
+        { summary_info: [{ text: `采购日期：${displayDate}`, lang: 'zh_CN' }] }
+      ]
+    };
+
+    console.log('[预付款审批] applyData:', JSON.stringify(applyData));
+
+    const spNo = await submitApproval(config, applyData);
+
+    await pool.query(
+      'UPDATE purchase_confirmations SET prepay_sp_no = ?, prepay_status = ? WHERE id = ?',
+      [spNo, 'pending', id]
+    );
+
+    res.json({ success: true, sp_no: spNo });
+  } catch (err) {
+    console.error('submit-prepay error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 回填预付款付款凭证
+router.post('/:id/prepay-voucher', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { payment_voucher_no, payment_voucher_at } = req.body;
+
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+    const row = rows[0];
+    if (row.purchase_type !== 'prepay') {
+      return res.status(400).json({ error: '该确认单不是预付款类型' });
+    }
+    if (row.prepay_status !== 'approved') {
+      return res.status(400).json({ error: '预付款审批尚未通过' });
+    }
+
+    await pool.query(
+      'UPDATE purchase_confirmations SET payment_voucher_no = ?, payment_voucher_at = ?, prepay_status = ? WHERE id = ?',
+      [payment_voucher_no || null, payment_voucher_at || null, 'prepaid', id]
+    );
+
+    // 记录预付款流水
+    if (row.supplier_id) {
+      await pool.query(
+        `INSERT INTO prepay_records (id, supplier_id, purchase_id, amount, type, voucher_no, remark) VALUES (?, ?, ?, ?, 'prepay', ?, '预付款付款凭证回填')`,
+        [uuidv4(), row.supplier_id, id, toNum(row.prepay_amount), payment_voucher_no || null]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('prepay-voucher error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 预付核销（收货确认后自动调用，也可手动触发）
+router.post('/:id/writeoff-prepay', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+    const row = rows[0];
+    if (row.purchase_type !== 'prepay') {
+      return res.status(400).json({ error: '该确认单不是预付款类型' });
+    }
+    if (row.writeoff_status === 'done') {
+      return res.status(400).json({ error: '已核销完成' });
+    }
+
+    const prepayAmount = toNum(row.prepay_amount);
+    const actualAmount = toNum(row.total_amount);
+    const difference = actualAmount - prepayAmount;
+
+    if (Math.abs(difference) < 0.01) {
+      // 金额一致，自动核销
+      await pool.query('UPDATE purchase_confirmations SET writeoff_status = ? WHERE id = ?', ['auto', id]);
+      res.json({ success: true, writeoff_status: 'auto', message: '预付金额与实际金额一致，自动核销完成' });
+    } else if (difference < 0) {
+      // 实际 < 预付（多付），记入供应商预付余额
+      const refundAmount = Math.abs(difference);
+      if (row.supplier_id) {
+        await pool.query('UPDATE suppliers SET prepay_balance = prepay_balance + ? WHERE id = ?', [refundAmount, row.supplier_id]);
+        await pool.query(
+          `INSERT INTO prepay_records (id, supplier_id, purchase_id, amount, type, remark) VALUES (?, ?, ?, ?, 'refund', '预付款多付，记入供应商余额')`,
+          [uuidv4(), row.supplier_id, id, refundAmount]
+        );
+      }
+      await pool.query('UPDATE purchase_confirmations SET writeoff_status = ? WHERE id = ?', ['manual', id]);
+      res.json({ success: true, writeoff_status: 'manual', message: `实际金额比预付少¥${refundAmount.toFixed(2)}，已记入供应商预付余额` });
+    } else {
+      // 实际 > 预付（少付），需要生成尾款报销
+      await pool.query('UPDATE purchase_confirmations SET writeoff_status = ? WHERE id = ?', ['manual', id]);
+      res.json({ success: true, writeoff_status: 'manual', message: `实际金额比预付多¥${difference.toFixed(2)}，需发起尾款报销` });
+    }
+  } catch (err) {
+    console.error('writeoff-prepay error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 刷新预付款审批状态
+router.post('/:id/refresh-prepay', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '确认单不存在' });
+    }
+    const row = rows[0];
+    if (!row.prepay_sp_no) {
+      return res.status(400).json({ error: '该确认单未发起预付款审批' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+
+    let detail;
+    try {
+      detail = await getApprovalDetail(config, row.prepay_sp_no);
+    } catch (detailErr) {
+      return res.status(500).json({ error: `查询预付款审批状态失败：${detailErr.message}` });
+    }
+
+    const spStatus = detail.info?.sp_status;
+    let newPrepayStatus = row.prepay_status;
+
+    if (spStatus === 2) {
+      newPrepayStatus = 'approved';
+    } else if (spStatus === 3) {
+      // 驳回 → 作废
+      newPrepayStatus = 'rejected';
+      await pool.query('UPDATE purchase_confirmations SET status = ? WHERE id = ? AND status = ?', ['cancelled', id, 'pending']);
+    }
+
+    await pool.query('UPDATE purchase_confirmations SET prepay_status = ? WHERE id = ?', [newPrepayStatus, id]);
+
+    res.json({ success: true, prepay_status: newPrepayStatus, sp_status: spStatus });
+  } catch (err) {
+    console.error('refresh-prepay error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 更新供应商（支持新字段）
+router.put('/suppliers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, contact, phone, address, settlement_method = 'normal', prepay_ratio = 0, monthly_statement_day = 1 } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: '供应商名称不能为空' });
+    }
+
+    const [existing] = await pool.query('SELECT id FROM suppliers WHERE name = ? AND id != ?', [name, id]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: '该供应商名称已存在' });
+    }
+
+    await pool.query(
+      'UPDATE suppliers SET name = ?, contact = ?, phone = ?, address = ?, settlement_method = ?, prepay_ratio = ?, monthly_statement_day = ? WHERE id = ?',
+      [name, contact || null, phone || null, address || null, settlement_method, prepay_ratio, monthly_statement_day, id]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM suppliers WHERE id = ?', [id]);
+    res.json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

@@ -1437,6 +1437,45 @@ router.post('/confirm-submit', async (req, res) => {
           console.error(`[确认提交] PDF自动生成失败，id=${id}:`, pdfError);
         }
 
+        // 根据采购类型决定后续流程
+        const purchaseType = row.purchase_type || 'normal';
+        console.log(`[确认提交] 采购类型=${purchaseType}，id=${id}`);
+
+        if (purchaseType === 'prepay') {
+          // 预付款采购：收货确认后自动核销
+          try {
+            const prepayAmount = toNum(row.prepay_amount);
+            const actualAmount = toNum(row.total_amount);
+            const difference = actualAmount - prepayAmount;
+
+            if (Math.abs(difference) < 0.01) {
+              await pool.query('UPDATE purchase_confirmations SET writeoff_status = ? WHERE id = ?', ['auto', id]);
+              console.log(`[确认提交] 预付核销：金额一致，自动核销完成，id=${id}`);
+            } else if (difference < 0) {
+              // 多付，记入供应商预付余额
+              const refundAmount = Math.abs(difference);
+              if (row.supplier_id) {
+                await pool.query('UPDATE suppliers SET prepay_balance = prepay_balance + ? WHERE id = ?', [refundAmount, row.supplier_id]);
+                await pool.query(
+                  `INSERT INTO prepay_records (id, supplier_id, purchase_id, amount, type, remark) VALUES (?, ?, ?, ?, 'refund', '预付款多付，记入供应商余额')`,
+                  [uuidv4(), row.supplier_id, id, refundAmount]
+                );
+              }
+              await pool.query('UPDATE purchase_confirmations SET writeoff_status = ? WHERE id = ?', ['manual', id]);
+              console.log(`[确认提交] 预付核销：多付¥${refundAmount.toFixed(2)}，已记入供应商余额，id=${id}`);
+            } else {
+              // 少付，需发起尾款报销
+              await pool.query('UPDATE purchase_confirmations SET writeoff_status = ? WHERE id = ?', ['manual', id]);
+              console.log(`[确认提交] 预付核销：少付¥${difference.toFixed(2)}，需发起尾款报销，id=${id}`);
+            }
+          } catch (writeoffErr) {
+            console.error(`[确认提交] 预付核销失败，id=${id}:`, writeoffErr.message);
+          }
+        } else if (purchaseType === 'monthly') {
+          // 月结采购：确认后不发起报销，标记为已入账月结
+          console.log(`[确认提交] 月结采购，不发起报销，标记为已入账，id=${id}`);
+        } else {
+          // 现购：原有流程，自动发起报销
         const config = await getWecomConfig();
         if (config && config.corp_id && config.app_secret && config.approval_template_id && config.applicant_userid) {
           try {
@@ -1607,6 +1646,7 @@ router.post('/confirm-submit', async (req, res) => {
             }
           }
         }
+        } // end else (现购)
       } else {
         try {
           console.log(`[确认提交] 所有用户已确认，开始自动生成PDF，id=${id}`);

@@ -12,6 +12,10 @@ export interface Supplier {
   phone?: string;
   address?: string;
   sort_order: number;
+  settlement_method?: 'normal' | 'prepay' | 'monthly';
+  prepay_balance?: number;
+  prepay_ratio?: number;
+  monthly_statement_day?: number;
 }
 
 export interface UnitConversion {

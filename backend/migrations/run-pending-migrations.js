@@ -97,11 +97,17 @@ async function main() {
   // 执行 036 迁移
   await runMigrationFile('036_add_reimbursement_error.sql');
 
+  // 执行 037 迁移（预付款和月结采购支持）
+  await runMigrationFile('037_prepay_and_monthly_purchase.sql');
+
   // 再次检查
   console.log('\n📋 迁移后字段状态：');
   console.log(`  user_departments:    ${await checkColumn('purchase_confirmations', 'user_departments') ? '✅ 已存在' : '❌ 缺失'}`);
   console.log(`  user_confirmations:  ${await checkColumn('purchase_confirmations', 'user_confirmations') ? '✅ 已存在' : '❌ 缺失'}`);
   console.log(`  reimbursement_error: ${await checkColumn('purchase_confirmations', 'reimbursement_error') ? '✅ 已存在' : '❌ 缺失'}`);
+  console.log(`  purchase_type:       ${await checkColumn('purchase_confirmations', 'purchase_type') ? '✅ 已存在' : '❌ 缺失'}`);
+  console.log(`  prepay_amount:       ${await checkColumn('purchase_confirmations', 'prepay_amount') ? '✅ 已存在' : '❌ 缺失'}`);
+  console.log(`  supplier prepay_balance: ${await checkColumn('suppliers', 'prepay_balance') ? '✅ 已存在' : '❌ 缺失'}`);
 
   console.log('\n✅ 全部完成！\n');
   await pool.end();
