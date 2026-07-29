@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const pool = require('../db');
+const { generateConfirmationPDF: generatePDF } = require('../utils/pdf');
 
 const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
 if (!fs.existsSync(PDF_DIR)) {
@@ -1419,7 +1420,7 @@ router.post('/confirm-submit', async (req, res) => {
 
       if (tableName === 'purchase_confirmations') {
         try {
-          const pdfPath = await generateConfirmationPDF(id);
+          const pdfPath = await generatePDF(id);
           const pdfUrl = `/api/purchase-confirmations/${id}/pdf`;
           await pool.query('UPDATE purchase_confirmations SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
         } catch (pdfErr) {
