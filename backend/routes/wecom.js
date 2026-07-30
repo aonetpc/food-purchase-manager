@@ -782,13 +782,18 @@ router.post('/test-send-confirmation', async (req, res) => {
     // 获取各部门确认人（用于群消息@）
     const [deptRows] = await pool.query('SELECT id, name, confirmer_userid FROM departments');
     const deptConfirmerMap = {};
-    const confirmerSet = new Set();
     for (const d of deptRows) {
       if (d.confirmer_userid) {
         deptConfirmerMap[d.id] = d.confirmer_userid;
         deptConfirmerMap[d.name] = d.confirmer_userid;
-        confirmerSet.add(d.confirmer_userid);
       }
+    }
+
+    // 仅收集本次采购涉及部门的确认人
+    const confirmerSet = new Set();
+    for (const item of items) {
+      const confirmer = deptConfirmerMap[item.department_id] || deptConfirmerMap[item.department_name];
+      if (confirmer) confirmerSet.add(confirmer);
     }
     const mentionedUsers = Array.from(confirmerSet);
 

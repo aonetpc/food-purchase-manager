@@ -153,15 +153,12 @@ router.post('/', async (req, res) => {
     // 获取各部门确认人（用于群消息@和个人消息发送）
     const [deptRows] = await pool.query('SELECT id, name, confirmer_userid FROM departments');
     const deptConfirmerMap = {};
-    const confirmerSet = new Set();
     for (const d of deptRows) {
       if (d.confirmer_userid) {
         deptConfirmerMap[d.id] = d.confirmer_userid;
         deptConfirmerMap[d.name] = d.confirmer_userid;
-        confirmerSet.add(d.confirmer_userid);
       }
     }
-    const mentionedUsers = Array.from(confirmerSet);
 
     // 构建 userDeptMap: 每个用户负责的部门和明细
     const userDeptMap = {};
@@ -175,6 +172,7 @@ router.post('/', async (req, res) => {
         userDeptMap[confirmer].depts.add(deptName);
       }
     }
+    const mentionedUsers = Object.keys(userDeptMap);
 
     // 构建 Markdown 群消息内容
     const deptNames = departments.map(d => d.name).join('、');

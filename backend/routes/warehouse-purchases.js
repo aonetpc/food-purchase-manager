@@ -1249,15 +1249,12 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
     // 读取各部门确认人
     const [deptRows] = await connection.query('SELECT id, name, confirmer_userid FROM departments');
     const deptConfirmerMap = {};
-    const confirmerSet = new Set();
     for (const d of deptRows) {
       if (d.confirmer_userid) {
         deptConfirmerMap[d.id] = d.confirmer_userid;
         deptConfirmerMap[d.name] = d.confirmer_userid;
-        confirmerSet.add(d.confirmer_userid);
       }
     }
-    const mentionedUsers = Array.from(confirmerSet);
 
     // 按 items 的 department_id 匹配确认人，构建 userDeptMap
     const userDeptMap = {};
@@ -1276,6 +1273,8 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       await connection.rollback();
       return res.status(400).json({ error: '未能匹配到任何部门确认人，请先在部门管理中配置确认人' });
     }
+
+    const mentionedUsers = Object.keys(userDeptMap);
 
     const domain = config.app_domain || (req.headers.origin || (req.protocol + '://' + req.get('host')));
     const purchaseNo = row.purchase_no || '';
