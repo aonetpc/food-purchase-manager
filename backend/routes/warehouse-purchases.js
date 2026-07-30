@@ -426,19 +426,21 @@ async function generateWarehousePDF(purchaseId) {
     : row.status === 'reimbursed' ? '已报销'
     : row.status;
   const amountLabel = toNum(row.actual_amount) > 0 ? toNum(row.actual_amount) : toNum(row.total_amount);
-  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${row.warehouse_name || '-'}    金额：¥${amountLabel.toFixed(2)}    状态：${statusLabel}`);
+  // 汇总涉及仓库
+  const pdfWarehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
+  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${pdfWarehouseNames.join('、') || '-'}    金额：¥${amountLabel.toFixed(2)}    状态：${statusLabel}`);
   doc.moveDown(0.5);
 
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const tableX = doc.page.margins.left;
   const tableWidth = pageWidth;
 
-  // 按部门分组
+  // 按仓库分组
   const groupedItems = {};
   for (const item of itemRows) {
-    const deptName = item.department_name || '未分类';
-    if (!groupedItems[deptName]) groupedItems[deptName] = [];
-    groupedItems[deptName].push(item);
+    const whName = item.warehouse_name || '未指定仓库';
+    if (!groupedItems[whName]) groupedItems[whName] = [];
+    groupedItems[whName].push(item);
   }
 
   // 表头与列宽（按任务要求）
@@ -479,15 +481,22 @@ async function generateWarehousePDF(purchaseId) {
     return fixedRowHeight;
   }
 
-  // 部门签字区：从 user_confirmations 中找到负责该部门的确认人及其签名
-  function drawDepartmentSignature(y, deptName) {
+  // 部门签字区：从 user_confirmations 中找到负责该仓库的确认人及其签名
+  function drawDepartmentSignature(y, whName) {
     const sigTop = y;
     const sigWidth = tableWidth;
     doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
 
-    const deptConf = Object.entries(userConfirmations).find(([, conf]) =>
-      conf && conf.departments && conf.departments.includes(deptName)
-    );
+    // 通过仓库对应的部门找确认人
+    const whItems = groupedItems[whName] || [];
+    const deptNames = Array.from(new Set(whItems.map(i => i.department_name).filter(Boolean)));
+    let deptConf = null;
+    for (const dn of deptNames) {
+      deptConf = Object.entries(userConfirmations).find(([, conf]) =>
+        conf && conf.departments && conf.departments.includes(dn)
+      );
+      if (deptConf) break;
+    }
     if (deptConf) {
       const info = deptConf[1];
       const infoText = `确认人：${info.confirmed_by || '-'}    确认时间：${info.confirmed_at || '-'}`;
@@ -501,11 +510,12 @@ async function generateWarehousePDF(purchaseId) {
             fit: [sigWidth - 4, signatureHeight - 14],
           });
         } catch (e) {
-          console.error(`[仓库PDF] 签名图片处理失败，dept=${deptName}:`, e.message);
+          console.error(`[仓库PDF] 签名图片处理失败，wh=${whName}:`, e.message);
         }
       }
     } else {
-      doc.text('状态：待确认', tableX + 2, sigTop + 8);
+      // 总仓无需确认
+      doc.text('总仓入库，无需部门确认', tableX + 2, sigTop + 8);
     }
     return signatureHeight;
   }
@@ -522,12 +532,12 @@ async function generateWarehousePDF(purchaseId) {
   doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   let grandTotal = 0;
 
-  for (const [deptName, items] of Object.entries(groupedItems)) {
+  for (const [whName, items] of Object.entries(groupedItems)) {
     const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + signatureHeight + 15;
     currentY = checkPageBreak(currentY, deptNeededHeight);
 
-    // 部门标题
-    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${deptName}】`, tableX, currentY + 1);
+    // 仓库标题
+    doc.fontSize(7.5).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${whName}】`, tableX, currentY + 1);
     currentY += fixedRowHeight;
 
     // 明细行（优先使用实收数据，无则用申请数据）
@@ -559,8 +569,8 @@ async function generateWarehousePDF(purchaseId) {
     currentY += 10;
     doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
 
-    // 部门签字区
-    currentY += drawDepartmentSignature(currentY, deptName);
+    // 仓库签字区
+    currentY += drawDepartmentSignature(currentY, whName);
     currentY += 15;
   }
 
@@ -873,34 +883,36 @@ router.post('/', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const { warehouse_id, items = [] } = req.body;
+    const { items = [] } = req.body;
 
-    if (!warehouse_id) {
-      await connection.rollback();
-      return res.status(400).json({ error: 'warehouse_id 不能为空' });
-    }
     if (!Array.isArray(items) || items.length === 0) {
       await connection.rollback();
       return res.status(400).json({ error: '采购明细不能为空' });
     }
 
-    // 查询仓库名称
-    const [whRows] = await connection.query('SELECT id, name FROM warehouses WHERE id = ?', [warehouse_id]);
-    if (whRows.length === 0) {
-      await connection.rollback();
-      return res.status(400).json({ error: '仓库不存在' });
+    // 校验每行必须有仓库
+    for (let i = 0; i < items.length; i++) {
+      if (!items[i].warehouse_id) {
+        await connection.rollback();
+        return res.status(400).json({ error: `第 ${i + 1} 行：请选择入库仓库` });
+      }
     }
-    const warehouseName = whRows[0].name;
+
+    // 批量查询仓库名称
+    const whIds = Array.from(new Set(items.map(i => i.warehouse_id).filter(Boolean)));
+    const [whRows] = await connection.query('SELECT id, name FROM warehouses WHERE id IN (?)', [whIds]);
+    const whMap = {};
+    for (const w of whRows) whMap[w.id] = w.name;
 
     const id = uuidv4();
     const purchaseNo = await generatePurchaseNo(connection);
 
-    // 计算申请总金额
+    // 计算申请总金额（兼容 quantity/requested_quantity 两种字段名）
     let totalAmount = 0;
     for (const item of items) {
-      const qty = toNum(item.requested_quantity);
-      const price = toNum(item.requested_unit_price);
-      const amount = toNum(item.requested_amount) > 0 ? toNum(item.requested_amount) : (qty * price);
+      const qty = toNum(item.quantity ?? item.requested_quantity);
+      const price = toNum(item.unit_price ?? item.requested_unit_price);
+      const amount = toNum(item.amount ?? item.requested_amount) > 0 ? toNum(item.amount ?? item.requested_amount) : (qty * price);
       totalAmount += amount;
     }
 
@@ -909,27 +921,34 @@ router.post('/', requireAuth, async (req, res) => {
 
     const { purchase_type = 'normal', supplier_id = null, supplier_name = null, prepay_amount = 0 } = req.body;
 
+    // 表头 warehouse_id 可空（兼容旧数据），取第一行的仓库作为表头冗余
+    const headerWhId = items[0].warehouse_id || null;
+    const headerWhName = whMap[headerWhId] || null;
+
     await connection.query(
       `INSERT INTO warehouse_purchases
        (id, purchase_no, warehouse_id, warehouse_name, status, total_amount, created_by, created_by_name,
         purchase_type, supplier_id, supplier_name, prepay_amount)
        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
-      [id, purchaseNo, warehouse_id, warehouseName, totalAmount, createdBy, createdByName,
+      [id, purchaseNo, headerWhId, headerWhName, totalAmount, createdBy, createdByName,
        purchase_type, supplier_id, supplier_name, prepay_amount]
     );
 
-    // 写入明细
+    // 写入明细（含行级仓库）
     let sortOrder = 0;
     for (const item of items) {
       const itemId = uuidv4();
-      const qty = toNum(item.requested_quantity);
-      const price = toNum(item.requested_unit_price);
-      const amount = toNum(item.requested_amount) > 0 ? toNum(item.requested_amount) : (qty * price);
+      const qty = toNum(item.quantity ?? item.requested_quantity);
+      const price = toNum(item.unit_price ?? item.requested_unit_price);
+      const amount = toNum(item.amount ?? item.requested_amount) > 0 ? toNum(item.amount ?? item.requested_amount) : (qty * price);
+      const itemWhId = item.warehouse_id || null;
+      const itemWhName = item.warehouse_name || whMap[itemWhId] || null;
       await connection.query(
         `INSERT INTO warehouse_purchase_items
          (id, purchase_id, item_id, item_name, category_name, spec, department_id, department_name,
+          warehouse_id, warehouse_name,
           requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId, id,
           item.item_id || null,
@@ -938,8 +957,10 @@ router.post('/', requireAuth, async (req, res) => {
           item.spec || null,
           item.department_id || null,
           item.department_name || null,
+          itemWhId,
+          itemWhName,
           qty,
-          item.requested_unit || '',
+          item.unit ?? item.requested_unit ?? '',
           price,
           amount,
           item.reason || null,
@@ -996,7 +1017,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   try {
     await connection.beginTransaction();
     const { id } = req.params;
-    const { warehouse_id, items = [] } = req.body;
+    const { items = [] } = req.body;
 
     const [rows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     if (rows.length === 0) {
@@ -1008,14 +1029,12 @@ router.put('/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '只有草稿状态的采购单可以编辑' });
     }
 
-    let warehouseName = rows[0].warehouse_name;
-    if (warehouse_id && warehouse_id !== rows[0].warehouse_id) {
-      const [whRows] = await connection.query('SELECT id, name FROM warehouses WHERE id = ?', [warehouse_id]);
-      if (whRows.length === 0) {
-        await connection.rollback();
-        return res.status(400).json({ error: '仓库不存在' });
-      }
-      warehouseName = whRows[0].name;
+    // 批量查询仓库名称
+    const whIds = Array.from(new Set(items.map(i => i.warehouse_id).filter(Boolean)));
+    let whMap = {};
+    if (whIds.length > 0) {
+      const [whRows] = await connection.query('SELECT id, name FROM warehouses WHERE id IN (?)', [whIds]);
+      for (const w of whRows) whMap[w.id] = w.name;
     }
 
     // 先删后插更新明细
@@ -1025,15 +1044,18 @@ router.put('/:id', requireAuth, async (req, res) => {
     let sortOrder = 0;
     for (const item of items) {
       const itemId = uuidv4();
-      const qty = toNum(item.requested_quantity);
-      const price = toNum(item.requested_unit_price);
-      const amount = toNum(item.requested_amount) > 0 ? toNum(item.requested_amount) : (qty * price);
+      const qty = toNum(item.quantity ?? item.requested_quantity);
+      const price = toNum(item.unit_price ?? item.requested_unit_price);
+      const amount = toNum(item.amount ?? item.requested_amount) > 0 ? toNum(item.amount ?? item.requested_amount) : (qty * price);
       totalAmount += amount;
+      const itemWhId = item.warehouse_id || null;
+      const itemWhName = item.warehouse_name || whMap[itemWhId] || null;
       await connection.query(
         `INSERT INTO warehouse_purchase_items
          (id, purchase_id, item_id, item_name, category_name, spec, department_id, department_name,
+          warehouse_id, warehouse_name,
           requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId, id,
           item.item_id || null,
@@ -1042,8 +1064,10 @@ router.put('/:id', requireAuth, async (req, res) => {
           item.spec || null,
           item.department_id || null,
           item.department_name || null,
+          itemWhId,
+          itemWhName,
           qty,
-          item.requested_unit || '',
+          item.unit ?? item.requested_unit ?? '',
           price,
           amount,
           item.reason || null,
@@ -1054,6 +1078,10 @@ router.put('/:id', requireAuth, async (req, res) => {
 
     const { purchase_type, supplier_id, supplier_name, prepay_amount } = req.body;
 
+    // 表头仓库取第一行
+    const headerWhId = items.length > 0 ? (items[0].warehouse_id || null) : rows[0].warehouse_id;
+    const headerWhName = items.length > 0 ? (items[0].warehouse_name || whMap[items[0].warehouse_id] || null) : rows[0].warehouse_name;
+
     await connection.query(
       `UPDATE warehouse_purchases
        SET warehouse_id = ?, warehouse_name = ?, total_amount = ?,
@@ -1062,7 +1090,7 @@ router.put('/:id', requireAuth, async (req, res) => {
            supplier_name = COALESCE(?, supplier_name),
            prepay_amount = COALESCE(?, prepay_amount)
        WHERE id = ?`,
-      [warehouse_id || rows[0].warehouse_id, warehouseName, totalAmount,
+      [headerWhId, headerWhName, totalAmount,
        purchase_type, supplier_id, supplier_name, prepay_amount, id]
     );
 
@@ -1191,6 +1219,56 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
       [actualAmount, 'received', id]
     );
 
+    // 写入入库流水 + 更新库存
+    const [receiveItemRows] = await connection.query(
+      `SELECT wpi.*, w.type as wh_type, w.department_id as wh_department_id
+       FROM warehouse_purchase_items wpi
+       LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+       WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
+      [id]
+    );
+    const operatorId = (req.user && req.user.id) || null;
+    const operatorName = (req.user && req.user.name) || null;
+    for (const ri of receiveItemRows) {
+      const rQty = toNum(ri.received_quantity);
+      if (rQty <= 0 || !ri.warehouse_id || !ri.item_id) continue;
+      const rPrice = toNum(ri.received_unit_price);
+      const rAmount = toNum(ri.received_amount);
+      const rUnit = ri.received_unit || ri.requested_unit || '';
+      // 部门仓自动取仓库绑定部门，总仓取明细行部门（可能为空）
+      const deptId = ri.wh_type === 'dept' ? (ri.wh_department_id || ri.department_id) : ri.department_id;
+      const deptName = ri.department_name || null;
+
+      // 写入 stock_movements
+      await connection.query(
+        `INSERT INTO stock_movements
+         (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount,
+          reason, related_type, related_id, operator_id, operator_name, department_id, department_name)
+         VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'purchase', ?, ?, ?, ?, ?)`,
+        [uuidv4(), ri.warehouse_id, ri.item_id, ri.item_name,
+         rQty, rUnit, rPrice, rAmount,
+         `采购入库 ${row.purchase_no || id}`,
+         id, operatorId, operatorName, deptId || null, deptName]
+      );
+
+      // upsert inventory
+      const [existingInv] = await connection.query(
+        'SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?',
+        [ri.warehouse_id, ri.item_id]
+      );
+      if (existingInv.length > 0) {
+        await connection.query(
+          'UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?',
+          [rQty, rUnit, ri.warehouse_id, ri.item_id]
+        );
+      } else {
+        await connection.query(
+          'INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)',
+          [uuidv4(), ri.warehouse_id, ri.item_id, rQty, rUnit]
+        );
+      }
+    }
+
     await connection.commit();
 
     const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
@@ -1257,7 +1335,9 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
     }
 
     // 按 items 的 department_id 匹配确认人，构建 userDeptMap
+    // 没有部门的行（总仓）不需要确认，只展示在群消息中
     const userDeptMap = {};
+    const noDeptItems = []; // 无部门的明细（总仓等）
     for (const item of itemRows) {
       const deptId = item.department_id;
       const deptName = item.department_name;
@@ -1266,49 +1346,48 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
         if (!userDeptMap[confirmer]) userDeptMap[confirmer] = { items: [], depts: new Set() };
         userDeptMap[confirmer].items.push(item);
         userDeptMap[confirmer].depts.add(deptName || '未分类');
+      } else {
+        noDeptItems.push(item);
       }
     }
 
-    if (Object.keys(userDeptMap).length === 0) {
-      await connection.rollback();
-      return res.status(400).json({ error: '未能匹配到任何部门确认人，请先在部门管理中配置确认人' });
-    }
-
+    // 如果没有需要确认的部门（全部是总仓），直接跳到已确认状态
+    const hasConfirmers = Object.keys(userDeptMap).length > 0;
     const mentionedUsers = Object.keys(userDeptMap);
 
     const domain = config.app_domain || (req.headers.origin || (req.protocol + '://' + req.get('host')));
     const purchaseNo = row.purchase_no || '';
-    const warehouseName = row.warehouse_name || '';
     const totalAmount = toNum(row.actual_amount) || toNum(row.total_amount);
 
-    // 构建群消息 Markdown（按部门分组明细，@确认人）
-    const deptNames = Array.from(new Set(itemRows.map(i => i.department_name || '未分类'))).join('、');
+    // 汇总涉及仓库
+    const warehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
+
+    // 构建群消息 Markdown（按仓库分组明细，@确认人）
     let mdContent = `**📋 仓库采购确认通知**\n\n`;
     mdContent += `📦 **采购单号**：${purchaseNo}\n`;
-    mdContent += `🏢 **仓库**：${warehouseName}\n`;
-    mdContent += `🏢 **涉及部门**：${deptNames}\n`;
+    mdContent += `🏢 **涉及仓库**：${warehouseNames.length > 0 ? warehouseNames.join('、') : '未指定'}\n`;
     mdContent += `💰 **总金额**：¥${totalAmount.toFixed(2)}\n\n`;
     mdContent += `---\n\n`;
 
-    const groupedItems = {};
+    // 按仓库分组
+    const groupedByWh = {};
     for (const item of itemRows) {
-      const dn = item.department_name || '未分类';
-      if (!groupedItems[dn]) groupedItems[dn] = [];
-      groupedItems[dn].push(item);
+      const wn = item.warehouse_name || '未指定仓库';
+      if (!groupedByWh[wn]) groupedByWh[wn] = [];
+      groupedByWh[wn].push(item);
     }
-    for (const [deptName, deptItems] of Object.entries(groupedItems)) {
-      mdContent += `**【${deptName}】**\n`;
-      const confirmer = deptConfirmerMap[deptItems[0] && deptItems[0].department_id] || deptConfirmerMap[deptName] || '';
-      if (confirmer) mdContent += `> 确认人：${confirmer}\n`;
-      for (const item of deptItems) {
+    for (const [whName, whItems] of Object.entries(groupedByWh)) {
+      mdContent += `**【${whName}】**\n`;
+      for (const item of whItems) {
         const hasReceived = toNum(item.received_amount) > 0 || toNum(item.received_quantity) > 0;
         const price = hasReceived ? toNum(item.received_unit_price) : toNum(item.requested_unit_price);
         const qty = hasReceived ? toNum(item.received_quantity) : toNum(item.requested_quantity);
         const amt = hasReceived ? toNum(item.received_amount) : toNum(item.requested_amount);
         const unit = hasReceived ? (item.received_unit || item.requested_unit) : item.requested_unit;
-        mdContent += `> ${item.item_name}  ${price.toFixed(2)}/${unit} ×${qty}${unit} = ¥${amt.toFixed(2)}\n`;
+        const deptTag = item.department_name ? `[${item.department_name}]` : '';
+        mdContent += `> ${item.item_name}  ${price.toFixed(2)}/${unit} ×${qty}${unit} = ¥${amt.toFixed(2)} ${deptTag}\n`;
       }
-      const subtotal = deptItems.reduce((s, i) => {
+      const subtotal = whItems.reduce((s, i) => {
         const hasReceived = toNum(i.received_amount) > 0 || toNum(i.received_quantity) > 0;
         return s + (hasReceived ? toNum(i.received_amount) : toNum(i.requested_amount));
       }, 0);
@@ -1322,6 +1401,8 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
         mdContent += ` @${userid}`;
       }
       mdContent += `\n\n`;
+    } else {
+      mdContent += `ℹ️ 本次采购均为总仓入库，无需部门确认。\n\n`;
     }
 
     // 发送群消息
@@ -1363,7 +1444,7 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
 
           const sendResult = await sendTemplateCardToUser(config, userid, {
             card_type: 'button_interaction',
-            main_title: { title: '📋 仓库采购确认通知', desc: warehouseName },
+            main_title: { title: '📋 仓库采购确认通知', desc: warehouseNames.join('、') },
             source: { desc: '仓库采购管理系统' },
             sub_title_text: subTitle,
             emphasis_content: { title: formatCurrency(userTotal), desc: '负责金额' },
@@ -1394,21 +1475,45 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       };
     }
 
-    await connection.query(
-      'UPDATE warehouse_purchases SET wecom_msg_id = ?, user_departments = ?, user_confirmations = ?, status = ? WHERE id = ?',
-      [wecomMsgId, JSON.stringify(userDepartmentsMap), JSON.stringify({}), 'confirming', id]
-    );
+    // 如果没有需要确认的部门（全部总仓），直接跳到已确认状态
+    if (!hasConfirmers) {
+      await connection.query(
+        'UPDATE warehouse_purchases SET wecom_msg_id = ?, user_departments = ?, user_confirmations = ?, status = ? WHERE id = ?',
+        [wecomMsgId, JSON.stringify({}), JSON.stringify({}), 'confirmed', id]
+      );
+      await connection.commit();
+      // 自动生成 PDF
+      try { await generateWarehousePDF(id); } catch (e) { console.error('自动生成PDF失败:', e.message); }
+      const pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
+      try {
+        await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+      } catch (e) { /* 忽略 */ }
+      res.json({
+        success: true,
+        message: '总仓采购无需部门确认，已自动完成确认',
+        wecom_msg_id: wecomMsgId,
+        sent_to_users: [],
+        failed_users: [],
+        user_departments: {},
+        auto_confirmed: true,
+      });
+    } else {
+      await connection.query(
+        'UPDATE warehouse_purchases SET wecom_msg_id = ?, user_departments = ?, user_confirmations = ?, status = ? WHERE id = ?',
+        [wecomMsgId, JSON.stringify(userDepartmentsMap), JSON.stringify({}), 'confirming', id]
+      );
 
-    await connection.commit();
+      await connection.commit();
 
-    res.json({
-      success: true,
-      message: '确认通知已发送',
-      wecom_msg_id: wecomMsgId,
-      sent_to_users: sentToUsers,
-      failed_users: failedUsers,
-      user_departments: userDepartmentsMap,
-    });
+      res.json({
+        success: true,
+        message: '确认通知已发送',
+        wecom_msg_id: wecomMsgId,
+        sent_to_users: sentToUsers,
+        failed_users: failedUsers,
+        user_departments: userDepartmentsMap,
+      });
+    }
   } catch (err) {
     await connection.rollback();
     console.error('发送仓库采购确认通知失败:', err);

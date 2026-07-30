@@ -45,20 +45,20 @@ router.get('/', async (req, res) => {
 router.post('/inbound', async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name } = req.body;
+    const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name, department_id, department_name } = req.body;
     if (!warehouse_id || !item_id || !quantity || !unit) {
       return res.status(400).json({ error: '仓库、物资、数量、单位不能为空' });
     }
 
     await conn.beginTransaction();
 
-    // 记录流水
+    // 记录流水（带部门归集）
     const id = uuidv4();
     const total_amount = unit_price ? Number(quantity) * Number(unit_price) : null;
     await conn.query(
-      `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name)
-       VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'manual', ?, ?)`,
-      [id, warehouse_id, item_id, item_name, quantity, unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null]
+      `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
+       VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
+      [id, warehouse_id, item_id, item_name, quantity, unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
     );
 
     // 更新库存（不存在则插入）
@@ -84,9 +84,12 @@ router.post('/inbound', async (req, res) => {
 router.post('/outbound', async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name } = req.body;
+    const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name, department_id, department_name } = req.body;
     if (!warehouse_id || !item_id || !quantity || !unit) {
       return res.status(400).json({ error: '仓库、物资、数量、单位不能为空' });
+    }
+    if (!department_id) {
+      return res.status(400).json({ error: '出库必须指定领用部门（用于成本归集）' });
     }
 
     await conn.beginTransaction();
@@ -98,13 +101,13 @@ router.post('/outbound', async (req, res) => {
       return res.status(400).json({ error: '库存不足' });
     }
 
-    // 记录流水（出库数量为负数）
+    // 记录流水（出库数量为负数，带部门归集）
     const id = uuidv4();
     const total_amount = unit_price ? Number(quantity) * Number(unit_price) : null;
     await conn.query(
-      `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name)
-       VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, 'manual', ?, ?)`,
-      [id, warehouse_id, item_id, item_name, -Math.abs(quantity), unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null]
+      `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
+       VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
+      [id, warehouse_id, item_id, item_name, -Math.abs(quantity), unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null, department_id, department_name || null]
     );
 
     // 扣减库存

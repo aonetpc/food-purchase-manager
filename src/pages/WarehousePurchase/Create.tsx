@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Save,
   Send,
+  Clipboard,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDepartmentStore } from '@/store/departmentStore';
@@ -25,6 +26,7 @@ interface Warehouse {
   id: string;
   name: string;
   type?: string;
+  department_id?: string;
   department_name?: string;
   location?: string;
 }
@@ -67,6 +69,8 @@ interface LineItem {
   unit: string;
   quantity: string;
   unit_price: string;
+  warehouse_id: string;
+  warehouse_name: string;
   department_id: string;
   department_name: string;
   reason: string;
@@ -82,6 +86,8 @@ interface PurchaseItemDTO {
   quantity: number;
   unit_price: number;
   amount?: number;
+  warehouse_id?: string;
+  warehouse_name?: string;
   department_id?: string;
   department_name?: string;
   reason?: string;
@@ -139,6 +145,8 @@ const emptyLine = (): LineItem => ({
   unit: '',
   quantity: '1',
   unit_price: '0',
+  warehouse_id: '',
+  warehouse_name: '',
   department_id: '',
   department_name: '',
   reason: '',
@@ -163,7 +171,6 @@ export default function WarehousePurchaseCreate() {
   const [prepayAmount, setPrepayAmount] = useState<number>(0);
 
   // 表单状态
-  const [warehouseId, setWarehouseId] = useState('');
   const [lines, setLines] = useState<LineItem[]>([emptyLine()]);
   const [remark, setRemark] = useState('');
 
@@ -171,6 +178,10 @@ export default function WarehousePurchaseCreate() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // 批量粘贴
+  const [showPastePanel, setShowPastePanel] = useState(false);
+  const [pasteText, setPasteText] = useState('');
 
   // 物资搜索弹窗
   const [showAddPanel, setShowAddPanel] = useState(false);
@@ -207,7 +218,6 @@ export default function WarehousePurchaseCreate() {
       try {
         const detail = await api.get<PurchaseDetailDTO>(`/warehouse-purchases/${id}`);
         if (cancelled) return;
-        setWarehouseId(detail.warehouse_id || '');
         setPurchaseType(detail.purchase_type || 'normal');
         setSelectedSupplierId(detail.supplier_id || '');
         setPrepayAmount(detail.prepay_amount ? safeNum(detail.prepay_amount) : 0);
@@ -219,6 +229,8 @@ export default function WarehousePurchaseCreate() {
           unit: it.unit || '',
           quantity: String(safeNum(it.quantity)),
           unit_price: String(safeNum(it.unit_price)),
+          warehouse_id: it.warehouse_id || '',
+          warehouse_name: it.warehouse_name || '',
           department_id: it.department_id || '',
           department_name: it.department_name || '',
           reason: it.reason || '',
@@ -323,9 +335,117 @@ export default function WarehousePurchaseCreate() {
     updateLine(key, { department_id: deptId, department_name: dept?.name || '' });
   };
 
+  // 选择仓库时联动部门（部门仓自动填部门，总仓/老板仓清空部门可手选）
+  const handleWarehouseChange = (key: string, whId: string) => {
+    const wh = warehouses.find((w) => w.id === whId);
+    if (!wh) {
+      updateLine(key, { warehouse_id: '', warehouse_name: '' });
+      return;
+    }
+    if (wh.type === 'dept' && wh.department_id) {
+      const dept = departments.find((d) => d.id === wh.department_id);
+      updateLine(key, {
+        warehouse_id: whId,
+        warehouse_name: wh.name,
+        department_id: wh.department_id,
+        department_name: dept?.name || wh.department_name || '',
+      });
+    } else {
+      // 总仓/老板仓：清空部门，允许手动选择或留空
+      updateLine(key, {
+        warehouse_id: whId,
+        warehouse_name: wh.name,
+        department_id: '',
+        department_name: '',
+      });
+    }
+  };
+
+  // 批量粘贴：解析粘贴文本，按 Tab/逗号分列
+  const handlePasteImport = () => {
+    const text = pasteText.trim();
+    if (!text) {
+      setError('请粘贴内容');
+      return;
+    }
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    const newLines: LineItem[] = [];
+    const errors: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i].trim();
+      if (!raw) continue;
+      // 跳过表头行
+      if (i === 0 && /物资名称|规格|单位|数量|单价|仓库|部门|理由/i.test(raw)) continue;
+      // 按 Tab 分列，回退到逗号
+      let cols = raw.split('\t');
+      if (cols.length === 1) cols = raw.split(/[,，]/);
+      const colsTrimmed = cols.map((c) => c.trim());
+      // 列顺序：物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 使用部门(可选) | 采购理由(可选)
+      const [name, spec, unit, qty, price, whName, deptName, reason] = colsTrimmed;
+      if (!name) {
+        errors.push(`第 ${i + 1} 行：物资名称为空`);
+        continue;
+      }
+      const line = emptyLine();
+      line.item_name = name;
+      line.spec = spec || '';
+      line.unit = unit || '';
+      line.quantity = qty || '1';
+      line.unit_price = price || '0';
+      line.reason = reason || '';
+      // 匹配仓库
+      if (whName) {
+        const wh = warehouses.find((w) => w.name === whName);
+        if (wh) {
+          line.warehouse_id = wh.id;
+          line.warehouse_name = wh.name;
+          if (wh.type === 'dept' && wh.department_id) {
+            const dept = departments.find((d) => d.id === wh.department_id);
+            line.department_id = wh.department_id;
+            line.department_name = dept?.name || wh.department_name || '';
+          }
+        } else {
+          errors.push(`第 ${i + 1} 行：未找到仓库"${whName}"`);
+        }
+      }
+      // 匹配物资库
+      const matched = items.find(
+        (it) => it.name === name && (!spec || it.spec === spec),
+      );
+      if (matched) {
+        line.item_id = matched.id;
+        if (!line.spec && matched.spec) line.spec = matched.spec;
+        if (!line.unit && matched.unit) line.unit = matched.unit;
+        if (line.unit_price === '0' && matched.reference_price != null) {
+          line.unit_price = String(safeNum(matched.reference_price));
+        }
+      }
+      // 手动指定部门
+      if (deptName && !line.department_id) {
+        const dept = departments.find((d) => d.name === deptName);
+        if (dept) {
+          line.department_id = dept.id;
+          line.department_name = dept.name;
+        }
+      }
+      newLines.push(line);
+    }
+    if (newLines.length === 0) {
+      setError('未解析到有效行' + (errors.length ? `\n${errors.join('\n')}` : ''));
+      return;
+    }
+    setLines(newLines);
+    setShowPastePanel(false);
+    setPasteText('');
+    setError('');
+    if (errors.length > 0) {
+      // 显示警告但不阻止
+      console.warn('批量粘贴部分行有问题:', errors);
+    }
+  };
+
   // ===== 校验 =====
   const validate = (): string | null => {
-    if (!warehouseId) return '请选择入库仓库';
     // 预付款/月结需要选择供应商
     if ((purchaseType === 'prepay' || purchaseType === 'monthly') && !selectedSupplierId) {
       return '预付款和月结采购必须选择供应商';
@@ -345,6 +465,7 @@ export default function WarehousePurchaseCreate() {
       const price = parseFloat(l.unit_price);
       if (isNaN(price) || price < 0) return `第 ${i + 1} 行：单价不能为负`;
       if (!l.unit.trim()) return `第 ${i + 1} 行：单位不能为空`;
+      if (!l.warehouse_id) return `第 ${i + 1} 行：请选择入库仓库`;
     }
     return null;
   };
@@ -354,7 +475,6 @@ export default function WarehousePurchaseCreate() {
     const validLines = lines.filter((l) => l.item_id || l.item_name);
     const selectedSupplier = suppliers.find(s => s.id === selectedSupplierId);
     return {
-      warehouse_id: warehouseId,
       remark,
       purchase_type: purchaseType,
       supplier_id: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplierId || null : null,
@@ -368,6 +488,8 @@ export default function WarehousePurchaseCreate() {
         quantity: parseFloat(l.quantity) || 0,
         unit_price: parseFloat(l.unit_price) || 0,
         amount: lineAmount(l),
+        warehouse_id: l.warehouse_id || null,
+        warehouse_name: l.warehouse_name || null,
         department_id: l.department_id || null,
         department_name: l.department_name || null,
         reason: l.reason.trim() || null,
@@ -450,7 +572,7 @@ export default function WarehousePurchaseCreate() {
               {isEdit ? '编辑采购单' : '新建采购单'}
             </h1>
             <p className="text-gray-500 mt-1">
-              选择入库仓库并添加物资明细，可保存草稿或直接提交审批
+              添加物资明细并选择入库仓库，可保存草稿或直接提交审批
             </p>
           </div>
         </div>
@@ -471,29 +593,6 @@ export default function WarehousePurchaseCreate() {
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">基本信息</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 入库仓库 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              入库仓库 <span className="text-danger-500">*</span>
-            </label>
-            <select
-              value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              className="input-field"
-              disabled={isEdit}
-            >
-              <option value="">请选择仓库</option>
-              {warehouses.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                  {w.department_name ? `（${w.department_name}）` : ''}
-                </option>
-              ))}
-            </select>
-            {isEdit && (
-              <p className="text-xs text-gray-400 mt-1">编辑模式下不可修改入库仓库</p>
-            )}
-          </div>
           {/* 采购类型 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -585,13 +684,22 @@ export default function WarehousePurchaseCreate() {
               共 {lines.length} 行，合计 {formatCurrency(totalAmount)}
             </p>
           </div>
-          <button
-            onClick={() => setLines((prev) => [...prev, emptyLine()])}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus size={16} />
-            添加行
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPastePanel(true)}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Clipboard size={16} />
+              批量粘贴
+            </button>
+            <button
+              onClick={() => setLines((prev) => [...prev, emptyLine()])}
+              className="btn-primary flex items-center gap-2"
+            >
+              <Plus size={16} />
+              添加行
+            </button>
+          </div>
         </div>
 
         {lines.length === 0 ? (
@@ -610,6 +718,7 @@ export default function WarehousePurchaseCreate() {
                   <th className="whitespace-nowrap text-right">数量</th>
                   <th className="whitespace-nowrap text-right">单价(元)</th>
                   <th className="whitespace-nowrap text-right">金额(元)</th>
+                  <th className="whitespace-nowrap">入库仓库</th>
                   <th className="whitespace-nowrap">使用部门</th>
                   <th className="whitespace-nowrap">采购理由</th>
                   <th className="whitespace-nowrap text-center">操作</th>
@@ -686,12 +795,31 @@ export default function WarehousePurchaseCreate() {
                     <td className="text-right font-semibold text-gray-800">
                       {formatCurrency(lineAmount(line))}
                     </td>
+                    {/* 入库仓库 */}
+                    <td>
+                      <select
+                        value={line.warehouse_id}
+                        onChange={(e) => handleWarehouseChange(line.key, e.target.value)}
+                        className={`border rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 ${
+                          line.warehouse_id ? 'border-gray-200' : 'border-dashed border-danger-300'
+                        }`}
+                      >
+                        <option value="">选择仓库</option>
+                        {warehouses.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.name}
+                            {w.type === 'dept' && w.department_name ? `（${w.department_name}）` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     {/* 使用部门 */}
                     <td>
                       <select
                         value={line.department_id}
                         onChange={(e) => handleDepartmentChange(line.key, e.target.value)}
-                        className="border border-gray-200 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                        disabled={!!line.warehouse_id && warehouses.find(w => w.id === line.warehouse_id)?.type === 'dept'}
+                        className="border border-gray-200 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-50 disabled:text-gray-500"
                       >
                         <option value="">未指定</option>
                         {departments.map((d) => (
@@ -750,7 +878,7 @@ export default function WarehousePurchaseCreate() {
                   <td className="text-right text-lg text-primary-600">
                     {formatCurrency(totalAmount)}
                   </td>
-                  <td colSpan={3}></td>
+                  <td colSpan={4}></td>
                 </tr>
               </tfoot>
             </table>
@@ -878,6 +1006,66 @@ export default function WarehousePurchaseCreate() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 批量粘贴弹窗 ===== */}
+      {showPastePanel && (
+        <div
+          className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowPastePanel(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">批量粘贴</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  从 Excel/WPS 复制粘贴，按 Tab 分列。列顺序：物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 使用部门(可选) | 采购理由(可选)
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPastePanel(false)}
+                className="p-1 hover:bg-gray-100 rounded-md transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+                <p className="font-medium mb-1">格式说明：</p>
+                <p>每行一条物资，列之间用 Tab（从 Excel 粘贴自动带 Tab）或逗号分隔。</p>
+                <p className="mt-1">示例：<code className="bg-blue-100 px-1 rounded">洗洁精	5L	桶	10	35.00	厨房仓		日常补充</code></p>
+                <p className="mt-1">仓库名称需与系统仓库名一致，部门仓会自动关联部门；总仓行可不填部门。</p>
+              </div>
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder="在此粘贴内容..."
+                className="input-field min-h-[200px] font-mono text-sm"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button
+                onClick={() => setShowPastePanel(false)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handlePasteImport}
+                className="btn-primary flex items-center gap-2"
+              >
+                <Clipboard size={16} />
+                导入
+              </button>
             </div>
           </div>
         </div>

@@ -49,6 +49,8 @@ interface PurchaseItem {
   quantity: number;
   unit_price: number;
   amount: number;
+  warehouse_id?: string;
+  warehouse_name?: string;
   department_id?: string;
   department_name?: string;
   reason?: string;
@@ -113,6 +115,7 @@ interface ListResponse {
 interface ReceiveFormRow {
   itemId: string;
   itemName: string;
+  warehouseName: string;
   received_quantity: string;
   received_unit: string;
   received_unit_price: string;
@@ -282,6 +285,7 @@ export default function WarehousePurchaseList() {
     const rows: ReceiveFormRow[] = (p.items || []).map((it) => ({
       itemId: it.id,
       itemName: it.item_name,
+      warehouseName: it.warehouse_name || '',
       received_quantity: String(safeNum(it.received_quantity) || safeNum(it.quantity)),
       received_unit: it.received_unit || it.unit || '',
       received_unit_price: String(
@@ -556,6 +560,10 @@ export default function WarehousePurchaseList() {
             const progress = getConfirmProgress(p);
             const expanded = expandedId === p.id;
             const items = p.items || [];
+            // 汇总涉及仓库
+            const warehouseNames = items.length > 0
+              ? Array.from(new Set(items.map(i => i.warehouse_name).filter(Boolean)))
+              : (p.warehouse_name ? [p.warehouse_name] : []);
             return (
               <div key={p.id} className="border border-gray-200 rounded-lg overflow-hidden bg-white">
                 {/* 卡片头部 - 点击展开 */}
@@ -593,7 +601,10 @@ export default function WarehousePurchaseList() {
                       <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
                         <span className="flex items-center gap-1">
                           <WarehouseIcon size={12} />
-                          {p.warehouse_name || '未指定仓库'}
+                          {warehouseNames.length > 0 ? warehouseNames.join(' + ') : '未指定仓库'}
+                          {warehouseNames.length > 1 && (
+                            <span className="text-primary-500">({warehouseNames.length}个)</span>
+                          )}
                         </span>
                         <span>·</span>
                         <span className="text-gray-700 font-medium">
@@ -672,7 +683,7 @@ export default function WarehousePurchaseList() {
                           <div className="bg-gray-50 rounded-lg p-2">
                             <p className="text-gray-500">入库仓库</p>
                             <p className="font-medium text-gray-800 mt-0.5">
-                              {p.warehouse_name || '-'}
+                              {warehouseNames.length > 0 ? warehouseNames.join('、') : '-'}
                             </p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2">
@@ -741,6 +752,7 @@ export default function WarehousePurchaseList() {
                               <table className="w-full text-xs">
                                 <thead className="bg-gray-100 text-gray-600 sticky top-0">
                                   <tr>
+                                    <th className="px-3 py-2 text-left">仓库</th>
                                     <th className="px-3 py-2 text-left">物资名称</th>
                                     <th className="px-3 py-2 text-left">规格</th>
                                     <th className="px-3 py-2 text-left">单位</th>
@@ -755,6 +767,9 @@ export default function WarehousePurchaseList() {
                                 <tbody className="divide-y divide-gray-200">
                                   {items.map((it, idx) => (
                                     <tr key={it.id || idx}>
+                                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                                        {it.warehouse_name || '-'}
+                                      </td>
                                       <td className="px-3 py-2 text-gray-700">{it.item_name}</td>
                                       <td className="px-3 py-2 text-gray-500">{it.spec || '-'}</td>
                                       <td className="px-3 py-2 text-gray-500">{it.unit || '-'}</td>
@@ -1073,6 +1088,7 @@ export default function WarehousePurchaseList() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 text-gray-600">
                       <tr>
+                        <th className="px-3 py-2 text-left">仓库</th>
                         <th className="px-3 py-2 text-left">物资名称</th>
                         <th className="px-3 py-2 text-left">规格</th>
                         <th className="px-3 py-2 text-left">单位</th>
@@ -1087,6 +1103,9 @@ export default function WarehousePurchaseList() {
                         const price = parseFloat(row.received_unit_price) || 0;
                         return (
                           <tr key={row.itemId || idx}>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">
+                              {row.warehouseName || '-'}
+                            </td>
                             <td className="px-3 py-2 text-gray-800 font-medium">
                               {row.itemName}
                             </td>
