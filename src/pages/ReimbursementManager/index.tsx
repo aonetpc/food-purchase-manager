@@ -35,13 +35,6 @@ interface PurchaseConfirmation {
   created_at: string;
   user_confirmations?: Record<string, { confirmed: boolean; confirmed_at?: string; confirmed_by?: string }>;
   user_departments?: Record<string, { departments: string[] } | string[]>;
-  purchase_type?: 'normal' | 'prepay' | 'monthly';
-  supplier_name?: string;
-  prepay_amount?: number;
-  prepay_status?: string;
-  prepay_sp_no?: string;
-  writeoff_status?: string;
-  payment_voucher_no?: string;
 }
 
 export default function ReimbursementManager() {
@@ -238,52 +231,6 @@ export default function ReimbursementManager() {
     }
   };
 
-  // 发起预付款审批
-  const handleSubmitPrepay = async (id: string) => {
-    try {
-      await api.post(`/purchase-confirmations/${id}/submit-prepay`);
-      fetchConfirmations();
-    } catch (err: any) {
-      setError(err.message || '发起预付款审批失败');
-    }
-  };
-
-  // 刷新预付款审批状态
-  const handleRefreshPrepay = async (id: string) => {
-    try {
-      await api.post(`/purchase-confirmations/${id}/refresh-prepay`);
-      fetchConfirmations();
-    } catch (err: any) {
-      setError(err.message || '刷新预付款审批状态失败');
-    }
-  };
-
-  // 回填预付款付款凭证
-  const handlePrepayVoucher = async (id: string) => {
-    const voucherNo = window.prompt('请输入付款凭证号/银行流水号：');
-    if (voucherNo === null) return;
-    try {
-      await api.post(`/purchase-confirmations/${id}/prepay-voucher`, {
-        payment_voucher_no: voucherNo || '',
-        payment_voucher_at: new Date().toISOString(),
-      });
-      fetchConfirmations();
-    } catch (err: any) {
-      setError(err.message || '回填付款凭证失败');
-    }
-  };
-
-  // 手动核销预付款
-  const handleWriteoffPrepay = async (id: string) => {
-    try {
-      const result = await api.post<{ message: string }>(`/purchase-confirmations/${id}/writeoff-prepay`);
-      alert(result.message || '核销完成');
-      fetchConfirmations();
-    } catch (err: any) {
-      setError(err.message || '核销失败');
-    }
-  };
-
   // 月份选择
   const months: string[] = [];
   const now = new Date();
@@ -380,16 +327,6 @@ export default function ReimbursementManager() {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-gray-800">{formatDate(c.purchase_date)}</span>
-                        {/* 采购类型标签 */}
-                        {c.purchase_type === 'prepay' && (
-                          <span className="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700 font-medium">预付款</span>
-                        )}
-                        {c.purchase_type === 'monthly' && (
-                          <span className="px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-700 font-medium">月结</span>
-                        )}
-                        {c.purchase_type !== 'prepay' && c.purchase_type !== 'monthly' && (
-                          <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700 font-medium">现购</span>
-                        )}
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(c.reimbursement_status)}`}>
                           {getStatusIcon(c.reimbursement_status)}
                           {getStatusText(c.reimbursement_status)}
@@ -397,17 +334,11 @@ export default function ReimbursementManager() {
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5">
                         {formatCurrency(safeParseFloat(c.total_amount))} · {totalDepts}个部门 · {c.purchase_items?.length || 0}项
-                        {c.supplier_name && <span className="ml-1">· {c.supplier_name}</span>}
-                        {c.purchase_type === 'prepay' && c.prepay_amount != null && (
-                          <span className="ml-1 text-orange-600">· 预付¥{safeParseFloat(c.prepay_amount).toFixed(2)}</span>
-                        )}
                         {totalUsers > 0 && (
                           <span className="ml-2 text-primary-600">
                             · {confirmedUsers}/{totalUsers} 已确认
                           </span>
                         )}
-                        {c.writeoff_status === 'auto' && <span className="ml-1 text-green-600">· 已自动核销</span>}
-                        {c.writeoff_status === 'manual' && <span className="ml-1 text-orange-600">· 待人工核销</span>}
                       </div>
                     </div>
                   </div>
@@ -593,45 +524,7 @@ export default function ReimbursementManager() {
                           重新发起
                         </button>
                       )}
-                      {/* 预付款采购操作按钮 */}
-                      {c.purchase_type === 'prepay' && !c.prepay_sp_no && c.status === 'confirmed' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleSubmitPrepay(c.id); }}
-                          className="btn-primary text-xs flex items-center gap-1 bg-orange-600 hover:bg-orange-700"
-                        >
-                          <Send size={14} />
-                          发起预付审批
-                        </button>
-                      )}
-                      {c.purchase_type === 'prepay' && c.prepay_sp_no && c.prepay_status === 'pending' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleRefreshPrepay(c.id); }}
-                          className="btn-secondary text-xs flex items-center gap-1"
-                        >
-                          <RefreshCw size={14} />
-                          刷新预付审批
-                        </button>
-                      )}
-                      {c.purchase_type === 'prepay' && c.prepay_status === 'approved' && !c.payment_voucher_no && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handlePrepayVoucher(c.id); }}
-                          className="btn-primary text-xs flex items-center gap-1 bg-teal-600 hover:bg-teal-700"
-                        >
-                          <CheckCircle2 size={14} />
-                          回填付款凭证
-                        </button>
-                      )}
-                      {c.purchase_type === 'prepay' && c.writeoff_status === 'manual' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleWriteoffPrepay(c.id); }}
-                          className="btn-secondary text-xs flex items-center gap-1 text-orange-600"
-                        >
-                          <RefreshCw size={14} />
-                          手动核销
-                        </button>
-                      )}
-                      {/* 月结和预付类型不显示"发起报销" */}
-                      {c.purchase_type !== 'prepay' && c.purchase_type !== 'monthly' && !c.reimbursement_sp_no && c.status === 'confirmed' && (
+                      {!c.reimbursement_sp_no && c.status === 'confirmed' && (
                         <button
                           onClick={(e) => { e.stopPropagation(); handleInitiateReimbursement(c.id); }}
                           className="btn-primary text-xs flex items-center gap-1"

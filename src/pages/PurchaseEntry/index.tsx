@@ -118,9 +118,6 @@ export default function PurchaseEntry() {
   const [showBatchPaste, setShowBatchPaste] = useState(false);
   const [sendingWecom, setSendingWecom] = useState(false);
   const [sendSuccess, setSendSuccess] = useState(false);
-  const [purchaseType, setPurchaseType] = useState<'normal' | 'prepay' | 'monthly'>('normal');
-  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
-  const [prepayAmount, setPrepayAmount] = useState<number>(0);
 
   useEffect(() => {
     fetchDepartments();
@@ -336,8 +333,6 @@ export default function PurchaseEntry() {
       const departments = Object.values(deptMap);
 
       // 获取供应商信息
-      const selectedSupplier = suppliers.find(s => s.id === selectedSupplierId);
-
       await api.post('/purchase-confirmations', {
         purchase_date: dateStr,
         total_amount: totalAmount,
@@ -350,10 +345,6 @@ export default function PurchaseEntry() {
           amount: item.amount,
           department_name: item.departmentName || '',
         })),
-        purchase_type: purchaseType,
-        supplier_id: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplierId || null : null,
-        supplier_name: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplier?.name || null : null,
-        prepay_amount: purchaseType === 'prepay' ? prepayAmount : 0,
       });
 
       setSendSuccess(true);
@@ -525,48 +516,6 @@ export default function PurchaseEntry() {
           </button>
         </div>
         <div className="flex items-center gap-2">
-          {/* 采购类型选择 */}
-          <select
-            value={purchaseType}
-            onChange={(e) => setPurchaseType(e.target.value as 'normal' | 'prepay' | 'monthly')}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="normal">现购（默认）</option>
-            <option value="prepay">预付款采购</option>
-            <option value="monthly">月结采购</option>
-          </select>
-
-          {/* 预付款/月结时显示供应商选择 */}
-          {(purchaseType === 'prepay' || purchaseType === 'monthly') && (
-            <select
-              value={selectedSupplierId}
-              onChange={(e) => setSelectedSupplierId(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="">选择供应商</option>
-              {suppliers.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name}{s.prepay_balance > 0 ? ` (余额¥${s.prepay_balance.toFixed(2)})` : ''}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {/* 预付款时显示预付金额输入 */}
-          {purchaseType === 'prepay' && (
-            <div className="flex items-center gap-1">
-              <span className="text-sm text-gray-600">预付:</span>
-              <input
-                type="number"
-                value={prepayAmount || ''}
-                onChange={(e) => setPrepayAmount(parseFloat(e.target.value) || 0)}
-                placeholder="预付金额"
-                className="w-28 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-              />
-              <span className="text-sm text-gray-600">¥</span>
-            </div>
-          )}
-
           {draftItems.length > 0 && (
             <button onClick={handleClear} className="btn-secondary flex items-center gap-2 text-danger-600 hover:bg-danger-50">
               <Trash2 size={16} />
