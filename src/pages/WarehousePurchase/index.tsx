@@ -91,6 +91,14 @@ interface WarehousePurchase {
   confirmation_departments?: ConfirmDepartment[];
   remark?: string;
   operator?: string;
+  // 采购类型相关
+  purchase_type?: 'normal' | 'prepay' | 'monthly';
+  supplier_id?: string;
+  supplier_name?: string;
+  prepay_amount?: number;
+  prepay_sp_no?: string;
+  prepay_status?: string;
+  writeoff_status?: string;
 }
 
 // 列表分页响应
@@ -406,6 +414,63 @@ export default function WarehousePurchaseList() {
     }
   };
 
+  // ===== 预付款相关操作 =====
+  const handleSubmitPrepay = async (id: string) => {
+    if (!window.confirm('确定发起预付款审批吗？')) return;
+    setActioningId(id);
+    try {
+      await api.post(`/warehouse-purchases/${id}/submit-prepay`);
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '发起预付款审批失败');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  const handleRefreshPrepay = async (id: string) => {
+    setActioningId(id);
+    try {
+      await api.post(`/warehouse-purchases/${id}/refresh-prepay`);
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '刷新预付款审批状态失败');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  const handlePrepayVoucher = async (id: string) => {
+    const voucherNo = window.prompt('请输入付款凭证号/银行流水号：');
+    if (voucherNo === null) return;
+    setActioningId(id);
+    try {
+      await api.post(`/warehouse-purchases/${id}/prepay-voucher`, {
+        payment_voucher_no: voucherNo || '',
+        payment_voucher_at: new Date().toISOString(),
+      });
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '回填付款凭证失败');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  const handleWriteoffPrepay = async (id: string) => {
+    if (!window.confirm('确定手动核销预付款吗？')) return;
+    setActioningId(id);
+    try {
+      const result = await api.post<{ message: string }>(`/warehouse-purchases/${id}/writeoff-prepay`);
+      alert(result.message || '核销完成');
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '核销失败');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
   // ===== 删除 =====
   const handleDelete = async (id: string) => {
     if (!window.confirm('确定删除该采购单吗？删除后不可恢复。')) return;
@@ -509,6 +574,16 @@ export default function WarehousePurchaseList() {
                         <span className="text-sm font-medium text-gray-800">
                           {p.purchase_no || `采购单 ${p.id.substring(0, 8)}`}
                         </span>
+                        {/* 采购类型标签 */}
+                        {p.purchase_type === 'prepay' && (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700 font-medium">预付款</span>
+                        )}
+                        {p.purchase_type === 'monthly' && (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-700 font-medium">月结</span>
+                        )}
+                        {(!p.purchase_type || p.purchase_type === 'normal') && (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700 font-medium">现购</span>
+                        )}
                         <span
                           className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusConf.color}`}
                         >
@@ -524,6 +599,31 @@ export default function WarehousePurchaseList() {
                         <span className="text-gray-700 font-medium">
                           {formatCurrency(safeNum(p.total_amount))}
                         </span>
+                        {/* 供应商和预付款信息 */}
+                        {p.supplier_name && (
+                          <>
+                            <span>·</span>
+                            <span className="text-gray-600">{p.supplier_name}</span>
+                          </>
+                        )}
+                        {p.purchase_type === 'prepay' && p.prepay_amount && (
+                          <>
+                            <span>·</span>
+                            <span className="text-orange-600">预付{formatCurrency(safeNum(p.prepay_amount))}</span>
+                          </>
+                        )}
+                        {p.writeoff_status === 'auto' && (
+                          <>
+                            <span>·</span>
+                            <span className="text-green-600">已核销</span>
+                          </>
+                        )}
+                        {p.writeoff_status === 'manual' && (
+                          <>
+                            <span>·</span>
+                            <span className="text-orange-600">待核销</span>
+                          </>
+                        )}
                         {progress.total > 0 && (
                           <>
                             <span>·</span>
@@ -770,8 +870,68 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* confirmed: 生成PDF、发起报销 */}
-                          {p.status === 'confirmed' && (
+                          {/* 预付款：发起预付款审批 */}
+                          {p.purchase_type === 'prepay' && !p.prepay_sp_no && p.status !== 'draft' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSubmitPrepay(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-primary text-xs flex items-center gap-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
+                            >
+                              <Send size={14} />
+                              发起预付审批
+                            </button>
+                          )}
+
+                          {/* 预付款审批中：刷新状态 */}
+                          {p.purchase_type === 'prepay' && p.prepay_sp_no && p.prepay_status === 'pending' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRefreshPrepay(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <RefreshCw size={14} />
+                              刷新预付审批
+                            </button>
+                          )}
+
+                          {/* 预付款已通过：回填凭证 */}
+                          {p.purchase_type === 'prepay' && p.prepay_status === 'approved' && !p.prepay_voucher_no && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePrepayVoucher(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-primary text-xs flex items-center gap-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50"
+                            >
+                              <CheckCircle2 size={14} />
+                              回填付款凭证
+                            </button>
+                          )}
+
+                          {/* 预付款待核销：手动核销 */}
+                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleWriteoffPrepay(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-secondary text-xs flex items-center gap-1 text-orange-600 disabled:opacity-50"
+                            >
+                              <RefreshCw size={14} />
+                              手动核销
+                            </button>
+                          )}
+
+                          {/* confirmed: 生成PDF、发起报销（预付款/月结不显示） */}
+                          {p.status === 'confirmed' && p.purchase_type !== 'prepay' && p.purchase_type !== 'monthly' && (
                             <>
                               <button
                                 onClick={(e) => {

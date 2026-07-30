@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDepartmentStore } from '@/store/departmentStore';
+import { useSupplierStore } from '@/store/supplierStore';
 import { formatCurrency } from '@/utils/format';
 
 // ====== 类型定义 ======
@@ -94,6 +95,10 @@ interface PurchaseDetailDTO {
   warehouse_name?: string;
   total_amount: number;
   items?: PurchaseItemDTO[];
+  purchase_type?: 'normal' | 'prepay' | 'monthly';
+  supplier_id?: string;
+  supplier_name?: string;
+  prepay_amount?: number;
 }
 
 // ====== 工具函数 ======
@@ -150,6 +155,12 @@ export default function WarehousePurchaseCreate() {
   const [items, setItems] = useState<WarehouseItem[]>([]);
   const [categoryTree, setCategoryTree] = useState<CategoryNode[]>([]);
   const { departments, fetchDepartments } = useDepartmentStore();
+  const { suppliers, fetchSuppliers } = useSupplierStore();
+
+  // 采购类型状态
+  const [purchaseType, setPurchaseType] = useState<'normal' | 'prepay' | 'monthly'>('normal');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [prepayAmount, setPrepayAmount] = useState<number>(0);
 
   // 表单状态
   const [warehouseId, setWarehouseId] = useState('');
@@ -171,6 +182,7 @@ export default function WarehousePurchaseCreate() {
   // ===== 初始化：加载仓库、物资、分类树、部门 =====
   useEffect(() => {
     fetchDepartments();
+    fetchSuppliers();
     Promise.all([
       api.get<Warehouse[]>('/warehouses').catch(() => [] as Warehouse[]),
       api.get<WarehouseItem[]>('/warehouses/items').catch(() => [] as WarehouseItem[]),
@@ -184,7 +196,7 @@ export default function WarehousePurchaseCreate() {
       .finally(() => {
         if (!isEdit) setLoading(false);
       });
-  }, [fetchDepartments, isEdit]);
+  }, [fetchDepartments, fetchSuppliers, isEdit]);
 
   // ===== 编辑模式：加载采购单详情回填表单 =====
   useEffect(() => {
@@ -196,6 +208,9 @@ export default function WarehousePurchaseCreate() {
         const detail = await api.get<PurchaseDetailDTO>(`/warehouse-purchases/${id}`);
         if (cancelled) return;
         setWarehouseId(detail.warehouse_id || '');
+        setPurchaseType(detail.purchase_type || 'normal');
+        setSelectedSupplierId(detail.supplier_id || '');
+        setPrepayAmount(detail.prepay_amount ? safeNum(detail.prepay_amount) : 0);
         const restoredLines: LineItem[] = (detail.items || []).map((it) => ({
           key: genKey(),
           item_id: it.item_id || '',
@@ -311,6 +326,14 @@ export default function WarehousePurchaseCreate() {
   // ===== 校验 =====
   const validate = (): string | null => {
     if (!warehouseId) return '请选择入库仓库';
+    // 预付款/月结需要选择供应商
+    if ((purchaseType === 'prepay' || purchaseType === 'monthly') && !selectedSupplierId) {
+      return '预付款和月结采购必须选择供应商';
+    }
+    // 预付款需要填写预付金额
+    if (purchaseType === 'prepay' && (!prepayAmount || prepayAmount <= 0)) {
+      return '预付款采购必须填写预付金额';
+    }
     // 过滤掉完全空的行
     const validLines = lines.filter((l) => l.item_id || l.item_name);
     if (validLines.length === 0) return '请至少添加一条物资明细';
@@ -329,9 +352,14 @@ export default function WarehousePurchaseCreate() {
   // ===== 构建提交 payload =====
   const buildPayload = () => {
     const validLines = lines.filter((l) => l.item_id || l.item_name);
+    const selectedSupplier = suppliers.find(s => s.id === selectedSupplierId);
     return {
       warehouse_id: warehouseId,
       remark,
+      purchase_type: purchaseType,
+      supplier_id: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplierId || null : null,
+      supplier_name: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplier?.name || null : null,
+      prepay_amount: purchaseType === 'prepay' ? prepayAmount : 0,
       items: validLines.map((l) => ({
         item_id: l.item_id || null,
         item_name: l.item_name.trim(),
@@ -466,6 +494,74 @@ export default function WarehousePurchaseCreate() {
               <p className="text-xs text-gray-400 mt-1">编辑模式下不可修改入库仓库</p>
             )}
           </div>
+          {/* 采购类型 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              采购类型 <span className="text-danger-500">*</span>
+            </label>
+            <select
+              value={purchaseType}
+              onChange={(e) => {
+                setPurchaseType(e.target.value as 'normal' | 'prepay' | 'monthly');
+                // 切换类型时清空供应商和预付金额
+                if (e.target.value === 'normal') {
+                  setSelectedSupplierId('');
+                  setPrepayAmount(0);
+                }
+              }}
+              className="input-field"
+            >
+              <option value="normal">现购</option>
+              <option value="prepay">预付款采购</option>
+              <option value="monthly">月结采购</option>
+            </select>
+          </div>
+          {/* 供应商选择（预付款/月结时显示） */}
+          {(purchaseType === 'prepay' || purchaseType === 'monthly') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                供应商 <span className="text-danger-500">*</span>
+              </label>
+              <select
+                value={selectedSupplierId}
+                onChange={(e) => setSelectedSupplierId(e.target.value)}
+                className="input-field"
+              >
+                <option value="">请选择供应商</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}{s.prepay_balance && s.prepay_balance > 0 ? ` (余额¥${Number(s.prepay_balance).toFixed(2)})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {/* 预付款金额 */}
+          {purchaseType === 'prepay' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                预付金额 <span className="text-danger-500">*</span>
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">¥</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={prepayAmount || ''}
+                  onChange={(e) => setPrepayAmount(parseFloat(e.target.value) || 0)}
+                  placeholder="请输入预付金额"
+                  className="input-field pl-7"
+                />
+              </div>
+              {prepayAmount > 0 && totalAmount > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  将预付 {((prepayAmount / totalAmount) * 100).toFixed(1)}%，
+                  剩余 {(totalAmount - prepayAmount).toFixed(2)} 元入库后结算
+                </p>
+              )}
+            </div>
+          )}
           {/* 备注 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">备注</label>

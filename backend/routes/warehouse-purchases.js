@@ -907,11 +907,15 @@ router.post('/', requireAuth, async (req, res) => {
     const createdBy = (req.user && req.user.id) || null;
     const createdByName = (req.user && req.user.name) || null;
 
+    const { purchase_type = 'normal', supplier_id = null, supplier_name = null, prepay_amount = 0 } = req.body;
+
     await connection.query(
       `INSERT INTO warehouse_purchases
-       (id, purchase_no, warehouse_id, warehouse_name, status, total_amount, created_by, created_by_name)
-       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
-      [id, purchaseNo, warehouse_id, warehouseName, totalAmount, createdBy, createdByName]
+       (id, purchase_no, warehouse_id, warehouse_name, status, total_amount, created_by, created_by_name,
+        purchase_type, supplier_id, supplier_name, prepay_amount)
+       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
+      [id, purchaseNo, warehouse_id, warehouseName, totalAmount, createdBy, createdByName,
+       purchase_type, supplier_id, supplier_name, prepay_amount]
     );
 
     // 写入明细
@@ -1048,9 +1052,18 @@ router.put('/:id', requireAuth, async (req, res) => {
       );
     }
 
+    const { purchase_type, supplier_id, supplier_name, prepay_amount } = req.body;
+
     await connection.query(
-      'UPDATE warehouse_purchases SET warehouse_id = ?, warehouse_name = ?, total_amount = ? WHERE id = ?',
-      [warehouse_id || rows[0].warehouse_id, warehouseName, totalAmount, id]
+      `UPDATE warehouse_purchases
+       SET warehouse_id = ?, warehouse_name = ?, total_amount = ?,
+           purchase_type = COALESCE(?, purchase_type),
+           supplier_id = COALESCE(?, supplier_id),
+           supplier_name = COALESCE(?, supplier_name),
+           prepay_amount = COALESCE(?, prepay_amount)
+       WHERE id = ?`,
+      [warehouse_id || rows[0].warehouse_id, warehouseName, totalAmount,
+       purchase_type, supplier_id, supplier_name, prepay_amount, id]
     );
 
     await connection.commit();
@@ -1580,6 +1593,254 @@ router.delete('/:id', requireAuth, async (req, res) => {
   } catch (err) {
     await connection.rollback();
     console.error('删除仓库采购单失败:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ================================================
+// 预付款相关接口
+// ================================================
+
+// 12. POST /:id/submit-prepay — 发起预付款审批
+router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const row = rows[0];
+    if (row.purchase_type !== 'prepay') {
+      return res.status(400).json({ error: '该采购单不是预付款类型' });
+    }
+    if (row.status !== 'draft' && row.status !== 'confirmed') {
+      return res.status(400).json({ error: '当前状态不可发起预付款审批' });
+    }
+    if (row.prepay_sp_no && row.prepay_status === 'pending') {
+      return res.status(400).json({ error: '预付款审批已发起，请等待结果' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret || !config.applicant_userid) {
+      return res.status(400).json({ error: '请先完成企微配置' });
+    }
+    if (!config.prepay_approval_template_id) {
+      return res.status(400).json({ error: '请配置预付款审批模板ID' });
+    }
+
+    const prepayAmount = toNum(row.prepay_amount);
+    if (prepayAmount <= 0) {
+      return res.status(400).json({ error: '预付款金额必须大于0' });
+    }
+
+    const fieldMapping = parseFieldMapping(config.prepay_field_mapping);
+    const controlTypeMap = await fetchWarehouseTemplateControlTypes(config, true);
+
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, {
+      date: dateStr,
+      amount: prepayAmount,
+      reason: `预付款 - ${row.supplier_name || '供应商'} - 仓库采购(${row.id.substring(0, 8)})`,
+      items: [],
+      useReceived: false,
+      pdfPath: null,
+      rowId: id,
+      prepayMode: true,
+    });
+
+    const spNo = await submitApproval(config, applyData, config.prepay_approval_template_id);
+
+    await pool.query(
+      'UPDATE warehouse_purchases SET prepay_sp_no = ?, prepay_status = ? WHERE id = ?',
+      [spNo, 'pending', id]
+    );
+
+    const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    res.json(normalizePurchaseRow(freshRows[0]));
+  } catch (err) {
+    console.error('发起预付款审批失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 13. POST /:id/refresh-prepay — 刷新预付款审批状态
+router.post('/:id/refresh-prepay', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const row = rows[0];
+    if (!row.prepay_sp_no) {
+      return res.status(400).json({ error: '未发起预付款审批' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config) {
+      return res.status(400).json({ error: '请先完成企微配置' });
+    }
+
+    const detail = await getApprovalDetail(config, row.prepay_sp_no);
+    const spStatus = detail.status || detail.sp_status;
+
+    let newStatus = row.prepay_status;
+    if (spStatus === 2 || spStatus === 'approved') {
+      newStatus = 'approved';
+      await pool.query(
+        'UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?',
+        [newStatus, id]
+      );
+      // 自动核销
+      await pool.query(
+        `UPDATE warehouse_purchases
+         SET writeoff_status = 'auto', writeoff_amount = prepay_amount
+         WHERE id = ? AND writeoff_status = 'pending'`,
+        [id]
+      );
+      // 更新供应商余额
+      if (row.supplier_id) {
+        const [supplierRows] = await pool.query(
+          'SELECT prepay_balance FROM suppliers WHERE id = ?',
+          [row.supplier_id]
+        );
+        if (supplierRows.length > 0) {
+          const currentBalance = toNum(supplierRows[0].prepay_balance);
+          await pool.query(
+            'UPDATE suppliers SET prepay_balance = ? WHERE id = ?',
+            [currentBalance + toNum(row.prepay_amount), row.supplier_id]
+          );
+        }
+      }
+    } else if (spStatus === 3 || spStatus === 'rejected') {
+      newStatus = 'rejected';
+      await pool.query(
+        'UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?',
+        [newStatus, id]
+      );
+    }
+
+    const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    res.json(normalizePurchaseRow(freshRows[0]));
+  } catch (err) {
+    console.error('刷新预付款审批状态失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 14. POST /:id/prepay-voucher — 回填预付款付款凭证
+router.post('/:id/prepay-voucher', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { payment_voucher_no, payment_voucher_at } = req.body;
+
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const row = rows[0];
+    if (row.prepay_status !== 'approved') {
+      return res.status(400).json({ error: '预付款审批未通过' });
+    }
+
+    await pool.query(
+      `UPDATE warehouse_purchases
+       SET prepay_status = 'paid',
+           prepay_voucher_no = ?,
+           prepay_voucher_at = ?
+       WHERE id = ?`,
+      [payment_voucher_no || null, payment_voucher_at || null, id]
+    );
+
+    const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    res.json(normalizePurchaseRow(freshRows[0]));
+  } catch (err) {
+    console.error('回填预付款付款凭证失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 15. POST /:id/writeoff-prepay — 手动核销预付款
+router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { id } = req.params;
+
+    const [rows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const row = rows[0];
+    if (row.purchase_type !== 'prepay') {
+      await connection.rollback();
+      return res.status(400).json({ error: '该采购单不是预付款类型' });
+    }
+    if (row.actual_amount == null || toNum(row.actual_amount) <= 0) {
+      await connection.rollback();
+      return res.status(400).json({ error: '请先录入收货并完成确认' });
+    }
+
+    const actualAmount = toNum(row.actual_amount);
+    const prepayAmount = toNum(row.prepay_amount);
+    let diffAmount = 0;
+    let writeoffAmount = prepayAmount;
+
+    if (prepayAmount >= actualAmount) {
+      writeoffAmount = actualAmount;
+      diffAmount = prepayAmount - actualAmount;
+      await connection.query(
+        `UPDATE warehouse_purchases
+         SET writeoff_status = 'auto', writeoff_amount = ?
+         WHERE id = ?`,
+        [actualAmount, id]
+      );
+      if (diffAmount > 0 && row.supplier_id) {
+        const [supplierRows] = await connection.query(
+          'SELECT prepay_balance FROM suppliers WHERE id = ?',
+          [row.supplier_id]
+        );
+        if (supplierRows.length > 0) {
+          const currentBalance = toNum(supplierRows[0].prepay_balance);
+          await connection.query(
+            'UPDATE suppliers SET prepay_balance = ? WHERE id = ?',
+            [currentBalance + diffAmount, row.supplier_id]
+          );
+        }
+      }
+      await connection.commit();
+      res.json({
+        message: `核销完成：预付¥${prepayAmount.toFixed(2)}，实际¥${actualAmount.toFixed(2)}，多付¥${diffAmount.toFixed(2)}已计入供应商余额`,
+        diff_amount: diffAmount,
+        writeoff_amount: writeoffAmount,
+        type: 'overpay',
+      });
+    } else {
+      writeoffAmount = prepayAmount;
+      const remainAmount = actualAmount - prepayAmount;
+      await connection.query(
+        `UPDATE warehouse_purchases
+         SET writeoff_status = 'manual', writeoff_amount = ?
+         WHERE id = ?`,
+        [prepayAmount, id]
+      );
+      await connection.commit();
+      res.json({
+        message: `核销完成：预付¥${prepayAmount.toFixed(2)}，实际¥${actualAmount.toFixed(2)}，少付¥${remainAmount.toFixed(2)}待后续报销`,
+        diff_amount: remainAmount,
+        writeoff_amount: writeoffAmount,
+        type: 'underpay',
+      });
+    }
+  } catch (err) {
+    await connection.rollback();
+    console.error('核销预付款失败:', err);
     res.status(500).json({ error: err.message });
   } finally {
     connection.release();

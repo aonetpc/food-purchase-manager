@@ -83,7 +83,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     // 查询关联采购单
     let purchases = [];
     if (stmt.purchase_ids && stmt.purchase_ids.length > 0) {
-      const q = `SELECT * FROM purchase_confirmations WHERE id IN (${stmt.purchase_ids.map(() => '?').join(',')})`;
+      const q = `SELECT * FROM warehouse_purchases WHERE id IN (${stmt.purchase_ids.map(() => '?').join(',')})`;
       const [pRows] = await pool.query(q, stmt.purchase_ids);
       purchases = pRows.map(p => ({
         ...p,
@@ -112,7 +112,7 @@ router.post('/generate', requireAuth, async (req, res) => {
     // 查询范围内已确认且未关联网结账单的月结采购单（跨月按入库日期 = confirmed_at）
     let sql = `
       SELECT id, supplier_id, supplier_name, total_amount, confirmed_at
-      FROM purchase_confirmations
+      FROM warehouse_purchases
       WHERE purchase_type = 'monthly'
         AND status = 'confirmed'
         AND monthly_statement_id IS NULL
@@ -155,7 +155,7 @@ router.post('/generate', requireAuth, async (req, res) => {
       );
       // 关联网采购单
       await conn.query(
-        `UPDATE purchase_confirmations SET monthly_statement_id = ? WHERE id IN (${purchaseIds.map(() => '?').join(',')})`,
+        `UPDATE warehouse_purchases SET monthly_statement_id = ? WHERE id IN (${purchaseIds.map(() => '?').join(',')})`,
         [stmtId, ...purchaseIds]
       );
       result.push({ id: stmtId, supplier_id: sid, supplier_name: group.supplier_name, count: purchaseIds.length, total: group.total });
@@ -283,11 +283,11 @@ router.post('/:id/submit-payment', requireAuth, async (req, res) => {
     if (fieldMapping.details) {
       const purchaseIds = parseJson(stmt.purchase_ids) || [];
       const [pRows] = purchaseIds.length
-        ? await pool.query(`SELECT id, purchase_date, total_amount FROM purchase_confirmations WHERE id IN (${purchaseIds.map(() => '?').join(',')})`, purchaseIds)
+        ? await pool.query(`SELECT id, purchase_no, total_amount FROM warehouse_purchases WHERE id IN (${purchaseIds.map(() => '?').join(',')})`, purchaseIds)
         : [[]];
       let detailText = `月结供应商：${stmt.supplier_name || '-'}\n账单月份：${stmt.statement_month}\n采购单数：${pRows.length}张\n合计金额：¥${amount.toFixed(2)}\n\n`;
       for (const p of pRows) {
-        detailText += `${p.purchase_date}  单号：${p.id.substring(0, 8)}  ¥${toNum(p.total_amount).toFixed(2)}\n`;
+        detailText += `${p.purchase_no || p.id.substring(0, 8)}  ¥${toNum(p.total_amount).toFixed(2)}\n`;
       }
       contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
     }
@@ -330,10 +330,10 @@ router.post('/:id/refresh-payment', requireAuth, async (req, res) => {
     let newStatus = stmt.status;
     if (spStatus === 2) {
       newStatus = 'paid';
-      // 付款通过，批量更新关联采购单状态为monthly_paid（模拟）
+      // 付款通过，批量更新关联采购单状态为已完成
       const ids = parseJson(stmt.purchase_ids) || [];
       if (ids.length > 0) {
-        const q = `UPDATE purchase_confirmations SET status = 'completed', reimbursement_status = 'approved' WHERE id IN (${ids.map(() => '?').join(',')})`;
+        const q = `UPDATE warehouse_purchases SET status = 'confirmed', reimbursement_status = 'approved' WHERE id IN (${ids.map(() => '?').join(',')})`;
         await pool.query(q, ids);
       }
     } else if (spStatus === 3) {
@@ -360,7 +360,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
     const ids = parseJson(stmt.purchase_ids) || [];
     if (ids.length > 0) {
-      const q = `UPDATE purchase_confirmations SET monthly_statement_id = NULL WHERE id IN (${ids.map(() => '?').join(',')})`;
+      const q = `UPDATE warehouse_purchases SET monthly_statement_id = NULL WHERE id IN (${ids.map(() => '?').join(',')})`;
       await conn.query(q, ids);
     }
     await conn.query('DELETE FROM monthly_statements WHERE id = ?', [id]);
@@ -383,7 +383,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 router.get('/prepay-writeoff/list', requireAuth, async (req, res) => {
   try {
     const { status } = req.query;
-    let sql = `SELECT * FROM purchase_confirmations WHERE purchase_type = 'prepay' AND status = 'confirmed'`;
+    let sql = `SELECT * FROM warehouse_purchases WHERE purchase_type = 'prepay' AND status = 'confirmed'`;
     const params = [];
     if (status === 'pending') { sql += ' AND (writeoff_status = ? OR writeoff_status IS NULL)'; params.push('manual'); }
     else if (status) { sql += ' AND writeoff_status = ?'; params.push(status); }
@@ -411,10 +411,9 @@ router.get('/prepay-writeoff/list', requireAuth, async (req, res) => {
 // 手动发起尾款报销（预付少付时调用）
 router.post('/prepay-writeoff/:id/submit-tail', requireAuth, async (req, res) => {
   try {
-    // 直接跳转到 resubmit 接口发起报销（金额仍为 total_amount，审批时财务可核对扣除预付部分）
-    // 实际为保持现有流程，直接调用 resubmit 的后端逻辑
+    // 直接跳转到仓库采购 resubmit 接口发起报销
     const { id } = req.params;
-    res.redirect(307, `/api/purchase-confirmations/${id}/resubmit`);
+    res.redirect(307, `/api/warehouse-purchases/${id}/resubmit`);
   } catch (err) {
     console.error('[submit tail prepay]', err);
     res.status(500).json({ error: err.message });
@@ -439,13 +438,13 @@ router.get('/stats/overview', requireAuth, async (req, res) => {
 
     // 待月结采购单数量和金额
     const [pendMonth] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM purchase_confirmations WHERE purchase_type='monthly' AND status='confirmed' AND monthly_statement_id IS NULL`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM warehouse_purchases WHERE purchase_type='monthly' AND status='confirmed' AND monthly_statement_id IS NULL`
     );
     const pendingMonthly = { count: pendMonth[0].cnt, amount: toNum(pendMonth[0].amt) };
 
     // 待人工核销预付款采购单
     const [pendPrepay] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM purchase_confirmations WHERE purchase_type='prepay' AND status='confirmed' AND writeoff_status='manual'`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status='confirmed' AND writeoff_status='manual'`
     );
     const pendingPrepayWriteoff = { count: pendPrepay[0].cnt, amount: toNum(pendPrepay[0].amt) };
 
