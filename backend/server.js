@@ -10,6 +10,7 @@ const departmentsRouter = require('./routes/departments');
 const suppliersRouter = require('./routes/suppliers');
 const wecomRouter = require('./routes/wecom');
 const purchaseConfirmationsRouter = require('./routes/purchase-confirmations');
+const reconciliationRouter = require('./routes/reconciliation');
 const userSignaturesRouter = require('./routes/user-signatures');
 
 // 仓库管理模块
@@ -85,6 +86,7 @@ app.use('/api/warehouse-purchases', warehousePurchasesRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
+app.use('/api/reconciliation', reconciliationRouter);
 app.use('/api/user/signature', userSignaturesRouter);
 
 // ================================================

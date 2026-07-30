@@ -42,6 +42,7 @@ import WarehousePurchase from '@/pages/WarehousePurchase';
 import WarehousePurchaseCreate from '@/pages/WarehousePurchase/Create';
 import InventoryManager from '@/pages/InventoryManager';
 import StockMovement from '@/pages/StockMovement';
+import SupplierReconciliation from '@/pages/SupplierReconciliation';
 
 export default function App() {
   return (
@@ -120,6 +121,11 @@ export default function App() {
           <Route path="reimbursement" element={
             <ProtectedRoute requiredPermission="action:reimbursement:manage">
               <ReimbursementManager />
+            </ProtectedRoute>
+          } />
+          <Route path="supplier-reconciliation" element={
+            <ProtectedRoute requiredPermission="action:reimbursement:manage">
+              <SupplierReconciliation />
             </ProtectedRoute>
           } />
           <Route path="warehouse" element={

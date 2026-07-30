@@ -137,6 +137,7 @@ export default function Layout() {
     { code: 'menu:ingredients', name: '食材价格查询', path: '/ingredients', icon: 'Search' },
     { code: 'menu:purchase-entry', name: '采购录入', path: '/purchase-entry', icon: 'ClipboardList' },
     { code: 'menu:reimbursement', name: '报销管理', path: '/reimbursement', icon: 'Receipt' },
+    { code: 'menu:supplier-reconciliation', name: '供应商对账中心', path: '/supplier-reconciliation', icon: 'Scale' },
     { code: 'menu:users', name: '用户管理', path: '/users', icon: 'Users' },
     { code: 'menu:roles', name: '角色管理', path: '/roles', icon: 'Shield' },
     { code: 'menu:categories', name: '分类管理', path: '/categories', icon: 'Tags' },
@@ -158,7 +159,7 @@ export default function Layout() {
   const adminNavItems = useMemo(() => {
     const menus = getUserMenus();
     return menus.filter(m => 
-      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/wecom', '/users', '/roles', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
+      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/supplier-reconciliation', '/wecom', '/users', '/roles', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
     );
   }, [getUserMenus]);
 
@@ -174,7 +175,7 @@ export default function Layout() {
       }
     }
 
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/supplier-reconciliation', '/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
 
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
