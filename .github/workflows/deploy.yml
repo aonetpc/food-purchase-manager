@@ -465,6 +465,139 @@ jobs:
             mkdir -p /opt/food-purchase/backend/uploads/pdfs
             chmod 755 /opt/food-purchase/backend/uploads/pdfs
 
+            # 数据库迁移：确保 warehouse_purchase_items 表有 warehouse_id 和 warehouse_name 字段（明细级仓库）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'warehouse_purchase_items';
+
+              SET @columnname = 'warehouse_id';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT \"入库仓库ID（明细级）\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+
+              SET @columnname = 'warehouse_name';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100) NULL COMMENT \"入库仓库名称\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+
+              SET @indexname = 'idx_wpi_warehouse';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND index_name = @indexname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (warehouse_id)')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：确保 warehouse_purchases 表的 warehouse_id 改为可空
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'warehouse_purchases';
+              SET @columnname = 'warehouse_id';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname
+                  AND is_nullable = 'YES') > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' MODIFY COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT \"已废弃，使用明细行的warehouse_id\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+
+              SET @columnname = 'warehouse_name';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname
+                  AND is_nullable = 'YES') > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' MODIFY COLUMN ', @columnname, ' VARCHAR(100) NULL')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：确保 stock_movements 表有 department_id 和 department_name 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'stock_movements';
+
+              SET @columnname = 'department_id';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT \"归集部门ID（出库/盘点必填）\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+
+              SET @columnname = 'department_name';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(50) NULL COMMENT \"归集部门名称\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+
+              SET @indexname = 'idx_sm_department';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND index_name = @indexname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (department_id)')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 回填旧数据：将旧采购单表头仓库写入明细行
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              UPDATE warehouse_purchase_items wi
+                INNER JOIN warehouse_purchases wp ON wi.purchase_id = wp.id
+                SET wi.warehouse_id = wp.warehouse_id,
+                    wi.warehouse_name = wp.warehouse_name
+                WHERE wi.warehouse_id IS NULL
+                  AND wp.warehouse_id IS NOT NULL;
+            " 2>/dev/null || true
+
             # 数据库迁移：执行所有迁移SQL文件（幂等，可重复执行）
             for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
               echo "Running migration: $sql_file"

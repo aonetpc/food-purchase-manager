@@ -3,58 +3,126 @@
 -- 1. warehouse_purchase_items 新增 warehouse_id/warehouse_name（明细级仓库）
 -- 2. warehouse_purchases.warehouse_id 改为可空（兼容旧数据，新单以明细行为准）
 -- 3. stock_movements 新增 department_id/department_name（出库/盘点归集部门成本）
--- 幂等执行：可重复执行不会报错
+-- 兼容 MySQL 5.7/8.0（不使用 ADD COLUMN IF NOT EXISTS 语法）
 -- ================================================
 
--- 1. 明细行加仓库字段
-ALTER TABLE warehouse_purchase_items
-  ADD COLUMN IF NOT EXISTS warehouse_id VARCHAR(36) NULL COMMENT '入库仓库ID（明细级）',
-  ADD COLUMN IF NOT EXISTS warehouse_name VARCHAR(100) NULL COMMENT '入库仓库名称';
+-- 1. 明细行加仓库字段（兼容 MySQL 5.7/8.0）
+SET @dbname = DATABASE();
+
+SET @tablename = 'warehouse_purchase_items';
+
+SET @columnname = 'warehouse_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT "入库仓库ID（明细级）"')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @columnname = 'warehouse_name';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100) NULL COMMENT "入库仓库名称"')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
 
 -- 为明细行仓库字段加索引
--- MySQL 不支持 IF NOT EXISTS 于 ADD INDEX，用存储过程兼容
-DROP PROCEDURE IF EXISTS proc_add_idx_039;
-DELIMITER $$
-CREATE PROCEDURE proc_add_idx_039()
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.statistics
-    WHERE table_schema = DATABASE()
-      AND table_name = 'warehouse_purchase_items'
-      AND index_name = 'idx_wpi_warehouse'
-  ) THEN
-    ALTER TABLE warehouse_purchase_items ADD INDEX idx_wpi_warehouse (warehouse_id);
-  END IF;
-END$$
-DELIMITER ;
-CALL proc_add_idx_039();
-DROP PROCEDURE IF EXISTS proc_add_idx_039;
+SET @indexname = 'idx_wpi_warehouse';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (warehouse_id)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
 
 -- 2. 采购单表头 warehouse_id 改为可空
-ALTER TABLE warehouse_purchases
-  MODIFY COLUMN warehouse_id VARCHAR(36) NULL COMMENT '已废弃，使用明细行的warehouse_id';
+SET @tablename = 'warehouse_purchases';
+
+SET @columnname = 'warehouse_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND column_name = @columnname
+    AND is_nullable = 'YES') > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' MODIFY COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT "已废弃，使用明细行的warehouse_id"')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @columnname = 'warehouse_name';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND column_name = @columnname
+    AND is_nullable = 'YES') > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' MODIFY COLUMN ', @columnname, ' VARCHAR(100) NULL')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
 
 -- 3. 库存流水加部门归集字段
-ALTER TABLE stock_movements
-  ADD COLUMN IF NOT EXISTS department_id VARCHAR(36) NULL COMMENT '归集部门ID（出库/盘点必填）',
-  ADD COLUMN IF NOT EXISTS department_name VARCHAR(50) NULL COMMENT '归集部门名称';
+SET @tablename = 'stock_movements';
 
-DROP PROCEDURE IF EXISTS proc_add_idx_039b;
-DELIMITER $$
-CREATE PROCEDURE proc_add_idx_039b()
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.statistics
-    WHERE table_schema = DATABASE()
-      AND table_name = 'stock_movements'
-      AND index_name = 'idx_sm_department'
-  ) THEN
-    ALTER TABLE stock_movements ADD INDEX idx_sm_department (department_id);
-  END IF;
-END$$
-DELIMITER ;
-CALL proc_add_idx_039b();
-DROP PROCEDURE IF EXISTS proc_add_idx_039b;
+SET @columnname = 'department_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT "归集部门ID（出库/盘点必填）"')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @columnname = 'department_name';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(50) NULL COMMENT "归集部门名称"')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_sm_department';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname
+    AND table_name = @tablename
+    AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (department_id)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
 
 -- 4. 回填旧数据：将旧采购单表头仓库写入明细行
 UPDATE warehouse_purchase_items wi
