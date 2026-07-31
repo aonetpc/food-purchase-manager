@@ -23,6 +23,9 @@ interface WecomConfig {
   approval_field_mapping?: Record<string, string>;
   wx_app_id?: string;
   wx_app_secret?: string;
+  warehouse_approval_template_id?: string;
+  warehouse_field_mapping?: Record<string, string>;
+  warehouse_dept_options?: Array<{ key: string; text: string }>;
 }
 
 interface TemplateControl {
@@ -44,6 +47,13 @@ const FIELD_MAPPING_OPTIONS = [
   { key: 'details', label: '采购明细', control: 'Textarea' },
 ];
 
+// 仓库采购审批模板字段映射选项
+const WAREHOUSE_FIELD_MAPPING_OPTIONS = [
+  { key: 'department', label: '申购部门', control: 'MultiSelector' },
+  { key: 'reason', label: '申购事由', control: 'Text' },
+  { key: 'attachment', label: '附件', control: 'File' },
+];
+
 export default function WecomManager() {
   const [config, setConfig] = useState<WecomConfig>({});
   const [loading, setLoading] = useState(true);
@@ -61,6 +71,8 @@ export default function WecomManager() {
 
   // 模板控件列表
   const [templateControls, setTemplateControls] = useState<TemplateControl[]>([]);
+  // 仓库采购模板控件列表
+  const [warehouseTemplateControls, setWarehouseTemplateControls] = useState<TemplateControl[]>([]);
 
   // 回调日志
   const [callbackLogs, setCallbackLogs] = useState<any[]>([]);
@@ -177,6 +189,58 @@ export default function WecomManager() {
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
       setError(err.message || '拉取模板失败');
+    }
+  };
+
+  // 拉取仓库采购审批模板结构
+  const handleFetchWarehouseTemplate = async () => {
+    if (!config.warehouse_approval_template_id) {
+      setError('请先填写仓库审批模板ID');
+      return;
+    }
+    setError('');
+    try {
+      const data = await api.get<any>(`/wecom/approval-template/${config.warehouse_approval_template_id}`);
+      const controls = data.template_content?.controls || data.controls || [];
+      const controlList: TemplateControl[] = [];
+      const deptOptions: Array<{ key: string; text: string }> = [];
+      for (const ctrl of controls) {
+        const property = ctrl.property || ctrl;
+        const titleArr = property.title || [];
+        const title = titleArr.find((t: any) => t.lang === 'zh_CN')?.text
+          || titleArr.find((t: any) => t.text)?.text
+          || property.control
+          || property.id;
+        controlList.push({
+          control: property.control,
+          id: property.id,
+          label: title,
+          value: ctrl.value || property.value
+        });
+        // 提取 MultiSelector / Selector 的部门选项
+        if (property.control === 'MultiSelector' || property.control === 'Selector') {
+          const selector = ctrl.config?.selector || ctrl.value?.selector;
+          if (selector && selector.options) {
+            for (const opt of selector.options) {
+              const text = opt.value?.find((t: any) => t.lang === 'zh_CN')?.text
+                || opt.value?.find((t: any) => t.text)?.text
+                || opt.key;
+              deptOptions.push({ key: opt.key, text: String(text) });
+            }
+          }
+        }
+      }
+      setWarehouseTemplateControls(controlList);
+      // 保存部门选项到配置（持久化到后端）
+      if (deptOptions.length > 0) {
+        setConfig(prev => ({ ...prev, warehouse_dept_options: deptOptions }));
+        setSuccess(`已拉取仓库模板，共${controlList.length}个字段，${deptOptions.length}个部门选项`);
+      } else {
+        setSuccess(`已拉取仓库模板，共${controlList.length}个字段`);
+      }
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err: any) {
+      setError(err.message || '拉取仓库模板失败');
     }
   };
 
@@ -626,6 +690,100 @@ export default function WecomManager() {
             >
               {sectionStatus['报销模板'] === 'saving' ? '保存中...' : sectionStatus['报销模板'] === 'saved' ? '已保存' : '保存配置'}
               {sectionStatus['报销模板'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 区块3.5：仓库采购审批配置 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText size={20} className="text-accent-500" />
+          <h2 className="text-lg font-semibold text-gray-800">仓库采购审批配置</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">仓库审批模板ID</label>
+            <input
+              type="text"
+              value={getFieldValue('warehouse_approval_template_id')}
+              onChange={(e) => setFieldValue('warehouse_approval_template_id', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="仓库采购审批模板ID"
+            />
+            <p className="text-xs text-gray-500 mt-1">申请人UserID复用上方「费用报销模板配置」中的配置</p>
+          </div>
+
+          {warehouseTemplateControls.length > 0 && (
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Link2 size={16} className="text-primary-500" />
+                <label className="text-sm font-medium text-gray-700">模板字段映射</label>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">将系统字段映射到仓库审批模板中的对应控件</p>
+              <div className="space-y-2">
+                {WAREHOUSE_FIELD_MAPPING_OPTIONS.map(field => (
+                  <div key={field.key} className="flex items-center gap-3">
+                    <div className="w-28 text-xs text-gray-600 flex-shrink-0">
+                      {field.label}
+                      <span className="text-gray-400 ml-1">({field.control})</span>
+                    </div>
+                    <select
+                      value={config.warehouse_field_mapping?.[field.key] || ''}
+                      onChange={(e) => {
+                        const newMapping = { ...(config.warehouse_field_mapping || {}), [field.key]: e.target.value || '' };
+                        if (!e.target.value) delete newMapping[field.key];
+                        setConfig(prev => ({ ...prev, warehouse_field_mapping: newMapping }));
+                      }}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    >
+                      <option value="">-- 请选择对应字段 --</option>
+                      {warehouseTemplateControls.map(ctrl => (
+                        <option key={ctrl.id} value={ctrl.id}>
+                          {ctrl.label} ({ctrl.control})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              {config.warehouse_dept_options && config.warehouse_dept_options.length > 0 && (
+                <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-600">
+                  <p>💡 已缓存{config.warehouse_dept_options.length}个部门选项：</p>
+                  <p className="mt-1">{config.warehouse_dept_options.map(o => o.text).join('、')}</p>
+                  <p className="mt-1">提交审批时按名称自动匹配，未匹配部门会在事由中体现</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 text-xs text-amber-700">
+            <p>💡 使用说明：</p>
+            <p>1. 填写模板ID后点「拉取模板结构」获取控件列表</p>
+            <p>2. 申购部门支持多选（MultiSelector），按名称自动匹配系统部门</p>
+            <p>3. 请确保企微模板部门名与系统部门名尽量一致</p>
+            <p>4. 未匹配的部门会在申购事由中体现，信息不丢失</p>
+          </div>
+
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleFetchWarehouseTemplate}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw size={16} />
+              拉取模板结构
+            </button>
+            <button
+              onClick={() => saveSection('仓库审批', {
+                warehouse_approval_template_id: getFieldValue('warehouse_approval_template_id'),
+                warehouse_field_mapping: config.warehouse_field_mapping,
+                warehouse_dept_options: config.warehouse_dept_options,
+              })}
+              disabled={sectionStatus['仓库审批'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['仓库审批'] === 'saving' ? '保存中...' : sectionStatus['仓库审批'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['仓库审批'] !== 'saving' && <Save size={16} />}
             </button>
           </div>
         </div>

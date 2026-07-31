@@ -558,7 +558,8 @@ router.put('/config', async (req, res) => {
       payment_reason_template, approval_field_mapping,
       callback_token, callback_aes_key, app_domain,
       query_agent_id, query_app_secret,
-      wx_app_id, wx_app_secret
+      wx_app_id, wx_app_secret,
+      warehouse_approval_template_id, warehouse_field_mapping, warehouse_dept_options
     } = req.body;
 
     await pool.query('INSERT IGNORE INTO wecom_config (id) VALUES (1)');
@@ -586,6 +587,9 @@ router.put('/config', async (req, res) => {
     if (app_domain !== undefined) { fields.push('app_domain = ?'); values.push(app_domain || null); }
     if (query_agent_id !== undefined) { fields.push('query_agent_id = ?'); values.push(query_agent_id || null); }
     if (query_app_secret !== undefined && query_app_secret !== '****') { fields.push('query_app_secret = ?'); values.push(query_app_secret || null); }
+    if (warehouse_approval_template_id !== undefined) { fields.push('warehouse_approval_template_id = ?'); values.push(warehouse_approval_template_id || null); }
+    if (warehouse_field_mapping !== undefined) { fields.push('warehouse_field_mapping = ?'); values.push(warehouse_field_mapping ? JSON.stringify(warehouse_field_mapping) : null); }
+    if (warehouse_dept_options !== undefined) { fields.push('warehouse_dept_options = ?'); values.push(warehouse_dept_options ? JSON.stringify(warehouse_dept_options) : null); }
 
     if (fields.length > 0) {
       values.push(1);

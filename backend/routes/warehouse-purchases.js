@@ -175,19 +175,38 @@ async function fetchWarehouseTemplateControlTypes(config) {
     throw new Error('获取审批模板详情失败：' + (tplData.errmsg || ''));
   }
   const controlTypeMap = {};
+  // 记录 MultiSelector / Selector 控件的选项列表（key + text）
+  const selectorOptionsMap = {};
   if (tplData.template_content && tplData.template_content.controls) {
     for (const ctrl of tplData.template_content.controls) {
       if (ctrl.property && ctrl.property.id && ctrl.property.control) {
-        controlTypeMap[ctrl.property.id] = ctrl.property.control;
+        const ctrlId = ctrl.property.id;
+        const ctrlType = ctrl.property.control;
+        controlTypeMap[ctrlId] = ctrlType;
+        // 提取 MultiSelector / Selector 的选项
+        if (ctrlType === 'MultiSelector' || ctrlType === 'Selector') {
+          const options = [];
+          const config = ctrl.config || {};
+          const selector = config.selector || ctrl.value?.selector;
+          if (selector && selector.options) {
+            for (const opt of selector.options) {
+              const text = opt.value?.find((t) => t.lang === 'zh_CN')?.text
+                || opt.value?.find((t) => t.text)?.text
+                || opt.key;
+              options.push({ key: opt.key, text: String(text) });
+            }
+          }
+          selectorOptionsMap[ctrlId] = options;
+        }
       }
     }
   }
-  return controlTypeMap;
+  return { controlTypeMap, selectorOptionsMap };
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
 // options: { date, amount, reason, items, useReceived, pdfPath, rowId }
-async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, options) {
+async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
   const { date, amount, reason, items, useReceived = false, pdfPath = null } = options;
 
   function getControlType(fieldKey, fallback) {
@@ -230,23 +249,74 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, opt
     });
   }
 
-  // 事由
+  // 事由（追加涉及部门信息作为兜底）
+  const deptNames = Array.from(new Set(
+    (items || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
+  ));
+  const fullDeptList = deptNames.length > 0 ? deptNames.join('、') : '未分类';
+  const reasonWithDepts = `${reason}。涉及部门：${fullDeptList}`;
   if (fieldMapping.reason) {
     contents.push({
       control: getControlType('reason', 'Text'),
       id: fieldMapping.reason,
-      value: { text: String(reason) },
+      value: { text: reasonWithDepts },
     });
   }
 
-  // 涉及部门
+  // 涉及部门（MultiSelector：按名称匹配企微选项key）
   if (fieldMapping.department) {
-    const deptNames = Array.from(new Set((items || []).map(i => String(i.department_name || '未分类')))).join('、');
-    contents.push({
-      control: getControlType('department', 'Text'),
-      id: fieldMapping.department,
-      value: { text: deptNames },
-    });
+    const deptControlType = getControlType('department', 'MultiSelector');
+    // 优先使用缓存选项，没有则用实时拉取的
+    let deptOptions = [];
+    const cachedOptions = parseJsonField(config.warehouse_dept_options);
+    if (Array.isArray(cachedOptions) && cachedOptions.length > 0) {
+      deptOptions = cachedOptions;
+    } else if (selectorOptionsMap[fieldMapping.department]) {
+      deptOptions = selectorOptionsMap[fieldMapping.department];
+    }
+
+    // 按名称匹配：精确匹配 → 包含匹配
+    const matchedOptions = [];
+    const matchedDeptNames = new Set();
+    for (const deptName of deptNames) {
+      // 精确匹配
+      let opt = deptOptions.find(o => o.text === deptName);
+      // 包含匹配（任一方包含另一方）
+      if (!opt) {
+        opt = deptOptions.find(o => o.text.includes(deptName) || deptName.includes(o.text));
+      }
+      if (opt && !matchedDeptNames.has(opt.key)) {
+        matchedOptions.push({ key: opt.key, value: [{ text: opt.text, lang: 'zh_CN' }] });
+        matchedDeptNames.add(opt.key);
+      }
+    }
+
+    if (deptControlType === 'MultiSelector') {
+      // MultiSelector：可填多个选项
+      contents.push({
+        control: 'MultiSelector',
+        id: fieldMapping.department,
+        value: { options: matchedOptions },
+      });
+    } else if (deptControlType === 'Selector') {
+      // Selector（单选）：取第一个匹配的，无匹配取第一个选项兜底
+      const singleOpt = matchedOptions[0]
+        || (deptOptions[0] ? { key: deptOptions[0].key, value: [{ text: deptOptions[0].text, lang: 'zh_CN' }] } : null);
+      if (singleOpt) {
+        contents.push({
+          control: 'Selector',
+          id: fieldMapping.department,
+          value: { selector: { type: 'single', options: [singleOpt] } },
+        });
+      }
+    } else {
+      // Text 兜底
+      contents.push({
+        control: deptControlType || 'Text',
+        id: fieldMapping.department,
+        value: { text: fullDeptList },
+      });
+    }
   }
 
   // 收款方/银行/账号
@@ -343,7 +413,7 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, opt
     use_template_approver: 1,
     apply_data: { contents },
     summary_list: [
-      { summary_info: [{ text: `事由：${reason}`, lang: 'zh_CN' }] },
+      { summary_info: [{ text: `事由：${reasonWithDepts}`, lang: 'zh_CN' }] },
       { summary_info: [{ text: `金额：¥${toNum(amount).toFixed(2)}`, lang: 'zh_CN' }] },
       { summary_info: [{ text: `付款方式：${paymentLabel}`, lang: 'zh_CN' }] },
     ],
@@ -358,7 +428,7 @@ async function submitWarehouseReimbursement(row, items) {
     throw new Error('请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）');
   }
   const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-  const controlTypeMap = await fetchWarehouseTemplateControlTypes(config);
+  const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
 
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -372,7 +442,7 @@ async function submitWarehouseReimbursement(row, items) {
     try { await generateWarehousePDF(row.id); } catch (e) { console.error('生成PDF失败:', e.message); }
   }
 
-  const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, {
+  const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
     date: dateStr,
     amount: toNum(row.actual_amount) || toNum(row.total_amount),
     reason,
@@ -832,7 +902,11 @@ router.post('/confirm-submit', async (req, res) => {
       let reimbursementSpNo = null;
       try {
         const [itemRows] = await pool.query(
-          'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
+          `SELECT wpi.*, d.name as department_name
+           FROM warehouse_purchase_items wpi
+           LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+           LEFT JOIN departments d ON w.department_id = d.id
+           WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
           [id]
         );
         const freshRow = { ...row, pdf_url: pdfUrl };
@@ -1133,19 +1207,23 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     }
 
     const [itemRows] = await pool.query(
-      'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
+      `SELECT wpi.*, d.name as department_name
+       FROM warehouse_purchase_items wpi
+       LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+       LEFT JOIN departments d ON w.department_id = d.id
+       WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
       [id]
     );
 
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-    const controlTypeMap = await fetchWarehouseTemplateControlTypes(config);
+    const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
 
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const reason = '仓库采购申请';
 
-    const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, {
+    const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
       date: dateStr,
       amount: toNum(row.total_amount),
       reason,
@@ -1651,7 +1729,11 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
     }
 
     const [itemRows] = await pool.query(
-      'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
+      `SELECT wpi.*, d.name as department_name
+       FROM warehouse_purchase_items wpi
+       LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+       LEFT JOIN departments d ON w.department_id = d.id
+       WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
       [id]
     );
 
