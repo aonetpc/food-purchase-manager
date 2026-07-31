@@ -127,11 +127,14 @@ export default function WarehouseBatchPasteModal({
       setPasteText('');
       setParsedRows([]);
       setStep('paste');
-      setLocalItems(initialItems);
       setResolveRow(null);
       setResolveType(null);
     }
-  }, [open, initialItems]);
+  }, [open]);
+
+  useEffect(() => {
+    setLocalItems(initialItems);
+  }, [initialItems]);
 
   // ===== 解析粘贴文本 =====
   const parseText = () => {
