@@ -33,7 +33,7 @@ interface Warehouse {
   created_at?: string;
 }
 
-// 分类树节点（最多 3 级）
+// 分类树节点（最多 2 级）
 interface CategoryNode {
   id: string;
   name: string;
@@ -97,7 +97,7 @@ const WAREHOUSE_TYPE_CONFIG: Record<WarehouseType, { label: string; color: strin
 };
 
 // 最大分类层级
-const MAX_CATEGORY_LEVEL = 3;
+const MAX_CATEGORY_LEVEL = 2;
 
 // 表单初始值工厂
 const emptyWarehouseForm = (): WarehouseForm => ({
@@ -234,7 +234,7 @@ export default function WarehouseManager() {
       setWarehouseFormError('请输入仓库名称');
       return;
     }
-    // 部门仓必须关联部门
+    // 部门仓必须关联部门，其他类型可选关联（用于确认通知）
     if (warehouseForm.type === 'dept' && !warehouseForm.department_id) {
       setWarehouseFormError('部门仓必须关联部门');
       return;
@@ -242,7 +242,7 @@ export default function WarehouseManager() {
     const payload = {
       name: warehouseForm.name.trim(),
       type: warehouseForm.type,
-      department_id: warehouseForm.type === 'dept' ? warehouseForm.department_id : null,
+      department_id: warehouseForm.department_id || null,
       manager_userid: warehouseForm.manager_userid.trim() || null,
       location: warehouseForm.location.trim() || null,
     };
@@ -709,7 +709,7 @@ export default function WarehouseManager() {
       {activeTab === 'categories' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">三级分类树形结构</p>
+            <p className="text-sm text-gray-500">二级分类树形结构</p>
             <button onClick={() => openAddCategory()} className="btn-primary flex items-center gap-2">
               <Plus size={18} />
               <span>新增一级分类</span>
@@ -735,7 +735,7 @@ export default function WarehouseManager() {
             <div className="card">
               <div className="space-y-1">{renderCategoryTree(categoryTree)}</div>
               <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400">
-                提示：分类最多支持三级，悬停节点可新增子分类、编辑或删除。
+                提示：分类最多支持二级，悬停节点可新增子分类、编辑或删除。
               </div>
             </div>
           )}
@@ -928,7 +928,7 @@ export default function WarehouseManager() {
                   ))}
                 </div>
               </div>
-              {/* 关联部门（部门仓必填） */}
+              {/* 关联部门 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   关联部门
@@ -938,10 +938,9 @@ export default function WarehouseManager() {
                   value={warehouseForm.department_id}
                   onChange={(e) => setWarehouseForm({ ...warehouseForm, department_id: e.target.value })}
                   className="input-field"
-                  disabled={warehouseForm.type !== 'dept'}
                 >
                   <option value="">
-                    {warehouseForm.type === 'dept' ? '请选择部门' : '仅部门仓需要关联'}
+                    {warehouseForm.type === 'dept' ? '请选择部门' : '可选：绑定确认部门'}
                   </option>
                   {departments.map((d) => (
                     <option key={d.id} value={d.id}>
@@ -950,7 +949,7 @@ export default function WarehouseManager() {
                   ))}
                 </select>
                 {warehouseForm.type !== 'dept' && (
-                  <p className="text-xs text-gray-400 mt-1">仅「部门仓」需要关联部门</p>
+                  <p className="text-xs text-gray-400 mt-1">绑定部门后，该仓库的入库确认将通知对应部门确认人</p>
                 )}
               </div>
               {/* 管理员 */}

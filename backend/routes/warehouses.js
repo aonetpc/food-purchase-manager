@@ -147,7 +147,7 @@ router.post('/categories', async (req, res) => {
       const [parent] = await pool.query('SELECT * FROM warehouse_categories WHERE id = ?', [parent_id]);
       if (parent.length === 0) return res.status(400).json({ error: '父分类不存在' });
       level = parent[0].level + 1;
-      if (level > 3) return res.status(400).json({ error: '最多支持三级分类' });
+      if (level > 2) return res.status(400).json({ error: '最多支持二级分类' });
       full_path = parent[0].full_path + '/' + name;
     }
 
