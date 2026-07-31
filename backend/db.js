@@ -11,6 +11,7 @@ const pool = mysql.createPool({
   charset: 'utf8mb4',
   dateStrings: true,
   timezone: '+08:00',
+  decimalNumbers: true,
 });
 
 module.exports = pool;

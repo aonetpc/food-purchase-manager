@@ -1,5 +1,6 @@
 export const formatCurrency = (amount: number): string => {
-  return `¥${amount.toFixed(2)}`;
+  const num = Number(amount) || 0;
+  return `¥${num.toFixed(2)}`;
 };
 
 export const formatPercent = (value: number): string => {
