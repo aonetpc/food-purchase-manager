@@ -403,12 +403,17 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
         console.log(`[企微] Contact控件值: API匹配departments=${departments.length}, deptNames=${deptNames.join(',')}`);
       }
 
+      // Contact控件: 同时传 departments + members，确保企微审批模板能显示
       const contactValue = {};
       if (departments.length > 0) {
         contactValue.departments = departments;
       }
-      // 兜底：无部门匹配时用申请人userid
-      if (departments.length === 0 && creatorUserid) {
+      // 始终传申请人作为成员，确保至少有值显示
+      if (creatorUserid) {
+        contactValue.members = [{ userid: String(creatorUserid) }];
+      }
+      // 兜底：无部门也无成员时用申请人userid
+      if (departments.length === 0 && !contactValue.members && creatorUserid) {
         contactValue.members = [{ userid: String(creatorUserid) }];
       }
       
@@ -713,7 +718,7 @@ async function generatePurchaseApplyPDF(purchaseId) {
   function drawReasonRow(y, reason) {
     doc.font(regFont).fontSize(8);
     doc.fillColor('#666666');
-    doc.text(`  理由：${reason}`, tableX + 2, y + 1, { width: tableWidth - 4, align: 'left', lineBreak: false });
+    doc.text(`理由：${reason}`, tableX, y + 1, { width: tableWidth - 4, align: 'right', lineBreak: false });
     doc.fillColor('#000000');
     return reasonHeight;
   }
@@ -769,10 +774,9 @@ async function generatePurchaseApplyPDF(purchaseId) {
       currentY += drawTableRow(currentY, cells);
       subtotal += amt;
 
-      // 在物资行下方显示采购理由
+      // 采购理由：右对齐，紧跟物资行下方单独一行
       if (item.reason) {
-        currentY += drawReasonRow(currentY, item.reason) - rowHeight;
-        currentY += rowHeight;
+        currentY += drawReasonRow(currentY, item.reason);
       }
     }
     grandTotal += subtotal;
@@ -1604,6 +1608,8 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     console.log(`[提交审批] 步骤4: 获取模板控件类型`);
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
     const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
+    console.log(`[提交审批] fieldMapping:`, JSON.stringify(fieldMapping));
+    console.log(`[提交审批] controlTypeMap:`, JSON.stringify(controlTypeMap));
 
     console.log(`[提交审批] 步骤4.5: 生成采购申请PDF`);
     let applyPdfPath = null;
@@ -1618,7 +1624,15 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const reason = '仓库采购申请';
+    const monthDayStr = `${now.getMonth() + 1}月${now.getDate()}日`;
+    const totalAmount = toNum(row.total_amount);
+
+    // 构建事由：8月1日后勤部采购，预计费用¥30.00
+    const deptNameList = Array.from(new Set(
+      (itemRows || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
+    ));
+    const deptText = deptNameList.length > 0 ? deptNameList.join('、') : '后勤';
+    const reason = `${monthDayStr}${deptText}采购，预计费用¥${totalAmount.toFixed(2)}`;
 
     const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
       date: dateStr,
