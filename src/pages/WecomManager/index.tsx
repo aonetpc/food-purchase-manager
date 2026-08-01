@@ -711,7 +711,7 @@ export default function WecomManager() {
               className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
               placeholder="仓库采购审批模板ID"
             />
-            <p className="text-xs text-gray-500 mt-1">申请人UserID复用上方「费用报销模板配置」中的配置</p>
+            <p className="text-xs text-gray-500 mt-1">审批申请人将自动使用当前登录用户的企微账号提交（需在用户管理中绑定企微userid），未绑定时回退到费用报销模板中的申请人配置</p>
           </div>
 
           {warehouseTemplateControls.length > 0 && (

@@ -54,6 +54,7 @@ interface WarehouseItem {
   spec?: string;
   unit?: string;
   reference_price?: number;
+  instant_use?: number;
   created_at?: string;
 }
 
@@ -87,6 +88,7 @@ interface ItemForm {
   spec: string;
   unit: string;
   reference_price: string;
+  instant_use: boolean;
 }
 
 // 仓库类型显示配置
@@ -121,6 +123,7 @@ const emptyItemForm = (): ItemForm => ({
   spec: '',
   unit: '',
   reference_price: '',
+  instant_use: false,
 });
 
 // 扁平化分类树（用于物资表单下拉与筛选）
@@ -442,6 +445,7 @@ export default function WarehouseManager() {
       spec: item.spec || '',
       unit: item.unit || '',
       reference_price: item.reference_price != null ? String(item.reference_price) : '',
+      instant_use: Number(item.instant_use) === 1,
     });
     setItemFormError('');
     setShowItemModal(true);
@@ -471,6 +475,7 @@ export default function WarehouseManager() {
       spec: itemForm.spec.trim() || null,
       unit: itemForm.unit.trim(),
       reference_price: itemForm.reference_price ? parseFloat(itemForm.reference_price) : null,
+      instant_use: itemForm.instant_use ? 1 : 0,
     };
     try {
       if (itemForm.id) {
@@ -827,6 +832,7 @@ export default function WarehouseManager() {
                       <th>规格</th>
                       <th>单位</th>
                       <th className="text-right">参考单价</th>
+                      <th>属性</th>
                       <th className="text-right">操作</th>
                     </tr>
                   </thead>
@@ -844,6 +850,13 @@ export default function WarehouseManager() {
                           {item.reference_price != null
                             ? `¥${Number(item.reference_price).toFixed(2)}`
                             : '-'}
+                        </td>
+                        <td>
+                          {Number(item.instant_use) === 1 && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
+                              即采即用
+                            </span>
+                          )}
                         </td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -1153,6 +1166,19 @@ export default function WarehouseManager() {
                     placeholder="请输入参考单价"
                     className="input-field"
                   />
+                </div>
+                {/* 即采即用 */}
+                <div className="col-span-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={itemForm.instant_use}
+                      onChange={(e) => setItemForm({ ...itemForm, instant_use: e.target.checked })}
+                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">即采即用</span>
+                    <span className="text-xs text-gray-400">（入库后自动出库归零，成本直接归集部门）</span>
+                  </label>
                 </div>
               </div>
 

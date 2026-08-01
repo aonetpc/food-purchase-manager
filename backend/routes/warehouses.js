@@ -252,14 +252,14 @@ router.get('/items', async (req, res) => {
 // 新建物资
 router.post('/items', async (req, res) => {
   try {
-    const { name, category_id, sku, spec, unit = '个', reference_price = 0 } = req.body;
+    const { name, category_id, sku, spec, unit = '个', reference_price = 0, instant_use = 0 } = req.body;
     if (!name) return res.status(400).json({ error: '物资名称不能为空' });
 
     const id = uuidv4();
     await pool.query(
-      `INSERT INTO warehouse_items (id, category_id, name, sku, spec, unit, reference_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, category_id || null, name, sku || null, spec || null, unit, reference_price]
+      `INSERT INTO warehouse_items (id, category_id, name, sku, spec, unit, reference_price, instant_use)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, category_id || null, name, sku || null, spec || null, unit, reference_price, instant_use ? 1 : 0]
     );
 
     const [rows] = await pool.query(`
@@ -278,7 +278,7 @@ router.post('/items', async (req, res) => {
 router.put('/items/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, category_id, sku, spec, unit, reference_price, status } = req.body;
+    const { name, category_id, sku, spec, unit, reference_price, status, instant_use } = req.body;
     const fields = [];
     const values = [];
     if (name !== undefined) { fields.push('name = ?'); values.push(name); }
@@ -288,6 +288,7 @@ router.put('/items/:id', async (req, res) => {
     if (unit !== undefined) { fields.push('unit = ?'); values.push(unit); }
     if (reference_price !== undefined) { fields.push('reference_price = ?'); values.push(reference_price); }
     if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+    if (instant_use !== undefined) { fields.push('instant_use = ?'); values.push(instant_use ? 1 : 0); }
     if (fields.length === 0) return res.status(400).json({ error: '没有需要更新的字段' });
 
     values.push(id);

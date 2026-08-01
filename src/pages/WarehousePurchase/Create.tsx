@@ -75,6 +75,7 @@ interface LineItem {
   department_id: string;
   department_name: string;
   reason: string;
+  instant_use_override: number | null;
 }
 
 // 后端返回的采购单明细（用于编辑模式回填）
@@ -151,6 +152,7 @@ const emptyLine = (): LineItem => ({
   department_id: '',
   department_name: '',
   reason: '',
+  instant_use_override: null,
 });
 
 export default function WarehousePurchaseCreate() {
@@ -221,7 +223,7 @@ export default function WarehousePurchaseCreate() {
         setPurchaseType(detail.purchase_type || 'normal');
         setSelectedSupplierId(detail.supplier_id || '');
         setPrepayAmount(detail.prepay_amount ? safeNum(detail.prepay_amount) : 0);
-        const restoredLines: LineItem[] = (detail.items || []).map((it) => ({
+        const restoredLines: LineItem[] = (detail.items || []).map((it: any) => ({
           key: genKey(),
           item_id: it.item_id || '',
           item_name: it.item_name,
@@ -234,6 +236,7 @@ export default function WarehousePurchaseCreate() {
           department_id: it.department_id || '',
           department_name: it.department_name || '',
           reason: it.reason || '',
+          instant_use_override: it.instant_use_override !== undefined ? it.instant_use_override : null,
         }));
         setLines(restoredLines.length > 0 ? restoredLines : [emptyLine()]);
       } catch (err: any) {
@@ -357,6 +360,7 @@ export default function WarehousePurchaseCreate() {
       department_id: '',
       department_name: '',
       reason: l.reason,
+      instant_use_override: null,
     }));
     setLines((prev) => [...prev, ...newLines]);
     setShowBatchPaste(false);
@@ -416,6 +420,7 @@ export default function WarehousePurchaseCreate() {
         department_id: null,
         department_name: null,
         reason: l.reason.trim() || null,
+        instant_use_override: l.instant_use_override,
       })),
     };
   };
@@ -643,6 +648,7 @@ export default function WarehousePurchaseCreate() {
                   <th className="whitespace-nowrap text-right">金额(元)</th>
                   <th className="whitespace-nowrap">入库仓库</th>
                   <th className="whitespace-nowrap">采购理由</th>
+                  <th className="whitespace-nowrap text-center">即采即用</th>
                   <th className="whitespace-nowrap text-center">操作</th>
                 </tr>
               </thead>
@@ -743,6 +749,16 @@ export default function WarehousePurchaseCreate() {
                         onChange={(e) => updateLine(line.key, { reason: e.target.value })}
                         placeholder="采购理由"
                         className="w-32 border border-gray-200 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                      />
+                    </td>
+                    {/* 即采即用 */}
+                    <td className="text-center">
+                      <input
+                        type="checkbox"
+                        checked={line.instant_use_override === 1}
+                        onChange={(e) => updateLine(line.key, { instant_use_override: e.target.checked ? 1 : 0 })}
+                        className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                        title="勾选后入库时自动出库归零，成本直接归集部门"
                       />
                     </td>
                     {/* 操作：上移、下移、删除 */}

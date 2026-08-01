@@ -408,7 +408,7 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   }
 
   const applyData = {
-    creator_userid: String(config.applicant_userid),
+    creator_userid: String(options.creatorUserid || config.applicant_userid),
     template_id: String(config.warehouse_approval_template_id),
     use_template_approver: 1,
     apply_data: { contents },
@@ -422,7 +422,7 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
 }
 
 // 发起仓库报销审批（全员确认后 / 重新发起 复用）
-async function submitWarehouseReimbursement(row, items) {
+async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const config = await getWecomConfig();
   if (!config || !config.corp_id || !config.app_secret || !config.warehouse_approval_template_id || !config.applicant_userid) {
     throw new Error('请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）');
@@ -450,6 +450,7 @@ async function submitWarehouseReimbursement(row, items) {
     useReceived: true,
     pdfPath,
     rowId: row.id,
+    creatorUserid,
   });
   const spNo = await submitApproval(config, applyData);
   return spNo;
@@ -685,6 +686,12 @@ router.get('/', requireAuth, async (req, res) => {
     const params = [];
     if (status) { conditions.push('status = ?'); params.push(status); }
     if (warehouse_id) { conditions.push('warehouse_id = ?'); params.push(warehouse_id); }
+    // 非管理员只能看到自己创建的采购单
+    const userRole = req.user?.role;
+    if (userRole !== 'admin') {
+      conditions.push('created_by = ?');
+      params.push(req.user.id);
+    }
 
     const whereSql = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
@@ -910,7 +917,7 @@ router.post('/confirm-submit', async (req, res) => {
           [id]
         );
         const freshRow = { ...row, pdf_url: pdfUrl };
-        reimbursementSpNo = await submitWarehouseReimbursement(freshRow, itemRows);
+        reimbursementSpNo = await submitWarehouseReimbursement(freshRow, itemRows, req.user?.wecom_userid);
         await connection.query(
           'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',
           ['pending', reimbursementSpNo, 'reimbursing', id]
@@ -1021,8 +1028,9 @@ router.post('/', requireAuth, async (req, res) => {
         `INSERT INTO warehouse_purchase_items
          (id, purchase_id, item_id, item_name, category_name, spec, department_id, department_name,
           warehouse_id, warehouse_name,
-          requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order,
+          instant_use_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId, id,
           item.item_id || null,
@@ -1039,6 +1047,7 @@ router.post('/', requireAuth, async (req, res) => {
           amount,
           item.reason || null,
           sortOrder++,
+          item.instant_use_override !== undefined ? item.instant_use_override : null,
         ]
       );
     }
@@ -1128,8 +1137,9 @@ router.put('/:id', requireAuth, async (req, res) => {
         `INSERT INTO warehouse_purchase_items
          (id, purchase_id, item_id, item_name, category_name, spec, department_id, department_name,
           warehouse_id, warehouse_name,
-          requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order,
+          instant_use_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId, id,
           item.item_id || null,
@@ -1146,6 +1156,7 @@ router.put('/:id', requireAuth, async (req, res) => {
           amount,
           item.reason || null,
           sortOrder++,
+          item.instant_use_override !== undefined ? item.instant_use_override : null,
         ]
       );
     }
@@ -1231,6 +1242,7 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       useReceived: false,
       pdfPath: null,
       rowId: id,
+      creatorUserid: req.user?.wecom_userid,
     });
 
     const spNo = await submitApproval(config, applyData);
@@ -1299,9 +1311,11 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
 
     // 写入入库流水 + 更新库存
     const [receiveItemRows] = await connection.query(
-      `SELECT wpi.*, w.type as wh_type, w.department_id as wh_department_id
+      `SELECT wpi.*, w.type as wh_type, w.department_id as wh_department_id,
+              wi.instant_use as item_instant_use
        FROM warehouse_purchase_items wpi
        LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+       LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
        WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
       [id]
     );
@@ -1317,7 +1331,12 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
       const deptId = ri.wh_type === 'dept' ? (ri.wh_department_id || ri.department_id) : ri.department_id;
       const deptName = ri.department_name || null;
 
-      // 写入 stock_movements
+      // 判断是否即采即用：明细行覆盖优先，否则继承物资库设置
+      const isInstantUse = ri.instant_use_override !== null
+        ? Number(ri.instant_use_override) === 1
+        : Number(ri.item_instant_use) === 1;
+
+      // 写入 stock_movements（入库）
       await connection.query(
         `INSERT INTO stock_movements
          (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount,
@@ -1343,6 +1362,25 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
         await connection.query(
           'INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)',
           [uuidv4(), ri.warehouse_id, ri.item_id, rQty, rUnit]
+        );
+      }
+
+      // 即采即用：自动出库归零，成本归集到部门
+      if (isInstantUse) {
+        await connection.query(
+          `INSERT INTO stock_movements
+           (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount,
+            reason, related_type, related_id, operator_id, operator_name, department_id, department_name)
+           VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, 'purchase', ?, ?, ?, ?, ?)`,
+          [uuidv4(), ri.warehouse_id, ri.item_id, ri.item_name,
+           -rQty, rUnit, rPrice, rAmount,
+           `即采即用自动出库 ${row.purchase_no || id}`,
+           id, operatorId, operatorName, deptId || null, deptName]
+        );
+        // 库存归零
+        await connection.query(
+          'UPDATE inventory SET quantity = 0 WHERE warehouse_id = ? AND item_id = ?',
+          [ri.warehouse_id, ri.item_id]
         );
       }
     }
@@ -1740,7 +1778,7 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
     // 重新生成 PDF（确保最新）
     try { await generateWarehousePDF(id); } catch (e) { console.error('重新生成PDF失败:', e.message); }
 
-    const spNo = await submitWarehouseReimbursement(row, itemRows);
+    const spNo = await submitWarehouseReimbursement(row, itemRows, req.user?.wecom_userid);
 
     await pool.query(
       'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',

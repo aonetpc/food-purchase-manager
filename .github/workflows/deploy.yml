@@ -633,6 +633,39 @@ jobs:
               DEALLOCATE PREPARE alterIfNotExists;
             " 2>/dev/null || true
 
+            # 数据库迁移：确保 warehouse_items 和 warehouse_purchase_items 有即采即用字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+
+              SET @tablename = 'warehouse_items';
+              SET @columnname = 'instant_use';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) DEFAULT 0 COMMENT \"即采即用\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+
+              SET @tablename = 'warehouse_purchase_items';
+              SET @columnname = 'instant_use_override';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) DEFAULT NULL COMMENT \"即采即用覆盖\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
             # 回填旧数据：将旧采购单表头仓库写入明细行
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
               UPDATE warehouse_purchase_items wi
