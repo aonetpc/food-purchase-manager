@@ -56,10 +56,19 @@ async function getWecomConfig() {
   return rows.length > 0 ? rows[0] : null;
 }
 
+// access_token 缓存（企微token有效期7200秒，缓存7000秒）
+let _accessTokenCache = { token: '', expireTime: 0 };
+const ACCESS_TOKEN_CACHE_TTL = 7000 * 1000; // 7000秒
+
 async function getAccessToken(config) {
+  const now = Date.now();
+  if (_accessTokenCache.token && (now - _accessTokenCache.expireTime) < ACCESS_TOKEN_CACHE_TTL) {
+    return _accessTokenCache.token;
+  }
   const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
   const data = await res.json();
   if (data.errcode !== 0) throw new Error(data.errmsg || '获取access_token失败');
+  _accessTokenCache = { token: data.access_token, expireTime: now };
   return data.access_token;
 }
 
@@ -2540,6 +2549,7 @@ router.post('/callback', async (req, res) => {
 
 module.exports = router;
 module.exports.getWecomConfig = getWecomConfig;
+module.exports.getAccessToken = getAccessToken;
 module.exports.sendWecomMessage = sendWecomMessage;
 module.exports.sendMarkdownViaWebhook = sendMarkdownViaWebhook;
 module.exports.sendViaWebhook = sendViaWebhook;

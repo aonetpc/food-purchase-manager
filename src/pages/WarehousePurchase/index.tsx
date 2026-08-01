@@ -268,8 +268,10 @@ export default function WarehousePurchaseList() {
   const handleSubmit = async (id: string) => {
     if (!window.confirm('确定提交审批吗？提交后将无法编辑。')) return;
     setActioningId(id);
+    setError('');
     try {
       await api.post(`/warehouse-purchases/${id}/submit`);
+      alert('提交审批成功！');
       await fetchList();
     } catch (err: any) {
       setError(err.message || '提交审批失败');
@@ -521,6 +523,14 @@ export default function WarehousePurchaseList() {
           <button onClick={() => setError('')} className="p-1 hover:bg-danger-100 rounded-md">
             <X size={16} className="text-danger-500" />
           </button>
+        </div>
+      )}
+
+      {/* 加载中提示 */}
+      {actioningId && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
+          <RefreshCw size={20} className="text-blue-500 animate-spin" />
+          <span className="text-blue-700">正在处理中，请稍候...</span>
         </div>
       )}
 
@@ -824,8 +834,17 @@ export default function WarehousePurchaseList() {
                                 disabled={actioningId === p.id}
                                 className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
                               >
-                                <Send size={14} />
-                                提交审批
+                                {actioningId === p.id ? (
+                                  <>
+                                    <RefreshCw size={14} className="animate-spin" />
+                                    提交中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Send size={14} />
+                                    提交审批
+                                  </>
+                                )}
                               </button>
                               <button
                                 onClick={(e) => {

@@ -13,6 +13,7 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/rbac');
 const {
   getWecomConfig,
+  getAccessToken,
   sendMarkdownViaWebhook,
   sendTemplateCardToUser,
   updateTemplateCardButton,
@@ -155,16 +156,10 @@ function normalizeItemRow(item) {
 }
 
 // ================================================
-// 企微审批辅助：用 fetch 直接获取模板控件类型
-// （getApprovalTemplateDetail 未从 wecom.js 导出，按任务要求直接 fetch）
+// 企微审批辅助：获取模板控件类型
 // ================================================
 async function fetchWarehouseTemplateControlTypes(config) {
-  const tokenResp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-  const tokenData = await tokenResp.json();
-  if (!tokenData.access_token) {
-    throw new Error('获取企微 access_token 失败：' + (tokenData.errmsg || ''));
-  }
-  const accessToken = tokenData.access_token;
+  const accessToken = await getAccessToken(config);
   const tplResp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -175,7 +170,6 @@ async function fetchWarehouseTemplateControlTypes(config) {
     throw new Error('获取审批模板详情失败：' + (tplData.errmsg || ''));
   }
   const controlTypeMap = {};
-  // 记录 MultiSelector / Selector 控件的选项列表（key + text）
   const selectorOptionsMap = {};
   if (tplData.template_content && tplData.template_content.controls) {
     for (const ctrl of tplData.template_content.controls) {
@@ -183,11 +177,10 @@ async function fetchWarehouseTemplateControlTypes(config) {
         const ctrlId = ctrl.property.id;
         const ctrlType = ctrl.property.control;
         controlTypeMap[ctrlId] = ctrlType;
-        // 提取 MultiSelector / Selector 的选项
         if (ctrlType === 'MultiSelector' || ctrlType === 'Selector') {
           const options = [];
-          const config = ctrl.config || {};
-          const selector = config.selector || ctrl.value?.selector;
+          const ctrlConfig = ctrl.config || {};
+          const selector = ctrlConfig.selector || ctrl.value?.selector;
           if (selector && selector.options) {
             for (const opt of selector.options) {
               const text = opt.value?.find((t) => t.lang === 'zh_CN')?.text
@@ -299,11 +292,8 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
       const creatorUserid = options.creatorUserid || config.applicant_userid;
       let wecomDeptList = [];
       try {
-        const accessTokenResp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
-        const tokenData = await accessTokenResp.json();
-        if (tokenData.access_token) {
-          wecomDeptList = await fetchWecomDepartments(tokenData.access_token);
-        }
+        const token = await getAccessToken(config);
+        wecomDeptList = await fetchWecomDepartments(token);
       } catch (e) { /* ignore, fallback to empty list */ }
 
       const members = [];
