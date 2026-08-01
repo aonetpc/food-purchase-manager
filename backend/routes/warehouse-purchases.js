@@ -201,7 +201,34 @@ async function fetchWarehouseTemplateControlTypes(config) {
       }
     }
   }
-  return { controlTypeMap, selectorOptionsMap };
+  return { controlTypeMap, selectorOptionsMap, accessToken };
+}
+
+// 缓存企微部门列表（避免重复调用API）
+let _wecomDeptCache = null;
+let _wecomDeptCacheTime = 0;
+const WECOM_DEPT_CACHE_TTL = 5 * 60 * 1000; // 5分钟
+
+async function fetchWecomDepartments(accessToken) {
+  const now = Date.now();
+  if (_wecomDeptCache && (now - _wecomDeptCacheTime) < WECOM_DEPT_CACHE_TTL) {
+    return _wecomDeptCache;
+  }
+  const allDepts = [];
+  const fetchDept = async (parentId) => {
+    const resp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/department/list?access_token=${accessToken}&id=${parentId}`);
+    const data = await resp.json();
+    if (data.errcode === 0 && data.department) {
+      for (const d of data.department) {
+        allDepts.push({ id: d.id, name: d.name, parentid: d.parentid });
+        await fetchDept(d.id);
+      }
+    }
+  };
+  await fetchDept(1); // 从根部门开始
+  _wecomDeptCache = allDepts;
+  _wecomDeptCacheTime = now;
+  return allDepts;
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
@@ -263,59 +290,93 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     });
   }
 
-  // 涉及部门（MultiSelector：按名称匹配企微选项key）
+  // 涉及部门（根据控件类型分别处理）
   if (fieldMapping.department) {
     const deptControlType = getControlType('department', 'MultiSelector');
-    // 优先使用缓存选项，没有则用实时拉取的
-    let deptOptions = [];
-    const cachedOptions = parseJsonField(config.warehouse_dept_options);
-    if (Array.isArray(cachedOptions) && cachedOptions.length > 0) {
-      deptOptions = cachedOptions;
-    } else if (selectorOptionsMap[fieldMapping.department]) {
-      deptOptions = selectorOptionsMap[fieldMapping.department];
-    }
 
-    // 按名称匹配：精确匹配 → 包含匹配
-    const matchedOptions = [];
-    const matchedDeptNames = new Set();
-    for (const deptName of deptNames) {
-      // 精确匹配
-      let opt = deptOptions.find(o => o.text === deptName);
-      // 包含匹配（任一方包含另一方）
-      if (!opt) {
-        opt = deptOptions.find(o => o.text.includes(deptName) || deptName.includes(o.text));
-      }
-      if (opt && !matchedDeptNames.has(opt.key)) {
-        matchedOptions.push({ key: opt.key, value: [{ text: opt.text, lang: 'zh_CN' }] });
-        matchedDeptNames.add(opt.key);
-      }
-    }
+    if (deptControlType === 'Contact') {
+      // Contact 类型：部门选择器，需要提交企微部门ID列表
+      const creatorUserid = options.creatorUserid || config.applicant_userid;
+      let wecomDeptList = [];
+      try {
+        const accessTokenResp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+        const tokenData = await accessTokenResp.json();
+        if (tokenData.access_token) {
+          wecomDeptList = await fetchWecomDepartments(tokenData.access_token);
+        }
+      } catch (e) { /* ignore, fallback to empty list */ }
 
-    if (deptControlType === 'MultiSelector') {
-      // MultiSelector：可填多个选项
-      contents.push({
-        control: 'MultiSelector',
-        id: fieldMapping.department,
-        value: { options: matchedOptions },
-      });
-    } else if (deptControlType === 'Selector') {
-      // Selector（单选）：取第一个匹配的，无匹配取第一个选项兜底
-      const singleOpt = matchedOptions[0]
-        || (deptOptions[0] ? { key: deptOptions[0].key, value: [{ text: deptOptions[0].text, lang: 'zh_CN' }] } : null);
-      if (singleOpt) {
+      const members = [];
+      const matchedNames = new Set();
+      for (const deptName of deptNames) {
+        // 精确匹配 → 包含匹配
+        let matched = wecomDeptList.find(d => d.name === deptName);
+        if (!matched) {
+          matched = wecomDeptList.find(d => d.name.includes(deptName) || deptName.includes(d.name));
+        }
+        if (matched && !matchedNames.has(String(matched.id))) {
+          members.push({ userid: String(matched.id) });
+          matchedNames.add(String(matched.id));
+        }
+      }
+      // 兜底：无匹配时用申请人userid（Contact必填，不能为空）
+      if (members.length === 0 && creatorUserid) {
+        members.push({ userid: String(creatorUserid) });
+      }
+      if (members.length > 0) {
         contents.push({
-          control: 'Selector',
+          control: 'Contact',
           id: fieldMapping.department,
-          value: { selector: { type: 'single', options: [singleOpt] } },
+          value: { members },
         });
       }
     } else {
-      // Text 兜底
-      contents.push({
-        control: deptControlType || 'Text',
-        id: fieldMapping.department,
-        value: { text: fullDeptList },
-      });
+      // MultiSelector / Selector：按名称匹配企微选项key
+      let deptOptions = [];
+      const cachedOptions = parseJsonField(config.warehouse_dept_options);
+      if (Array.isArray(cachedOptions) && cachedOptions.length > 0) {
+        deptOptions = cachedOptions;
+      } else if (selectorOptionsMap[fieldMapping.department]) {
+        deptOptions = selectorOptionsMap[fieldMapping.department];
+      }
+
+      const matchedOptions = [];
+      const matchedDeptNames = new Set();
+      for (const deptName of deptNames) {
+        let opt = deptOptions.find(o => o.text === deptName);
+        if (!opt) {
+          opt = deptOptions.find(o => o.text.includes(deptName) || deptName.includes(o.text));
+        }
+        if (opt && !matchedDeptNames.has(opt.key)) {
+          matchedOptions.push({ key: opt.key, value: [{ text: opt.text, lang: 'zh_CN' }] });
+          matchedDeptNames.add(opt.key);
+        }
+      }
+
+      if (deptControlType === 'MultiSelector') {
+        contents.push({
+          control: 'MultiSelector',
+          id: fieldMapping.department,
+          value: { options: matchedOptions },
+        });
+      } else if (deptControlType === 'Selector') {
+        const singleOpt = matchedOptions[0]
+          || (deptOptions[0] ? { key: deptOptions[0].key, value: [{ text: deptOptions[0].text, lang: 'zh_CN' }] } : null);
+        if (singleOpt) {
+          contents.push({
+            control: 'Selector',
+            id: fieldMapping.department,
+            value: { selector: { type: 'single', options: [singleOpt] } },
+          });
+        }
+      } else {
+        // Text 兜底
+        contents.push({
+          control: deptControlType || 'Text',
+          id: fieldMapping.department,
+          value: { text: fullDeptList },
+        });
+      }
     }
   }
 
