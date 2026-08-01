@@ -2344,7 +2344,7 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
   }
 });
 
-// 10. POST /:id/generate-pdf — 生成PDF
+// 10. POST /:id/generate-pdf — 生成PDF（按状态选择申请单或确认单）
 router.post('/:id/generate-pdf', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2352,51 +2352,73 @@ router.post('/:id/generate-pdf', requireAuth, async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: '采购单不存在' });
     }
-    await generateWarehousePDF(id);
+    const row = rows[0];
+    // 根据状态选择PDF类型
+    const applyStatuses = ['draft', 'pending_approval', 'rejected', 'approved'];
+    const isApplyPdf = applyStatuses.includes(row.status);
+    const pdfPath = isApplyPdf
+      ? await generatePurchaseApplyPDF(id)
+      : await generateWarehousePDF(id);
+    const urlPath = isApplyPdf ? `warehouse_apply_${id}.pdf` : `warehouse_${id}.pdf`;
     const pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
     await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
-    res.json({ success: true, pdf_url: pdfUrl });
+    res.json({ success: true, pdf_url: pdfUrl, type: isApplyPdf ? 'apply' : 'confirm' });
   } catch (err) {
     console.error('仓库采购PDF生成失败:', err);
     res.status(500).json({ error: err.message || 'PDF生成失败' });
   }
 });
 
-// 11. GET /:id/pdf — 下载PDF（优先确认单PDF，其次申请单PDF）
+// 11. GET /:id/pdf — 下载PDF（按状态选择申请单或确认单）
 router.get('/:id/pdf', async (req, res) => {
   try {
     const { id } = req.params;
-    const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
-    const applyPdfPath = path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
 
-    // 优先确认单PDF（收货后）
-    if (fs.existsSync(confirmPdfPath)) {
-      return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
-    }
-
-    // 尝试生成确认单PDF
-    const [rows] = await pool.query('SELECT id FROM warehouse_purchases WHERE id = ?', [id]);
+    // 查询采购单状态，决定PDF类型
+    const [rows] = await pool.query('SELECT status FROM warehouse_purchases WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: '采购单不存在' });
     }
-    try {
-      await generateWarehousePDF(id);
+    const orderStatus = rows[0].status;
+    const applyStatuses = ['draft', 'pending_approval', 'rejected', 'approved'];
+    const isApplyPdf = applyStatuses.includes(orderStatus);
+
+    const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
+    const applyPdfPath = path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
+
+    if (isApplyPdf) {
+      // 申请单状态：返回申请单PDF
+      if (fs.existsSync(applyPdfPath)) {
+        return res.download(applyPdfPath, `仓库采购申请单_${id}.pdf`);
+      }
+      // 自动生成申请单PDF
+      try {
+        await generatePurchaseApplyPDF(id);
+        if (fs.existsSync(applyPdfPath)) {
+          try { await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]); } catch (e) {}
+          return res.download(applyPdfPath, `仓库采购申请单_${id}.pdf`);
+        }
+      } catch (genErr) {
+        console.error('生成申请单PDF失败:', genErr.message);
+      }
+      return res.status(404).json({ error: 'PDF文件不存在' });
+    } else {
+      // 确认单状态：返回确认单PDF
       if (fs.existsSync(confirmPdfPath)) {
-        try {
-          await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]);
-        } catch (e) { /* 忽略 */ }
         return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
       }
-    } catch (genErr) {
-      // 生成失败，尝试申请单PDF
+      // 自动生成确认单PDF
+      try {
+        await generateWarehousePDF(id);
+        if (fs.existsSync(confirmPdfPath)) {
+          try { await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]); } catch (e) {}
+          return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
+        }
+      } catch (genErr) {
+        console.error('生成确认单PDF失败:', genErr.message);
+      }
+      return res.status(404).json({ error: 'PDF文件不存在' });
     }
-
-    // 返回申请单PDF
-    if (fs.existsSync(applyPdfPath)) {
-      return res.download(applyPdfPath, `仓库采购申请单_${id}.pdf`);
-    }
-
-    return res.status(404).json({ error: 'PDF文件不存在' });
   } catch (err) {
     console.error('下载仓库采购PDF失败:', err);
     res.status(500).json({ error: err.message || '下载失败' });
