@@ -423,17 +423,16 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     });
   }
 
-  // 事由（追加涉及部门信息作为兜底）
+  // 事由（已包含完整信息，不再追加部门）
   const deptNames = Array.from(new Set(
     (items || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
   ));
   const fullDeptList = deptNames.length > 0 ? deptNames.join('、') : '未分类';
-  const reasonWithDepts = `${reason}。涉及部门：${fullDeptList}`;
   if (fieldMapping.reason) {
     contents.push({
       control: getControlType('reason', 'Text'),
       id: fieldMapping.reason,
-      value: { text: reasonWithDepts },
+      value: { text: reason },
     });
   }
 
@@ -925,15 +924,15 @@ async function generatePurchaseApplyPDF(purchaseId) {
   // 表头与列宽（物资名称/规格/单价/数量/单位/金额/理由）
   const headers = ['物资名称', '规格', '单价/单位', '数量', '单位', '金额', '理由'];
   const colWidths = [
-    tableWidth * 0.20,
-    tableWidth * 0.12,
-    tableWidth * 0.14,
-    tableWidth * 0.07,
-    tableWidth * 0.07,
+    tableWidth * 0.22,
     tableWidth * 0.15,
+    tableWidth * 0.13,
+    tableWidth * 0.06,
+    tableWidth * 0.06,
+    tableWidth * 0.13,
     tableWidth * 0.25,
   ];
-  const rowHeight = 16;
+  const rowHeight = 18;
 
   function checkPageBreak(y, extraHeight = 0) {
     const pageBottom = doc.page.height - doc.page.margins.bottom;
@@ -944,11 +943,30 @@ async function generatePurchaseApplyPDF(purchaseId) {
     return y;
   }
 
+  // 截断文本以适应列宽，防止溢出重叠
+  function truncateText(text, maxWidth, fontSize) {
+    doc.fontSize(fontSize);
+    const str = String(text ?? '');
+    if (doc.widthOfString(str) <= maxWidth) return str;
+    // 逐步截断直到能放下（含省略号）
+    let lo = 0, hi = str.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (doc.widthOfString(str.substring(0, mid) + '…') <= maxWidth) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return str.substring(0, lo) + '…';
+  }
+
   function drawTableRow(y, cells, isHeader = false) {
-    doc.font(isHeader ? boldFont : regFont).fontSize(isHeader ? 10 : 9);
+    const fontSize = isHeader ? 10 : 9;
+    doc.font(isHeader ? boldFont : regFont).fontSize(fontSize);
     let x = tableX;
     for (let i = 0; i < cells.length; i++) {
-      const text = String(cells[i] ?? '');
+      const text = truncateText(cells[i], colWidths[i] - 6, fontSize);
       const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
       doc.text(text, x + 2, y + 2, { width: colWidths[i] - 4, align, lineBreak: false });
       x += colWidths[i];
@@ -1855,12 +1873,8 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     const monthDayStr = `${now.getMonth() + 1}月${now.getDate()}日`;
     const totalAmount = toNum(row.total_amount);
 
-    // 构建事由：8月1日后勤部采购，预计费用¥30.00
-    const deptNameList = Array.from(new Set(
-      (itemRows || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
-    ));
-    const deptText = deptNameList.length > 0 ? deptNameList.join('、') : '后勤';
-    const reason = `${monthDayStr}${deptText}采购，预计费用¥${totalAmount.toFixed(2)}`;
+    // 构建事由：采购事由：8月1日采购单，预计费用¥30.00，详情请查阅附件
+    const reason = `采购事由：${monthDayStr}采购单，预计费用¥${totalAmount.toFixed(2)}，详情请查阅附件`;
 
     const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
       date: dateStr,
