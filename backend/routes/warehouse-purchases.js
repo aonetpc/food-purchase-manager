@@ -369,6 +369,7 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     const directDeptIds = Array.from(new Set(
       itemsWithWecomId.map(i => String(i.wecom_dept_id)).filter(Boolean)
     ));
+    console.log(`[企微-部门] 控件类型=${deptControlType}, deptNames=${deptNames.join(',')}, directDeptIds=${directDeptIds.join(',')}, 明细带wecom_dept_id=${itemsWithWecomId.length}/${(items||[]).length}`);
 
     if (deptControlType === 'Contact') {
       // Contact 类型：部门+成员选择器
@@ -1591,10 +1592,14 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       `SELECT wpi.*, d.name as department_name, d.wecom_dept_id
        FROM warehouse_purchase_items wpi
        LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
-       LEFT JOIN departments d ON wpi.department_id = d.id
+       LEFT JOIN departments d ON d.id = COALESCE(wpi.department_id, w.department_id)
        WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
       [id]
     );
+    console.log(`[提交审批] 明细条数: ${itemRows.length}, 含wecom_dept_id条数: ${itemRows.filter(i => i.wecom_dept_id).length}`);
+    if (itemRows.length > 0) {
+      console.log(`[提交审批] 首条明细: item=${itemRows[0].item_name}, dept_name=${itemRows[0].department_name}, wecom_dept_id=${itemRows[0].wecom_dept_id}`);
+    }
 
     console.log(`[提交审批] 步骤4: 获取模板控件类型`);
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
