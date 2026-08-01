@@ -13,6 +13,7 @@ import {
   Save,
   Send,
   Clipboard,
+  Loader2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDepartmentStore } from '@/store/departmentStore';
@@ -192,6 +193,17 @@ export default function WarehousePurchaseCreate() {
   // 当前正在编辑的行 key（用于从弹窗选择物资后回填到对应行）
   const [editingLineKey, setEditingLineKey] = useState<string | null>(null);
 
+  // 快速添加物资
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickAddData, setQuickAddData] = useState({
+    name: '',
+    category_id: '',
+    spec: '',
+    unit: '个',
+    reference_price: '',
+  });
+  const [quickAddLoading, setQuickAddLoading] = useState(false);
+
   // ===== 初始化：加载仓库、物资、分类树、部门 =====
   useEffect(() => {
     fetchDepartments();
@@ -330,6 +342,50 @@ export default function WarehousePurchaseCreate() {
     });
     setShowAddPanel(false);
     setEditingLineKey(null);
+    // 重置快速添加表单
+    setShowQuickAdd(false);
+    setQuickAddData({ name: '', category_id: '', spec: '', unit: '个', reference_price: '' });
+  };
+
+  // 快速添加物资并自动选中
+  const handleQuickAdd = async () => {
+    if (!quickAddData.name.trim()) return;
+    setQuickAddLoading(true);
+    try {
+      const newItem = await api.post<WarehouseItem>('/warehouses/items', {
+        name: quickAddData.name.trim(),
+        category_id: quickAddData.category_id || null,
+        spec: quickAddData.spec.trim() || null,
+        unit: quickAddData.unit.trim() || '个',
+        reference_price: parseFloat(quickAddData.reference_price) || 0,
+      });
+      // 添加到本地物资列表
+      handleItemCreated(newItem);
+      // 自动选中新创建的物资
+      if (editingLineKey) {
+        updateLine(editingLineKey, {
+          item_id: newItem.id,
+          item_name: newItem.name,
+          spec: newItem.spec || '',
+          unit: newItem.unit || '',
+          unit_price: newItem.reference_price != null ? String(safeNum(newItem.reference_price)) : '0',
+        });
+        setShowAddPanel(false);
+        setEditingLineKey(null);
+      }
+      // 重置快速添加表单
+      setShowQuickAdd(false);
+      setQuickAddData({ name: '', category_id: '', spec: '', unit: '个', reference_price: '' });
+    } catch (err: any) {
+      alert(err.message || '添加物资失败');
+    } finally {
+      setQuickAddLoading(false);
+    }
+  };
+
+  // 更新快速添加表单
+  const updateQuickAdd = (field: string, value: string) => {
+    setQuickAddData((prev) => ({ ...prev, [field]: value }));
   };
 
   // 选择仓库
@@ -839,21 +895,114 @@ export default function WarehousePurchaseCreate() {
       {showAddPanel && (
         <div
           className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4"
-          onClick={() => setShowAddPanel(false)}
+          onClick={() => { setShowAddPanel(false); setShowQuickAdd(false); }}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+            className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
               <h3 className="text-lg font-semibold text-gray-800">选择物资</h3>
-              <button
-                onClick={() => setShowAddPanel(false)}
-                className="p-1 hover:bg-gray-100 rounded-md transition-colors"
-              >
-                <X size={20} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowQuickAdd(!showQuickAdd)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    showQuickAdd
+                      ? 'bg-primary-500 text-white'
+                      : 'bg-primary-50 text-primary-600 hover:bg-primary-100'
+                  }`}
+                >
+                  <Plus size={14} />
+                  快速添加物资
+                </button>
+                <button
+                  onClick={() => { setShowAddPanel(false); setShowQuickAdd(false); }}
+                  className="p-1 hover:bg-gray-100 rounded-md transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
+
+            {/* 快速添加表单 */}
+            {showQuickAdd && (
+              <div className="p-4 border-b border-gray-100 bg-gray-50 rounded-none">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="text-xs text-gray-600 mb-1 block">物资名称 *</label>
+                    <input
+                      type="text"
+                      value={quickAddData.name}
+                      onChange={(e) => updateQuickAdd('name', e.target.value)}
+                      placeholder="输入物资名称"
+                      className="input-field"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1 block">分类</label>
+                    <select
+                      value={quickAddData.category_id}
+                      onChange={(e) => updateQuickAdd('category_id', e.target.value)}
+                      className="input-field"
+                    >
+                      <option value="">未分类</option>
+                      {flatCategories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1 block">规格</label>
+                    <input
+                      type="text"
+                      value={quickAddData.spec}
+                      onChange={(e) => updateQuickAdd('spec', e.target.value)}
+                      placeholder="如：开尔5W暖光"
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1 block">单位</label>
+                    <input
+                      type="text"
+                      value={quickAddData.unit}
+                      onChange={(e) => updateQuickAdd('unit', e.target.value)}
+                      placeholder="如：个、箱、kg"
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1 block">参考单价</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={quickAddData.reference_price}
+                      onChange={(e) => updateQuickAdd('reference_price', e.target.value)}
+                      placeholder="0.00"
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-3">
+                  <button
+                    onClick={() => setShowQuickAdd(false)}
+                    className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleQuickAdd}
+                    disabled={!quickAddData.name.trim() || quickAddLoading}
+                    className="px-4 py-1.5 text-xs bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                  >
+                    {quickAddLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    {quickAddLoading ? '添加中...' : '添加并选中'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 搜索框 + 分类筛选 */}
             <div className="p-5 border-b border-gray-100 space-y-3">
@@ -903,6 +1052,7 @@ export default function WarehousePurchaseCreate() {
                 <div className="text-center py-12 text-gray-400">
                   <Package size={36} className="mx-auto mb-2 opacity-50" />
                   <p>未找到匹配的物资</p>
+                  <p className="text-xs mt-1">点击右上角"快速添加物资"新增</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

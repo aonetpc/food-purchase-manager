@@ -185,14 +185,21 @@ function normalizePurchaseRow(row) {
   };
 }
 
-// 规整明细行（金额安全转换）
+// 规整明细行（金额安全转换 + 字段名映射）
 function normalizeItemRow(item) {
   if (!item) return item;
   return {
     ...item,
+    // 映射到前端友好的字段名
+    quantity: toNum(item.requested_quantity),
+    unit_price: toNum(item.requested_unit_price),
+    amount: toNum(item.requested_amount),
+    unit: item.requested_unit || '',
+    // 保留原始字段（兼容其他调用方）
     requested_quantity: toNum(item.requested_quantity),
     requested_unit_price: toNum(item.requested_unit_price),
     requested_amount: toNum(item.requested_amount),
+    requested_unit: item.requested_unit || '',
     received_quantity: toNum(item.received_quantity),
     received_unit_price: toNum(item.received_unit_price),
     received_amount: toNum(item.received_amount),
