@@ -202,15 +202,16 @@ function normalizeItemRow(item) {
 // ================================================
 // 企微审批辅助：获取模板控件类型
 // ================================================
-async function fetchWarehouseTemplateControlTypes(config) {
+async function fetchWarehouseTemplateControlTypes(config, isPrepay = false) {
   const accessToken = await getAccessToken(config);
-  console.log('[企微] 获取审批模板详情...');
+  const tplId = isPrepay ? (config.prepay_approval_template_id || config.warehouse_approval_template_id) : config.warehouse_approval_template_id;
+  console.log(`[企微] 获取审批模板详情... template_id=${tplId}`);
   const tplResp = await fetchWithTimeout(
     `https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_id: config.warehouse_approval_template_id }),
+      body: JSON.stringify({ template_id: tplId }),
     },
     10000
   );
@@ -220,15 +221,39 @@ async function fetchWarehouseTemplateControlTypes(config) {
   }
   const controlTypeMap = {};
   const selectorOptionsMap = {};
+  const requiredControls = new Set();
+  const controlTitles = {};
   if (tplData.template_content && tplData.template_content.controls) {
     for (const ctrl of tplData.template_content.controls) {
       if (ctrl.property && ctrl.property.id && ctrl.property.control) {
         const ctrlId = ctrl.property.id;
         const ctrlType = ctrl.property.control;
         controlTypeMap[ctrlId] = ctrlType;
+
+        // 解析控件标题（placeholder / name）
+        const title = (ctrl.property.placeholder?.length > 0 ? ctrl.property.placeholder[0]?.text : '')
+          || (ctrl.property.name?.length > 0 ? ctrl.property.name[0]?.text : '')
+          || '';
+        if (title) controlTitles[ctrlId] = title;
+
+        // 解析 required 标记
+        if (ctrl.require === 1 || ctrl.require === '1' || ctrl.required === 1 || ctrl.required === '1') {
+          requiredControls.add(ctrlId);
+        }
+        // 从 config 中解析 require
+        const ctrlConfig = ctrl.config || {};
+        if (ctrlConfig.require === 1 || ctrlConfig.require === '1'
+          || ctrlConfig.required === 1 || ctrlConfig.required === '1'
+          || ctrlConfig.not_null === 1 || ctrlConfig.not_null === '1') {
+          requiredControls.add(ctrlId);
+        }
+        if ((ctrl.property.require === 1) || (ctrl.property.require === '1')
+          || (ctrl.property.required === 1) || (ctrl.property.required === '1')) {
+          requiredControls.add(ctrlId);
+        }
+
         if (ctrlType === 'MultiSelector' || ctrlType === 'Selector') {
           const options = [];
-          const ctrlConfig = ctrl.config || {};
           const selector = ctrlConfig.selector || ctrl.value?.selector;
           if (selector && selector.options) {
             for (const opt of selector.options) {
@@ -243,8 +268,8 @@ async function fetchWarehouseTemplateControlTypes(config) {
       }
     }
   }
-  console.log('[企微] 模板控件类型获取成功');
-  return { controlTypeMap, selectorOptionsMap, accessToken };
+  console.log(`[企微] 模板控件类型获取成功: controls=${JSON.stringify(controlTypeMap)}, required=[${Array.from(requiredControls).join(',')}], titles=${JSON.stringify(controlTitles)}`);
+  return { controlTypeMap, selectorOptionsMap, accessToken, requiredControls, controlTitles };
 }
 
 // 缓存企微部门列表（避免重复调用API）
@@ -302,9 +327,39 @@ async function fetchWecomDepartments(accessToken) {
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
-// options: { date, amount, reason, items, useReceived, pdfPath, rowId }
+// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, requiredControls, controlTitles }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, requiredControls, controlTitles } = options;
+
+  // ================= 控件ID自动发现（兜底） =================
+  // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
+  //    如果不匹配，自动从controlTypeMap找第一个Contact控件（标题含"部门"/"申购"优先）
+  const allContactIds = Object.entries(controlTypeMap || {})
+    .filter(([, type]) => type === 'Contact')
+    .map(([id]) => id);
+  console.log(`[审批构建] 所有Contact控件: ${allContactIds.join(',')}`);
+
+  function findDeptContactId() {
+    if (allContactIds.length === 0) return null;
+    // 优先：标题含"部门"
+    let hit = allContactIds.find(id => {
+      const t = String(controlTitles?.[id] || '');
+      return t.includes('部门') || t.includes('申购部门') || t.includes('采购部门');
+    });
+    if (hit) return hit;
+    // 其次：fieldMapping.department在contact列表里
+    if (fieldMapping.department && allContactIds.includes(fieldMapping.department)) {
+      return fieldMapping.department;
+    }
+    // 兜底：第一个Contact
+    return allContactIds[0];
+  }
+
+  const effectiveDeptId = findDeptContactId();
+  if (effectiveDeptId && effectiveDeptId !== fieldMapping.department) {
+    console.log(`[审批构建] department控件自动修正: fieldMapping=${fieldMapping.department || '空'} -> ${effectiveDeptId} (title=${controlTitles?.[effectiveDeptId] || ''})`);
+    fieldMapping = { ...fieldMapping, department: effectiveDeptId };
+  }
 
   function getControlType(fieldKey, fallback) {
     const mappedId = fieldMapping[fieldKey];
@@ -580,9 +635,96 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     summaryList.push({ summary_info: [{ text: `付款方式：${paymentLabel}`, lang: 'zh_CN' }] });
   }
 
+  // ================= 必填控件兜底填充 =================
+  // 检查模板中所有 requiredControls 是否已出现在 contents 中
+  // 若缺失则根据控件类型填充一个默认值
+  const filledIds = new Set(contents.map(c => c.id));
+  const creatorUserid = String(options.creatorUserid || config.applicant_userid);
+
+  if (requiredControls && requiredControls.size > 0) {
+    for (const ctrlId of requiredControls) {
+      if (filledIds.has(ctrlId)) continue;
+      const ctrlType = controlTypeMap?.[ctrlId];
+      const ctrlTitle = controlTitles?.[ctrlId] || '';
+      console.log(`[审批构建] 自动填充缺失必填控件: id=${ctrlId}, type=${ctrlType}, title=${ctrlTitle}`);
+
+      switch (ctrlType) {
+        case 'Text':
+          contents.push({ control: 'Text', id: ctrlId, value: { text: '' } });
+          break;
+        case 'Textarea':
+          contents.push({ control: 'Textarea', id: ctrlId, value: { text: '' } });
+          break;
+        case 'Money':
+          contents.push({ control: 'Money', id: ctrlId, value: { new_money: '0.00' } });
+          break;
+        case 'Date':
+        case 'DateRange':
+          contents.push({ control: ctrlType, id: ctrlId, value: { date: new Date().getTime(), type: ctrlType === 'DateRange' ? 'duration' : 'day' } });
+          break;
+        case 'Number':
+          contents.push({ control: 'Number', id: ctrlId, value: { new_number: '0' } });
+          break;
+        case 'Contact':
+          // 优先使用已匹配的部门，兜底用申请人
+          if (effectiveDeptId && ctrlId === effectiveDeptId) {
+            // 此时 department 控件应该已经填充过了，不需要再填
+          } else {
+            contents.push({
+              control: 'Contact',
+              id: ctrlId,
+              value: {
+                selected: creatorUserid
+                  ? [{ id: creatorUserid, name: '申请人' }]
+                  : [],
+              },
+            });
+          }
+          break;
+        case 'Selector': {
+          const opts = selectorOptionsMap?.[ctrlId] || [];
+          if (opts.length > 0) {
+            contents.push({
+              control: 'Selector',
+              id: ctrlId,
+              value: { selector: { type: 'single', options: [{ key: opts[0].key, value: [{ text: opts[0].text, lang: 'zh_CN' }] }] } },
+            });
+          }
+          break;
+        }
+        case 'MultiSelector': {
+          const opts = selectorOptionsMap?.[ctrlId] || [];
+          if (opts.length > 0) {
+            contents.push({
+              control: 'MultiSelector',
+              id: ctrlId,
+              value: {
+                options: opts.slice(0, 1).map(o => ({ key: o.key, value: [{ text: o.text, lang: 'zh_CN' }] })),
+              },
+            });
+          }
+          break;
+        }
+        case 'File':
+          contents.push({ control: 'File', id: ctrlId, value: { files: [] } });
+          break;
+        case 'Table':
+          contents.push({ control: 'Table', id: ctrlId, value: { children: [] } });
+          break;
+        case 'Tips':
+          break;
+        default:
+          console.warn(`[审批构建] 未知必填控件类型 type=${ctrlType}, id=${ctrlId}`);
+      }
+      filledIds.add(ctrlId);
+    }
+  }
+
   const applyData = {
-    creator_userid: String(options.creatorUserid || config.applicant_userid),
-    template_id: String(config.warehouse_approval_template_id),
+    creator_userid: creatorUserid,
+    template_id: options.prepayMode && options.template_id_override
+      ? String(options.template_id_override)
+      : String(config.warehouse_approval_template_id),
     use_template_approver: 1,
     apply_data: { contents },
     summary_list: summaryList,
@@ -599,7 +741,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     throw new Error('请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）');
   }
   const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-  const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
+  const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles } = await fetchWarehouseTemplateControlTypes(config);
 
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -622,6 +764,8 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     pdfPath,
     rowId: row.id,
     creatorUserid,
+    requiredControls,
+    controlTitles,
   });
   const spNo = await submitApproval(config, applyData);
   return spNo;
@@ -1611,7 +1755,7 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
 
     console.log(`[提交审批] 步骤4: 获取模板控件类型`);
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-    const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
+    const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles } = await fetchWarehouseTemplateControlTypes(config);
     console.log(`[提交审批] fieldMapping:`, JSON.stringify(fieldMapping));
     console.log(`[提交审批] controlTypeMap:`, JSON.stringify(controlTypeMap));
 
@@ -1647,6 +1791,8 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       pdfPath: applyPdfPath,
       rowId: id,
       creatorUserid: req.user?.wecom_userid,
+      requiredControls,
+      controlTitles,
     });
 
     console.log(`[提交审批] 步骤6: 提交企微审批`);
@@ -2337,13 +2483,13 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     }
 
     const fieldMapping = parseFieldMapping(config.prepay_field_mapping);
-    const controlTypeMap = await fetchWarehouseTemplateControlTypes(config, true);
+    const { controlTypeMap, selectorOptionsMap: prepaySelectorOpts, requiredControls: prepayReqControls, controlTitles: prepayTitles } = await fetchWarehouseTemplateControlTypes(config, true);
 
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
-    const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, {
+    const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, prepaySelectorOpts || {}, {
       date: dateStr,
       amount: prepayAmount,
       reason: `预付款 - ${row.supplier_name || '供应商'} - 仓库采购(${row.id.substring(0, 8)})`,
@@ -2352,9 +2498,12 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       pdfPath: null,
       rowId: id,
       prepayMode: true,
+      template_id_override: config.prepay_approval_template_id,
+      requiredControls: prepayReqControls,
+      controlTitles: prepayTitles,
     });
 
-    const spNo = await submitApproval(config, applyData, config.prepay_approval_template_id);
+    const spNo = await submitApproval(config, applyData);
 
     await pool.query(
       'UPDATE warehouse_purchases SET prepay_sp_no = ?, prepay_status = ? WHERE id = ?',
