@@ -1435,9 +1435,9 @@ router.put('/:id', requireAuth, async (req, res) => {
       await connection.rollback();
       return res.status(404).json({ error: '采购单不存在' });
     }
-    if (rows[0].status !== 'draft') {
+    if (rows[0].status !== 'draft' && rows[0].status !== 'rejected') {
       await connection.rollback();
-      return res.status(400).json({ error: '只有草稿状态的采购单可以编辑' });
+      return res.status(400).json({ error: '只有草稿或驳回状态的采购单可以编辑' });
     }
 
     // 批量查询仓库名称
@@ -1634,22 +1634,27 @@ router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
     const config = await getWecomConfig();
     if (!config) return res.status(400).json({ error: '企业微信未配置' });
 
+    console.log(`[刷新采购审批] 查询审批详情: sp_no=${row.approval_sp_no}`);
     const detail = await getApprovalDetail(config, row.approval_sp_no);
-    const spStatus = detail?.sp_status;
+    console.log(`[刷新采购审批] 原始响应:`, JSON.stringify(detail).substring(0, 500));
+    
+    // 企微API返回结构: { errcode, errmsg, info: { sp_status, ... } }
+    const spStatus = detail?.info?.sp_status ?? detail?.sp_status;
+    console.log(`[刷新采购审批] sp_status=${spStatus} (类型: ${typeof spStatus})`);
     // sp_status: 1=审批中，2=已通过，3=已驳回，4=已撤销
 
     let newStatus = row.status;
     let newApprovalStatus = row.approval_status || 'pending';
 
-    if (spStatus === 1 || spStatus === '1' || spStatus === 'pending') {
+    if (spStatus === 1 || spStatus === '1') {
       newApprovalStatus = 'pending';
-    } else if (spStatus === 2 || spStatus === '2' || spStatus === 'approved' || spStatus === 'passed') {
+    } else if (spStatus === 2 || spStatus === '2') {
       newStatus = 'approved';
       newApprovalStatus = 'approved';
-    } else if (spStatus === 3 || spStatus === '3' || spStatus === 'rejected' || spStatus === 'refused') {
+    } else if (spStatus === 3 || spStatus === '3') {
       newStatus = 'rejected';
       newApprovalStatus = 'rejected';
-    } else if (spStatus === 4 || spStatus === '4' || spStatus === 'canceled') {
+    } else if (spStatus === 4 || spStatus === '4') {
       newStatus = 'draft';
       newApprovalStatus = 'canceled';
     }

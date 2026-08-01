@@ -413,7 +413,9 @@ export default function WarehousePurchaseList() {
       const data = await api.post<WarehousePurchase>(
         `/warehouse-purchases/${id}/refresh-approval`,
       );
-      setPurchases((prev) => prev.map((it) => (it.id === id ? { ...it, ...data } : it)));
+      // 刷新成功后重新拉取列表，确保状态和所有字段正确更新
+      await fetchList();
+      console.log(`[刷新审批] ${id} 成功，当前状态: ${data.status}`);
     } catch (err: any) {
       setError(err.message || '刷新审批状态失败');
     } finally {
