@@ -694,6 +694,24 @@ jobs:
               DEALLOCATE PREPARE alterIfNotExists;
             " 2>/dev/null || true
 
+            # 数据库迁移：确保 departments 表有 wecom_dept_id 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'departments';
+              SET @columnname = 'wecom_dept_id';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname
+                  AND table_name = @tablename
+                  AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(50) NULL COMMENT \"企微部门ID\"')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
             # 数据库迁移：执行所有迁移SQL文件（幂等，可重复执行）
             for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
               echo "Running migration: $sql_file"

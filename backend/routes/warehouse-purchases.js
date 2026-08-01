@@ -364,31 +364,44 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   if (fieldMapping.department) {
     const deptControlType = getControlType('department', 'MultiSelector');
 
+    // 优先使用部门表中的 wecom_dept_id（手动配置，零API调用）
+    const itemsWithWecomId = (items || []).filter(i => i.wecom_dept_id);
+    const directDeptIds = Array.from(new Set(
+      itemsWithWecomId.map(i => String(i.wecom_dept_id)).filter(Boolean)
+    ));
+
     if (deptControlType === 'Contact') {
       // Contact 类型：部门+成员选择器
       // 企微API要求：departments字段存部门ID，members字段存成员userid
       const creatorUserid = options.creatorUserid || config.applicant_userid;
-      let wecomDeptList = [];
-      try {
-        const token = await getAccessToken(config);
-        wecomDeptList = await fetchWecomDepartments(token);
-      } catch (e) { /* ignore, fallback to empty list */ }
 
-      const departments = [];
-      const matchedDeptIds = new Set();
-      for (const deptName of deptNames) {
-        // 精确匹配 → 包含匹配
-        let matched = wecomDeptList.find(d => d.name === deptName);
-        if (!matched) {
-          matched = wecomDeptList.find(d => d.name.includes(deptName) || deptName.includes(d.name));
+      let departments = [];
+      if (directDeptIds.length > 0) {
+        // 直接使用手动配置的企微部门ID
+        departments = directDeptIds.map(id => ({ id }));
+        console.log(`[企微] Contact控件值: 直接使用wecom_dept_id=${directDeptIds.join(',')}`);
+      } else {
+        // 兜底：调用API匹配
+        let wecomDeptList = [];
+        try {
+          const token = await getAccessToken(config);
+          wecomDeptList = await fetchWecomDepartments(token);
+        } catch (e) { /* ignore, fallback to empty list */ }
+
+        const matchedDeptIds = new Set();
+        for (const deptName of deptNames) {
+          let matched = wecomDeptList.find(d => d.name === deptName);
+          if (!matched) {
+            matched = wecomDeptList.find(d => d.name.includes(deptName) || deptName.includes(d.name));
+          }
+          if (matched && !matchedDeptIds.has(String(matched.id))) {
+            departments.push({ id: String(matched.id) });
+            matchedDeptIds.add(String(matched.id));
+          }
         }
-        if (matched && !matchedDeptIds.has(String(matched.id))) {
-          departments.push({ id: String(matched.id) });
-          matchedDeptIds.add(String(matched.id));
-        }
+        console.log(`[企微] Contact控件值: API匹配departments=${departments.length}, deptNames=${deptNames.join(',')}`);
       }
 
-      // 构建 Contact value：部门用 departments，成员用 members
       const contactValue = {};
       if (departments.length > 0) {
         contactValue.departments = departments;
@@ -397,8 +410,6 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
       if (departments.length === 0 && creatorUserid) {
         contactValue.members = [{ userid: String(creatorUserid) }];
       }
-      
-      console.log(`[企微] Contact控件值: departments=${departments.length}, deptNames=${deptNames.join(',')}`);
       
       if (Object.keys(contactValue).length > 0) {
         contents.push({
@@ -429,6 +440,8 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
           matchedDeptNames.add(opt.key);
         }
       }
+
+      console.log(`[企微] ${deptControlType}控件值: matched=${matchedOptions.length}, deptNames=${deptNames.join(',')}`);
 
       if (deptControlType === 'MultiSelector') {
         contents.push({
@@ -607,6 +620,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
 // ================================================
 // generatePurchaseApplyPDF —— 仓库采购申请单 PDF
 // 提交审批时生成，格式参考食材采购确认单
+// 每个物资行下方显示采购理由（如有）
 // ================================================
 async function generatePurchaseApplyPDF(purchaseId) {
   const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [purchaseId]);
@@ -631,20 +645,17 @@ async function generatePurchaseApplyPDF(purchaseId) {
     doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
   }
 
+  const regFont = hasChineseFont ? 'Chinese-Regular' : 'Helvetica';
+  const boldFont = hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold';
+
   // 标题（参考食材采购：18号字，居中加粗）
-  doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('仓库采购申请单', { align: 'center' });
+  doc.fontSize(18).font(boldFont).text('仓库采购申请单', { align: 'center' });
   doc.moveDown(0.5);
 
   // 头部信息（参考食材采购：10号字）
-  doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+  doc.fontSize(10).font(regFont);
   const amountLabel = toNum(row.total_amount);
   const whNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
-  let createDateStr = '';
-  if (row.created_at instanceof Date) {
-    createDateStr = row.created_at.toISOString().substring(0, 10);
-  } else if (typeof row.created_at === 'string') {
-    createDateStr = row.created_at.substring(0, 10);
-  }
   const statusText = row.status === 'pending_approval' ? '审批中'
     : row.status === 'rejected' ? '已驳回'
     : row.status === 'approved' ? '审批通过'
@@ -674,7 +685,8 @@ async function generatePurchaseApplyPDF(purchaseId) {
     tableWidth * 0.10,
     tableWidth * 0.22,
   ];
-  const fixedRowHeight = 11;
+  const rowHeight = 16; // 增大行高避免重叠
+  const reasonHeight = 14; // 采购理由行高
 
   function checkPageBreak(y, extraHeight = 0) {
     const pageBottom = doc.page.height - doc.page.margins.bottom;
@@ -686,43 +698,53 @@ async function generatePurchaseApplyPDF(purchaseId) {
   }
 
   function drawTableRow(y, cells, isHeader = false) {
-    const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
-    const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
-    doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 10 : 9);
-    const lineHeight = doc.currentLineHeight();
+    doc.font(isHeader ? boldFont : regFont).fontSize(isHeader ? 10 : 9);
     let x = tableX;
     for (let i = 0; i < cells.length; i++) {
-      const text = String(cells[i]);
+      const text = String(cells[i] ?? '');
       const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
-      const textY = y + (fixedRowHeight - lineHeight) / 2;
-      doc.text(text, x + 2, textY, { width: colWidths[i] - 4, align });
+      doc.text(text, x + 2, y + 2, { width: colWidths[i] - 4, align, lineBreak: false });
       x += colWidths[i];
     }
-    return fixedRowHeight;
+    return rowHeight;
   }
 
+  function drawReasonRow(y, reason) {
+    doc.font(regFont).fontSize(8);
+    doc.fillColor('#666666');
+    doc.text(`  理由：${reason}`, tableX + 2, y + 1, { width: tableWidth - 4, align: 'left', lineBreak: false });
+    doc.fillColor('#000000');
+    return reasonHeight;
+  }
+
+  // 标题"采购明细"
   let currentY = doc.y;
-  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
-  doc.moveDown(0.3);
-  currentY = doc.y;
+  currentY = checkPageBreak(currentY, rowHeight + 10);
+  doc.fontSize(12).font(boldFont).text('采购明细', tableX, currentY, { lineBreak: false });
+  currentY += rowHeight + 4;
 
   // 表头
+  currentY = checkPageBreak(currentY, rowHeight);
   currentY += drawTableRow(currentY, headers, true);
-  doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
+  doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
 
-  doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
   let grandTotal = 0;
 
   for (const [whName, items] of Object.entries(groupedItems)) {
-    const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + 15;
-    currentY = checkPageBreak(currentY, deptNeededHeight);
+    // 预估高度：仓库标题 + (每行高度 + 可能的理由行高度)
+    let groupHeight = rowHeight; // 仓库标题
+    for (const item of items) {
+      groupHeight += rowHeight;
+      if (item.reason) groupHeight += reasonHeight;
+    }
+    groupHeight += 12 + 10; // 小计 + 间距
+    currentY = checkPageBreak(currentY, groupHeight);
 
-    // 仓库标题（参考食材采购：分组标题）
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${whName}】`, tableX, currentY + 1);
-    currentY += fixedRowHeight;
+    // 仓库标题
+    doc.fontSize(10).font(boldFont).text(`【${whName}】`, tableX, currentY + 1, { lineBreak: false });
+    currentY += rowHeight;
 
-    // 明细行（使用申请数据）
-    doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(9);
+    // 明细行
     let subtotal = 0;
     for (const item of items) {
       const price = toNum(item.requested_unit_price);
@@ -738,40 +760,46 @@ async function generatePurchaseApplyPDF(purchaseId) {
         unit,
         `¥${amt.toFixed(2)}`,
       ];
+
+      // 检查是否需要换页（考虑理由行）
+      const needHeight = rowHeight + (item.reason ? reasonHeight : 0);
+      currentY = checkPageBreak(currentY, needHeight);
+
       currentY += drawTableRow(currentY, cells);
       subtotal += amt;
+
+      // 在物资行下方显示采购理由
+      if (item.reason) {
+        currentY += drawReasonRow(currentY, item.reason) - rowHeight;
+        currentY += rowHeight;
+      }
     }
     grandTotal += subtotal;
 
     // 仓库小计
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
-      .text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY, { width: tableWidth, align: 'right' });
-    currentY += 10;
+    currentY = checkPageBreak(currentY, 20);
+    doc.fontSize(10).font(boldFont)
+      .text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY + 2, { width: tableWidth, align: 'right', lineBreak: false });
+    currentY += 12;
     doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
-    currentY += 15;
+    currentY += 8;
   }
 
   if (Object.keys(groupedItems).length === 0) {
-    doc.fontSize(10).text('暂无采购明细', { align: 'center' });
+    doc.fontSize(10).font(regFont).text('暂无采购明细', { align: 'center' });
   }
 
-  // 合计（参考食材采购）
-  currentY = checkPageBreak(currentY, 50);
+  // 合计
+  currentY = checkPageBreak(currentY, 30);
   doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
-  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
-    .text(`合计金额：¥${grandTotal.toFixed(2)}`, tableX, currentY + 5, { width: tableWidth, align: 'right' });
+  doc.fontSize(12).font(boldFont)
+    .text(`合计金额：¥${grandTotal.toFixed(2)}`, tableX, currentY + 5, { width: tableWidth, align: 'right', lineBreak: false });
+  currentY += 25;
 
-  // 采购理由
-  if (row.reason) {
-    currentY = checkPageBreak(currentY, 30);
-    doc.moveDown(0.5);
-    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
-    doc.text(`采购理由：${row.reason}`, tableX, currentY, { width: tableWidth, align: 'left' });
-  }
-
-  doc.moveDown(0.5);
-  doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica')
-    .text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
+  // 生成时间
+  currentY = checkPageBreak(currentY, 15);
+  doc.fontSize(7).font(regFont)
+    .text(`生成时间：${new Date().toLocaleString('zh-CN')}`, tableX, currentY, { width: tableWidth, align: 'right', lineBreak: false });
 
   doc.end();
 
@@ -1560,10 +1588,10 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
 
     console.log(`[提交审批] 步骤3: 查询明细`);
     const [itemRows] = await pool.query(
-      `SELECT wpi.*, d.name as department_name
+      `SELECT wpi.*, d.name as department_name, d.wecom_dept_id
        FROM warehouse_purchase_items wpi
        LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
-       LEFT JOIN departments d ON w.department_id = d.id
+       LEFT JOIN departments d ON wpi.department_id = d.id
        WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
       [id]
     );

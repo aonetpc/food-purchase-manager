@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, sort_order = 0, confirmer_userid } = req.body;
+    const { name, sort_order = 0, confirmer_userid, wecom_dept_id } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: '部门名称不能为空' });
@@ -36,8 +36,8 @@ router.post('/', async (req, res) => {
     const newSortOrder = sort_order || countResult[0].cnt + 1;
 
     await pool.query(
-      'INSERT INTO departments (id, name, sort_order, confirmer_userid) VALUES (?, ?, ?, ?)',
-      [id, name, newSortOrder, confirmer_userid || null]
+      'INSERT INTO departments (id, name, sort_order, confirmer_userid, wecom_dept_id) VALUES (?, ?, ?, ?, ?)',
+      [id, name, newSortOrder, confirmer_userid || null, wecom_dept_id || null]
     );
 
     const [rows] = await pool.query('SELECT * FROM departments WHERE id = ?', [id]);
@@ -51,7 +51,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, sort_order, confirmer_userid } = req.body;
+    const { name, sort_order, confirmer_userid, wecom_dept_id } = req.body;
 
     if (name) {
       const [existing] = await pool.query(
@@ -68,6 +68,7 @@ router.put('/:id', async (req, res) => {
     if (name !== undefined) { fields.push('name = ?'); values.push(name); }
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(sort_order); }
     if (confirmer_userid !== undefined) { fields.push('confirmer_userid = ?'); values.push(confirmer_userid); }
+    if (wecom_dept_id !== undefined) { fields.push('wecom_dept_id = ?'); values.push(wecom_dept_id || null); }
 
     if (fields.length === 0) {
       return res.status(400).json({ error: '没有更新字段' });

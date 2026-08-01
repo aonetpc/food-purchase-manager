@@ -6,6 +6,8 @@ export interface Department {
   name: string;
   sort_order: number;
   created_at?: string;
+  confirmer_userid?: string;
+  wecom_dept_id?: string;
 }
 
 interface DepartmentStore {

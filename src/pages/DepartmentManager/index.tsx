@@ -33,6 +33,7 @@ export default function DepartmentManager() {
   const [editDeptName, setEditDeptName] = useState('');
   const [editDeptError, setEditDeptError] = useState('');
   const [editDeptConfirmer, setEditDeptConfirmer] = useState('');
+  const [editDeptWecomId, setEditDeptWecomId] = useState('');
 
   const [hoveredDeptId, setHoveredDeptId] = useState<string | null>(null);
 
@@ -84,7 +85,8 @@ export default function DepartmentManager() {
   const handleEditDept = async (dept: Department) => {
     setEditDeptId(dept.id);
     setEditDeptName(dept.name);
-    setEditDeptConfirmer((dept as any).confirmer_userid || '');
+    setEditDeptConfirmer(dept.confirmer_userid || '');
+    setEditDeptWecomId(dept.wecom_dept_id || '');
     setEditDeptError('');
   };
 
@@ -95,9 +97,12 @@ export default function DepartmentManager() {
       return;
     }
 
-    // 先保存确认人
+    // 一次性保存所有字段
     try {
-      await api.put(`/departments/${editDeptId}`, { confirmer_userid: editDeptConfirmer.trim() || null });
+      await api.put(`/departments/${editDeptId}`, {
+        confirmer_userid: editDeptConfirmer.trim() || null,
+        wecom_dept_id: editDeptWecomId.trim() || null,
+      });
     } catch (e) {
       // 忽略错误，继续保存名称
     }
@@ -267,10 +272,18 @@ export default function DepartmentManager() {
                       type="text"
                       value={editDeptConfirmer}
                       onChange={(e) => setEditDeptConfirmer(e.target.value)}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 mt-2"
                       placeholder="确认人企微UserID"
                     />
                     <p className="text-xs text-gray-400 -mt-1">确认人企微UserID（用于采购确认）</p>
+                    <input
+                      type="text"
+                      value={editDeptWecomId}
+                      onChange={(e) => setEditDeptWecomId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 mt-2"
+                      placeholder="企微部门ID（数字，如：2）"
+                    />
+                    <p className="text-xs text-gray-400 -mt-1">企微部门ID：在企业微信管理后台→通讯录中查看部门ID</p>
                     {editDeptError && (
                       <p className="text-danger-500 text-xs mt-2">{editDeptError}</p>
                     )}
@@ -292,12 +305,15 @@ export default function DepartmentManager() {
                       </div>
                       <div>
                         <h3 className="font-medium text-gray-800">{dept.name}</h3>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           {idx === 0 && (
                             <span className="text-xs text-primary-500">默认部门</span>
                           )}
-                          {(dept as any).confirmer_userid && (
-                            <span className="text-xs text-gray-400">确认人: {(dept as any).confirmer_userid}</span>
+                          {dept.confirmer_userid && (
+                            <span className="text-xs text-gray-400">确认人: {dept.confirmer_userid}</span>
+                          )}
+                          {dept.wecom_dept_id && (
+                            <span className="text-xs text-blue-400">企微ID: {dept.wecom_dept_id}</span>
                           )}
                         </div>
                       </div>
