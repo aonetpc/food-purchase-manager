@@ -401,15 +401,23 @@ async function getApprovalTemplateDetail(config, templateId) {
   return data;
 }
 
-async function submitApproval(config, applyData) {
+async function submitApproval(config, applyData, templateIdOverride) {
   const accessToken = await getAccessToken(config);
-  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/applyevent?access_token=${accessToken}`, {
+  const url = `https://qyapi.weixin.qq.com/cgi-bin/oa/applyevent?access_token=${accessToken}`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(applyData)
   });
   const data = await res.json();
-  if (data.errcode !== 0) throw new Error(data.errmsg || '提交审批失败');
+  if (data.errcode !== 0) {
+    // 打印完整错误详情便于排查
+    const errDetail = data.errmsg_detail || '';
+    console.error(`[企微审批提交失败] errcode=${data.errcode}, errmsg=${data.errmsg}, detail=${errDetail}`);
+    console.error(`[企微审批提交失败] apply_data.contents:`, JSON.stringify(applyData.apply_data?.contents || []));
+    const msg = errDetail ? `${data.errmsg} (${errDetail})` : data.errmsg;
+    throw new Error(msg || '提交审批失败');
+  }
   return data.sp_no;
 }
 

@@ -373,21 +373,32 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
 
     if (deptControlType === 'Contact') {
       // Contact 类型：部门+成员选择器
-      // 企微API要求：departments字段存部门ID，members字段存成员userid
+      // 企微API正确格式: value.selected = [{id, name}]
       const creatorUserid = options.creatorUserid || config.applicant_userid;
 
-      let departments = [];
+      // 构建 wecom_dept_id -> department_name 映射
+      const deptIdNameMap = {};
+      for (const item of (items || [])) {
+        if (item.wecom_dept_id && item.department_name) {
+          deptIdNameMap[String(item.wecom_dept_id)] = item.department_name;
+        }
+      }
+
+      let selected = [];
       if (directDeptIds.length > 0) {
-        // 直接使用手动配置的企微部门ID
-        departments = directDeptIds.map(id => ({ id }));
-        console.log(`[企微] Contact控件值: 直接使用wecom_dept_id=${directDeptIds.join(',')}`);
+        // 直接使用手动配置的企微部门ID + 对应名称
+        selected = directDeptIds.map(id => ({
+          id: id,
+          name: deptIdNameMap[id] || deptNames.find(n => n) || id,
+        }));
+        console.log(`[企微] Contact控件: 直接使用wecom_dept_id, selected=`, JSON.stringify(selected));
       } else {
         // 兜底：调用API匹配
         let wecomDeptList = [];
         try {
           const token = await getAccessToken(config);
           wecomDeptList = await fetchWecomDepartments(token);
-        } catch (e) { /* ignore, fallback to empty list */ }
+        } catch (e) { /* ignore */ }
 
         const matchedDeptIds = new Set();
         for (const deptName of deptNames) {
@@ -396,32 +407,25 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
             matched = wecomDeptList.find(d => d.name.includes(deptName) || deptName.includes(d.name));
           }
           if (matched && !matchedDeptIds.has(String(matched.id))) {
-            departments.push({ id: String(matched.id) });
+            selected.push({ id: String(matched.id), name: matched.name });
             matchedDeptIds.add(String(matched.id));
           }
         }
-        console.log(`[企微] Contact控件值: API匹配departments=${departments.length}, deptNames=${deptNames.join(',')}`);
+        console.log(`[企微] Contact控件: API匹配, selected=`, JSON.stringify(selected));
       }
 
-      // Contact控件: 同时传 departments + members，确保企微审批模板能显示
-      const contactValue = {};
-      if (departments.length > 0) {
-        contactValue.departments = departments;
-      }
-      // 始终传申请人作为成员，确保至少有值显示
-      if (creatorUserid) {
-        contactValue.members = [{ userid: String(creatorUserid) }];
-      }
-      // 兜底：无部门也无成员时用申请人userid
-      if (departments.length === 0 && !contactValue.members && creatorUserid) {
-        contactValue.members = [{ userid: String(creatorUserid) }];
-      }
-      
-      if (Object.keys(contactValue).length > 0) {
+      if (selected.length > 0) {
         contents.push({
           control: 'Contact',
           id: fieldMapping.department,
-          value: contactValue,
+          value: { selected },
+        });
+      } else if (creatorUserid) {
+        // 兜底：无部门时用申请人userid
+        contents.push({
+          control: 'Contact',
+          id: fieldMapping.department,
+          value: { selected: [{ id: creatorUserid, name: '申请人' }] },
         });
       }
     } else {
@@ -566,9 +570,9 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     }
   }
 
-  // 构建摘要列表
+  // 构建摘要列表（审批卡片上显示的摘要）
   const summaryList = [
-    { summary_info: [{ text: `事由：${reasonWithDepts}`, lang: 'zh_CN' }] },
+    { summary_info: [{ text: reason, lang: 'zh_CN' }] },
     { summary_info: [{ text: `金额：¥${toNum(amount).toFixed(2)}`, lang: 'zh_CN' }] },
   ];
   // 报销时才添加付款方式
