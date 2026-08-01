@@ -223,6 +223,7 @@ async function fetchWarehouseTemplateControlTypes(config, isPrepay = false) {
   const selectorOptionsMap = {};
   const requiredControls = new Set();
   const controlTitles = {};
+  const contactModes = {}; // Contact 控件的 mode 配置：{ ctrlId: { mode: 'user'|'department', type: 'single'|'multi' } }
   if (tplData.template_content && tplData.template_content.controls) {
     for (const ctrl of tplData.template_content.controls) {
       if (ctrl.property && ctrl.property.id && ctrl.property.control) {
@@ -230,9 +231,11 @@ async function fetchWarehouseTemplateControlTypes(config, isPrepay = false) {
         const ctrlType = ctrl.property.control;
         controlTypeMap[ctrlId] = ctrlType;
 
-        // 解析控件标题（placeholder / name）
-        const title = (ctrl.property.placeholder?.length > 0 ? ctrl.property.placeholder[0]?.text : '')
-          || (ctrl.property.name?.length > 0 ? ctrl.property.name[0]?.text : '')
+        // 解析控件标题（企微API实际返回 property.title，兼容 placeholder / name）
+        const pickFirstText = (arr) => (Array.isArray(arr) && arr.length > 0 ? (arr[0]?.text || '') : '');
+        const title = pickFirstText(ctrl.property.title)
+          || pickFirstText(ctrl.property.placeholder)
+          || pickFirstText(ctrl.property.name)
           || '';
         if (title) controlTitles[ctrlId] = title;
 
@@ -252,6 +255,15 @@ async function fetchWarehouseTemplateControlTypes(config, isPrepay = false) {
           requiredControls.add(ctrlId);
         }
 
+        // 解析 Contact 控件的 mode（user-成员 / department-部门）和 type（single/multi）
+        if (ctrlType === 'Contact') {
+          const contactConfig = ctrlConfig.contact || {};
+          const mode = contactConfig.mode || ''; // user / department
+          const cType = contactConfig.type || ''; // single / multi
+          contactModes[ctrlId] = { mode, type: cType };
+          console.log(`[企微] Contact控件配置: id=${ctrlId}, title=${title || '(无标题)'}, mode=${mode || '(未配置)'}, type=${cType || '(未配置)'}, config=${JSON.stringify(ctrlConfig)}`);
+        }
+
         if (ctrlType === 'MultiSelector' || ctrlType === 'Selector') {
           const options = [];
           const selector = ctrlConfig.selector || ctrl.value?.selector;
@@ -268,8 +280,8 @@ async function fetchWarehouseTemplateControlTypes(config, isPrepay = false) {
       }
     }
   }
-  console.log(`[企微] 模板控件类型获取成功: controls=${JSON.stringify(controlTypeMap)}, required=[${Array.from(requiredControls).join(',')}], titles=${JSON.stringify(controlTitles)}`);
-  return { controlTypeMap, selectorOptionsMap, accessToken, requiredControls, controlTitles };
+  console.log(`[企微] 模板控件类型获取成功: controls=${JSON.stringify(controlTypeMap)}, required=[${Array.from(requiredControls).join(',')}], titles=${JSON.stringify(controlTitles)}, contactModes=${JSON.stringify(contactModes)}`);
+  return { controlTypeMap, selectorOptionsMap, accessToken, requiredControls, controlTitles, contactModes };
 }
 
 // 缓存企微部门列表（避免重复调用API）
@@ -327,9 +339,9 @@ async function fetchWecomDepartments(accessToken) {
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
-// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, requiredControls, controlTitles }
+// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, requiredControls, controlTitles, contactModes }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null, requiredControls, controlTitles } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, requiredControls, controlTitles, contactModes } = options;
 
   // ================= 控件ID自动发现（兜底） =================
   // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
@@ -430,9 +442,12 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     console.log(`[企微-部门] 控件类型=${deptControlType}, deptNames=${deptNames.join(',')}, directDeptIds=${directDeptIds.join(',')}, 明细带wecom_dept_id=${itemsWithWecomId.length}/${(items||[]).length}`);
 
     if (deptControlType === 'Contact') {
-      // Contact 类型：部门+成员选择器
-      // 企微API正确格式: value.selected = [{id, name}]
+      // Contact 类型：根据模板 config.contact.mode 决定是部门还是成员
+      // mode=user（成员模式）：value 用 members [{userid, name}]
+      // mode=department（部门模式）：value 用 departments [{openapi_id, name}]
       const creatorUserid = options.creatorUserid || config.applicant_userid;
+      const deptContactMode = contactModes?.[fieldMapping.department]?.mode || '';
+      console.log(`[企微-Contact] 控件id=${fieldMapping.department}, 模板mode=${deptContactMode || '(未配置,默认department)'}`);
 
       // 构建 wecom_dept_id -> department_name 映射
       const deptIdNameMap = {};
@@ -472,26 +487,47 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
         console.log(`[企微] Contact控件: API匹配, selected=`, JSON.stringify(selected));
       }
 
-      if (selected.length > 0) {
-        // 企微官方文档：部门控件 value 用 departments 字段，每项含 openapi_id + name
-        contents.push({
-          control: 'Contact',
-          id: fieldMapping.department,
-          value: {
-            departments: selected.map(s => ({ openapi_id: String(s.id), name: s.name })),
-          },
-        });
-        console.log(`[企微] 填充部门Contact(id=${fieldMapping.department}): departments=${JSON.stringify(selected.map(s => ({ openapi_id: s.id, name: s.name })))}`);
-      } else if (creatorUserid) {
-        // 兜底：无部门时用申请人userid（members 格式）
-        contents.push({
-          control: 'Contact',
-          id: fieldMapping.department,
-          value: {
-            members: [{ userid: String(creatorUserid), name: '申请人' }],
-          },
-        });
-        console.log(`[企微] 部门Contact无匹配，兜底用申请人: userid=${creatorUserid}`);
+      // 根据 mode 决定 value 格式
+      // mode=user：成员模式，传 members（用申请人userid）
+      // mode=department 或未配置：部门模式，传 departments
+      const isUserMode = deptContactMode === 'user';
+
+      if (isUserMode) {
+        // 成员模式：传申请人userid
+        if (creatorUserid) {
+          contents.push({
+            control: 'Contact',
+            id: fieldMapping.department,
+            value: {
+              members: [{ userid: String(creatorUserid), name: '申请人' }],
+            },
+          });
+          console.log(`[企微] 填充Contact(id=${fieldMapping.department}, mode=user): members=[{userid=${creatorUserid}}]`);
+        } else {
+          console.warn(`[企微] Contact控件mode=user但无creatorUserid，跳过`);
+        }
+      } else {
+        // 部门模式：传 departments
+        if (selected.length > 0) {
+          contents.push({
+            control: 'Contact',
+            id: fieldMapping.department,
+            value: {
+              departments: selected.map(s => ({ openapi_id: String(s.id), name: s.name })),
+            },
+          });
+          console.log(`[企微] 填充部门Contact(id=${fieldMapping.department}, mode=${deptContactMode || 'department'}): departments=${JSON.stringify(selected.map(s => ({ openapi_id: s.id, name: s.name })))}`);
+        } else if (creatorUserid) {
+          // 兜底：无部门匹配时用申请人userid
+          contents.push({
+            control: 'Contact',
+            id: fieldMapping.department,
+            value: {
+              members: [{ userid: String(creatorUserid), name: '申请人' }],
+            },
+          });
+          console.log(`[企微] 部门Contact无匹配，兜底用申请人: userid=${creatorUserid}`);
+        }
       }
       // 记住这个selected，供必填兜底复用
       if (deptControlType === 'Contact') {
@@ -640,9 +676,9 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   }
 
   // 构建摘要列表（审批卡片上显示的摘要）
+  // 注意：金额已在事由中体现（"预计费用¥xxx"），摘要不再单独显示金额行
   const summaryList = [
     { summary_info: [{ text: reason, lang: 'zh_CN' }] },
-    { summary_info: [{ text: `金额：¥${toNum(amount).toFixed(2)}`, lang: 'zh_CN' }] },
   ];
   // 报销时才添加付款方式
   if (useReceived) {
@@ -679,10 +715,12 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
         case 'Number':
           contents.push({ control: 'Number', id: ctrlId, value: { new_number: '0' } });
           break;
-        case 'Contact':
+        case 'Contact': {
           // 兜底：所有必填Contact控件都填充
           const isDeptCtrl = effectiveDeptId && ctrlId === effectiveDeptId;
-          if (isDeptCtrl && selectedBeforeFallback && selectedBeforeFallback.length > 0) {
+          const fbMode = contactModes?.[ctrlId]?.mode || '';
+          const fbIsUserMode = fbMode === 'user';
+          if (!fbIsUserMode && isDeptCtrl && selectedBeforeFallback && selectedBeforeFallback.length > 0) {
             // 部门控件：用 departments 格式
             contents.push({
               control: 'Contact',
@@ -691,9 +729,9 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
                 departments: selectedBeforeFallback.map(s => ({ openapi_id: String(s.id), name: s.name })),
               },
             });
-            console.log(`[审批构建] 兜底必填department Contact(id=${ctrlId}): departments=${JSON.stringify(selectedBeforeFallback)}`);
+            console.log(`[审批构建] 兜底必填department Contact(id=${ctrlId}, mode=${fbMode || 'department'}): departments=${JSON.stringify(selectedBeforeFallback)}`);
           } else {
-            // 其他情况兜底用申请人（members 格式）
+            // 成员模式或无部门数据：用 members 格式（申请人userid）
             contents.push({
               control: 'Contact',
               id: ctrlId,
@@ -703,9 +741,10 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
                   : [],
               },
             });
-            console.log(`[审批构建] 兜底必填Contact(id=${ctrlId}, title=${ctrlTitle}): 申请人=${creatorUserid || '空'}`);
+            console.log(`[审批构建] 兜底必填Contact(id=${ctrlId}, mode=${fbMode || 'user'}, title=${ctrlTitle}): 申请人=${creatorUserid || '空'}`);
           }
           break;
+        }
         case 'Selector': {
           const opts = selectorOptionsMap?.[ctrlId] || [];
           if (opts.length > 0) {
@@ -783,7 +822,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     throw new Error('请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）');
   }
   const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-  const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles } = await fetchWarehouseTemplateControlTypes(config);
+  const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles, contactModes } = await fetchWarehouseTemplateControlTypes(config);
 
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -808,6 +847,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     creatorUserid,
     requiredControls,
     controlTitles,
+    contactModes,
   });
   const spNo = await submitApproval(config, applyData);
   return spNo;
@@ -1797,7 +1837,7 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
 
     console.log(`[提交审批] 步骤4: 获取模板控件类型`);
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-    const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles } = await fetchWarehouseTemplateControlTypes(config);
+    const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles, contactModes } = await fetchWarehouseTemplateControlTypes(config);
     console.log(`[提交审批] fieldMapping:`, JSON.stringify(fieldMapping));
     console.log(`[提交审批] controlTypeMap:`, JSON.stringify(controlTypeMap));
 
@@ -1835,6 +1875,7 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       creatorUserid: req.user?.wecom_userid,
       requiredControls,
       controlTitles,
+      contactModes,
     });
 
     console.log(`[提交审批] 步骤6: 提交企微审批`);
@@ -2525,7 +2566,7 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     }
 
     const fieldMapping = parseFieldMapping(config.prepay_field_mapping);
-    const { controlTypeMap, selectorOptionsMap: prepaySelectorOpts, requiredControls: prepayReqControls, controlTitles: prepayTitles } = await fetchWarehouseTemplateControlTypes(config, true);
+    const { controlTypeMap, selectorOptionsMap: prepaySelectorOpts, requiredControls: prepayReqControls, controlTitles: prepayTitles, contactModes: prepayContactModes } = await fetchWarehouseTemplateControlTypes(config, true);
 
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -2543,6 +2584,7 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       template_id_override: config.prepay_approval_template_id,
       requiredControls: prepayReqControls,
       controlTitles: prepayTitles,
+      contactModes: prepayContactModes,
     });
 
     const spNo = await submitApproval(config, applyData);
