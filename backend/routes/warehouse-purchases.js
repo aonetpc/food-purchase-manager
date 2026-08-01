@@ -352,7 +352,8 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     const deptControlType = getControlType('department', 'MultiSelector');
 
     if (deptControlType === 'Contact') {
-      // Contact 类型：部门选择器，需要提交企微部门ID列表
+      // Contact 类型：部门+成员选择器
+      // 企微API要求：departments字段存部门ID，members字段存成员userid
       const creatorUserid = options.creatorUserid || config.applicant_userid;
       let wecomDeptList = [];
       try {
@@ -360,28 +361,37 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
         wecomDeptList = await fetchWecomDepartments(token);
       } catch (e) { /* ignore, fallback to empty list */ }
 
-      const members = [];
-      const matchedNames = new Set();
+      const departments = [];
+      const matchedDeptIds = new Set();
       for (const deptName of deptNames) {
         // 精确匹配 → 包含匹配
         let matched = wecomDeptList.find(d => d.name === deptName);
         if (!matched) {
           matched = wecomDeptList.find(d => d.name.includes(deptName) || deptName.includes(d.name));
         }
-        if (matched && !matchedNames.has(String(matched.id))) {
-          members.push({ userid: String(matched.id) });
-          matchedNames.add(String(matched.id));
+        if (matched && !matchedDeptIds.has(String(matched.id))) {
+          departments.push({ id: String(matched.id) });
+          matchedDeptIds.add(String(matched.id));
         }
       }
-      // 兜底：无匹配时用申请人userid（Contact必填，不能为空）
-      if (members.length === 0 && creatorUserid) {
-        members.push({ userid: String(creatorUserid) });
+
+      // 构建 Contact value：部门用 departments，成员用 members
+      const contactValue = {};
+      if (departments.length > 0) {
+        contactValue.departments = departments;
       }
-      if (members.length > 0) {
+      // 兜底：无部门匹配时用申请人userid
+      if (departments.length === 0 && creatorUserid) {
+        contactValue.members = [{ userid: String(creatorUserid) }];
+      }
+      
+      console.log(`[企微] Contact控件值: departments=${departments.length}, deptNames=${deptNames.join(',')}`);
+      
+      if (Object.keys(contactValue).length > 0) {
         contents.push({
           control: 'Contact',
           id: fieldMapping.department,
-          value: { members },
+          value: contactValue,
         });
       }
     } else {
@@ -2207,6 +2217,70 @@ router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
   } finally {
     connection.release();
   }
+});
+
+// ===== 日志缓存与查看接口 =====
+// 内存日志缓存（用于前端查看）
+const _logCache = [];
+const LOG_CACHE_MAX = 500; // 最多保存500条日志
+
+// 包装 console.log 等方法，将日志存入缓存
+const origLog = console.log;
+const origError = console.error;
+const origWarn = console.warn;
+
+function addLog(type, ...args) {
+  const message = args.map(a => {
+    if (typeof a === 'object') {
+      try { return JSON.stringify(a); } catch { return String(a); }
+    }
+    return String(a);
+  }).join(' ');
+  
+  // 只缓存包含关键标记的日志
+  if (message.includes('[提交审批]') || 
+      message.includes('[企微]') || 
+      message.includes('错误') || 
+      message.includes('失败') ||
+      message.includes('Error') ||
+      message.includes('error')) {
+    const logEntry = {
+      time: new Date().toISOString(),
+      type,
+      message
+    };
+    _logCache.push(logEntry);
+    if (_logCache.length > LOG_CACHE_MAX) {
+      _logCache.shift();
+    }
+  }
+}
+
+console.log = function(...args) {
+  origLog.apply(console, args);
+  addLog('INFO', ...args);
+};
+console.error = function(...args) {
+  origError.apply(console, args);
+  addLog('ERROR', ...args);
+};
+console.warn = function(...args) {
+  origWarn.apply(console, args);
+  addLog('WARN', ...args);
+};
+
+// GET /logs — 查看最近的系统日志
+router.get('/logs', requireAuth, (req, res) => {
+  const lines = parseInt(req.query.lines) || 50;
+  const type = req.query.type; // 可选：INFO/ERROR/WARN
+  let logs = _logCache;
+  if (type) {
+    logs = logs.filter(l => l.type === type);
+  }
+  res.json({
+    total: _logCache.length,
+    logs: logs.slice(-lines)
+  });
 });
 
 module.exports = router;

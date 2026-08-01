@@ -198,6 +198,11 @@ export default function WarehousePurchaseList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // 日志查看
+  const [showLogModal, setShowLogModal] = useState(false);
+  const [logList, setLogList] = useState<Array<{ time: string; type: string; message: string }>>([]);
+  const [logLoading, setLogLoading] = useState(false);
+
   // 筛选与分页
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
@@ -492,6 +497,26 @@ export default function WarehousePurchaseList() {
     }
   };
 
+  // ===== 获取系统日志 =====
+  const fetchLogs = async () => {
+    setLogLoading(true);
+    try {
+      const data = await api.get<{ total: number; logs: Array<{ time: string; type: string; message: string }> }>(
+        '/warehouse-purchases/logs?lines=100'
+      );
+      setLogList(data.logs || []);
+    } catch (err: any) {
+      setError(err.message || '获取日志失败');
+    } finally {
+      setLogLoading(false);
+    }
+  };
+
+  const openLogModal = () => {
+    setShowLogModal(true);
+    fetchLogs();
+  };
+
   // ===== 分页计算 =====
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -506,13 +531,22 @@ export default function WarehousePurchaseList() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">仓库采购</h1>
           <p className="text-gray-500 mt-1">管理仓库采购单的创建、审批、收货与报销</p>
         </div>
-        <button
-          onClick={() => navigate('/warehouse-purchase/create')}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={18} />
-          <span>新建采购</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openLogModal}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <FileDown size={16} />
+            <span>查看日志</span>
+          </button>
+          <button
+            onClick={() => navigate('/warehouse-purchase/create')}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus size={18} />
+            <span>新建采购</span>
+          </button>
+        </div>
       </div>
 
       {/* 错误提示 */}
@@ -1216,6 +1250,63 @@ export default function WarehousePurchaseList() {
                 <PackageCheck size={16} />
                 {receiveSubmitting ? '提交中...' : '确认收货'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 日志查看弹窗 ===== */}
+      {showLogModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowLogModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-800">系统日志</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchLogs}
+                  disabled={logLoading}
+                  className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={logLoading ? 'animate-spin' : ''} />
+                  刷新
+                </button>
+                <button
+                  onClick={() => setShowLogModal(false)}
+                  className="p-1 hover:bg-gray-100 rounded-md"
+                >
+                  <X size={20} className="text-gray-500" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {logLoading ? (
+                <div className="text-center py-10 text-gray-400">加载中...</div>
+              ) : logList.length === 0 ? (
+                <div className="text-center py-10 text-gray-400">暂无日志</div>
+              ) : (
+                <div className="space-y-1 font-mono text-xs">
+                  {logList.map((log, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-2 rounded ${
+                        log.type === 'ERROR' ? 'bg-red-50 text-red-700' :
+                        log.type === 'WARN' ? 'bg-yellow-50 text-yellow-700' :
+                        'bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      <span className="text-gray-400">[{new Date(log.time).toLocaleString('zh-CN')}]</span>
+                      <span className="font-bold mx-1">[{log.type}]</span>
+                      <span>{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
