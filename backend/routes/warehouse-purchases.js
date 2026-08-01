@@ -154,13 +154,24 @@ async function generatePurchaseNo(connection) {
   return `${prefix}${String(seq).padStart(3, '0')}`;
 }
 
-// 规整采购单行（解析 JSON 字段、计算确认进度）
+// 规整采购单行（解析 JSON 字段、计算确认进度、计算PDF URL）
 function normalizePurchaseRow(row) {
   if (!row) return row;
   const userDepartments = parseJsonField(row.user_departments) || {};
   const userConfirmations = parseJsonField(row.user_confirmations) || {};
   const totalUsers = Object.keys(userDepartments).length;
   const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
+  const id = row.id;
+  let pdfUrl = row.pdf_url;
+  let applyPdfUrl = null;
+  const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
+  const applyPdfPath = row.apply_pdf_path || path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
+  if (fs.existsSync(confirmPdfPath) && !pdfUrl) {
+    pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
+  }
+  if (fs.existsSync(applyPdfPath)) {
+    applyPdfUrl = `/api/warehouse-purchases/${id}/pdf`;
+  }
   return {
     ...row,
     total_amount: toNum(row.total_amount),
@@ -169,6 +180,8 @@ function normalizePurchaseRow(row) {
     user_confirmations: userConfirmations,
     total_users: totalUsers,
     confirmed_users: confirmedUsers,
+    pdf_url: pdfUrl,
+    apply_pdf_url: applyPdfUrl,
   };
 }
 
@@ -589,6 +602,186 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   });
   const spNo = await submitApproval(config, applyData);
   return spNo;
+}
+
+// ================================================
+// generatePurchaseApplyPDF —— 仓库采购申请单 PDF
+// 提交审批时生成，格式参考食材采购确认单
+// ================================================
+async function generatePurchaseApplyPDF(purchaseId) {
+  const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [purchaseId]);
+  if (rows.length === 0) throw new Error('采购单不存在');
+  const row = rows[0];
+
+  const [itemRows] = await pool.query(
+    'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
+    [purchaseId]
+  );
+
+  const doc = new PDFDocument({ size: 'A4', margin: 40 });
+  const pdfPath = path.join(PDF_DIR, `warehouse_apply_${purchaseId}.pdf`);
+  const writeStream = fs.createWriteStream(pdfPath);
+  doc.pipe(writeStream);
+
+  const chineseFont = findChineseFont();
+  const chineseBoldFont = findChineseBoldFont();
+  const hasChineseFont = !!chineseFont;
+  if (hasChineseFont) {
+    doc.registerFont('Chinese-Regular', chineseFont);
+    doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
+  }
+
+  // 标题（参考食材采购：18号字，居中加粗）
+  doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('仓库采购申请单', { align: 'center' });
+  doc.moveDown(0.5);
+
+  // 头部信息（参考食材采购：10号字）
+  doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+  const amountLabel = toNum(row.total_amount);
+  const whNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
+  let createDateStr = '';
+  if (row.created_at instanceof Date) {
+    createDateStr = row.created_at.toISOString().substring(0, 10);
+  } else if (typeof row.created_at === 'string') {
+    createDateStr = row.created_at.substring(0, 10);
+  }
+  const statusText = row.status === 'pending_approval' ? '审批中'
+    : row.status === 'rejected' ? '已驳回'
+    : row.status === 'approved' ? '审批通过'
+    : row.status;
+  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${whNames.join('、') || '-'}    申请金额：¥${amountLabel.toFixed(2)}    状态：${statusText}`);
+  doc.moveDown(0.5);
+
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const tableX = doc.page.margins.left;
+  const tableWidth = pageWidth;
+
+  // 按仓库分组
+  const groupedItems = {};
+  for (const item of itemRows) {
+    const whName = item.warehouse_name || '未指定仓库';
+    if (!groupedItems[whName]) groupedItems[whName] = [];
+    groupedItems[whName].push(item);
+  }
+
+  // 表头与列宽（参考食材采购：名称/规格/单价/数量/单位/金额）
+  const headers = ['物资名称', '规格', '单价/单位', '数量', '单位', '金额'];
+  const colWidths = [
+    tableWidth * 0.25,
+    tableWidth * 0.15,
+    tableWidth * 0.18,
+    tableWidth * 0.10,
+    tableWidth * 0.10,
+    tableWidth * 0.22,
+  ];
+  const fixedRowHeight = 11;
+
+  function checkPageBreak(y, extraHeight = 0) {
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+    if (y + extraHeight > pageBottom) {
+      doc.addPage();
+      return doc.page.margins.top;
+    }
+    return y;
+  }
+
+  function drawTableRow(y, cells, isHeader = false) {
+    const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
+    const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
+    doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 10 : 9);
+    const lineHeight = doc.currentLineHeight();
+    let x = tableX;
+    for (let i = 0; i < cells.length; i++) {
+      const text = String(cells[i]);
+      const align = i === 0 ? 'left' : (i === cells.length - 1 ? 'right' : 'center');
+      const textY = y + (fixedRowHeight - lineHeight) / 2;
+      doc.text(text, x + 2, textY, { width: colWidths[i] - 4, align });
+      x += colWidths[i];
+    }
+    return fixedRowHeight;
+  }
+
+  let currentY = doc.y;
+  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text('采购明细', { underline: true });
+  doc.moveDown(0.3);
+  currentY = doc.y;
+
+  // 表头
+  currentY += drawTableRow(currentY, headers, true);
+  doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
+
+  doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+  let grandTotal = 0;
+
+  for (const [whName, items] of Object.entries(groupedItems)) {
+    const deptNeededHeight = fixedRowHeight + items.length * fixedRowHeight + 14 + 15;
+    currentY = checkPageBreak(currentY, deptNeededHeight);
+
+    // 仓库标题（参考食材采购：分组标题）
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold').text(`【${whName}】`, tableX, currentY + 1);
+    currentY += fixedRowHeight;
+
+    // 明细行（使用申请数据）
+    doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(9);
+    let subtotal = 0;
+    for (const item of items) {
+      const price = toNum(item.requested_unit_price);
+      const qty = toNum(item.requested_quantity);
+      const amt = toNum(item.requested_amount);
+      const spec = item.spec || '';
+      const unit = item.requested_unit || '';
+      const cells = [
+        item.item_name,
+        spec,
+        `${price.toFixed(2)}/${unit}`,
+        String(qty),
+        unit,
+        `¥${amt.toFixed(2)}`,
+      ];
+      currentY += drawTableRow(currentY, cells);
+      subtotal += amt;
+    }
+    grandTotal += subtotal;
+
+    // 仓库小计
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+      .text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY, { width: tableWidth, align: 'right' });
+    currentY += 10;
+    doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+    currentY += 15;
+  }
+
+  if (Object.keys(groupedItems).length === 0) {
+    doc.fontSize(10).text('暂无采购明细', { align: 'center' });
+  }
+
+  // 合计（参考食材采购）
+  currentY = checkPageBreak(currentY, 50);
+  doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+  doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+    .text(`合计金额：¥${grandTotal.toFixed(2)}`, tableX, currentY + 5, { width: tableWidth, align: 'right' });
+
+  // 采购理由
+  if (row.reason) {
+    currentY = checkPageBreak(currentY, 30);
+    doc.moveDown(0.5);
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+    doc.text(`采购理由：${row.reason}`, tableX, currentY, { width: tableWidth, align: 'left' });
+  }
+
+  doc.moveDown(0.5);
+  doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica')
+    .text(`生成时间：${new Date().toLocaleString('zh-CN')}`, { align: 'right' });
+
+  doc.end();
+
+  await new Promise((resolve, reject) => {
+    writeStream.on('finish', () => resolve(pdfPath));
+    writeStream.on('error', reject);
+  });
+
+  console.log(`[采购申请PDF] 生成成功: ${pdfPath}`);
+  return pdfPath;
 }
 
 // ================================================
@@ -1353,9 +1546,9 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const row = rows[0];
-    if (row.status !== 'draft') {
+    if (row.status !== 'draft' && row.status !== 'rejected') {
       clearTimeout(timeout);
-      return res.status(400).json({ error: '只有草稿状态的采购单可以提交审批' });
+      return res.status(400).json({ error: '只有草稿或驳回状态的采购单可以提交审批' });
     }
 
     console.log(`[提交审批] 步骤2: 获取企微配置`);
@@ -1379,6 +1572,15 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
     const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
 
+    console.log(`[提交审批] 步骤4.5: 生成采购申请PDF`);
+    let applyPdfPath = null;
+    try {
+      applyPdfPath = await generatePurchaseApplyPDF(id);
+      console.log(`[提交审批] PDF生成成功: ${applyPdfPath}`);
+    } catch (pdfErr) {
+      console.error(`[提交审批] PDF生成失败（不影响提交）:`, pdfErr.message);
+    }
+
     console.log(`[提交审批] 步骤5: 构建审批数据`);
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -1391,7 +1593,7 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       reason,
       items: itemRows,
       useReceived: false,
-      pdfPath: null,
+      pdfPath: applyPdfPath,
       rowId: id,
       creatorUserid: req.user?.wecom_userid,
     });
@@ -1402,8 +1604,8 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
 
     console.log(`[提交审批] 步骤7: 更新数据库`);
     await pool.query(
-      'UPDATE warehouse_purchases SET status = ?, approval_sp_no = ?, approval_status = ? WHERE id = ?',
-      ['pending_approval', spNo, 'pending', id]
+      'UPDATE warehouse_purchases SET status = ?, approval_sp_no = ?, approval_status = ?, apply_pdf_path = ? WHERE id = ?',
+      ['pending_approval', spNo, 'pending', applyPdfPath, id]
     );
 
     const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
@@ -1414,6 +1616,54 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
   } catch (err) {
     clearTimeout(timeout);
     console.error('提交仓库采购审批失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5.5. POST /:id/refresh-approval — 刷新采购审批状态
+router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) return res.status(404).json({ error: '采购单不存在' });
+    const row = rows[0];
+    if (!row.approval_sp_no) {
+      return res.status(400).json({ error: '该采购单未发起审批' });
+    }
+
+    const config = await getWecomConfig();
+    if (!config) return res.status(400).json({ error: '企业微信未配置' });
+
+    const detail = await getApprovalDetail(config, row.approval_sp_no);
+    const spStatus = detail?.sp_status;
+    // sp_status: 1=审批中，2=已通过，3=已驳回，4=已撤销
+
+    let newStatus = row.status;
+    let newApprovalStatus = row.approval_status || 'pending';
+
+    if (spStatus === 1 || spStatus === '1' || spStatus === 'pending') {
+      newApprovalStatus = 'pending';
+    } else if (spStatus === 2 || spStatus === '2' || spStatus === 'approved' || spStatus === 'passed') {
+      newStatus = 'approved';
+      newApprovalStatus = 'approved';
+    } else if (spStatus === 3 || spStatus === '3' || spStatus === 'rejected' || spStatus === 'refused') {
+      newStatus = 'rejected';
+      newApprovalStatus = 'rejected';
+    } else if (spStatus === 4 || spStatus === '4' || spStatus === 'canceled') {
+      newStatus = 'draft';
+      newApprovalStatus = 'canceled';
+    }
+
+    await pool.query(
+      'UPDATE warehouse_purchases SET status = ?, approval_status = ? WHERE id = ?',
+      [newStatus, newApprovalStatus, id]
+    );
+
+    const [fresh] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    console.log(`[刷新采购审批] ${id}: spStatus=${spStatus} -> status=${newStatus}, approval=${newApprovalStatus}`);
+    res.json(normalizePurchaseRow(fresh[0]));
+  } catch (err) {
+    console.error('刷新采购审批状态失败:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1815,28 +2065,41 @@ router.post('/:id/generate-pdf', requireAuth, async (req, res) => {
   }
 });
 
-// 11. GET /:id/pdf — 下载PDF（免登录，不存在则自动生成）
+// 11. GET /:id/pdf — 下载PDF（优先确认单PDF，其次申请单PDF）
 router.get('/:id/pdf', async (req, res) => {
   try {
     const { id } = req.params;
-    const pdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
+    const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
+    const applyPdfPath = path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
 
-    if (!fs.existsSync(pdfPath)) {
-      // 自动生成
-      const [rows] = await pool.query('SELECT id FROM warehouse_purchases WHERE id = ?', [id]);
-      if (rows.length === 0) {
-        return res.status(404).json({ error: '采购单不存在' });
-      }
+    // 优先确认单PDF（收货后）
+    if (fs.existsSync(confirmPdfPath)) {
+      return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
+    }
+
+    // 尝试生成确认单PDF
+    const [rows] = await pool.query('SELECT id FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    try {
       await generateWarehousePDF(id);
-      try {
-        await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]);
-      } catch (e) { /* 忽略 */ }
+      if (fs.existsSync(confirmPdfPath)) {
+        try {
+          await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]);
+        } catch (e) { /* 忽略 */ }
+        return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
+      }
+    } catch (genErr) {
+      // 生成失败，尝试申请单PDF
     }
 
-    if (!fs.existsSync(pdfPath)) {
-      return res.status(404).json({ error: 'PDF文件不存在' });
+    // 返回申请单PDF
+    if (fs.existsSync(applyPdfPath)) {
+      return res.download(applyPdfPath, `仓库采购申请单_${id}.pdf`);
     }
-    res.download(pdfPath, `仓库采购确认单_${id}.pdf`);
+
+    return res.status(404).json({ error: 'PDF文件不存在' });
   } catch (err) {
     console.error('下载仓库采购PDF失败:', err);
     res.status(500).json({ error: err.message || '下载失败' });

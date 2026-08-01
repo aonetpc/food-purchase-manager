@@ -81,6 +81,8 @@ interface WarehousePurchase {
   updated_at?: string;
   items?: PurchaseItem[];
   pdf_url?: string;
+  apply_pdf_path?: string;
+  apply_pdf_url?: string;
   // 报销相关
   reimbursement_no?: string;
   reimbursement_sp_no?: string;
@@ -389,7 +391,7 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  // ===== 刷新审批状态 =====
+  // ===== 刷新审批状态（确认/报销/预付款） =====
   const handleRefreshStatus = async (id: string) => {
     setActioningId(id);
     try {
@@ -399,6 +401,21 @@ export default function WarehousePurchaseList() {
       setPurchases((prev) => prev.map((it) => (it.id === id ? { ...it, ...data } : it)));
     } catch (err: any) {
       setError(err.message || '刷新状态失败');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  // ===== 刷新采购审批状态 =====
+  const handleRefreshApproval = async (id: string) => {
+    setActioningId(id);
+    try {
+      const data = await api.post<WarehousePurchase>(
+        `/warehouse-purchases/${id}/refresh-approval`,
+      );
+      setPurchases((prev) => prev.map((it) => (it.id === id ? { ...it, ...data } : it)));
+    } catch (err: any) {
+      setError(err.message || '刷新审批状态失败');
     } finally {
       setActioningId(null);
     }
@@ -493,8 +510,8 @@ export default function WarehousePurchaseList() {
   // ===== 分页计算 =====
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // 是否有 PDF 可下载
-  const hasPdf = (p: WarehousePurchase) => !!p.pdf_url;
+  // 是否有 PDF 可下载（确认单PDF或申请单PDF）
+  const hasPdf = (p: WarehousePurchase) => !!(p.pdf_url || p.apply_pdf_url);
 
   return (
     <div className="space-y-6">
@@ -900,6 +917,57 @@ export default function WarehousePurchaseList() {
                               <RefreshCw size={14} />
                               刷新进度
                             </button>
+                          )}
+
+                          {/* pending_approval: 审批中，刷新审批状态 */}
+                          {p.status === 'pending_approval' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRefreshApproval(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <RefreshCw size={14} />
+                              刷新审批
+                            </button>
+                          )}
+
+                          {/* rejected: 驳回，可编辑和重新提交 */}
+                          {p.status === 'rejected' && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/warehouse-purchase/edit/${p.id}`);
+                                }}
+                                className="btn-secondary text-xs flex items-center gap-1"
+                              >
+                                <Pencil size={14} />
+                                编辑
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSubmit(p.id);
+                                }}
+                                disabled={actioningId === p.id}
+                                className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
+                              >
+                                {actioningId === p.id ? (
+                                  <>
+                                    <RefreshCw size={14} className="animate-spin" />
+                                    提交中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <RotateCcw size={14} />
+                                    重新提交
+                                  </>
+                                )}
+                              </button>
+                            </>
                           )}
 
                           {/* 预付款：发起预付款审批 */}
