@@ -444,39 +444,41 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     }
   }
 
-  // 收款方/银行/账号
-  if (fieldMapping.payee_name && config.payee_name) {
-    contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: String(config.payee_name) } });
-  }
-  if (fieldMapping.bank_name && config.bank_name) {
-    contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { text: String(config.bank_name) } });
-  }
-  if (fieldMapping.bank_account && config.bank_account) {
-    contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
-  }
-
-  // 付款方式
+  // 收款方/银行/账号（仅报销时传递）
   let paymentLabel = '转账';
-  if (fieldMapping.payment_method && config.default_payment_key) {
-    let paymentOptions = {};
-    if (config.payment_options) {
-      if (typeof config.payment_options === 'string') {
-        try { paymentOptions = JSON.parse(config.payment_options); } catch (e) { paymentOptions = {}; }
-      } else if (typeof config.payment_options === 'object') {
-        paymentOptions = config.payment_options;
-      }
+  if (useReceived) {
+    if (fieldMapping.payee_name && config.payee_name) {
+      contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: String(config.payee_name) } });
     }
-    paymentLabel = String(paymentOptions[config.default_payment_key] || '转账');
-    contents.push({
-      control: getControlType('payment_method', 'Selector'),
-      id: fieldMapping.payment_method,
-      value: {
-        selector: {
-          type: 'single',
-          options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }],
+    if (fieldMapping.bank_name && config.bank_name) {
+      contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { text: String(config.bank_name) } });
+    }
+    if (fieldMapping.bank_account && config.bank_account) {
+      contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
+    }
+
+    // 付款方式
+    if (fieldMapping.payment_method && config.default_payment_key) {
+      let paymentOptions = {};
+      if (config.payment_options) {
+        if (typeof config.payment_options === 'string') {
+          try { paymentOptions = JSON.parse(config.payment_options); } catch (e) { paymentOptions = {}; }
+        } else if (typeof config.payment_options === 'object') {
+          paymentOptions = config.payment_options;
+        }
+      }
+      paymentLabel = String(paymentOptions[config.default_payment_key] || '转账');
+      contents.push({
+        control: getControlType('payment_method', 'Selector'),
+        id: fieldMapping.payment_method,
+        value: {
+          selector: {
+            type: 'single',
+            options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }],
+          },
         },
-      },
-    });
+      });
+    }
   }
 
   // 物资明细
@@ -532,17 +534,25 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     }
   }
 
+  // 构建摘要列表
+  const summaryList = [
+    { summary_info: [{ text: `事由：${reasonWithDepts}`, lang: 'zh_CN' }] },
+    { summary_info: [{ text: `金额：¥${toNum(amount).toFixed(2)}`, lang: 'zh_CN' }] },
+  ];
+  // 报销时才添加付款方式
+  if (useReceived) {
+    summaryList.push({ summary_info: [{ text: `付款方式：${paymentLabel}`, lang: 'zh_CN' }] });
+  }
+
   const applyData = {
     creator_userid: String(options.creatorUserid || config.applicant_userid),
     template_id: String(config.warehouse_approval_template_id),
     use_template_approver: 1,
     apply_data: { contents },
-    summary_list: [
-      { summary_info: [{ text: `事由：${reasonWithDepts}`, lang: 'zh_CN' }] },
-      { summary_info: [{ text: `金额：¥${toNum(amount).toFixed(2)}`, lang: 'zh_CN' }] },
-      { summary_info: [{ text: `付款方式：${paymentLabel}`, lang: 'zh_CN' }] },
-    ],
+    summary_list: summaryList,
   };
+  
+  console.log(`[企微] 构建审批数据完成: useReceived=${useReceived}, contents=${contents.length}, summary=${summaryList.length}`);
   return applyData;
 }
 
