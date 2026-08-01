@@ -680,6 +680,10 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   const summaryList = [
     { summary_info: [{ text: reason, lang: 'zh_CN' }] },
   ];
+  // 添加申购部门行（采购审批时显示）
+  if (!useReceived && fullDeptList) {
+    summaryList.push({ summary_info: [{ text: `申购部门：${fullDeptList}`, lang: 'zh_CN' }] });
+  }
   // 报销时才添加付款方式
   if (useReceived) {
     summaryList.push({ summary_info: [{ text: `付款方式：${paymentLabel}`, lang: 'zh_CN' }] });
@@ -911,18 +915,18 @@ async function generatePurchaseApplyPDF(purchaseId) {
     groupedItems[whName].push(item);
   }
 
-  // 表头与列宽（参考食材采购：名称/规格/单价/数量/单位/金额）
-  const headers = ['物资名称', '规格', '单价/单位', '数量', '单位', '金额'];
+  // 表头与列宽（物资名称/规格/单价/数量/单位/金额/理由）
+  const headers = ['物资名称', '规格', '单价/单位', '数量', '单位', '金额', '理由'];
   const colWidths = [
-    tableWidth * 0.25,
+    tableWidth * 0.20,
+    tableWidth * 0.12,
+    tableWidth * 0.14,
+    tableWidth * 0.07,
+    tableWidth * 0.07,
     tableWidth * 0.15,
-    tableWidth * 0.18,
-    tableWidth * 0.10,
-    tableWidth * 0.10,
-    tableWidth * 0.22,
+    tableWidth * 0.25,
   ];
-  const rowHeight = 16; // 增大行高避免重叠
-  const reasonHeight = 14; // 采购理由行高
+  const rowHeight = 16;
 
   function checkPageBreak(y, extraHeight = 0) {
     const pageBottom = doc.page.height - doc.page.margins.bottom;
@@ -945,14 +949,6 @@ async function generatePurchaseApplyPDF(purchaseId) {
     return rowHeight;
   }
 
-  function drawReasonRow(y, reason) {
-    doc.font(regFont).fontSize(8);
-    doc.fillColor('#666666');
-    doc.text(`理由：${reason}`, tableX, y + 1, { width: tableWidth - 4, align: 'right', lineBreak: false });
-    doc.fillColor('#000000');
-    return reasonHeight;
-  }
-
   // 标题"采购明细"
   let currentY = doc.y;
   currentY = checkPageBreak(currentY, rowHeight + 10);
@@ -967,11 +963,10 @@ async function generatePurchaseApplyPDF(purchaseId) {
   let grandTotal = 0;
 
   for (const [whName, items] of Object.entries(groupedItems)) {
-    // 预估高度：仓库标题 + (每行高度 + 可能的理由行高度)
-    let groupHeight = rowHeight; // 仓库标题
+    // 预估高度：仓库标题 + 每行高度
+    let groupHeight = rowHeight;
     for (const item of items) {
       groupHeight += rowHeight;
-      if (item.reason) groupHeight += reasonHeight;
     }
     groupHeight += 12 + 10; // 小计 + 间距
     currentY = checkPageBreak(currentY, groupHeight);
@@ -988,6 +983,7 @@ async function generatePurchaseApplyPDF(purchaseId) {
       const amt = toNum(item.requested_amount);
       const spec = item.spec || '';
       const unit = item.requested_unit || '';
+      const reason = item.reason || '';
       const cells = [
         item.item_name,
         spec,
@@ -995,19 +991,14 @@ async function generatePurchaseApplyPDF(purchaseId) {
         String(qty),
         unit,
         `¥${amt.toFixed(2)}`,
+        reason,
       ];
 
-      // 检查是否需要换页（考虑理由行）
-      const needHeight = rowHeight + (item.reason ? reasonHeight : 0);
-      currentY = checkPageBreak(currentY, needHeight);
+      // 检查是否需要换页
+      currentY = checkPageBreak(currentY, rowHeight);
 
       currentY += drawTableRow(currentY, cells);
       subtotal += amt;
-
-      // 采购理由：右对齐，紧跟物资行下方单独一行
-      if (item.reason) {
-        currentY += drawReasonRow(currentY, item.reason);
-      }
     }
     grandTotal += subtotal;
 
