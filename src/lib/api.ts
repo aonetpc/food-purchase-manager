@@ -1,4 +1,5 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const DEFAULT_TIMEOUT = 35000; // 默认35秒超时（后端30秒超时+5秒缓冲）
 
 function getToken(): string | null {
   try {
@@ -18,8 +19,9 @@ function getToken(): string | null {
   return null;
 }
 
-async function request<T>(path: string, options: RequestInit & { params?: Record<string, any> } = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit & { params?: Record<string, any>; timeout?: number } = {}): Promise<T> {
   let url = `${BASE_URL}${path}`;
+  const timeout = options.timeout || DEFAULT_TIMEOUT;
   
   if (options.params) {
     const searchParams = new URLSearchParams();
@@ -42,22 +44,35 @@ async function request<T>(path: string, options: RequestInit & { params?: Record
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
-  const { params: _, ...restOptions } = options;
+  const { params: _, timeout: __, ...restOptions } = options;
 
-  const response = await fetch(url, {
-    ...restOptions,
-    headers: {
-      ...defaultHeaders,
-      ...restOptions.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: '请求失败' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      ...restOptions,
+      headers: {
+        ...defaultHeaders,
+        ...restOptions.headers,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: '请求失败' }));
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return response.json();
 }
 
 export const api = {

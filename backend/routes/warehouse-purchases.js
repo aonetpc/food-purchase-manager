@@ -13,7 +13,6 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/rbac');
 const {
   getWecomConfig,
-  getAccessToken,
   sendMarkdownViaWebhook,
   sendTemplateCardToUser,
   updateTemplateCardButton,
@@ -22,6 +21,38 @@ const {
   getApprovalDetail,
   uploadMedia,
 } = require('./wecom');
+
+// 带超时的 fetch 包装函数
+async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// access_token 缓存
+let _accessTokenCache = { token: '', expireTime: 0 };
+const ACCESS_TOKEN_TTL = 7000 * 1000;
+
+async function getAccessToken(config) {
+  const now = Date.now();
+  if (_accessTokenCache.token && (now - _accessTokenCache.expireTime) < ACCESS_TOKEN_TTL) {
+    return _accessTokenCache.token;
+  }
+  const res = await fetchWithTimeout(
+    `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`,
+    {},
+    10000
+  );
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '获取access_token失败');
+  _accessTokenCache = { token: data.access_token, expireTime: now };
+  return data.access_token;
+}
 
 // PDF 存储目录（与项目根 uploads/pdfs 对齐）
 const PDF_DIR = path.join(__dirname, '..', 'uploads', 'pdfs');
@@ -160,11 +191,16 @@ function normalizeItemRow(item) {
 // ================================================
 async function fetchWarehouseTemplateControlTypes(config) {
   const accessToken = await getAccessToken(config);
-  const tplResp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ template_id: config.warehouse_approval_template_id }),
-  });
+  console.log('[企微] 获取审批模板详情...');
+  const tplResp = await fetchWithTimeout(
+    `https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: config.warehouse_approval_template_id }),
+    },
+    10000
+  );
   const tplData = await tplResp.json();
   if (tplData.errcode !== 0) {
     throw new Error('获取审批模板详情失败：' + (tplData.errmsg || ''));
@@ -194,6 +230,7 @@ async function fetchWarehouseTemplateControlTypes(config) {
       }
     }
   }
+  console.log('[企微] 模板控件类型获取成功');
   return { controlTypeMap, selectorOptionsMap, accessToken };
 }
 
@@ -205,22 +242,49 @@ const WECOM_DEPT_CACHE_TTL = 5 * 60 * 1000; // 5分钟
 async function fetchWecomDepartments(accessToken) {
   const now = Date.now();
   if (_wecomDeptCache && (now - _wecomDeptCacheTime) < WECOM_DEPT_CACHE_TTL) {
+    console.log('[企微] 使用缓存的部门列表');
     return _wecomDeptCache;
   }
+  console.log('[企微] 获取部门列表...');
   const allDepts = [];
-  const fetchDept = async (parentId) => {
-    const resp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/department/list?access_token=${accessToken}&id=${parentId}`);
-    const data = await resp.json();
-    if (data.errcode === 0 && data.department) {
-      for (const d of data.department) {
-        allDepts.push({ id: d.id, name: d.name, parentid: d.parentid });
-        await fetchDept(d.id);
+  const visitedIds = new Set();
+  
+  const fetchDept = async (parentId, depth = 0) => {
+    // 深度限制：最多5层，防止无限递归
+    if (depth > 5) {
+      console.log('[企微] 部门递归深度超限，停止');
+      return;
+    }
+    if (visitedIds.has(parentId)) return;
+    visitedIds.add(parentId);
+    
+    try {
+      const resp = await fetchWithTimeout(
+        `https://qyapi.weixin.qq.com/cgi-bin/department/list?access_token=${accessToken}&id=${parentId}`,
+        {},
+        8000
+      );
+      const data = await resp.json();
+      if (data.errcode === 0 && data.department) {
+        for (const d of data.department) {
+          allDepts.push({ id: d.id, name: d.name, parentid: d.parentid });
+          await fetchDept(d.id, depth + 1);
+        }
       }
+    } catch (e) {
+      console.error(`[企微] 获取部门失败 id=${parentId}:`, e.message);
     }
   };
-  await fetchDept(1); // 从根部门开始
+  
+  try {
+    await fetchDept(1); // 从根部门开始
+  } catch (e) {
+    console.error('[企微] 获取部门列表异常:', e.message);
+  }
+  
   _wecomDeptCache = allDepts;
   _wecomDeptCacheTime = now;
+  console.log(`[企微] 部门列表获取成功，共${allDepts.length}个部门`);
   return allDepts;
 }
 
@@ -1252,22 +1316,36 @@ router.put('/:id', requireAuth, async (req, res) => {
 
 // 5. POST /:id/submit — 提交企微审批
 router.post('/:id/submit', requireAuth, async (req, res) => {
+  const startTime = Date.now();
+  console.log(`[提交审批] 开始处理: ${req.params.id}`);
+  
+  // 设置请求超时（30秒）
+  const timeout = setTimeout(() => {
+    res.status(504).json({ error: '请求超时，请稍后重试' });
+  }, 30000);
+
   try {
     const { id } = req.params;
+    console.log(`[提交审批] 步骤1: 验证采购单`);
     const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     if (rows.length === 0) {
+      clearTimeout(timeout);
       return res.status(404).json({ error: '采购单不存在' });
     }
     const row = rows[0];
     if (row.status !== 'draft') {
+      clearTimeout(timeout);
       return res.status(400).json({ error: '只有草稿状态的采购单可以提交审批' });
     }
 
+    console.log(`[提交审批] 步骤2: 获取企微配置`);
     const config = await getWecomConfig();
     if (!config || !config.corp_id || !config.app_secret || !config.warehouse_approval_template_id || !config.applicant_userid) {
+      clearTimeout(timeout);
       return res.status(400).json({ error: '请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）' });
     }
 
+    console.log(`[提交审批] 步骤3: 查询明细`);
     const [itemRows] = await pool.query(
       `SELECT wpi.*, d.name as department_name
        FROM warehouse_purchase_items wpi
@@ -1277,9 +1355,11 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       [id]
     );
 
+    console.log(`[提交审批] 步骤4: 获取模板控件类型`);
     const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
     const { controlTypeMap, selectorOptionsMap } = await fetchWarehouseTemplateControlTypes(config);
 
+    console.log(`[提交审批] 步骤5: 构建审批数据`);
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -1296,16 +1376,23 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       creatorUserid: req.user?.wecom_userid,
     });
 
+    console.log(`[提交审批] 步骤6: 提交企微审批`);
     const spNo = await submitApproval(config, applyData);
+    console.log(`[提交审批] 审批单号: ${spNo}`);
 
+    console.log(`[提交审批] 步骤7: 更新数据库`);
     await pool.query(
       'UPDATE warehouse_purchases SET status = ?, approval_sp_no = ?, approval_status = ? WHERE id = ?',
       ['pending_approval', spNo, 'pending', id]
     );
 
     const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    clearTimeout(timeout);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`[提交审批] 完成，耗时: ${elapsed}秒`);
     res.json(normalizePurchaseRow(freshRows[0]));
   } catch (err) {
+    clearTimeout(timeout);
     console.error('提交仓库采购审批失败:', err);
     res.status(500).json({ error: err.message });
   }
