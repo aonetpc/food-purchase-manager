@@ -361,6 +361,9 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     fieldMapping = { ...fieldMapping, department: effectiveDeptId };
   }
 
+  // 记住部门Contact的selected数组（必填兜底复用）
+  let selectedBeforeFallback = [];
+
   function getControlType(fieldKey, fallback) {
     const mappedId = fieldMapping[fieldKey];
     return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
@@ -473,15 +476,27 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
         contents.push({
           control: 'Contact',
           id: fieldMapping.department,
-          value: { selected },
+          value: {
+            type: 'department',
+            selected: selected.map(s => ({ id: s.id, name: s.name, type: 'department' })),
+          },
         });
+        console.log(`[企微] 填充部门Contact(id=${fieldMapping.department}): depts=${JSON.stringify(selected)}`);
       } else if (creatorUserid) {
         // 兜底：无部门时用申请人userid
         contents.push({
           control: 'Contact',
           id: fieldMapping.department,
-          value: { selected: [{ id: creatorUserid, name: '申请人' }] },
+          value: {
+            type: 'user',
+            selected: [{ id: creatorUserid, name: '申请人', type: 'user' }],
+          },
         });
+        console.log(`[企微] 部门Contact无匹配，兜底用申请人: userid=${creatorUserid}`);
+      }
+      // 记住这个selected，供必填兜底复用
+      if (deptControlType === 'Contact') {
+        selectedBeforeFallback = selected.slice();
       }
     } else {
       // MultiSelector / Selector：按名称匹配企微选项key
@@ -666,19 +681,34 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
           contents.push({ control: 'Number', id: ctrlId, value: { new_number: '0' } });
           break;
         case 'Contact':
-          // 优先使用已匹配的部门，兜底用申请人
-          if (effectiveDeptId && ctrlId === effectiveDeptId) {
-            // 此时 department 控件应该已经填充过了，不需要再填
-          } else {
+          // 兜底：所有必填Contact控件都填充
+          // 即使 effectiveDeptId 匹配，只要没在 filledIds 里就填（避免department逻辑因条件跳过）
+          const isDeptCtrl = effectiveDeptId && ctrlId === effectiveDeptId;
+          if (isDeptCtrl && selectedBeforeFallback && selectedBeforeFallback.length > 0) {
+            // 如果是 department 控件，且之前填充过 selected，则按部门类型补
             contents.push({
               control: 'Contact',
               id: ctrlId,
               value: {
-                selected: creatorUserid
-                  ? [{ id: creatorUserid, name: '申请人' }]
-                  : [],
+                type: 'department',
+                selected: selectedBeforeFallback.map(s => ({ id: s.id, name: s.name, type: 'department' })),
               },
             });
+            console.log(`[审批构建] 兜底必填department Contact(id=${ctrlId}):`, JSON.stringify(selectedBeforeFallback));
+          } else {
+            // 其他情况兜底用申请人
+            const selVal = creatorUserid
+              ? [{ id: creatorUserid, name: '申请人', type: 'user' }]
+              : [];
+            contents.push({
+              control: 'Contact',
+              id: ctrlId,
+              value: {
+                type: creatorUserid ? 'user' : 'department',
+                selected: selVal,
+              },
+            });
+            console.log(`[审批构建] 兜底必填Contact(id=${ctrlId}, title=${ctrlTitle}): 申请人=${creatorUserid || '空'}`);
           }
           break;
         case 'Selector': {
@@ -718,6 +748,23 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
       }
       filledIds.add(ctrlId);
     }
+  }
+
+  // ================= 提交前诊断日志 =================
+  const contentsDiag = contents.map(c => ({ id: c.id, control: c.control, valueKeys: Object.keys(c.value || {}) }));
+  const missingReq = [];
+  if (requiredControls) {
+    for (const rid of requiredControls) {
+      if (!contents.find(c => c.id === rid)) {
+        missingReq.push(rid);
+      }
+    }
+  }
+  console.log(`[审批构建-诊断] 最终contents=${JSON.stringify(contentsDiag)}`);
+  console.log(`[审批构建-诊断] 必填控件=[${Array.from(requiredControls || []).join(',')}], 缺失=[${missingReq.join(',')}]`);
+  if (effectiveDeptId) {
+    const deptInContents = contents.find(c => c.id === effectiveDeptId);
+    console.log(`[审批构建-诊断] 部门Contact(id=${effectiveDeptId}, title=${controlTitles?.[effectiveDeptId] || ''}) 是否已存在: ${!!deptInContents}`, deptInContents ? JSON.stringify(deptInContents.value) : '');
   }
 
   const applyData = {
