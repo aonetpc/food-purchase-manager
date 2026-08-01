@@ -473,23 +473,22 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
       }
 
       if (selected.length > 0) {
+        // 企微官方文档：部门控件 value 用 departments 字段，每项含 openapi_id + name
         contents.push({
           control: 'Contact',
           id: fieldMapping.department,
           value: {
-            type: 'department',
-            selected: selected.map(s => ({ id: s.id, name: s.name, type: 'department' })),
+            departments: selected.map(s => ({ openapi_id: String(s.id), name: s.name })),
           },
         });
-        console.log(`[企微] 填充部门Contact(id=${fieldMapping.department}): depts=${JSON.stringify(selected)}`);
+        console.log(`[企微] 填充部门Contact(id=${fieldMapping.department}): departments=${JSON.stringify(selected.map(s => ({ openapi_id: s.id, name: s.name })))}`);
       } else if (creatorUserid) {
-        // 兜底：无部门时用申请人userid
+        // 兜底：无部门时用申请人userid（members 格式）
         contents.push({
           control: 'Contact',
           id: fieldMapping.department,
           value: {
-            type: 'user',
-            selected: [{ id: creatorUserid, name: '申请人', type: 'user' }],
+            members: [{ userid: String(creatorUserid), name: '申请人' }],
           },
         });
         console.log(`[企微] 部门Contact无匹配，兜底用申请人: userid=${creatorUserid}`);
@@ -682,30 +681,26 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
           break;
         case 'Contact':
           // 兜底：所有必填Contact控件都填充
-          // 即使 effectiveDeptId 匹配，只要没在 filledIds 里就填（避免department逻辑因条件跳过）
           const isDeptCtrl = effectiveDeptId && ctrlId === effectiveDeptId;
           if (isDeptCtrl && selectedBeforeFallback && selectedBeforeFallback.length > 0) {
-            // 如果是 department 控件，且之前填充过 selected，则按部门类型补
+            // 部门控件：用 departments 格式
             contents.push({
               control: 'Contact',
               id: ctrlId,
               value: {
-                type: 'department',
-                selected: selectedBeforeFallback.map(s => ({ id: s.id, name: s.name, type: 'department' })),
+                departments: selectedBeforeFallback.map(s => ({ openapi_id: String(s.id), name: s.name })),
               },
             });
-            console.log(`[审批构建] 兜底必填department Contact(id=${ctrlId}):`, JSON.stringify(selectedBeforeFallback));
+            console.log(`[审批构建] 兜底必填department Contact(id=${ctrlId}): departments=${JSON.stringify(selectedBeforeFallback)}`);
           } else {
-            // 其他情况兜底用申请人
-            const selVal = creatorUserid
-              ? [{ id: creatorUserid, name: '申请人', type: 'user' }]
-              : [];
+            // 其他情况兜底用申请人（members 格式）
             contents.push({
               control: 'Contact',
               id: ctrlId,
               value: {
-                type: creatorUserid ? 'user' : 'department',
-                selected: selVal,
+                members: creatorUserid
+                  ? [{ userid: String(creatorUserid), name: '申请人' }]
+                  : [],
               },
             });
             console.log(`[审批构建] 兜底必填Contact(id=${ctrlId}, title=${ctrlTitle}): 申请人=${creatorUserid || '空'}`);
