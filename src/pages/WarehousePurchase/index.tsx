@@ -19,6 +19,8 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
+  FileText,
+  ClipboardCheck,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
@@ -356,11 +358,12 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  // ===== 生成 PDF =====
-  const handleGeneratePDF = async (id: string) => {
+  // ===== 生成 PDF（支持 type=apply|confirm 指定类型） =====
+  const handleGeneratePDF = async (id: string, type?: 'apply' | 'confirm') => {
     setActioningId(id);
     try {
-      await api.post(`/warehouse-purchases/${id}/generate-pdf`);
+      const query = type ? `?type=${type}` : '';
+      await api.post(`/warehouse-purchases/${id}/generate-pdf${query}`);
       await fetchList();
     } catch (err: any) {
       setError(err.message || 'PDF 生成失败');
@@ -369,12 +372,13 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  // ===== 下载 PDF（需用 fetch + token，不能用 api.get） =====
-  const handleDownloadPDF = async (id: string) => {
+  // ===== 下载 PDF（支持 type=apply|confirm 指定类型） =====
+  const handleDownloadPDF = async (id: string, type?: 'apply' | 'confirm') => {
     try {
       const token = api.getToken();
+      const query = type ? `?type=${type}` : '';
       const response = await fetch(
-        `${api.getBaseUrl()}/warehouse-purchases/${id}/pdf`,
+        `${api.getBaseUrl()}/warehouse-purchases/${id}/pdf${query}`,
         {
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         },
@@ -386,7 +390,8 @@ export default function WarehousePurchaseList() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `warehouse_purchase_${id}.pdf`;
+      const prefix = type === 'apply' ? '仓库采购申请单' : type === 'confirm' ? '仓库采购确认单' : 'warehouse_purchase';
+      a.download = `${prefix}_${id}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -519,6 +524,14 @@ export default function WarehousePurchaseList() {
 
   // 是否有 PDF 可下载（确认单PDF或申请单PDF）
   const hasPdf = (p: WarehousePurchase) => !!(p.pdf_url || p.apply_pdf_url);
+  // 是否有申请单 PDF
+  const hasApplyPdf = (p: WarehousePurchase) => !!p.apply_pdf_url;
+  // 是否有确认单 PDF
+  const hasConfirmPdf = (p: WarehousePurchase) => !!p.pdf_url;
+  // 申请单可操作的状态（草稿/审批中/已通过/已驳回）
+  const APPLY_PDF_STATUSES: PurchaseStatus[] = ['draft', 'pending_approval', 'approved', 'rejected'];
+  // 确认单可操作的状态（已收货/确认中/已确认/报销中/已报销）
+  const CONFIRM_PDF_STATUSES: PurchaseStatus[] = ['received', 'confirming', 'confirmed', 'reimbursing', 'reimbursed'];
 
   return (
     <div className="space-y-6">
@@ -681,17 +694,32 @@ export default function WarehousePurchaseList() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* 非 draft 状态且已有 PDF：快捷下载 */}
-                    {p.status !== 'draft' && hasPdf(p) && (
+                    {/* 快捷下载：申请单 PDF */}
+                    {hasApplyPdf(p) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDownloadPDF(p.id);
+                          handleDownloadPDF(p.id, 'apply');
                         }}
-                        className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1"
+                        title="下载采购申请单PDF"
+                        className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
                       >
-                        <Download size={14} />
-                        PDF
+                        <FileText size={14} />
+                        申请单
+                      </button>
+                    )}
+                    {/* 快捷下载：确认单 PDF */}
+                    {hasConfirmPdf(p) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadPDF(p.id, 'confirm');
+                        }}
+                        title="下载入库确认单PDF"
+                        className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1"
+                      >
+                        <ClipboardCheck size={14} />
+                        确认单
                       </button>
                     )}
                   </div>
@@ -1039,32 +1067,19 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* confirmed: 生成PDF、发起报销（预付款/月结不显示） */}
+                          {/* confirmed: 发起报销（预付款/月结不显示） */}
                           {p.status === 'confirmed' && p.purchase_type !== 'prepay' && p.purchase_type !== 'monthly' && (
-                            <>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleGeneratePDF(p.id);
-                                }}
-                                disabled={actioningId === p.id}
-                                className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
-                              >
-                                <Download size={14} />
-                                生成PDF
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleResubmit(p.id);
-                                }}
-                                disabled={actioningId === p.id}
-                                className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
-                              >
-                                <RotateCcw size={14} />
-                                发起报销
-                              </button>
-                            </>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleResubmit(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <RotateCcw size={14} />
+                              发起报销
+                            </button>
                           )}
 
                           {/* reimbursing: 刷新状态 */}
@@ -1096,21 +1111,96 @@ export default function WarehousePurchaseList() {
                               重新发起
                             </button>
                           )}
-
-                          {/* 所有状态(除draft)：下载PDF（如有） */}
-                          {p.status !== 'draft' && hasPdf(p) && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadPDF(p.id);
-                              }}
-                              className="btn-secondary text-xs flex items-center gap-1 text-green-600 hover:bg-green-50"
-                            >
-                              <Download size={14} />
-                              下载PDF
-                            </button>
-                          )}
                         </div>
+
+                        {/* ===== PDF 独立操作区：申请单PDF + 确认单PDF ===== */}
+                        {(APPLY_PDF_STATUSES.includes(p.status) || CONFIRM_PDF_STATUSES.includes(p.status)) && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                            {/* 采购申请单 PDF */}
+                            {APPLY_PDF_STATUSES.includes(p.status) && (
+                              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <FileText size={14} className="text-blue-600" />
+                                    <span className="text-xs font-medium text-blue-700">采购申请单 PDF</span>
+                                  </div>
+                                  {hasApplyPdf(p) && (
+                                    <span className="text-xs text-green-600 flex items-center gap-0.5">
+                                      <CheckCircle2 size={12} />已生成
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleGeneratePDF(p.id, 'apply');
+                                    }}
+                                    disabled={actioningId === p.id}
+                                    className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Download size={12} />
+                                    生成
+                                  </button>
+                                  {hasApplyPdf(p) && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDownloadPDF(p.id, 'apply');
+                                      }}
+                                      className="btn-secondary text-xs flex items-center gap-1 text-blue-600 hover:bg-blue-50"
+                                    >
+                                      <Download size={12} />
+                                      下载
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 入库确认单 PDF */}
+                            {CONFIRM_PDF_STATUSES.includes(p.status) && (
+                              <div className="bg-teal-50 border border-teal-100 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <ClipboardCheck size={14} className="text-teal-600" />
+                                    <span className="text-xs font-medium text-teal-700">入库确认单 PDF</span>
+                                  </div>
+                                  {hasConfirmPdf(p) && (
+                                    <span className="text-xs text-green-600 flex items-center gap-0.5">
+                                      <CheckCircle2 size={12} />已生成
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleGeneratePDF(p.id, 'confirm');
+                                    }}
+                                    disabled={actioningId === p.id}
+                                    className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Download size={12} />
+                                    生成
+                                  </button>
+                                  {hasConfirmPdf(p) && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDownloadPDF(p.id, 'confirm');
+                                      }}
+                                      className="btn-secondary text-xs flex items-center gap-1 text-teal-600 hover:bg-teal-50"
+                                    >
+                                      <Download size={12} />
+                                      下载
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

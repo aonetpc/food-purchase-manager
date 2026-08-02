@@ -96,6 +96,17 @@ function parseJsonField(value) {
   try { return JSON.parse(value); } catch (e) { return null; }
 }
 
+// 解析确认人 userid 字段（支持逗号或竖线分隔的多人配置）
+// 返回去重后的 userid 数组
+function parseConfirmerUserids(raw) {
+  if (!raw) return [];
+  const str = String(raw).trim();
+  if (!str) return [];
+  // 同时支持英文逗号、中文逗号、竖线、空格分隔
+  const parts = str.split(/[,，|\s]+/).map(s => s.trim()).filter(Boolean);
+  return Array.from(new Set(parts));
+}
+
 // 查找中文字体（常规）
 function findChineseFont() {
   const candidates = [
@@ -163,14 +174,15 @@ function normalizePurchaseRow(row) {
   const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
   const id = row.id;
   let pdfUrl = row.pdf_url;
-  let applyPdfUrl = null;
+  let applyPdfUrl = row.apply_pdf_url;
   const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
   const applyPdfPath = row.apply_pdf_path || path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
-  if (fs.existsSync(confirmPdfPath) && !pdfUrl) {
-    pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
+  // 确认单 PDF 与申请单 PDF 走独立 URL（带 type 参数区分）
+  if (fs.existsSync(confirmPdfPath)) {
+    pdfUrl = `/api/warehouse-purchases/${id}/pdf?type=confirm`;
   }
   if (fs.existsSync(applyPdfPath)) {
-    applyPdfUrl = `/api/warehouse-purchases/${id}/pdf`;
+    applyPdfUrl = `/api/warehouse-purchases/${id}/pdf?type=apply`;
   }
   return {
     ...row,
@@ -1339,22 +1351,77 @@ router.get('/confirm-page', async (req, res) => {
     const userDepartments = parseJsonField(row.user_departments) || {};
     const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
-    const userDeptData = userDepartments[user];
-    const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments))
-      ? userDeptData.departments
-      : (Array.isArray(userDeptData) ? userDeptData : []);
+    // 判断是否为新结构（按仓库维度）
+    const isNewStructure = Object.values(userDepartments).some(v => v && Array.isArray(v.confirmers));
 
-    if (myDeptNames.length === 0) {
-      return res.status(403).json({ error: '您不是本采购单的指定确认人' });
+    let myWarehouseNames = [];
+    let myItems = [];
+    let totalTasks = 0;
+    let confirmedTasks = 0;
+    const allConfirmations = [];
+
+    if (isNewStructure) {
+      // 新结构：找出当前用户负责的仓库任务
+      const myTasks = [];
+      for (const [whKey, task] of Object.entries(userDepartments)) {
+        if (task && Array.isArray(task.confirmers)) {
+          totalTasks++;
+          if (task.confirmed) confirmedTasks++;
+          if (task.confirmers.includes(user)) {
+            myTasks.push({ whKey, task });
+            if (task.wh_name) myWarehouseNames.push(task.wh_name);
+          }
+          allConfirmations.push({
+            wh_key: whKey,
+            wh_name: task.wh_name,
+            confirmers: task.confirmers,
+            confirmed: !!task.confirmed,
+            confirmed_by: task.confirmed_by,
+            confirmed_by_name: task.confirmed_by_name,
+            confirmed_at: task.confirmed_at,
+          });
+        }
+      }
+      if (myTasks.length === 0) {
+        return res.status(403).json({ error: '您不是本采购单的指定确认人' });
+      }
+      // 该用户负责的仓库下的物资
+      const myWhIds = myTasks.map(t => t.task.wh_id).filter(Boolean);
+      const myWhNames = myTasks.map(t => t.task.wh_name).filter(Boolean);
+      const [itemRows] = await pool.query(
+        'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
+        [id]
+      );
+      myItems = itemRows
+        .filter(item => (item.warehouse_id && myWhIds.includes(item.warehouse_id)) || myWhNames.includes(item.warehouse_name))
+        .map(normalizeItemRow);
+    } else {
+      // 兼容旧结构
+      const userDeptData = userDepartments[user];
+      const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments))
+        ? userDeptData.departments
+        : (Array.isArray(userDeptData) ? userDeptData : []);
+      if (myDeptNames.length === 0) {
+        return res.status(403).json({ error: '您不是本采购单的指定确认人' });
+      }
+      const [itemRows] = await pool.query(
+        'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
+        [id]
+      );
+      myItems = itemRows
+        .filter(item => myDeptNames.includes(item.department_name))
+        .map(normalizeItemRow);
+      const allConfPromises = Object.entries(userConfirmations).map(async ([userid, info]) => ({
+        userid,
+        name: await getWecomUserName(userid),
+        confirmed: !!(info && info.confirmed),
+        confirmed_at: info && info.confirmed_at,
+        confirmed_by: info && info.confirmed_by,
+      }));
+      allConfirmations.push(...await Promise.all(allConfPromises));
+      totalTasks = Object.keys(userDepartments).length;
+      confirmedTasks = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
     }
-
-    const [itemRows] = await pool.query(
-      'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
-      [id]
-    );
-    const myItems = itemRows
-      .filter(item => myDeptNames.includes(item.department_name))
-      .map(normalizeItemRow);
 
     const myTotal = myItems.reduce((s, i) => {
       const amt = toNum(i.received_amount) > 0 ? toNum(i.received_amount) : toNum(i.requested_amount);
@@ -1363,19 +1430,6 @@ router.get('/confirm-page', async (req, res) => {
 
     const myConfirmation = userConfirmations[user] || null;
     const userName = await getWecomUserName(user);
-
-    const allConfirmations = await Promise.all(
-      Object.entries(userConfirmations).map(async ([userid, info]) => ({
-        userid,
-        name: await getWecomUserName(userid),
-        confirmed: !!(info && info.confirmed),
-        confirmed_at: info && info.confirmed_at,
-        confirmed_by: info && info.confirmed_by,
-      }))
-    );
-
-    const totalUsers = Object.keys(userDepartments).length;
-    const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
 
     res.json({
       id: row.id,
@@ -1386,13 +1440,13 @@ router.get('/confirm-page', async (req, res) => {
       actual_amount: toNum(row.actual_amount),
       user,
       user_name: userName,
-      my_departments: myDeptNames,
+      my_warehouses: myWarehouseNames,
       my_items: myItems,
       my_total: myTotal,
       my_confirmation: myConfirmation,
       all_confirmations: allConfirmations,
-      total_users: totalUsers,
-      confirmed_users: confirmedUsers,
+      total_tasks: totalTasks,
+      confirmed_tasks: confirmedTasks,
       created_at: row.created_at,
     });
   } catch (err) {
@@ -1422,19 +1476,40 @@ router.post('/confirm-submit', async (req, res) => {
     }
     const row = rows[0];
 
-    const userDepartments = parseJsonField(row.user_departments) || {};
-    let userConfirmations = parseJsonField(row.user_confirmations) || {};
+    const userDepartments = parseJsonField(row.user_departments) || {}; // 按仓库维度组织
+    let userConfirmations = parseJsonField(row.user_confirmations) || {}; // userid -> { confirmed, ... }
 
-    const userDeptData = userDepartments[user];
-    const myDeptNames = (userDeptData && Array.isArray(userDeptData.departments))
-      ? userDeptData.departments
-      : (Array.isArray(userDeptData) ? userDeptData : []);
-    const responseCode = (userDeptData && userDeptData.response_code) || null;
+    // 新结构：user_departments = { whKey: { wh_id, wh_name, confirmers: [userid...], response_codes: {userid: code}, confirmed, confirmed_by, confirmed_at } }
+    // 兼容旧结构：user_departments = { userid: { departments: [...], response_code } }
 
-    if (myDeptNames.length === 0) {
-      await connection.rollback();
-      return res.status(403).json({ error: '您不是本采购单的指定确认人' });
+    // 判断是否为新结构（按仓库维度）
+    const isNewStructure = Object.values(userDepartments).some(v => v && Array.isArray(v.confirmers));
+    // 找出当前用户负责的仓库任务（新结构）
+    let myWarehouseTasks = [];
+    let responseCode = null;
+    if (isNewStructure) {
+      for (const [whKey, task] of Object.entries(userDepartments)) {
+        if (task && Array.isArray(task.confirmers) && task.confirmers.includes(user) && !task.confirmed) {
+          myWarehouseTasks.push({ whKey, task });
+          if (!responseCode && task.response_codes && task.response_codes[user]) {
+            responseCode = task.response_codes[user];
+          }
+        }
+      }
+      if (myWarehouseTasks.length === 0) {
+        await connection.rollback();
+        return res.status(403).json({ error: '您不是本采购单的指定确认人，或您负责的仓库已确认' });
+      }
+    } else {
+      // 兼容旧结构
+      const userDeptData = userDepartments[user];
+      responseCode = (userDeptData && userDeptData.response_code) || null;
+      if (!userDeptData) {
+        await connection.rollback();
+        return res.status(403).json({ error: '您不是本采购单的指定确认人' });
+      }
     }
+
     if (userConfirmations[user] && userConfirmations[user].confirmed) {
       await connection.rollback();
       return res.status(400).json({ error: '您已确认过，无需重复确认' });
@@ -1447,14 +1522,30 @@ router.post('/confirm-submit', async (req, res) => {
       confirmed: true,
       confirmed_at: now,
       confirmed_by: realName,
-      departments: myDeptNames,
       signature_data,
     };
 
-    await connection.query(
-      'UPDATE warehouse_purchases SET user_confirmations = ? WHERE id = ?',
-      [JSON.stringify(userConfirmations), id]
-    );
+    // 新结构：标记该用户负责的所有未确认仓库为已确认（任一人确认即算完成）
+    if (isNewStructure) {
+      for (const { whKey, task } of myWarehouseTasks) {
+        if (!task.confirmed) {
+          task.confirmed = true;
+          task.confirmed_by = user;
+          task.confirmed_by_name = realName;
+          task.confirmed_at = now;
+          userDepartments[whKey] = task;
+        }
+      }
+      await connection.query(
+        'UPDATE warehouse_purchases SET user_confirmations = ?, user_departments = ? WHERE id = ?',
+        [JSON.stringify(userConfirmations), JSON.stringify(userDepartments), id]
+      );
+    } else {
+      await connection.query(
+        'UPDATE warehouse_purchases SET user_confirmations = ? WHERE id = ?',
+        [JSON.stringify(userConfirmations), id]
+      );
+    }
 
     // 保存用户签名到 user_signatures（不影响主流程）
     try {
@@ -1500,16 +1591,29 @@ router.post('/confirm-submit', async (req, res) => {
       cardError = cfgErr.message;
     }
 
-    const totalUsers = Object.keys(userDepartments).length;
-    const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
-    const allConfirmed = totalUsers > 0 && confirmedUsers === totalUsers;
+    // 判断是否全部确认完成
+    let allConfirmed = false;
+    let totalTasks = 0;
+    let confirmedTasks = 0;
+    if (isNewStructure) {
+      const allTasks = Object.values(userDepartments).filter(v => v && Array.isArray(v.confirmers));
+      totalTasks = allTasks.length;
+      confirmedTasks = allTasks.filter(t => t.confirmed).length;
+      allConfirmed = totalTasks > 0 && confirmedTasks === totalTasks;
+    } else {
+      const totalUsers = Object.keys(userDepartments).length;
+      const confirmedUsers = Object.values(userConfirmations).filter(c => c && c.confirmed).length;
+      totalTasks = totalUsers;
+      confirmedTasks = confirmedUsers;
+      allConfirmed = totalUsers > 0 && confirmedUsers === totalUsers;
+    }
 
     if (allConfirmed) {
-      // 1. 生成 PDF
+      // 1. 生成 PDF（确认单）
       let pdfUrl = row.pdf_url;
       try {
         await generateWarehousePDF(id);
-        pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
+        pdfUrl = `/api/warehouse-purchases/${id}/pdf?type=confirm`;
         await connection.query('UPDATE warehouse_purchases SET pdf_url = ?, status = ? WHERE id = ?', [pdfUrl, 'confirmed', id]);
       } catch (pdfErr) {
         console.error('仓库采购PDF生成失败:', pdfErr.message);
@@ -1542,8 +1646,7 @@ router.post('/confirm-submit', async (req, res) => {
         success: true,
         message: '确认成功，已全部确认并发起报销',
         confirmed_at: now,
-        confirmed_departments: myDeptNames,
-        progress: { confirmed_users: confirmedUsers, total_users: totalUsers, all_confirmed: true },
+        progress: { confirmed_tasks: confirmedTasks, total_tasks: totalTasks, all_confirmed: true },
         card_updated: cardUpdated,
         card_error: cardError,
         reimbursement_sp_no: reimbursementSpNo,
@@ -1556,8 +1659,7 @@ router.post('/confirm-submit', async (req, res) => {
       success: true,
       message: '确认成功',
       confirmed_at: now,
-      confirmed_departments: myDeptNames,
-      progress: { confirmed_users: confirmedUsers, total_users: totalUsers, all_confirmed: false },
+      progress: { confirmed_tasks: confirmedTasks, total_tasks: totalTasks, all_confirmed: false },
       card_updated: cardUpdated,
       card_error: cardError,
     });
@@ -1899,9 +2001,10 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     console.log(`[提交审批] 审批单号: ${spNo}`);
 
     console.log(`[提交审批] 步骤7: 更新数据库`);
+    const applyPdfUrl = applyPdfPath ? `/api/warehouse-purchases/${id}/pdf?type=apply` : null;
     await pool.query(
-      'UPDATE warehouse_purchases SET status = ?, approval_sp_no = ?, approval_status = ?, apply_pdf_path = ? WHERE id = ?',
-      ['pending_approval', spNo, 'pending', applyPdfPath, id]
+      'UPDATE warehouse_purchases SET status = ?, approval_sp_no = ?, approval_status = ?, apply_pdf_path = ?, apply_pdf_url = ? WHERE id = ?',
+      ['pending_approval', spNo, 'pending', applyPdfPath, applyPdfUrl, id]
     );
 
     const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
@@ -2152,42 +2255,71 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       [id]
     );
 
-    // 读取各部门确认人
+    // 读取各部门确认人（解析为 userid 数组，支持多人）
     const [deptRows] = await connection.query('SELECT id, name, confirmer_userid FROM departments');
-    const deptConfirmerMap = {};
+    const deptConfirmerMap = {}; // dept id/name -> [userid, ...]
     for (const d of deptRows) {
-      if (d.confirmer_userid) {
-        deptConfirmerMap[d.id] = d.confirmer_userid;
-        deptConfirmerMap[d.name] = d.confirmer_userid;
+      const userids = parseConfirmerUserids(d.confirmer_userid);
+      if (userids.length > 0) {
+        deptConfirmerMap[d.id] = userids;
+        deptConfirmerMap[d.name] = userids;
       }
     }
 
-    // 读取各仓库确认人
+    // 读取各仓库确认人（解析为 userid 数组，支持多人）
     const [whRows] = await connection.query('SELECT id, name, confirmer_userid FROM warehouses WHERE status = 1');
-    const whConfirmerMap = {};
+    const whConfirmerMap = {}; // wh id/name -> [userid, ...]
     for (const w of whRows) {
-      if (w.confirmer_userid) {
-        whConfirmerMap[w.id] = w.confirmer_userid;
-        whConfirmerMap[w.name] = w.confirmer_userid;
+      const userids = parseConfirmerUserids(w.confirmer_userid);
+      if (userids.length > 0) {
+        whConfirmerMap[w.id] = userids;
+        whConfirmerMap[w.name] = userids;
       }
     }
 
-    // 按 items 的 warehouse_id 优先匹配确认人，fallback 到 department_id
-    const userDeptMap = {}; // userid -> { items: [], depts: Set, warehouses: Set }
+    // 按仓库维度组织确认任务：whKey -> { whName, confirmers: [userid...], items: [] }
+    // 优先使用仓库确认人，仓库未配置则 fallback 到部门确认人
+    const warehouseTasks = {}; // whKey(whId||whName) -> task
     for (const item of itemRows) {
-      const confirmer = whConfirmerMap[item.warehouse_id] || whConfirmerMap[item.warehouse_name]
-        || deptConfirmerMap[item.department_id] || deptConfirmerMap[item.department_name];
-      if (confirmer) {
-        if (!userDeptMap[confirmer]) userDeptMap[confirmer] = { items: [], depts: new Set(), warehouses: new Set() };
-        userDeptMap[confirmer].items.push(item);
-        if (item.department_name) userDeptMap[confirmer].depts.add(item.department_name);
-        if (item.warehouse_name) userDeptMap[confirmer].warehouses.add(item.warehouse_name);
+      const whId = item.warehouse_id || null;
+      const whName = item.warehouse_name || '未指定仓库';
+      const whKey = whId || whName;
+      // 优先仓库确认人，fallback 部门确认人
+      const confirmers = (whId && whConfirmerMap[whId]) || whConfirmerMap[whName]
+        || (item.department_id && deptConfirmerMap[item.department_id]) || deptConfirmerMap[item.department_name]
+        || [];
+      if (!warehouseTasks[whKey]) {
+        warehouseTasks[whKey] = {
+          whId, whName,
+          confirmers: Array.from(new Set(confirmers)), // 去重
+          items: [],
+        };
+      } else {
+        // 合并确认人（同一仓库不同部门的物资，确认人取并集）
+        for (const u of confirmers) {
+          if (!warehouseTasks[whKey].confirmers.includes(u)) {
+            warehouseTasks[whKey].confirmers.push(u);
+          }
+        }
       }
+      warehouseTasks[whKey].items.push(item);
     }
 
-    // 如果没有需要确认的人
-    const hasConfirmers = Object.keys(userDeptMap).length > 0;
-    const mentionedUsers = Object.keys(userDeptMap);
+    // 过滤掉没有确认人的仓库任务（这些仓库无需确认）
+    const tasksNeedingConfirm = Object.values(warehouseTasks).filter(t => t.confirmers.length > 0);
+    const hasConfirmers = tasksNeedingConfirm.length > 0;
+
+    // 构建 userid -> { items, whNames, whKeys } 映射（用于发送个人卡片）
+    const userTaskMap = {}; // userid -> { items: [], whNames: Set, whKeys: Set }
+    for (const task of tasksNeedingConfirm) {
+      for (const userid of task.confirmers) {
+        if (!userTaskMap[userid]) userTaskMap[userid] = { items: [], whNames: new Set(), whKeys: new Set() };
+        userTaskMap[userid].items.push(...task.items);
+        userTaskMap[userid].whNames.add(task.whName);
+        userTaskMap[userid].whKeys.add(task.whId || task.whName);
+      }
+    }
+    const mentionedUsers = Object.keys(userTaskMap);
 
     const domain = config.app_domain || (req.headers.origin || (req.protocol + '://' + req.get('host')));
     const purchaseNo = row.purchase_no || '';
@@ -2259,15 +2391,14 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       console.error('群消息发送失败:', sendErr.message);
     }
 
-    // 对每个确认人发送模板卡片
+    // 对每个确认人发送模板卡片（逐人发送，touser 为单个 userid）
     const sentToUsers = [];
     const failedUsers = [];
-    const sentResponseCodes = [];
+    const sentResponseCodes = []; // { userid, responseCode }
     if (hasApiConfig) {
-      for (const [userid, data] of Object.entries(userDeptMap)) {
+      for (const [userid, data] of Object.entries(userTaskMap)) {
         try {
-          const userDeptNames = Array.from(data.depts);
-          const userWhNames = Array.from(data.warehouses);
+          const userWhNames = Array.from(data.whNames);
           const userItems = data.items;
           // 金额只统计已到货物资
           const userTotal = userItems.filter(i => !i.not_arrived).reduce((s, i) => {
@@ -2275,13 +2406,13 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
             return s + (hasReceived ? toNum(i.received_amount) : toNum(i.requested_amount));
           }, 0);
 
-          // 用户负责仓库/部门的内容摘要
-          const scopeLabel = userWhNames.length > 0 ? userWhNames.join('、') : userDeptNames.join('、');
+          // 用户负责仓库的内容摘要
+          const scopeLabel = userWhNames.join('、');
           const subTitle = `采购单号：${purchaseNo}\n您负责确认：${scopeLabel}`;
 
           const horizontalContentList = [
             { keyname: '采购单号', value: String(purchaseNo || '-') },
-            { keyname: '涉及仓库', value: userWhNames.length > 0 ? userWhNames.join('、') : '-' },
+            { keyname: '涉及仓库', value: userWhNames.join('、') },
             { keyname: '物资项数', value: `${userItems.length}项` },
           ];
 
@@ -2311,37 +2442,44 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       }
     }
 
-    // 构建 user_departments 存库
+    // 构建 user_departments 存库（按仓库维度组织，记录该仓库的确认人列表）
+    // 结构: { whKey: { wh_name, confirmers: [userid...], response_codes: { userid: code }, confirmed: false, confirmed_by: null, confirmed_at: null } }
     const userDepartmentsMap = {};
-    for (const [userid, data] of Object.entries(userDeptMap)) {
-      const sentItem = sentResponseCodes.find(s => s.userid === userid);
-      userDepartmentsMap[userid] = {
-        departments: Array.from(data.depts),
-        response_code: sentItem ? sentItem.responseCode : null,
+    for (const task of tasksNeedingConfirm) {
+      const whKey = task.whId || task.whName;
+      const responseCodes = {};
+      for (const userid of task.confirmers) {
+        const sentItem = sentResponseCodes.find(s => s.userid === userid);
+        if (sentItem) responseCodes[userid] = sentItem.responseCode;
+      }
+      userDepartmentsMap[whKey] = {
+        wh_id: task.whId,
+        wh_name: task.whName,
+        confirmers: task.confirmers,
+        response_codes: responseCodes,
+        confirmed: false,
+        confirmed_by: null,
+        confirmed_at: null,
       };
     }
 
-    // 如果没有需要确认的部门（全部总仓），直接跳到已确认状态
+    // 如果没有匹配到任何确认人：群消息仍发送，但不自动确认，提示用户去配置确认人
     if (!hasConfirmers) {
       await connection.query(
-        'UPDATE warehouse_purchases SET wecom_msg_id = ?, user_departments = ?, user_confirmations = ?, status = ? WHERE id = ?',
-        [wecomMsgId, JSON.stringify({}), JSON.stringify({}), 'confirmed', id]
+        'UPDATE warehouse_purchases SET wecom_msg_id = ?, user_departments = ?, user_confirmations = ? WHERE id = ?',
+        [wecomMsgId, JSON.stringify({}), JSON.stringify({}), id]
       );
       await connection.commit();
-      // 自动生成 PDF
-      try { await generateWarehousePDF(id); } catch (e) { console.error('自动生成PDF失败:', e.message); }
-      const pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
-      try {
-        await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
-      } catch (e) { /* 忽略 */ }
+      const tip = '已发送群消息，但未匹配到任何确认人。请在「仓库管理」或「部门管理」中为相关仓库/部门配置确认人（企业微信userid）后再发送确认通知。';
       res.json({
         success: true,
-        message: '总仓采购无需部门确认，已自动完成确认',
+        message: tip,
         wecom_msg_id: wecomMsgId,
         sent_to_users: [],
         failed_users: [],
         user_departments: {},
-        auto_confirmed: true,
+        auto_confirmed: false,
+        no_confirmer: true,
       });
     } else {
       await connection.query(
@@ -2351,9 +2489,15 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
 
       await connection.commit();
 
+      // 如果未配置企微应用信息，补充提示
+      let extraMsg = '';
+      if (!hasApiConfig) {
+        extraMsg = '（未配置企微应用 corp_id/app_secret/agent_id，未发送个人应用消息，仅发送了群消息）';
+      }
+
       res.json({
         success: true,
-        message: '确认通知已发送',
+        message: `确认通知已发送${extraMsg}`,
         wecom_msg_id: wecomMsgId,
         sent_to_users: sentToUsers,
         failed_users: failedUsers,
@@ -2369,80 +2513,83 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
   }
 });
 
-// 10. POST /:id/generate-pdf — 生成PDF（按状态选择申请单或确认单）
+// 10. POST /:id/generate-pdf — 生成PDF（支持 type=apply|confirm 指定类型，未指定时按状态自动判断）
 router.post('/:id/generate-pdf', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    const { type } = req.query; // 'apply' = 申请单, 'confirm' = 确认单
     const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const row = rows[0];
-    // 根据状态选择PDF类型
+    // 显式指定类型优先；未指定时按状态自动判断
     const applyStatuses = ['draft', 'pending_approval', 'rejected', 'approved'];
-    const isApplyPdf = applyStatuses.includes(row.status);
-    const pdfPath = isApplyPdf
-      ? await generatePurchaseApplyPDF(id)
-      : await generateWarehousePDF(id);
-    const urlPath = isApplyPdf ? `warehouse_apply_${id}.pdf` : `warehouse_${id}.pdf`;
-    const pdfUrl = `/api/warehouse-purchases/${id}/pdf`;
-    await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
-    res.json({ success: true, pdf_url: pdfUrl, type: isApplyPdf ? 'apply' : 'confirm' });
+    const isApplyPdf = type === 'apply' ? true : (type === 'confirm' ? false : applyStatuses.includes(row.status));
+    if (isApplyPdf) {
+      await generatePurchaseApplyPDF(id);
+      const applyPdfUrl = `/api/warehouse-purchases/${id}/pdf?type=apply`;
+      await pool.query('UPDATE warehouse_purchases SET apply_pdf_url = ? WHERE id = ?', [applyPdfUrl, id]);
+      res.json({ success: true, pdf_url: applyPdfUrl, type: 'apply' });
+    } else {
+      await generateWarehousePDF(id);
+      const pdfUrl = `/api/warehouse-purchases/${id}/pdf?type=confirm`;
+      await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [pdfUrl, id]);
+      res.json({ success: true, pdf_url: pdfUrl, type: 'confirm' });
+    }
   } catch (err) {
     console.error('仓库采购PDF生成失败:', err);
     res.status(500).json({ error: err.message || 'PDF生成失败' });
   }
 });
 
-// 11. GET /:id/pdf — 下载PDF（按状态选择申请单或确认单）
+// 11. GET /:id/pdf — 下载PDF（支持 type=apply|confirm 指定类型，未指定时按状态自动判断）
 router.get('/:id/pdf', async (req, res) => {
   try {
     const { id } = req.params;
+    const { type } = req.query; // 'apply' = 申请单, 'confirm' = 确认单
 
-    // 查询采购单状态，决定PDF类型
     const [rows] = await pool.query('SELECT status FROM warehouse_purchases WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const orderStatus = rows[0].status;
     const applyStatuses = ['draft', 'pending_approval', 'rejected', 'approved'];
-    const isApplyPdf = applyStatuses.includes(orderStatus);
+    const isApplyPdf = type === 'apply' ? true : (type === 'confirm' ? false : applyStatuses.includes(orderStatus));
 
     const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
     const applyPdfPath = path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
 
     if (isApplyPdf) {
-      // 申请单状态：返回申请单PDF
+      // 申请单 PDF
       if (fs.existsSync(applyPdfPath)) {
         return res.download(applyPdfPath, `仓库采购申请单_${id}.pdf`);
       }
-      // 自动生成申请单PDF
       try {
         await generatePurchaseApplyPDF(id);
         if (fs.existsSync(applyPdfPath)) {
-          try { await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]); } catch (e) {}
+          try { await pool.query('UPDATE warehouse_purchases SET apply_pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf?type=apply`, id]); } catch (e) {}
           return res.download(applyPdfPath, `仓库采购申请单_${id}.pdf`);
         }
       } catch (genErr) {
         console.error('生成申请单PDF失败:', genErr.message);
       }
-      return res.status(404).json({ error: 'PDF文件不存在' });
+      return res.status(404).json({ error: '申请单PDF不存在' });
     } else {
-      // 确认单状态：返回确认单PDF
+      // 确认单 PDF
       if (fs.existsSync(confirmPdfPath)) {
         return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
       }
-      // 自动生成确认单PDF
       try {
         await generateWarehousePDF(id);
         if (fs.existsSync(confirmPdfPath)) {
-          try { await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf`, id]); } catch (e) {}
+          try { await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf?type=confirm`, id]); } catch (e) {}
           return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
         }
       } catch (genErr) {
         console.error('生成确认单PDF失败:', genErr.message);
       }
-      return res.status(404).json({ error: 'PDF文件不存在' });
+      return res.status(404).json({ error: '确认单PDF不存在' });
     }
   } catch (err) {
     console.error('下载仓库采购PDF失败:', err);
@@ -2527,8 +2674,11 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const row = rows[0];
-    if (row.reimbursement_status !== 'rejected') {
-      return res.status(400).json({ error: '只有报销被拒绝的采购单可以重新发起' });
+    // 允许两种场景：1) 首次发起报销（status=confirmed 且无 reimbursement_sp_no）；2) 报销被拒绝后重新发起
+    const isFirstTime = row.status === 'confirmed' && !row.reimbursement_sp_no;
+    const isResubmit = row.reimbursement_status === 'rejected';
+    if (!isFirstTime && !isResubmit) {
+      return res.status(400).json({ error: '只有已确认未报销或报销被拒绝的采购单可以发起报销' });
     }
 
     const [itemRows] = await pool.query(
