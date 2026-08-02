@@ -898,8 +898,8 @@ async function generatePurchaseApplyPDF(purchaseId) {
   doc.fontSize(18).font(boldFont).text('仓库采购申请单', { align: 'center' });
   doc.moveDown(0.5);
 
-  // 头部信息（参考食材采购：10号字）
-  doc.fontSize(10).font(regFont);
+  // 头部信息（9号字）
+  doc.fontSize(9).font(regFont);
   const amountLabel = toNum(row.total_amount);
   const whNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
   const statusText = row.status === 'pending_approval' ? '审批中'
@@ -962,7 +962,7 @@ async function generatePurchaseApplyPDF(purchaseId) {
   }
 
   function drawTableRow(y, cells, isHeader = false) {
-    const fontSize = isHeader ? 10 : 9;
+    const fontSize = isHeader ? 9 : 8;
     doc.font(isHeader ? boldFont : regFont).fontSize(fontSize);
     let x = tableX;
     for (let i = 0; i < cells.length; i++) {
@@ -977,7 +977,7 @@ async function generatePurchaseApplyPDF(purchaseId) {
   // 标题"采购明细"
   let currentY = doc.y;
   currentY = checkPageBreak(currentY, rowHeight + 10);
-  doc.fontSize(12).font(boldFont).text('采购明细', tableX, currentY, { lineBreak: false });
+  doc.fontSize(11).font(boldFont).text('采购明细', tableX, currentY, { lineBreak: false });
   currentY += rowHeight + 4;
 
   // 表头
@@ -997,7 +997,7 @@ async function generatePurchaseApplyPDF(purchaseId) {
     currentY = checkPageBreak(currentY, groupHeight);
 
     // 仓库标题
-    doc.fontSize(10).font(boldFont).text(`【${whName}】`, tableX, currentY + 1, { lineBreak: false });
+    doc.fontSize(9).font(boldFont).text(`【${whName}】`, tableX, currentY + 1, { lineBreak: false });
     currentY += rowHeight;
 
     // 明细行
@@ -1029,7 +1029,7 @@ async function generatePurchaseApplyPDF(purchaseId) {
 
     // 仓库小计
     currentY = checkPageBreak(currentY, 20);
-    doc.fontSize(10).font(boldFont)
+    doc.fontSize(9).font(boldFont)
       .text(`小计：¥${subtotal.toFixed(2)}`, tableX, currentY + 2, { width: tableWidth, align: 'right', lineBreak: false });
     currentY += 12;
     doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
@@ -1037,13 +1037,13 @@ async function generatePurchaseApplyPDF(purchaseId) {
   }
 
   if (Object.keys(groupedItems).length === 0) {
-    doc.fontSize(10).font(regFont).text('暂无采购明细', { align: 'center' });
+    doc.fontSize(9).font(regFont).text('暂无采购明细', { align: 'center' });
   }
 
   // 合计
   currentY = checkPageBreak(currentY, 30);
   doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
-  doc.fontSize(12).font(boldFont)
+  doc.fontSize(11).font(boldFont)
     .text(`合计金额：¥${grandTotal.toFixed(2)}`, tableX, currentY + 5, { width: tableWidth, align: 'right', lineBreak: false });
   currentY += 25;
 
@@ -1222,22 +1222,26 @@ async function generateWarehousePDF(purchaseId) {
     doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7);
     let subtotal = 0;
     for (const item of items) {
+      const notArrived = item.not_arrived ? Number(item.not_arrived) === 1 : false;
       const hasReceived = toNum(item.received_amount) > 0 || toNum(item.received_quantity) > 0;
       const price = hasReceived ? toNum(item.received_unit_price) : toNum(item.requested_unit_price);
       const qty = hasReceived ? toNum(item.received_quantity) : toNum(item.requested_quantity);
       const amt = hasReceived ? toNum(item.received_amount) : toNum(item.requested_amount);
       const spec = hasReceived ? (item.received_spec || item.spec || '') : (item.spec || '');
       const unit = hasReceived ? (item.received_unit || item.requested_unit || '') : (item.requested_unit || '');
+      const itemName = notArrived ? `${item.item_name}（未到货）` : item.item_name;
+      const qtyDisplay = notArrived ? '0' : String(qty);
+      const amtDisplay = notArrived ? '¥0.00' : `¥${amt.toFixed(2)}`;
       const cells = [
-        item.item_name,
+        itemName,
         spec,
         `${price.toFixed(2)}/${unit}`,
-        String(qty),
+        qtyDisplay,
         unit,
-        `¥${amt.toFixed(2)}`,
+        amtDisplay,
       ];
       currentY += drawTableRow(currentY, cells);
-      subtotal += amt;
+      if (!notArrived) subtotal += amt;
     }
     grandTotal += subtotal;
 
@@ -1991,11 +1995,12 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
     for (const item of items) {
       const qty = toNum(item.received_quantity);
       const price = toNum(item.received_unit_price);
+      const notArrived = item.not_arrived ? 1 : 0;
       const amount = qty * price;
       actualAmount += amount;
       await connection.query(
         `UPDATE warehouse_purchase_items
-         SET received_quantity = ?, received_unit = ?, received_unit_price = ?, received_amount = ?, received_spec = ?
+         SET received_quantity = ?, received_unit = ?, received_unit_price = ?, received_amount = ?, received_spec = ?, not_arrived = ?
          WHERE id = ? AND purchase_id = ?`,
         [
           qty,
@@ -2003,6 +2008,7 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
           price,
           amount,
           item.received_spec || null,
+          notArrived,
           item.id,
           id,
         ]

@@ -58,6 +58,7 @@ interface PurchaseItem {
   received_unit?: string;
   received_unit_price?: number;
   received_spec?: string;
+  not_arrived?: boolean;
 }
 
 // 确认部门
@@ -121,6 +122,7 @@ interface ReceiveFormRow {
   received_unit: string;
   received_unit_price: string;
   received_spec: string;
+  not_arrived: boolean;
 }
 
 // ====== 状态显示配置 ======
@@ -294,6 +296,7 @@ export default function WarehousePurchaseList() {
         safeNum(it.received_unit_price) || safeNum(it.unit_price),
       ),
       received_spec: it.received_spec || it.spec || '',
+      not_arrived: false,
     }));
     setReceiveRows(rows);
     setShowReceiveModal(true);
@@ -302,8 +305,9 @@ export default function WarehousePurchaseList() {
   // ===== 提交收货 =====
   const handleReceiveSubmit = async () => {
     if (!receiveTarget) return;
-    // 校验：实收数量不能为空或负数
+    // 校验：实收数量不能为空或负数（未到货的行无需校验数量）
     for (const row of receiveRows) {
+      if (row.not_arrived) continue;
       const qty = parseFloat(row.received_quantity);
       if (isNaN(qty) || qty < 0) {
         setError(`物资「${row.itemName}」的实收数量无效`);
@@ -320,10 +324,11 @@ export default function WarehousePurchaseList() {
       const payload = {
         items: receiveRows.map((r) => ({
           id: r.itemId,
-          received_quantity: parseFloat(r.received_quantity) || 0,
+          received_quantity: r.not_arrived ? 0 : (parseFloat(r.received_quantity) || 0),
           received_unit: r.received_unit.trim(),
           received_unit_price: parseFloat(r.received_unit_price) || 0,
           received_spec: r.received_spec.trim(),
+          not_arrived: r.not_arrived,
         })),
       };
       await api.post(`/warehouse-purchases/${receiveTarget.id}/receive`, payload);
@@ -816,9 +821,11 @@ export default function WarehousePurchaseList() {
                                         {it.reason || '-'}
                                       </td>
                                       <td className="px-3 py-2 text-right text-cyan-700">
-                                        {it.received_quantity != null
-                                          ? safeNum(it.received_quantity)
-                                          : '-'}
+                                        {it.not_arrived
+                                          ? <span className="text-red-500 text-xs">未到货</span>
+                                          : it.received_quantity != null
+                                            ? safeNum(it.received_quantity)
+                                            : '-'}
                                       </td>
                                     </tr>
                                   ))}
@@ -1182,14 +1189,16 @@ export default function WarehousePurchaseList() {
                         <th className="px-3 py-2 text-right">实收数量</th>
                         <th className="px-3 py-2 text-right">单价</th>
                         <th className="px-3 py-2 text-right">金额</th>
+                        <th className="px-3 py-2 text-center">未到货</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {receiveRows.map((row, idx) => {
-                        const qty = parseFloat(row.received_quantity) || 0;
+                        const qty = row.not_arrived ? 0 : (parseFloat(row.received_quantity) || 0);
                         const price = parseFloat(row.received_unit_price) || 0;
+                        const disabled = row.not_arrived;
                         return (
-                          <tr key={row.itemId || idx}>
+                          <tr key={row.itemId || idx} className={row.not_arrived ? 'bg-gray-50 opacity-60' : ''}>
                             <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">
                               {row.warehouseName || '-'}
                             </td>
@@ -1207,7 +1216,8 @@ export default function WarehousePurchaseList() {
                                     ),
                                   )
                                 }
-                                className="w-28 border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                disabled={disabled}
+                                className="w-28 border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
                               />
                             </td>
                             <td className="px-3 py-2">
@@ -1221,7 +1231,8 @@ export default function WarehousePurchaseList() {
                                     ),
                                   )
                                 }
-                                className="w-20 border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                disabled={disabled}
+                                className="w-20 border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
                               />
                             </td>
                             <td className="px-3 py-2">
@@ -1229,7 +1240,7 @@ export default function WarehousePurchaseList() {
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={row.received_quantity}
+                                value={row.not_arrived ? '0' : row.received_quantity}
                                 onChange={(e) =>
                                   setReceiveRows((prev) =>
                                     prev.map((r, i) =>
@@ -1237,7 +1248,8 @@ export default function WarehousePurchaseList() {
                                     ),
                                   )
                                 }
-                                className="w-24 text-right border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                disabled={disabled}
+                                className="w-24 text-right border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
                               />
                             </td>
                             <td className="px-3 py-2">
@@ -1253,11 +1265,34 @@ export default function WarehousePurchaseList() {
                                     ),
                                   )
                                 }
-                                className="w-24 text-right border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                disabled={disabled}
+                                className="w-24 text-right border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
                               />
                             </td>
                             <td className="px-3 py-2 text-right font-medium text-gray-800">
-                              {formatCurrency(qty * price)}
+                              {row.not_arrived ? (
+                                <span className="text-red-500 text-xs">未到货</span>
+                              ) : (
+                                formatCurrency(qty * price)
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <label className="inline-flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={row.not_arrived}
+                                  onChange={(e) =>
+                                    setReceiveRows((prev) =>
+                                      prev.map((r, i) =>
+                                        i === idx
+                                          ? { ...r, not_arrived: e.target.checked }
+                                          : r,
+                                      ),
+                                    )
+                                  }
+                                  className="w-4 h-4 text-red-500 border-gray-300 rounded focus:ring-red-500/20"
+                                />
+                              </label>
                             </td>
                           </tr>
                         );
