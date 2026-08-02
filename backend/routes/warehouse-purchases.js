@@ -221,9 +221,11 @@ function normalizeItemRow(item) {
 // ================================================
 // 企微审批辅助：获取模板控件类型
 // ================================================
-async function fetchWarehouseTemplateControlTypes(config, isPrepay = false) {
+async function fetchWarehouseTemplateControlTypes(config, isPrepay = false, templateIdOverride = null) {
   const accessToken = await getAccessToken(config);
-  const tplId = isPrepay ? (config.prepay_approval_template_id || config.warehouse_approval_template_id) : config.warehouse_approval_template_id;
+  // 优先使用显式指定的模板ID，其次按 isPrepay 选择预付款模板，最后回退到仓库审批模板
+  const tplId = templateIdOverride
+    || (isPrepay ? (config.prepay_approval_template_id || config.warehouse_approval_template_id) : config.warehouse_approval_template_id);
   console.log(`[企微] 获取审批模板详情... template_id=${tplId}`);
   const tplResp = await fetchWithTimeout(
     `https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`,
@@ -358,9 +360,9 @@ async function fetchWecomDepartments(accessToken) {
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
-// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, requiredControls, controlTitles, contactModes }
+// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, requiredControls, controlTitles, contactModes, templateIdOverride }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null, requiredControls, controlTitles, contactModes } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, requiredControls, controlTitles, contactModes, templateIdOverride } = options;
 
   // ================= 控件ID自动发现（兜底） =================
   // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
@@ -604,10 +606,12 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   }
 
   // 收款方/银行/账号（仅报销时传递）
+  // 收款人优先使用传入的 payeeName（如申请人自己），否则回退到 config.payee_name
   let paymentLabel = '转账';
+  const effectivePayeeName = payeeName || config.payee_name;
   if (useReceived) {
-    if (fieldMapping.payee_name && config.payee_name) {
-      contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: String(config.payee_name) } });
+    if (fieldMapping.payee_name && effectivePayeeName) {
+      contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: String(effectivePayeeName) } });
     }
     if (fieldMapping.bank_name && config.bank_name) {
       contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { text: String(config.bank_name) } });
@@ -711,7 +715,8 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   // 检查模板中所有 requiredControls 是否已出现在 contents 中
   // 若缺失则根据控件类型填充一个默认值
   const filledIds = new Set(contents.map(c => c.id));
-  const creatorUserid = String(options.creatorUserid || config.applicant_userid);
+  // creatorUserid 已在函数顶部从 options 解构，此处确保非空字符串
+  const effectiveCreatorUserid = String(creatorUserid || config.applicant_userid);
 
   if (requiredControls && requiredControls.size > 0) {
     for (const ctrlId of requiredControls) {
@@ -758,12 +763,12 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
               control: 'Contact',
               id: ctrlId,
               value: {
-                members: creatorUserid
-                  ? [{ userid: String(creatorUserid), name: '申请人' }]
+                members: effectiveCreatorUserid
+                  ? [{ userid: effectiveCreatorUserid, name: '申请人' }]
                   : [],
               },
             });
-            console.log(`[审批构建] 兜底必填Contact(id=${ctrlId}, mode=${fbMode || 'user'}, title=${ctrlTitle}): 申请人=${creatorUserid || '空'}`);
+            console.log(`[审批构建] 兜底必填Contact(id=${ctrlId}, mode=${fbMode || 'user'}, title=${ctrlTitle}): 申请人=${effectiveCreatorUserid || '空'}`);
           }
           break;
         }
@@ -824,10 +829,11 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   }
 
   const applyData = {
-    creator_userid: creatorUserid,
-    template_id: options.prepayMode && options.template_id_override
-      ? String(options.template_id_override)
-      : String(config.warehouse_approval_template_id),
+    creator_userid: effectiveCreatorUserid,
+    // 模板ID优先级：显式传入 templateIdOverride > prepayMode 的 template_id_override > 仓库审批模板
+    template_id: templateIdOverride
+      || (options.prepayMode && options.template_id_override)
+      || String(config.warehouse_approval_template_id),
     use_template_approver: 1,
     apply_data: { contents },
     summary_list: summaryList,
@@ -838,13 +844,22 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
 }
 
 // 发起仓库报销审批（全员确认后 / 重新发起 复用）
+// 与食材采购报销不同：
+//   - 申请人 = 当前登录用户（creatorUserid），而非配置中的固定 applicant_userid
+//   - 收款人 = 申请人自己（取企微真实姓名），而非配置中的固定 payee_name
+//   - 模板使用费用报销模板（approval_template_id）+ 字段映射（approval_field_mapping）
 async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const config = await getWecomConfig();
-  if (!config || !config.corp_id || !config.app_secret || !config.warehouse_approval_template_id || !config.applicant_userid) {
-    throw new Error('请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）');
+  // 报销走费用报销模板，校验 approval_template_id（不再要求 warehouse_approval_template_id 和 applicant_userid）
+  if (!config || !config.corp_id || !config.app_secret || !config.approval_template_id) {
+    throw new Error('请先完成企微费用报销配置（费用报销模板ID approval_template_id）');
   }
-  const fieldMapping = parseFieldMapping(config.warehouse_field_mapping);
-  const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles, contactModes } = await fetchWarehouseTemplateControlTypes(config);
+  if (!creatorUserid) {
+    throw new Error('未获取到当前登录用户的企微userid，无法发起报销');
+  }
+  const approvalTemplateId = String(config.approval_template_id);
+  const fieldMapping = parseFieldMapping(config.approval_field_mapping);
+  const { controlTypeMap, selectorOptionsMap, requiredControls, controlTitles, contactModes } = await fetchWarehouseTemplateControlTypes(config, false, approvalTemplateId);
 
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -852,7 +867,16 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const reasonTemplate = config.payment_reason_template || '仓库采购报销';
   const reason = reasonTemplate.replace('{date}', dateStr);
 
-  // 确保 PDF 存在
+  // 收款人 = 申请人自己，取企微真实姓名
+  let payeeName = creatorUserid;
+  try {
+    const realName = await getWecomUserName(creatorUserid);
+    if (realName) payeeName = realName;
+  } catch (e) {
+    console.warn('[仓库报销] 获取申请人姓名失败，回退使用userid作为收款人:', e.message);
+  }
+
+  // 确保 PDF 存在（确认单 PDF）
   const pdfPath = path.join(PDF_DIR, `warehouse_${row.id}.pdf`);
   if (!fs.existsSync(pdfPath)) {
     try { await generateWarehousePDF(row.id); } catch (e) { console.error('生成PDF失败:', e.message); }
@@ -867,9 +891,11 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     pdfPath,
     rowId: row.id,
     creatorUserid,
+    payeeName,
     requiredControls,
     controlTitles,
     contactModes,
+    templateIdOverride: approvalTemplateId,
   });
   const spNo = await submitApproval(config, applyData);
   return spNo;
