@@ -1982,7 +1982,8 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
       await connection.rollback();
       return res.status(404).json({ error: '采购单不存在' });
     }
-    if (rows[0].status !== 'approved') {
+    const purchaseRow = rows[0];
+    if (purchaseRow.status !== 'approved') {
       await connection.rollback();
       return res.status(400).json({ error: '只有审批通过的采购单可以录入收货' });
     }
@@ -2055,7 +2056,7 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
          VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'purchase', ?, ?, ?, ?, ?)`,
         [uuidv4(), ri.warehouse_id, ri.item_id, ri.item_name,
          rQty, rUnit, rPrice, rAmount,
-         `采购入库 ${row.purchase_no || id}`,
+         `采购入库 ${purchaseRow.purchase_no || id}`,
          id, operatorId, operatorName, deptId || null, deptName]
       );
 
@@ -2085,7 +2086,7 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
            VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, 'purchase', ?, ?, ?, ?, ?)`,
           [uuidv4(), ri.warehouse_id, ri.item_id, ri.item_name,
            -rQty, rUnit, rPrice, rAmount,
-           `即采即用自动出库 ${row.purchase_no || id}`,
+           `即采即用自动出库 ${purchaseRow.purchase_no || id}`,
            id, operatorId, operatorName, deptId || null, deptName]
         );
         // 库存归零
