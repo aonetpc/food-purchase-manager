@@ -1050,7 +1050,7 @@ export default function WarehousePurchaseList() {
                                 disabled={actioningId === p.id}
                                 className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
                               >
-                                <FileDown size={14} />
+                                <Download size={14} />
                                 生成PDF
                               </button>
                               <button

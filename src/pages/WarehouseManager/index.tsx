@@ -29,6 +29,7 @@ interface Warehouse {
   department_id?: string;
   department_name?: string;
   manager_userid?: string;
+  confirmer_userid?: string;
   location?: string;
   created_at?: string;
 }
@@ -68,6 +69,7 @@ interface WarehouseForm {
   type: WarehouseType;
   department_id: string;
   manager_userid: string;
+  confirmer_userid: string;
   location: string;
 }
 
@@ -107,6 +109,7 @@ const emptyWarehouseForm = (): WarehouseForm => ({
   type: 'main',
   department_id: '',
   manager_userid: '',
+  confirmer_userid: '',
   location: '',
 });
 
@@ -224,6 +227,7 @@ export default function WarehouseManager() {
       type: w.type,
       department_id: w.department_id || '',
       manager_userid: w.manager_userid || '',
+      confirmer_userid: w.confirmer_userid || '',
       location: w.location || '',
     });
     setWarehouseFormError('');
@@ -247,6 +251,7 @@ export default function WarehouseManager() {
       type: warehouseForm.type,
       department_id: warehouseForm.department_id || null,
       manager_userid: warehouseForm.manager_userid.trim() || null,
+      confirmer_userid: warehouseForm.confirmer_userid.trim() || null,
       location: warehouseForm.location.trim() || null,
     };
     try {
@@ -656,6 +661,7 @@ export default function WarehouseManager() {
                     <th>类型</th>
                     <th>关联部门</th>
                     <th>管理员</th>
+                    <th>确认人</th>
                     <th>位置</th>
                     <th className="text-right">操作</th>
                   </tr>
@@ -681,6 +687,7 @@ export default function WarehouseManager() {
                         </td>
                         <td className="text-gray-700">{w.department_name || '-'}</td>
                         <td className="text-gray-700">{w.manager_userid || '-'}</td>
+                        <td className="text-gray-700">{w.confirmer_userid || '-'}</td>
                         <td className="text-gray-700">{w.location || '-'}</td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -975,6 +982,18 @@ export default function WarehouseManager() {
                   placeholder="请输入管理员姓名"
                   className="input-field"
                 />
+              </div>
+              {/* 确认人 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">确认人（企微userid）</label>
+                <input
+                  type="text"
+                  value={warehouseForm.confirmer_userid}
+                  onChange={(e) => setWarehouseForm({ ...warehouseForm, confirmer_userid: e.target.value })}
+                  placeholder="企业微信userid，多个用逗号分隔"
+                  className="input-field"
+                />
+                <p className="text-xs text-gray-400 mt-1">采购入库后，系统将向此确认人发送应用消息通知</p>
               </div>
               {/* 仓库位置 */}
               <div>

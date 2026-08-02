@@ -27,14 +27,14 @@ router.get('/', async (req, res) => {
 // 新建仓库
 router.post('/', async (req, res) => {
   try {
-    const { name, code, type = 'dept', department_id, manager_userid, location, sort_order = 0 } = req.body;
+    const { name, code, type = 'dept', department_id, manager_userid, confirmer_userid, location, sort_order = 0 } = req.body;
     if (!name) return res.status(400).json({ error: '仓库名称不能为空' });
 
     const id = uuidv4();
     await pool.query(
-      `INSERT INTO warehouses (id, name, code, type, department_id, manager_userid, location, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, name, code || null, type, department_id || null, manager_userid || null, location || null, sort_order]
+      `INSERT INTO warehouses (id, name, code, type, department_id, manager_userid, confirmer_userid, location, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name, code || null, type, department_id || null, manager_userid || null, confirmer_userid || null, location || null, sort_order]
     );
 
     const [rows] = await pool.query(`
@@ -53,7 +53,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, code, type, department_id, manager_userid, location, sort_order, status } = req.body;
+    const { name, code, type, department_id, manager_userid, confirmer_userid, location, sort_order, status } = req.body;
     const fields = [];
     const values = [];
     if (name !== undefined) { fields.push('name = ?'); values.push(name); }
@@ -61,6 +61,7 @@ router.put('/:id', async (req, res) => {
     if (type !== undefined) { fields.push('type = ?'); values.push(type); }
     if (department_id !== undefined) { fields.push('department_id = ?'); values.push(department_id); }
     if (manager_userid !== undefined) { fields.push('manager_userid = ?'); values.push(manager_userid); }
+    if (confirmer_userid !== undefined) { fields.push('confirmer_userid = ?'); values.push(confirmer_userid); }
     if (location !== undefined) { fields.push('location = ?'); values.push(location); }
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(sort_order); }
     if (status !== undefined) { fields.push('status = ?'); values.push(status); }

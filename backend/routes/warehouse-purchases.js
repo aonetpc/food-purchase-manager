@@ -2162,24 +2162,30 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       }
     }
 
-    // 按 items 的 department_id 匹配确认人，构建 userDeptMap
-    // 没有部门的行（总仓）不需要确认，只展示在群消息中
-    const userDeptMap = {};
-    const noDeptItems = []; // 无部门的明细（总仓等）
-    for (const item of itemRows) {
-      const deptId = item.department_id;
-      const deptName = item.department_name;
-      const confirmer = deptConfirmerMap[deptId] || deptConfirmerMap[deptName];
-      if (confirmer) {
-        if (!userDeptMap[confirmer]) userDeptMap[confirmer] = { items: [], depts: new Set() };
-        userDeptMap[confirmer].items.push(item);
-        userDeptMap[confirmer].depts.add(deptName || '未分类');
-      } else {
-        noDeptItems.push(item);
+    // 读取各仓库确认人
+    const [whRows] = await connection.query('SELECT id, name, confirmer_userid FROM warehouses WHERE status = 1');
+    const whConfirmerMap = {};
+    for (const w of whRows) {
+      if (w.confirmer_userid) {
+        whConfirmerMap[w.id] = w.confirmer_userid;
+        whConfirmerMap[w.name] = w.confirmer_userid;
       }
     }
 
-    // 如果没有需要确认的部门（全部是总仓），直接跳到已确认状态
+    // 按 items 的 warehouse_id 优先匹配确认人，fallback 到 department_id
+    const userDeptMap = {}; // userid -> { items: [], depts: Set, warehouses: Set }
+    for (const item of itemRows) {
+      const confirmer = whConfirmerMap[item.warehouse_id] || whConfirmerMap[item.warehouse_name]
+        || deptConfirmerMap[item.department_id] || deptConfirmerMap[item.department_name];
+      if (confirmer) {
+        if (!userDeptMap[confirmer]) userDeptMap[confirmer] = { items: [], depts: new Set(), warehouses: new Set() };
+        userDeptMap[confirmer].items.push(item);
+        if (item.department_name) userDeptMap[confirmer].depts.add(item.department_name);
+        if (item.warehouse_name) userDeptMap[confirmer].warehouses.add(item.warehouse_name);
+      }
+    }
+
+    // 如果没有需要确认的人
     const hasConfirmers = Object.keys(userDeptMap).length > 0;
     const mentionedUsers = Object.keys(userDeptMap);
 
@@ -2206,7 +2212,9 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
     }
     for (const [whName, whItems] of Object.entries(groupedByWh)) {
       mdContent += `**【${whName}】**\n`;
+      // 已到货物资
       for (const item of whItems) {
+        if (item.not_arrived) continue; // 未到货物资单独列出
         const hasReceived = toNum(item.received_amount) > 0 || toNum(item.received_quantity) > 0;
         const price = hasReceived ? toNum(item.received_unit_price) : toNum(item.requested_unit_price);
         const qty = hasReceived ? toNum(item.received_quantity) : toNum(item.requested_quantity);
@@ -2215,7 +2223,16 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
         const deptTag = item.department_name ? `[${item.department_name}]` : '';
         mdContent += `> ${item.item_name}  ${price.toFixed(2)}/${unit} ×${qty}${unit} = ¥${amt.toFixed(2)} ${deptTag}\n`;
       }
-      const subtotal = whItems.reduce((s, i) => {
+      // 未到货物资单独列出
+      const notArrivedItems = whItems.filter(i => i.not_arrived);
+      if (notArrivedItems.length > 0) {
+        mdContent += `\n> ⚠️ **未到货物资**：\n`;
+        for (const item of notArrivedItems) {
+          mdContent += `> ${item.item_name}  （未到货）\n`;
+        }
+      }
+      // 小计只计算已到货物资
+      const subtotal = whItems.filter(i => !i.not_arrived).reduce((s, i) => {
         const hasReceived = toNum(i.received_amount) > 0 || toNum(i.received_quantity) > 0;
         return s + (hasReceived ? toNum(i.received_amount) : toNum(i.requested_amount));
       }, 0);
@@ -2229,8 +2246,6 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
         mdContent += ` @${userid}`;
       }
       mdContent += `\n\n`;
-    } else {
-      mdContent += `ℹ️ 本次采购均为总仓入库，无需部门确认。\n\n`;
     }
 
     // 发送群消息
@@ -2252,18 +2267,21 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       for (const [userid, data] of Object.entries(userDeptMap)) {
         try {
           const userDeptNames = Array.from(data.depts);
+          const userWhNames = Array.from(data.warehouses);
           const userItems = data.items;
-          const userTotal = userItems.reduce((s, i) => {
+          // 金额只统计已到货物资
+          const userTotal = userItems.filter(i => !i.not_arrived).reduce((s, i) => {
             const hasReceived = toNum(i.received_amount) > 0 || toNum(i.received_quantity) > 0;
             return s + (hasReceived ? toNum(i.received_amount) : toNum(i.requested_amount));
           }, 0);
 
-          // 用户负责部门的内容摘要
-          const subTitle = `采购单号：${purchaseNo}\n您负责的部门：${userDeptNames.join('、')}`;
+          // 用户负责仓库/部门的内容摘要
+          const scopeLabel = userWhNames.length > 0 ? userWhNames.join('、') : userDeptNames.join('、');
+          const subTitle = `采购单号：${purchaseNo}\n您负责确认：${scopeLabel}`;
 
           const horizontalContentList = [
             { keyname: '采购单号', value: String(purchaseNo || '-') },
-            { keyname: '涉及部门', value: userDeptNames.join('、') },
+            { keyname: '涉及仓库', value: userWhNames.length > 0 ? userWhNames.join('、') : '-' },
             { keyname: '物资项数', value: `${userItems.length}项` },
           ];
 
@@ -2285,7 +2303,7 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
           });
 
           sentResponseCodes.push({ userid, responseCode: sendResult.response_code });
-          sentToUsers.push({ userid, departments: userDeptNames.join('、'), total: userTotal });
+          sentToUsers.push({ userid, scope: scopeLabel, total: userTotal });
         } catch (sendErr) {
           console.error(`发送个人模板卡片消息失败 ${userid}:`, sendErr.message);
           failedUsers.push({ userid, error: sendErr.message });
