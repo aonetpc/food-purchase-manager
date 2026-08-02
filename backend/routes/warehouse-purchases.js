@@ -698,17 +698,20 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   }
 
   // 构建摘要列表（审批卡片上显示的摘要）
-  // 注意：金额已在事由中体现（"预计费用¥xxx"），摘要不再单独显示金额行
-  const summaryList = [
-    { summary_info: [{ text: reason, lang: 'zh_CN' }] },
-  ];
-  // 添加申购部门行（采购审批时显示）
-  if (!useReceived && fullDeptList) {
-    summaryList.push({ summary_info: [{ text: `申购部门：${fullDeptList}`, lang: 'zh_CN' }] });
-  }
-  // 报销时才添加付款方式
+  // 采购审批：事由 + 申购部门
+  // 报销审批：付款事由 + 付款金额 + 付款方式（与食材采购费用报销对齐）
+  const summaryList = [];
   if (useReceived) {
+    // 报销模式：对齐食材采购费用报销格式
+    summaryList.push({ summary_info: [{ text: `付款事由：${reason}`, lang: 'zh_CN' }] });
+    summaryList.push({ summary_info: [{ text: `付款金额：¥${toNum(amount).toFixed(2)}`, lang: 'zh_CN' }] });
     summaryList.push({ summary_info: [{ text: `付款方式：${paymentLabel}`, lang: 'zh_CN' }] });
+  } else {
+    // 采购审批模式
+    summaryList.push({ summary_info: [{ text: reason, lang: 'zh_CN' }] });
+    if (fullDeptList) {
+      summaryList.push({ summary_info: [{ text: `申购部门：${fullDeptList}`, lang: 'zh_CN' }] });
+    }
   }
 
   // ================= 必填控件兜底填充 =================
@@ -864,7 +867,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const reasonTemplate = config.payment_reason_template || '仓库采购报销';
+  const reasonTemplate = config.payment_reason_template || '{date}仓库采购费用';
   const reason = reasonTemplate.replace('{date}', dateStr);
 
   // 收款人 = 申请人自己，取企微真实姓名
