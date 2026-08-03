@@ -974,9 +974,16 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   // 付款事由：对齐采购申请事由格式，如"8月2日仓库采购单，实际入库¥414.41"
   // 日期使用采购单创建时间，而非报销提交时间
   const orderDate = new Date(row.created_at || row.apply_time || now);
-  const reimburseAmount = toNum(row.actual_amount) || toNum(row.total_amount);
+  const fullAmount = toNum(row.actual_amount) || toNum(row.total_amount);
   const monthDayStr = `${orderDate.getMonth() + 1}月${orderDate.getDate()}日`;
-  const reason = `${monthDayStr}仓库采购单，实际入库¥${reimburseAmount.toFixed(2)}`;
+  // 预付款少付尾款报销：仅报销差额（实际 - 预付）
+  const isPrepayTail = row.purchase_type === 'prepay' && row.writeoff_status === 'manual';
+  const reimburseAmount = isPrepayTail
+    ? Math.max(0, fullAmount - toNum(row.prepay_amount))
+    : fullAmount;
+  const reason = isPrepayTail
+    ? `${monthDayStr}仓库采购预付尾款，实际入库¥${fullAmount.toFixed(2)}，已预付¥${toNum(row.prepay_amount).toFixed(2)}，尾款¥${reimburseAmount.toFixed(2)}`
+    : `${monthDayStr}仓库采购单，实际入库¥${reimburseAmount.toFixed(2)}`;
 
   // 收款人 = 申请人自己，取企微真实姓名
   let payeeName = creatorUserid;
@@ -995,7 +1002,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
 
   const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
     date: dateStr,
-    amount: toNum(row.actual_amount) || toNum(row.total_amount),
+    amount: reimburseAmount,
     reason,
     items,
     useReceived: true,
@@ -2276,12 +2283,8 @@ router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
     if (spStatus === 1 || spStatus === '1') {
       newApprovalStatus = 'pending';
     } else if (spStatus === 2 || spStatus === '2') {
-      // 采购审批通过：预付款订单直接进入 confirmed 状态（允许收货），不受预付款审批状态影响
-      if (row.purchase_type === 'prepay') {
-        newStatus = 'confirmed';
-      } else {
-        newStatus = 'approved';
-      }
+      // 采购审批通过：预付款订单也走完整收货流程，统一设为 approved
+      newStatus = 'approved';
       newApprovalStatus = 'approved';
     } else if (spStatus === 3 || spStatus === '3') {
       newStatus = 'rejected';
@@ -2883,9 +2886,14 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
 
     let newReimburseStatus = row.reimbursement_status;
     let newStatus = row.status;
+    let writeoffDone = false;
     if (spStatus === 2) {
       newReimburseStatus = 'approved';
       newStatus = 'reimbursed';
+      // 预付款少付尾款报销通过后，标记核销完成
+      if (row.purchase_type === 'prepay' && row.writeoff_status === 'manual') {
+        writeoffDone = true;
+      }
     } else if (spStatus === 1) {
       newReimburseStatus = 'processing';
     } else if (spStatus === 3) {
@@ -2900,10 +2908,17 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
       }
     }
 
-    await pool.query(
-      'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ? WHERE id = ?',
-      [newReimburseStatus, newStatus, id]
-    );
+    if (writeoffDone) {
+      await pool.query(
+        'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ?, writeoff_status = ? WHERE id = ?',
+        [newReimburseStatus, newStatus, 'auto', id]
+      );
+    } else {
+      await pool.query(
+        'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ? WHERE id = ?',
+        [newReimburseStatus, newStatus, id]
+      );
+    }
 
     const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     res.json({
@@ -3087,10 +3102,11 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       }
     }
 
-    // 付款事由：8月3日仓库采购预付款，供应商：麦德龙，预付金额：¥50.00
-    const prepayReason = `${monthDayStr}仓库采购预付款，供应商：${row.supplier_name || '未指定'}，预付金额：¥${prepayAmount.toFixed(2)}`;
-    // 备注说明：预付款给供应商麦德龙，采购单号：WH20260803001
-    const prepayRemark = `预付款给供应商${row.supplier_name || '未指定'}，采购单号：${row.purchase_no || id}`;
+    // 付款事由：8月3日仓库采购预付款，预计总金额：¥136.00，预付金额：¥50.00，供应商：麦德龙
+    const totalAmount = toNum(row.total_amount);
+    const prepayReason = `${monthDayStr}仓库采购预付款，预计总金额：¥${totalAmount.toFixed(2)}，预付金额：¥${prepayAmount.toFixed(2)}，供应商：${row.supplier_name || '未指定'}`;
+    // 备注说明：本次为仓库采购预付款，请相关部门确认收货后完成对账结算，采购单号：WH20260803001
+    const prepayRemark = `本次为仓库采购预付款，请相关部门确认收货后完成对账结算，采购单号：${row.purchase_no || id}`;
 
     // 预校验报销模板必填字段配置是否完整
     const missingConfigs = [];
@@ -3212,27 +3228,8 @@ router.post('/:id/refresh-prepay', requireAuth, async (req, res) => {
         'UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?',
         [newStatus, id]
       );
-      // 自动核销
-      await pool.query(
-        `UPDATE warehouse_purchases
-         SET writeoff_status = 'auto', writeoff_amount = prepay_amount
-         WHERE id = ? AND writeoff_status = 'pending'`,
-        [id]
-      );
-      // 更新供应商余额
-      if (row.supplier_id) {
-        const [supplierRows] = await pool.query(
-          'SELECT prepay_balance FROM suppliers WHERE id = ?',
-          [row.supplier_id]
-        );
-        if (supplierRows.length > 0) {
-          const currentBalance = toNum(supplierRows[0].prepay_balance);
-          await pool.query(
-            'UPDATE suppliers SET prepay_balance = ? WHERE id = ?',
-            [currentBalance + toNum(row.prepay_amount), row.supplier_id]
-          );
-        }
-      }
+      // 注：预付款审批通过后不在此处自动核销，需等待收货确认后通过 /writeoff-prepay 手动核销
+      // 供应商余额也不在此处更新，避免与核销时重复计算（核销时按实际金额差异更新）
     } else if (spStatus === 3 || spStatus === '3') {
       newStatus = 'rejected';
       await pool.query(
@@ -3307,6 +3304,10 @@ router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
     if (row.actual_amount == null || toNum(row.actual_amount) <= 0) {
       await connection.rollback();
       return res.status(400).json({ error: '请先录入收货并完成确认' });
+    }
+    if (row.writeoff_status === 'auto' || row.writeoff_status === 'manual') {
+      await connection.rollback();
+      return res.status(400).json({ error: '该采购单已核销，请勿重复操作' });
     }
 
     const actualAmount = toNum(row.actual_amount);

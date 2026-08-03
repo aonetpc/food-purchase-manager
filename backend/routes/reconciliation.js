@@ -442,9 +442,9 @@ router.get('/stats/overview', requireAuth, async (req, res) => {
     );
     const pendingMonthly = { count: pendMonth[0].cnt, amount: toNum(pendMonth[0].amt) };
 
-    // 待人工核销预付款采购单
+    // 待人工核销预付款采购单（含未核销 NULL 及少付待尾款 manual）
     const [pendPrepay] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status='confirmed' AND writeoff_status='manual'`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status='confirmed' AND (writeoff_status='manual' OR writeoff_status IS NULL)`
     );
     const pendingPrepayWriteoff = { count: pendPrepay[0].cnt, amount: toNum(pendPrepay[0].amt) };
 

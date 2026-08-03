@@ -1125,8 +1125,8 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* 预付款待核销：手动核销 */}
-                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && (
+                          {/* 预付款已确认未核销：手动核销 */}
+                          {p.purchase_type === 'prepay' && p.status === 'confirmed' && !p.writeoff_status && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1137,6 +1137,21 @@ export default function WarehousePurchaseList() {
                             >
                               <RefreshCw size={14} />
                               手动核销
+                            </button>
+                          )}
+
+                          {/* 预付款少付待尾款报销 */}
+                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleResubmit(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-primary text-xs flex items-center gap-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
+                            >
+                              <RotateCcw size={14} />
+                              发起尾款报销
                             </button>
                           )}
 
