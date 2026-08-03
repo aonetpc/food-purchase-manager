@@ -360,9 +360,9 @@ async function fetchWecomDepartments(accessToken) {
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
-// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, requiredControls, controlTitles, contactModes, templateIdOverride }
+// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, relatedApprovalSpNo, requiredControls, controlTitles, contactModes, templateIdOverride }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, requiredControls, controlTitles, contactModes, templateIdOverride } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride } = options;
 
   // ================= 控件ID自动发现（兜底） =================
   // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
@@ -697,6 +697,57 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     }
   }
 
+  // ================= 报销模式：备注说明（涉及部门） =================
+  // 备注说明只写涉及部门，如"后勤部、行政人事部"
+  // 控件发现优先级：fieldMapping.remark > 模板中标题含"备注"或"说明"的 Text/Textarea 控件
+  if (useReceived) {
+    const deptNames = Array.from(new Set(
+      (items || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
+    ));
+    const remarkText = deptNames.length > 0 ? deptNames.join('、') : '';
+    if (remarkText) {
+      let remarkControlId = fieldMapping.remark || null;
+      if (!remarkControlId && controlTitles) {
+        // 自动发现：标题含"备注"或"说明"的 Text/Textarea 控件
+        const remarkEntry = Object.entries(controlTitles).find(([id, title]) => {
+          const t = String(title || '');
+          return (t.includes('备注') || t.includes('说明')) && (controlTypeMap[id] === 'Text' || controlTypeMap[id] === 'Textarea');
+        });
+        if (remarkEntry) remarkControlId = remarkEntry[0];
+      }
+      if (remarkControlId) {
+        contents.push({
+          control: controlTypeMap[remarkControlId] || 'Text',
+          id: remarkControlId,
+          value: { text: remarkText },
+        });
+        console.log(`[审批构建] 填充备注说明(id=${remarkControlId}): ${remarkText}`);
+      }
+    }
+  }
+
+  // ================= 报销模式：关联审批单（RelatedApproval 控件） =================
+  // 引用之前填写的采购申请单（approval_sp_no）
+  // 控件发现优先级：fieldMapping.related_approval > 模板中第一个 RelatedApproval 控件
+  if (useReceived && relatedApprovalSpNo) {
+    let relatedControlId = fieldMapping.related_approval || null;
+    if (!relatedControlId && controlTypeMap) {
+      // 自动发现：第一个 RelatedApproval 类型控件
+      const relatedEntry = Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'RelatedApproval');
+      if (relatedEntry) relatedControlId = relatedEntry[0];
+    }
+    if (relatedControlId) {
+      contents.push({
+        control: 'RelatedApproval',
+        id: relatedControlId,
+        value: { related_approval: { sp_no_list: [String(relatedApprovalSpNo)] } },
+      });
+      console.log(`[审批构建] 填充关联审批单(id=${relatedControlId}): sp_no=${relatedApprovalSpNo}`);
+    } else {
+      console.warn('[审批构建] 未找到关联审批单控件，跳过填充。请在企微配置页配置 related_approval 控件ID');
+    }
+  }
+
   // 构建摘要列表（审批卡片上显示的摘要）
   // 采购审批：事由 + 申购部门
   // 报销审批：付款事由 + 付款金额 + 付款方式（与食材采购费用报销对齐）
@@ -867,8 +918,11 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const reasonTemplate = config.payment_reason_template || '{date}仓库采购费用';
-  const reason = reasonTemplate.replace('{date}', dateStr);
+  // 付款事由：对齐采购申请事由格式（图3），如"8月3日仓库采购单，实际入库¥414.41"
+  // 优先使用实际入库金额，无实际金额时回退到申请金额
+  const reimburseAmount = toNum(row.actual_amount) || toNum(row.total_amount);
+  const monthDayStr = `${now.getMonth() + 1}月${now.getDate()}日`;
+  const reason = `${monthDayStr}仓库采购单，实际入库¥${reimburseAmount.toFixed(2)}`;
 
   // 收款人 = 申请人自己，取企微真实姓名
   let payeeName = creatorUserid;
@@ -895,6 +949,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     rowId: row.id,
     creatorUserid,
     payeeName,
+    relatedApprovalSpNo: row.approval_sp_no || null, // 关联采购审批单号
     requiredControls,
     controlTitles,
     contactModes,

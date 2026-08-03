@@ -45,6 +45,9 @@ const FIELD_MAPPING_OPTIONS = [
   { key: 'bank_account', label: '银行账号', control: 'Text' },
   { key: 'payment_method', label: '付款方式', control: 'Select' },
   { key: 'details', label: '采购明细', control: 'Textarea' },
+  // 仓库采购报销专用：备注说明（涉及部门）与关联采购审批单
+  { key: 'remark', label: '备注说明', control: 'Text' },
+  { key: 'related_approval', label: '关联审批单', control: 'RelatedApproval' },
 ];
 
 // 仓库采购审批模板字段映射选项
