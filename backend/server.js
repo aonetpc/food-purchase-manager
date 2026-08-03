@@ -34,7 +34,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // 为企微回调添加raw body解析
 app.use('/api/wecom/callback', express.raw({ type: '*/*' }));

@@ -511,13 +511,13 @@ export default function WarehousePurchaseList() {
     try {
       await api.post(`/warehouse-purchases/${prepayTarget.id}/submit-prepay`, {
         attachments: prepayAttachments,
-      });
+      }, { timeout: 60000 });
       setShowPrepayModal(false);
       setPrepayTarget(null);
       setPrepayAttachments([]);
       await fetchList();
     } catch (err: any) {
-      const errMsg = err?.response?.data?.error || err?.message || '发起预付款审批失败';
+      const errMsg = err?.message || err?.error || '发起预付款审批失败';
       setError(errMsg);
     } finally {
       setPrepaySubmitting(false);

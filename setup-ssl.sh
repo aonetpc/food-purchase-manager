@@ -123,6 +123,8 @@ server {
 
     # API接口转发到后端
     location /api/ {
+        # 允许大文件上传（预付款附件等）
+        client_max_body_size 50m;
         proxy_pass http://localhost:3000/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
