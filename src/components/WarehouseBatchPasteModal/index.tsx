@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Warehouse as WarehouseIcon,
   ClipboardList,
+  Truck,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -33,6 +34,11 @@ interface WhItem {
   reference_price?: number;
   category_id?: string;
 }
+interface Supplier {
+  id: string;
+  name: string;
+  prepay_balance?: number;
+}
 
 // 导入结果行
 export interface PasteLine {
@@ -44,11 +50,13 @@ export interface PasteLine {
   unit_price: string;
   warehouse_id: string;
   warehouse_name: string;
+  supplier_id?: string;
+  supplier_name?: string;
   reason: string;
 }
 
 // 解析行状态
-type RowStatus = 'matched' | 'item_missing' | 'warehouse_missing' | 'error';
+type RowStatus = 'matched' | 'item_missing' | 'warehouse_missing' | 'supplier_missing' | 'error';
 
 interface ParsedRow {
   id: string;
@@ -60,10 +68,12 @@ interface ParsedRow {
   quantity: string;
   unitPrice: string;
   warehouse: string;
+  supplier: string;
   reason: string;
   status: RowStatus;
   matchedItem?: WhItem;
   matchedWarehouse?: Wh;
+  matchedSupplier?: Supplier;
   error?: string;
 }
 
@@ -72,9 +82,13 @@ interface Props {
   onClose: () => void;
   onConfirm: (lines: PasteLine[]) => void;
   onItemCreated?: (item: WhItem) => void;
+  onSupplierCreated?: (supplier: Supplier) => void;
   warehouses: Wh[];
   categoryTree: CatNode[];
   items: WhItem[];
+  suppliers: Supplier[];
+  // 预付/月结采购已选表头供应商时传入，导入时自动复用，不解析供应商列
+  fixedSupplier?: Supplier | null;
 }
 
 const genId = () => Math.random().toString(36).substring(2, 11);
@@ -98,18 +112,22 @@ export default function WarehouseBatchPasteModal({
   onClose,
   onConfirm,
   onItemCreated,
+  onSupplierCreated,
   warehouses,
   categoryTree,
   items: initialItems,
+  suppliers: initialSuppliers,
+  fixedSupplier,
 }: Props) {
   const [pasteText, setPasteText] = useState('');
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [step, setStep] = useState<'paste' | 'preview'>('paste');
   const [localItems, setLocalItems] = useState<WhItem[]>(initialItems);
+  const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>(initialSuppliers);
 
-  // 新增物资 / 仓库映射 弹窗
+  // 新增物资 / 仓库映射 / 供应商映射 弹窗
   const [resolveRow, setResolveRow] = useState<ParsedRow | null>(null);
-  const [resolveType, setResolveType] = useState<'item' | 'warehouse' | null>(null);
+  const [resolveType, setResolveType] = useState<'item' | 'warehouse' | 'supplier' | null>(null);
   const [newItemForm, setNewItemForm] = useState({
     name: '',
     categoryId: '',
@@ -118,9 +136,13 @@ export default function WarehouseBatchPasteModal({
     refPrice: '',
   });
   const [newItemError, setNewItemError] = useState('');
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [newSupplierError, setNewSupplierError] = useState('');
   const [saving, setSaving] = useState(false);
 
   const flatCats = useMemo(() => flattenCats(categoryTree), [categoryTree]);
+  // 是否固定使用表头供应商（预付/月结）
+  const useFixedSupplier = !!fixedSupplier;
 
   useEffect(() => {
     if (open) {
@@ -136,6 +158,10 @@ export default function WarehouseBatchPasteModal({
     setLocalItems(initialItems);
   }, [initialItems]);
 
+  useEffect(() => {
+    setLocalSuppliers(initialSuppliers);
+  }, [initialSuppliers]);
+
   // ===== 解析粘贴文本 =====
   const parseText = () => {
     const lines = pasteText.trim().split('\n').filter((l) => l.trim());
@@ -150,7 +176,7 @@ export default function WarehouseBatchPasteModal({
 
       // 跳过表头（第一行且关键词命中≥2个）
       if (idx === 0) {
-        const hits = (line.match(/物资名称|规格|单位|数量|单价|仓库|理由/g) || []).length;
+        const hits = (line.match(/物资名称|规格|单位|数量|单价|仓库|供应商|理由/g) || []).length;
         if (hits >= 2) return;
       }
 
@@ -165,6 +191,7 @@ export default function WarehouseBatchPasteModal({
           quantity: '',
           unitPrice: '',
           warehouse: '',
+          supplier: '',
           reason: '',
           status: 'error',
           error: '格式不正确，至少需要物资名称',
@@ -178,6 +205,7 @@ export default function WarehouseBatchPasteModal({
       let quantity = '1';
       let unitPrice = '0';
       let warehouse = '';
+      let supplier = '';
       let reason = '';
 
       if (cols.length <= 3) {
@@ -189,13 +217,19 @@ export default function WarehouseBatchPasteModal({
           unitPrice = cols[2];
         }
       } else {
-        // 完整格式：名称 | 规格 | 单位 | 数量 | 单价 | 仓库 | 理由
+        // 完整格式：名称 | 规格 | 单位 | 数量 | 单价 | 仓库 | 供应商 | 理由
         spec = cols[1] || '';
         unit = cols[2] || '';
         quantity = cols[3] || '1';
         unitPrice = cols[4] || '0';
         warehouse = cols[5] || '';
-        reason = cols[6] || '';
+        // 固定表头供应商模式下不解析供应商列，第7列视为理由
+        if (useFixedSupplier) {
+          reason = cols[6] || '';
+        } else {
+          supplier = cols[6] || '';
+          reason = cols[7] || '';
+        }
       }
 
       // 匹配物资库（先精确名称+规格，回退只按名称）
@@ -209,11 +243,21 @@ export default function WarehouseBatchPasteModal({
         matchedWarehouse = warehouses.find((w) => w.name === warehouse);
       }
 
+      // 匹配供应商（固定供应商模式下直接使用表头供应商）
+      let matchedSupplier: Supplier | undefined;
+      if (useFixedSupplier) {
+        matchedSupplier = fixedSupplier || undefined;
+      } else if (supplier) {
+        matchedSupplier = localSuppliers.find((s) => s.name === supplier);
+      }
+
       let status: RowStatus = 'matched';
       if (!matchedItem) {
         status = 'item_missing';
       } else if (warehouse && !matchedWarehouse) {
         status = 'warehouse_missing';
+      } else if (!useFixedSupplier && supplier && !matchedSupplier) {
+        status = 'supplier_missing';
       }
 
       // 匹配到物资时补全规格/单位/参考价
@@ -235,10 +279,12 @@ export default function WarehouseBatchPasteModal({
         quantity,
         unitPrice,
         warehouse,
+        supplier,
         reason,
         status,
         matchedItem,
         matchedWarehouse,
+        matchedSupplier,
       });
     });
 
@@ -309,6 +355,7 @@ export default function WarehouseBatchPasteModal({
               : '0';
           let newStatus: RowStatus = 'matched';
           if (r.warehouse && !r.matchedWarehouse) newStatus = 'warehouse_missing';
+          else if (!useFixedSupplier && r.supplier && !r.matchedSupplier) newStatus = 'supplier_missing';
           return {
             ...r,
             status: newStatus,
@@ -338,14 +385,66 @@ export default function WarehouseBatchPasteModal({
     const wh = warehouses.find((w) => w.id === whId);
     if (!wh || !resolveRow) return;
     setParsedRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== resolveRow.id) return r;
+        let newStatus: RowStatus = 'matched';
+        if (!useFixedSupplier && r.supplier && !r.matchedSupplier) newStatus = 'supplier_missing';
+        return { ...r, status: newStatus, matchedWarehouse: wh, warehouse: wh.name };
+      }),
+    );
+    setResolveRow(null);
+    setResolveType(null);
+  };
+
+  // ===== 供应商映射 =====
+  const handleResolveSupplier = (row: ParsedRow) => {
+    setResolveRow(row);
+    setResolveType('supplier');
+    setNewSupplierName(row.supplier);
+    setNewSupplierError('');
+  };
+
+  const handleMapSupplier = (supplierId: string) => {
+    const supp = localSuppliers.find((s) => s.id === supplierId);
+    if (!supp || !resolveRow) return;
+    setParsedRows((prev) =>
       prev.map((r) =>
         r.id === resolveRow.id
-          ? { ...r, status: 'matched', matchedWarehouse: wh, warehouse: wh.name }
+          ? { ...r, status: 'matched', matchedSupplier: supp, supplier: supp.name }
           : r,
       ),
     );
     setResolveRow(null);
     setResolveType(null);
+  };
+
+  const handleAddSupplier = async () => {
+    if (!newSupplierName.trim()) {
+      setNewSupplierError('请输入供应商名称');
+      return;
+    }
+    setSaving(true);
+    setNewSupplierError('');
+    try {
+      const created = await api.post<Supplier>('/suppliers', {
+        name: newSupplierName.trim(),
+      });
+      setLocalSuppliers((prev) => [created, ...prev]);
+      onSupplierCreated?.(created);
+      setParsedRows((prev) =>
+        prev.map((r) =>
+          r.id === resolveRow?.id
+            ? { ...r, status: 'matched', matchedSupplier: created, supplier: created.name }
+            : r,
+        ),
+      );
+      setResolveRow(null);
+      setResolveType(null);
+    } catch (err: any) {
+      setNewSupplierError(err.message || '新增供应商失败');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ===== 确认导入 =====
@@ -360,6 +459,12 @@ export default function WarehouseBatchPasteModal({
       unit_price: r.unitPrice,
       warehouse_id: r.matchedWarehouse?.id || '',
       warehouse_name: r.matchedWarehouse?.name || r.warehouse,
+      supplier_id: useFixedSupplier
+        ? fixedSupplier?.id
+        : r.matchedSupplier?.id || '',
+      supplier_name: useFixedSupplier
+        ? fixedSupplier?.name
+        : r.matchedSupplier?.name || r.supplier,
       reason: r.reason,
     }));
     onConfirm(lines);
@@ -405,7 +510,11 @@ export default function WarehouseBatchPasteModal({
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
                 placeholder={
-                  '格式：物资名称 规格 单位 数量 单价 仓库名称 采购理由\n例如：\n洗洁精 5L 桶 10 35.00 厨房仓 日常补充\n灯泡 LED12W 个 20 8.50 总仓\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
+                  useFixedSupplier
+                    ? '格式：物资名称 规格 单位 数量 单价 仓库名称 采购理由\n例如：\n洗洁精 5L 桶 10 35.00 厨房仓 日常补充\n灯泡 LED12W 个 20 8.50 总仓\n（供应商已自动使用表头选择的：' +
+                      (fixedSupplier?.name || '') +
+                      '）\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
+                    : '格式：物资名称 规格 单位 数量 单价 仓库名称 供应商 采购理由\n例如：\n洗洁精 5L 桶 10 35.00 厨房仓 永辉超市 日常补充\n灯泡 LED12W 个 20 8.50 总仓 飞利浦 月度补充\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
                 }
                 className="w-full h-56 border border-gray-200 rounded-lg px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none"
               />
@@ -417,13 +526,26 @@ export default function WarehouseBatchPasteModal({
               <p className="mt-1">
                 列顺序：
                 <code className="bg-amber-100 px-1 rounded">
-                  物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 采购理由
+                  {useFixedSupplier
+                    ? '物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 采购理由'
+                    : '物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 供应商 | 采购理由'}
                 </code>
               </p>
+              {useFixedSupplier ? (
+                <p className="mt-1">
+                  当前为
+                  <strong>预付/月结</strong>
+                  采购，供应商自动使用表头选择的「{fixedSupplier?.name || '-'}」
+                </p>
+              ) : (
+                <p className="mt-1">
+                  供应商未匹配时可在预览页映射或新增到供应商库
+                </p>
+              )}
               <p className="mt-1">
                 简写模式（3列）：
                 <code className="bg-amber-100 px-1 rounded">物资名称 | 数量 | 单价</code>
-                ，规格/单位/仓库留空
+                ，其余字段留空
               </p>
               <p className="mt-1">
                 未匹配的物资可在预览页一键新增到物资库，仓库名不匹配可手动映射
@@ -487,6 +609,11 @@ export default function WarehouseBatchPasteModal({
                           {row.quantity} {row.unit} · ¥{row.unitPrice}
                           {row.spec && ` · ${row.spec}`}
                           {row.warehouse && ` · ${row.warehouse}`}
+                          {useFixedSupplier && fixedSupplier
+                            ? ` · 供应商: ${fixedSupplier.name}`
+                            : !useFixedSupplier && row.supplier
+                            ? ` · 供应商: ${row.supplier}`
+                            : ''}
                           {row.reason && ` · ${row.reason}`}
                         </div>
                       </div>
@@ -506,6 +633,14 @@ export default function WarehouseBatchPasteModal({
                           className="text-xs bg-blue-500 text-white px-2.5 py-1 rounded hover:bg-blue-600"
                         >
                           映射仓库
+                        </button>
+                      )}
+                      {row.status === 'supplier_missing' && (
+                        <button
+                          onClick={() => handleResolveSupplier(row)}
+                          className="text-xs bg-purple-500 text-white px-2.5 py-1 rounded hover:bg-purple-600"
+                        >
+                          映射供应商
                         </button>
                       )}
                       {row.status === 'error' && (
@@ -696,6 +831,88 @@ export default function WarehouseBatchPasteModal({
                     )}
                   </button>
                 ))}
+              </div>
+              <button
+                onClick={() => {
+                  setResolveRow(null);
+                  setResolveType(null);
+                }}
+                className="mt-3 w-full btn-secondary text-sm"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ===== 供应商映射弹窗 ===== */}
+        {resolveRow && resolveType === 'supplier' && (
+          <div
+            className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]"
+            onClick={() => {
+              setResolveRow(null);
+              setResolveType(null);
+            }}
+          >
+            <div
+              className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md max-h-[70vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                <Truck size={16} className="text-purple-500" />
+                映射供应商
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                供应商「{resolveRow.supplier}」未识别，请选择已有供应商或新增
+              </p>
+              <div className="space-y-1.5 overflow-y-auto flex-1 mb-3 max-h-48">
+                {localSuppliers.length === 0 ? (
+                  <p className="text-center text-xs text-gray-400 py-4">暂无供应商，请新增</p>
+                ) : (
+                  localSuppliers.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => handleMapSupplier(s.id)}
+                      className="w-full flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg hover:border-purple-400 hover:bg-purple-50 transition-colors text-left text-sm"
+                    >
+                      <Truck size={16} className="text-purple-500" />
+                      <span className="font-medium text-gray-800">{s.name}</span>
+                      {s.prepay_balance != null && Number(s.prepay_balance) > 0 && (
+                        <span className="text-xs text-gray-400">
+                          (余额¥{Number(s.prepay_balance).toFixed(2)})
+                        </span>
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="border-t border-gray-100 pt-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  新增供应商
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newSupplierName}
+                    onChange={(e) => setNewSupplierName(e.target.value)}
+                    placeholder="输入新供应商名称"
+                    className="input-field text-sm flex-1"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleAddSupplier}
+                    disabled={saving || !newSupplierName.trim()}
+                    className="btn-primary text-sm px-4 disabled:opacity-50"
+                  >
+                    {saving ? '...' : '新增'}
+                  </button>
+                </div>
+                {newSupplierError && (
+                  <div className="flex items-center gap-2 text-danger-600 mt-2 text-xs">
+                    <AlertCircle size={14} />
+                    <span>{newSupplierError}</span>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => {

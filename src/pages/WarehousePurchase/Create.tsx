@@ -186,6 +186,9 @@ export default function WarehousePurchaseCreate() {
   // 批量粘贴
   const [showBatchPaste, setShowBatchPaste] = useState(false);
 
+  // 库存数据：{ [warehouse_id]: { [item_id]: { quantity, unit } } }
+  const [inventoryMap, setInventoryMap] = useState<Record<string, Record<string, { quantity: number; unit?: string }>>>({});
+
   // 物资搜索弹窗
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -204,7 +207,7 @@ export default function WarehousePurchaseCreate() {
   });
   const [quickAddLoading, setQuickAddLoading] = useState(false);
 
-  // ===== 初始化：加载仓库、物资、分类树、部门 =====
+  // ===== 初始化：加载仓库、物资、分类树、部门、库存 =====
   useEffect(() => {
     fetchDepartments();
     fetchSuppliers();
@@ -212,11 +215,22 @@ export default function WarehousePurchaseCreate() {
       api.get<Warehouse[]>('/warehouses').catch(() => [] as Warehouse[]),
       api.get<WarehouseItem[]>('/warehouses/items').catch(() => [] as WarehouseItem[]),
       api.get<CategoryNode[]>('/warehouses/categories/tree').catch(() => [] as CategoryNode[]),
+      api.get<Array<{ warehouse_id: string; item_id: string; quantity: number; unit?: string }>>('/inventory').catch(() => []),
     ])
-      .then(([wh, it, tree]) => {
+      .then(([wh, it, tree, inv]) => {
         setWarehouses(wh);
         setItems(it);
         setCategoryTree(tree);
+        // 构建库存映射 { warehouse_id: { item_id: { quantity, unit } } }
+        const map: Record<string, Record<string, { quantity: number; unit?: string }>> = {};
+        (inv || []).forEach((row) => {
+          if (!map[row.warehouse_id]) map[row.warehouse_id] = {};
+          map[row.warehouse_id][row.item_id] = {
+            quantity: safeNum(row.quantity),
+            unit: row.unit,
+          };
+        });
+        setInventoryMap(map);
       })
       .finally(() => {
         if (!isEdit) setLoading(false);
@@ -429,6 +443,17 @@ export default function WarehousePurchaseCreate() {
   // 物资库新增物资后同步到本地列表
   const handleItemCreated = (item: WarehouseItem) => {
     setItems((prev) => [item, ...prev]);
+  };
+
+  // 供应商新增后同步刷新供应商库
+  const handleSupplierCreated = () => {
+    fetchSuppliers();
+  };
+
+  // 获取某行当前库存（按所选仓库+物资）
+  const getStockInfo = (line: LineItem): { quantity: number; unit?: string } | null => {
+    if (!line.warehouse_id || !line.item_id) return null;
+    return inventoryMap[line.warehouse_id]?.[line.item_id] || null;
   };
 
   // ===== 校验 =====
@@ -707,6 +732,7 @@ export default function WarehousePurchaseCreate() {
                   <th className="whitespace-nowrap text-right">单价(元)</th>
                   <th className="whitespace-nowrap text-right">金额(元)</th>
                   <th className="whitespace-nowrap">入库仓库</th>
+                  <th className="whitespace-nowrap text-right">当前库存</th>
                   <th className="whitespace-nowrap">采购理由</th>
                   <th className="whitespace-nowrap text-center">即采即用</th>
                   <th className="whitespace-nowrap text-center">操作</th>
@@ -801,6 +827,23 @@ export default function WarehousePurchaseCreate() {
                         ))}
                       </select>
                     </td>
+                    {/* 当前库存 */}
+                    <td className="text-right">
+                      {(() => {
+                        const stock = getStockInfo(line);
+                        if (!line.warehouse_id) return <span className="text-xs text-gray-300">-</span>;
+                        if (!line.item_id) return <span className="text-xs text-gray-300">-</span>;
+                        if (!stock) return <span className="text-xs text-gray-400">0</span>;
+                        const qty = stock.quantity;
+                        const color = qty <= 0 ? 'text-red-500' : qty < 5 ? 'text-amber-600' : 'text-gray-700';
+                        return (
+                          <span className={`text-sm font-medium ${color}`} title="该仓库当前剩余库存">
+                            {qty}
+                            {stock.unit ? ` ${stock.unit}` : ''}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     {/* 采购理由 */}
                     <td>
                       <input
@@ -860,7 +903,7 @@ export default function WarehousePurchaseCreate() {
                   <td className="text-right text-lg text-primary-600">
                     {formatCurrency(totalAmount)}
                   </td>
-                  <td colSpan={3}></td>
+                  <td colSpan={4}></td>
                 </tr>
               </tfoot>
             </table>
@@ -1093,9 +1136,19 @@ export default function WarehousePurchaseCreate() {
         onClose={() => setShowBatchPaste(false)}
         onConfirm={handleBatchImport}
         onItemCreated={handleItemCreated}
+        onSupplierCreated={handleSupplierCreated}
         warehouses={warehouses}
         categoryTree={categoryTree}
         items={items}
+        suppliers={suppliers}
+        fixedSupplier={
+          (purchaseType === 'prepay' || purchaseType === 'monthly') && selectedSupplierId
+            ? (() => {
+                const s = suppliers.find((x) => x.id === selectedSupplierId);
+                return s ? { id: s.id, name: s.name, prepay_balance: s.prepay_balance } : null;
+              })()
+            : null
+        }
       />
     </div>
   );

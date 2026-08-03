@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
+import WarehousePurchaseProgress from '@/components/WarehousePurchaseProgress';
 
 // ====== 类型定义 ======
 
@@ -766,6 +767,13 @@ export default function WarehousePurchaseList() {
                       </div>
                     </div>
                   </div>
+                  {/* 流程进度条 */}
+                  <WarehousePurchaseProgress
+                    status={p.status}
+                    purchaseType={p.purchase_type}
+                    prepayStatus={p.prepay_status}
+                    writeoffStatus={p.writeoff_status}
+                  />
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {/* 快捷下载：申请单 PDF */}
                     {hasApplyPdf(p) && (
@@ -892,7 +900,6 @@ export default function WarehousePurchaseList() {
                                     <th className="px-3 py-2 text-right">数量</th>
                                     <th className="px-3 py-2 text-right">单价</th>
                                     <th className="px-3 py-2 text-right">金额</th>
-                                    <th className="px-3 py-2 text-left">使用部门</th>
                                     <th className="px-3 py-2 text-left">采购理由</th>
                                     <th className="px-3 py-2 text-right">实收数量</th>
                                   </tr>
@@ -914,9 +921,6 @@ export default function WarehousePurchaseList() {
                                       </td>
                                       <td className="px-3 py-2 text-right font-medium text-gray-800">
                                         {safeNum(it.amount).toFixed(2)}
-                                      </td>
-                                      <td className="px-3 py-2 text-gray-500">
-                                        {it.department_name || '-'}
                                       </td>
                                       <td className="px-3 py-2 text-gray-500">
                                         {it.reason || '-'}
