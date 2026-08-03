@@ -1,28 +1,214 @@
 -- ================================================
 -- 038 - 仓库采购：预付款与月结支持
 -- 为 warehouse_purchases 表新增采购类型、供应商、预付款等字段
--- 幂等执行：可重复执行不会报错
+-- 幂等执行：使用 INFORMATION_SCHEMA 动态判断，可重复执行
 -- ================================================
 
+SET @dbname = DATABASE();
+
 -- 1. warehouse_purchases 表新增采购类型与结算字段
-ALTER TABLE warehouse_purchases
-  ADD COLUMN purchase_type ENUM('normal', 'prepay', 'monthly') DEFAULT 'normal' COMMENT '采购类型：normal=现购 prepay=预付款 monthly=月结',
-  ADD COLUMN supplier_id VARCHAR(36) NULL COMMENT '供应商ID',
-  ADD COLUMN supplier_name VARCHAR(100) NULL COMMENT '供应商名称（冗余）',
-  ADD COLUMN prepay_amount DECIMAL(12,2) DEFAULT 0 COMMENT '预付款金额',
-  ADD COLUMN prepay_sp_no VARCHAR(100) NULL COMMENT '预付款审批单号',
-  ADD COLUMN prepay_status VARCHAR(20) DEFAULT 'pending' COMMENT '预付款审批状态：pending/approved/rejected/paid',
-  ADD COLUMN prepay_voucher_no VARCHAR(100) NULL COMMENT '预付款付款凭证号',
-  ADD COLUMN prepay_voucher_at DATETIME NULL COMMENT '预付款付款凭证时间',
-  ADD COLUMN writeoff_status VARCHAR(20) DEFAULT 'pending' COMMENT '核销状态：pending/auto/manual/done',
-  ADD COLUMN writeoff_amount DECIMAL(12,2) DEFAULT 0 COMMENT '已核销金额',
-  ADD COLUMN monthly_statement_id VARCHAR(36) NULL COMMENT '关联月结账单ID',
-  ADD INDEX idx_purchase_type (purchase_type),
-  ADD INDEX idx_supplier (supplier_id),
-  ADD INDEX idx_prepay_status (prepay_status),
-  ADD INDEX idx_writeoff (writeoff_status),
-  ADD INDEX idx_monthly_statement (monthly_statement_id);
+SET @tablename = 'warehouse_purchases';
+
+-- purchase_type
+SET @columnname = 'purchase_type';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " ENUM('normal', 'prepay', 'monthly') DEFAULT 'normal' COMMENT '采购类型'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- supplier_id
+SET @columnname = 'supplier_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(36) NULL COMMENT '供应商ID'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- supplier_name
+SET @columnname = 'supplier_name';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(100) NULL COMMENT '供应商名称'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- prepay_amount
+SET @columnname = 'prepay_amount';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " DECIMAL(12,2) DEFAULT 0 COMMENT '预付款金额'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- prepay_sp_no
+SET @columnname = 'prepay_sp_no';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(100) NULL COMMENT '预付款审批单号'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- prepay_status
+SET @columnname = 'prepay_status';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(20) DEFAULT 'pending' COMMENT '预付款审批状态'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- prepay_voucher_no
+SET @columnname = 'prepay_voucher_no';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(100) NULL COMMENT '预付款付款凭证号'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- prepay_voucher_at
+SET @columnname = 'prepay_voucher_at';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " DATETIME NULL COMMENT '预付款付款凭证时间'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- writeoff_status
+SET @columnname = 'writeoff_status';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(20) DEFAULT 'pending' COMMENT '核销状态'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- writeoff_amount
+SET @columnname = 'writeoff_amount';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " DECIMAL(12,2) DEFAULT 0 COMMENT '已核销金额'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- monthly_statement_id
+SET @columnname = 'monthly_statement_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " VARCHAR(36) NULL COMMENT '关联月结账单ID'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- 索引
+SET @indexname = 'idx_purchase_type';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (purchase_type)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_supplier';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (supplier_id)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_prepay_status';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (prepay_status)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_writeoff';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (writeoff_status)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_monthly_statement';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (monthly_statement_id)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
 
 -- 2. 供应商表新增 prepay_balance 字段（如果不存在）
-ALTER TABLE suppliers
-  ADD COLUMN prepay_balance DECIMAL(12,2) DEFAULT 0 COMMENT '预付款余额（多付抵扣款）';
+SET @tablename = 'suppliers';
+
+SET @columnname = 'prepay_balance';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, " DECIMAL(12,2) DEFAULT 0 COMMENT '预付款余额'")
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SELECT '038_warehouse_prepay_monthly.sql 执行完成' AS message;

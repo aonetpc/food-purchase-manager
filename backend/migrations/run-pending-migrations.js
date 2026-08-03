@@ -100,8 +100,14 @@ async function main() {
   // 执行 037 迁移（预付款和月结采购支持）
   await runMigrationFile('037_prepay_and_monthly_purchase.sql');
 
+  // 执行 038 迁移（预付款与月结字段补充，已改为幂等）
+  await runMigrationFile('038_warehouse_prepay_monthly.sql');
+
   // 执行 048 迁移（预付款审批附件字段）
   await runMigrationFile('048_prepay_attachments.sql');
+
+  // 执行 049 迁移（修复预付款缺失字段：writeoff_amount、prepay_voucher_no、prepay_voucher_at）
+  await runMigrationFile('049_fix_missing_prepay_columns.sql');
 
   // 再次检查
   console.log('\n📋 迁移后字段状态：');

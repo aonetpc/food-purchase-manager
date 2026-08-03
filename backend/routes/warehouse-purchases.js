@@ -188,6 +188,8 @@ function normalizePurchaseRow(row) {
     ...row,
     total_amount: toNum(row.total_amount),
     actual_amount: toNum(row.actual_amount),
+    prepay_amount: toNum(row.prepay_amount),
+    writeoff_amount: toNum(row.writeoff_amount),
     user_departments: userDepartments,
     user_confirmations: userConfirmations,
     total_users: totalUsers,
