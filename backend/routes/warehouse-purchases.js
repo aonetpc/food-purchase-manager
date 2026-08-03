@@ -728,6 +728,7 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
 
   // ================= 报销模式：关联审批单（RelatedApproval 控件） =================
   // 引用之前填写的采购申请单（approval_sp_no）
+  // 企微官方格式：{ related_approval: [{ sp_no, sp_name, template_id }] }
   // 控件发现优先级：fieldMapping.related_approval > 模板中第一个 RelatedApproval 控件
   if (useReceived && relatedApprovalSpNo) {
     let relatedControlId = fieldMapping.related_approval || null;
@@ -737,10 +738,25 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
       if (relatedEntry) relatedControlId = relatedEntry[0];
     }
     if (relatedControlId) {
+      // 查询采购审批单详情获取 sp_name 和 template_id
+      let relatedItems = [{ sp_no: String(relatedApprovalSpNo), sp_name: '仓库采购申请', template_id: '' }];
+      try {
+        const approvalDetail = await getApprovalDetail(config, String(relatedApprovalSpNo));
+        if (approvalDetail) {
+          relatedItems = [{
+            sp_no: String(approvalDetail.sp_no || relatedApprovalSpNo),
+            sp_name: approvalDetail.sp_name || '仓库采购申请',
+            template_id: approvalDetail.template_id || '',
+          }];
+          console.log(`[审批构建] 关联审批单详情: sp_name=${relatedItems[0].sp_name}, template_id=${relatedItems[0].template_id}`);
+        }
+      } catch (detailErr) {
+        console.warn(`[审批构建] 获取采购审批单详情失败: ${detailErr.message}，使用默认值`);
+      }
       contents.push({
         control: 'RelatedApproval',
         id: relatedControlId,
-        value: { related_approval: { sp_no_list: [String(relatedApprovalSpNo)] } },
+        value: { related_approval: relatedItems },
       });
       console.log(`[审批构建] 填充关联审批单(id=${relatedControlId}): sp_no=${relatedApprovalSpNo}`);
     } else {
