@@ -1599,6 +1599,7 @@ router.get('/confirm-page', async (req, res) => {
     }
 
     const myTotal = myItems.reduce((s, i) => {
+      if (i.not_arrived) return s; // 未到货物材不计入总金额
       const amt = toNum(i.received_amount) > 0 ? toNum(i.received_amount) : toNum(i.requested_amount);
       return s + amt;
     }, 0);
@@ -2518,6 +2519,16 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
     }
     const mentionedUsers = Object.keys(userTaskMap);
 
+    // 解析 @提及用户的真实姓名
+    const mentionedNameMap = {};
+    for (const uid of mentionedUsers) {
+      try {
+        mentionedNameMap[uid] = await getWecomUserName(uid);
+      } catch (_) {
+        mentionedNameMap[uid] = uid;
+      }
+    }
+
     const domain = config.app_domain || (req.headers.origin || (req.protocol + '://' + req.get('host')));
     const purchaseNo = row.purchase_no || '';
     const totalAmount = toNum(row.actual_amount) || toNum(row.total_amount);
@@ -2572,7 +2583,8 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
     if (mentionedUsers.length > 0) {
       mdContent += `📢 **请相关人员核对清单并确认入库**：`;
       for (const userid of mentionedUsers) {
-        mdContent += ` @${userid}`;
+        const displayName = mentionedNameMap[userid] || userid;
+        mdContent += ` @${displayName}`;
       }
       mdContent += `\n\n`;
     }
