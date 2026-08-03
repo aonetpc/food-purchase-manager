@@ -362,9 +362,9 @@ async function fetchWecomDepartments(accessToken) {
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
-// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, relatedApprovalSpNo, requiredControls, controlTitles, contactModes, templateIdOverride, attachments }
+// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, relatedApprovalSpNo, requiredControls, controlTitles, contactModes, templateIdOverride, attachments, remarkTextOverride }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride, pdfType = 'confirm', attachments = [] } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride, pdfType = 'confirm', attachments = [], remarkTextOverride = null } = options;
 
   // ================= 控件ID自动发现（兜底） =================
   // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
@@ -719,14 +719,19 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     console.log(`[审批构建] 填充File控件(id=${fileControlId}): ${filesToAttach.length}个文件`);
   }
 
-  // ================= 报销模式：备注说明（涉及部门） =================
-  // 备注说明内容：涉及部门：后勤部、行政人事部
+  // ================= 报销模式：备注说明（涉及部门 / 自定义） =================
+  // 备注说明内容优先级：remarkTextOverride > 自动计算"涉及部门：xxx"
   // 控件发现优先级：fieldMapping.remark > 模板中标题含"备注"或"说明"的 Text/Textarea 控件
   if (useReceived) {
-    const deptNames = Array.from(new Set(
-      (items || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
-    ));
-    const remarkText = deptNames.length > 0 ? `涉及部门：${deptNames.join('、')}` : '';
+    let remarkText = '';
+    if (remarkTextOverride) {
+      remarkText = String(remarkTextOverride);
+    } else {
+      const deptNames = Array.from(new Set(
+        (items || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
+      ));
+      remarkText = deptNames.length > 0 ? `涉及部门：${deptNames.join('、')}` : '';
+    }
     if (remarkText) {
       // filledIds 去重：该控件已被其他逻辑（如原字段映射）push 过则跳过
       const existingFilledIds = new Set(contents.map(c => c.id));
@@ -2194,7 +2199,15 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
     const totalAmount = toNum(row.total_amount);
 
     // 构建事由：采购事由：8月1日采购单，预计费用¥30.00，详情请查阅附件
-    const reason = `采购事由：${monthDayStr}采购单，预计费用¥${totalAmount.toFixed(2)}，详情请查阅附件`;
+    // 预付款类型追加供应商和预付金额信息
+    let reason = `采购事由：${monthDayStr}采购单，预计费用¥${totalAmount.toFixed(2)}`;
+    if (row.purchase_type === 'prepay' && row.supplier_name) {
+      reason += `，供应商：${row.supplier_name}`;
+    }
+    if (row.purchase_type === 'prepay' && row.prepay_amount && toNum(row.prepay_amount) > 0) {
+      reason += `，预付金额：¥${toNum(row.prepay_amount).toFixed(2)}`;
+    }
+    reason += '，详情请查阅附件';
 
     const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
       date: dateStr,
@@ -3031,6 +3044,17 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const monthDayStr = `${now.getMonth() + 1}月${now.getDate()}日`;
+
+    // 查询采购明细（用于部门信息填充备注说明）
+    const [itemRows] = await pool.query(
+      `SELECT wpi.*, d.name as department_name, d.wecom_dept_id
+       FROM warehouse_purchase_items wpi
+       LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+       LEFT JOIN departments d ON d.id = COALESCE(wpi.department_id, w.department_id)
+       WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
+      [id]
+    );
 
     // 处理手动上传的附件（base64 → 保存文件 → 上传企微获取 mediaId）
     const { attachments: rawAttachments = [] } = req.body;
@@ -3061,11 +3085,16 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       }
     }
 
+    // 付款事由：8月3日仓库采购预付款，供应商：麦德龙，预付金额：¥50.00
+    const prepayReason = `${monthDayStr}仓库采购预付款，供应商：${row.supplier_name || '未指定'}，预付金额：¥${prepayAmount.toFixed(2)}`;
+    // 备注说明：预付款给供应商麦德龙，采购单号：WH20260803001
+    const prepayRemark = `预付款给供应商${row.supplier_name || '未指定'}，采购单号：${row.purchase_no || id}`;
+
     const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, prepaySelectorOpts || {}, {
       date: dateStr,
       amount: prepayAmount,
-      reason: `预付款 - ${row.supplier_name || '供应商'} - 仓库采购(${row.id.substring(0, 8)})`,
-      items: [],
+      reason: prepayReason,
+      items: itemRows,
       useReceived: true,
       pdfPath: null,
       rowId: id,
@@ -3078,6 +3107,7 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       controlTitles: prepayTitles,
       contactModes: prepayContactModes,
       attachments: uploadedAttachments,
+      remarkTextOverride: prepayRemark,
     });
 
     const spNo = await submitApproval(config, applyData);
