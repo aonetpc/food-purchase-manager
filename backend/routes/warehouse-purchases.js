@@ -362,7 +362,7 @@ async function fetchWecomDepartments(accessToken) {
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
 // options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, relatedApprovalSpNo, requiredControls, controlTitles, contactModes, templateIdOverride }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride, pdfType = 'confirm' } = options;
 
   // ================= 控件ID自动发现（兜底） =================
   // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
@@ -688,11 +688,13 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     try {
       const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'File')?.[0];
       if (fileControlId && fs.existsSync(pdfPath)) {
-        const mediaId = await uploadMedia(config, pdfPath, `仓库采购确认单_${options.rowId || ''}.pdf`);
+        const pdfLabel = pdfType === 'apply' ? '仓库采购申请单' : '仓库采购确认单';
+        const pdfFilename = `${pdfLabel}_${rowId || ''}.pdf`;
+        const mediaId = await uploadMedia(config, pdfPath, pdfFilename);
         contents.push({
           control: controlTypeMap[fileControlId] || 'File',
           id: fileControlId,
-          value: { files: [{ file_id: mediaId, filename: `仓库采购确认单_${options.rowId || ''}.pdf` }] },
+          value: { files: [{ file_id: mediaId, filename: pdfFilename }] },
         });
       }
     } catch (uploadErr) {
@@ -2183,6 +2185,7 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       items: itemRows,
       useReceived: false,
       pdfPath: applyPdfPath,
+      pdfType: 'apply',
       rowId: id,
       creatorUserid: req.user?.wecom_userid,
       requiredControls,
