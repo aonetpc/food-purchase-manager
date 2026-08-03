@@ -3171,10 +3171,17 @@ router.post('/:id/refresh-prepay', requireAuth, async (req, res) => {
     }
 
     const detail = await getApprovalDetail(config, row.prepay_sp_no);
-    const spStatus = detail.status || detail.sp_status;
+    console.log(`[刷新预付审批] 原始响应:`, JSON.stringify(detail).substring(0, 500));
+
+    // 企微API返回结构: { errcode, errmsg, info: { sp_status, ... } }
+    const spStatus = detail?.info?.sp_status ?? detail?.sp_status;
+    console.log(`[刷新预付审批] sp_status=${spStatus} (类型: ${typeof spStatus})`);
+    // sp_status: 1=审批中，2=已通过，3=已驳回，4=已撤销
 
     let newStatus = row.prepay_status;
-    if (spStatus === 2 || spStatus === 'approved') {
+    if (spStatus === 1 || spStatus === '1') {
+      newStatus = 'pending';
+    } else if (spStatus === 2 || spStatus === '2') {
       newStatus = 'approved';
       await pool.query(
         'UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?',
@@ -3201,8 +3208,14 @@ router.post('/:id/refresh-prepay', requireAuth, async (req, res) => {
           );
         }
       }
-    } else if (spStatus === 3 || spStatus === 'rejected') {
+    } else if (spStatus === 3 || spStatus === '3') {
       newStatus = 'rejected';
+      await pool.query(
+        'UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?',
+        [newStatus, id]
+      );
+    } else if (spStatus === 4 || spStatus === '4') {
+      newStatus = 'revoked';
       await pool.query(
         'UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?',
         [newStatus, id]
