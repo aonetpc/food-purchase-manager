@@ -3092,6 +3092,16 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     // 备注说明：预付款给供应商麦德龙，采购单号：WH20260803001
     const prepayRemark = `预付款给供应商${row.supplier_name || '未指定'}，采购单号：${row.purchase_no || id}`;
 
+    // 预校验报销模板必填字段配置是否完整
+    const missingConfigs = [];
+    if (fieldMapping.payee_name && !row.supplier_name) missingConfigs.push('供应商名称');
+    if (fieldMapping.bank_name && !config.bank_name) missingConfigs.push('开户行');
+    if (fieldMapping.bank_account && !config.bank_account) missingConfigs.push('银行账号');
+    if (fieldMapping.payment_method && !config.default_payment_key) missingConfigs.push('付款方式');
+    if (missingConfigs.length > 0) {
+      console.warn(`[预付审批] 配置缺失: ${missingConfigs.join('、')}`);
+    }
+
     const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, prepaySelectorOpts || {}, {
       date: dateStr,
       amount: prepayAmount,
@@ -3112,7 +3122,22 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       remarkTextOverride: prepayRemark,
     });
 
-    const spNo = await submitApproval(config, applyData);
+    // 打印审批数据摘要，便于排查提交失败
+    console.log(`[预付审批] apply_data contents 数量: ${applyData.apply_data?.contents?.length || 0}`);
+    console.log(`[预付审批] apply_data contents 摘要:`, JSON.stringify((applyData.apply_data?.contents || []).map(c => ({ id: c.id, control: c.control }))));
+
+    let spNo;
+    try {
+      spNo = await submitApproval(config, applyData);
+    } catch (submitErr) {
+      console.error('[预付审批] 企微审批提交失败:', submitErr.message);
+      // 将企微错误详情透传给前端
+      const detail = submitErr.message || '提交审批失败';
+      if (missingConfigs.length > 0) {
+        throw new Error(`审批提交失败，可能原因：以下字段未配置（${missingConfigs.join('、')}）。企微返回：${detail}`);
+      }
+      throw new Error(`审批提交失败：${detail}`);
+    }
 
     await pool.query(
       'UPDATE warehouse_purchases SET prepay_sp_no = ?, prepay_status = ?, prepay_attachments = ? WHERE id = ?',

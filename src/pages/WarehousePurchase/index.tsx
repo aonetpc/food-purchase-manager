@@ -517,7 +517,8 @@ export default function WarehousePurchaseList() {
       setPrepayAttachments([]);
       await fetchList();
     } catch (err: any) {
-      setError(err.message || '发起预付款审批失败');
+      const errMsg = err?.response?.data?.error || err?.message || '发起预付款审批失败';
+      setError(errMsg);
     } finally {
       setPrepaySubmitting(false);
       setActioningId(null);
