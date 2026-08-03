@@ -698,24 +698,30 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   }
 
   // ================= 报销模式：备注说明（涉及部门） =================
-  // 备注说明只写涉及部门，如"后勤部、行政人事部"
+  // 备注说明内容：涉及部门：后勤部、行政人事部
   // 控件发现优先级：fieldMapping.remark > 模板中标题含"备注"或"说明"的 Text/Textarea 控件
   if (useReceived) {
     const deptNames = Array.from(new Set(
       (items || []).map(i => String(i.department_name || '').trim()).filter(Boolean)
     ));
-    const remarkText = deptNames.length > 0 ? deptNames.join('、') : '';
+    const remarkText = deptNames.length > 0 ? `涉及部门：${deptNames.join('、')}` : '';
     if (remarkText) {
-      let remarkControlId = fieldMapping.remark || null;
-      if (!remarkControlId && controlTitles) {
-        // 自动发现：标题含"备注"或"说明"的 Text/Textarea 控件
+      // filledIds 去重：该控件已被其他逻辑（如原字段映射）push 过则跳过
+      const existingFilledIds = new Set(contents.map(c => c.id));
+      let remarkControlId = null;
+      if (fieldMapping.remark && !existingFilledIds.has(fieldMapping.remark)) {
+        remarkControlId = fieldMapping.remark;
+      }
+      // 只有 fieldMapping.remark 未配置时才尝试自动发现
+      if (!remarkControlId && !fieldMapping.remark && controlTitles) {
         const remarkEntry = Object.entries(controlTitles).find(([id, title]) => {
+          if (existingFilledIds.has(id)) return false;
           const t = String(title || '');
           return (t.includes('备注') || t.includes('说明')) && (controlTypeMap[id] === 'Text' || controlTypeMap[id] === 'Textarea');
         });
         if (remarkEntry) remarkControlId = remarkEntry[0];
       }
-      if (remarkControlId) {
+      if (remarkControlId && !existingFilledIds.has(remarkControlId)) {
         contents.push({
           control: controlTypeMap[remarkControlId] || 'Text',
           id: remarkControlId,
@@ -934,10 +940,11 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  // 付款事由：对齐采购申请事由格式（图3），如"8月3日仓库采购单，实际入库¥414.41"
-  // 优先使用实际入库金额，无实际金额时回退到申请金额
+  // 付款事由：对齐采购申请事由格式，如"8月2日仓库采购单，实际入库¥414.41"
+  // 日期使用采购单创建时间，而非报销提交时间
+  const orderDate = new Date(row.created_at || row.apply_time || now);
   const reimburseAmount = toNum(row.actual_amount) || toNum(row.total_amount);
-  const monthDayStr = `${now.getMonth() + 1}月${now.getDate()}日`;
+  const monthDayStr = `${orderDate.getMonth() + 1}月${orderDate.getDate()}日`;
   const reason = `${monthDayStr}仓库采购单，实际入库¥${reimburseAmount.toFixed(2)}`;
 
   // 收款人 = 申请人自己，取企微真实姓名
