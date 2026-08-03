@@ -1285,29 +1285,91 @@ async function generateWarehousePDF(purchaseId) {
     return fixedRowHeight;
   }
 
-  // 部门签字区：从 user_confirmations 中找到负责该仓库的确认人及其签名
+  // 部门签字区：支持新结构（按仓库维度）和旧结构（按部门维度）
   function drawDepartmentSignature(y, whName) {
     const sigTop = y;
     const sigWidth = tableWidth;
     doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
 
-    // 通过仓库对应的部门找确认人
-    const whItems = groupedItems[whName] || [];
-    const deptNames = Array.from(new Set(whItems.map(i => i.department_name).filter(Boolean)));
-    let deptConf = null;
-    for (const dn of deptNames) {
-      deptConf = Object.entries(userConfirmations).find(([, conf]) =>
-        conf && conf.departments && conf.departments.includes(dn)
-      );
-      if (deptConf) break;
+    // 获取 user_departments（按仓库维度的结构）
+    const userDepartments = parseJsonField(row.user_departments) || {};
+
+    // 1. 从新结构找确认人（按仓库维度）
+    let whConfirmedInfo = null;
+    
+    // 先尝试通过 whKey（仓库id或名称）匹配
+    for (const [whKey, task] of Object.entries(userDepartments)) {
+      if (!task || !Array.isArray(task.confirmers)) continue;
+      // 匹配仓库名称或ID
+      const whId = task.wh_id;
+      if (task.wh_name === whName || whKey === whName || 
+          (itemRows.some(i => i.warehouse_name === whName && i.warehouse_id === whKey))) {
+        // 找到该仓库的确认人列表
+        if (task.confirmed && task.confirmed_by) {
+          // 已确认，获取确认人的签字
+          const confInfo = userConfirmations[task.confirmed_by];
+          if (confInfo) {
+            whConfirmedInfo = {
+              confirmed_by: task.confirmed_by_name || confInfo.confirmed_by,
+              confirmed_at: task.confirmed_at || confInfo.confirmed_at,
+              signature_data: confInfo.signature_data,
+            };
+          } else {
+            whConfirmedInfo = {
+              confirmed_by: task.confirmed_by_name || task.confirmed_by,
+              confirmed_at: task.confirmed_at,
+              signature_data: null,
+            };
+          }
+        } else if (task.confirmers.length > 0) {
+          // 未确认，但有确认人 - 显示确认人列表
+          const confNames = [];
+          for (const uid of task.confirmers) {
+            const conf = userConfirmations[uid];
+            if (conf) {
+              confNames.push(conf.confirmed_by || uid);
+            } else {
+              confNames.push(uid);
+            }
+          }
+          whConfirmedInfo = {
+            confirmed_by: confNames.join('、'),
+            confirmed_at: '待确认',
+            signature_data: null,
+            pending: true,
+          };
+        }
+        break;
+      }
     }
-    if (deptConf) {
-      const info = deptConf[1];
-      const infoText = `确认人：${info.confirmed_by || '-'}    确认时间：${info.confirmed_at || '-'}`;
+
+    // 2. 回退：尝试旧结构（按部门维度）
+    if (!whConfirmedInfo) {
+      const whItems = groupedItems[whName] || [];
+      const deptNames = Array.from(new Set(whItems.map(i => i.department_name).filter(Boolean)));
+      for (const dn of deptNames) {
+        const deptConf = Object.entries(userConfirmations).find(([, conf]) =>
+          conf && conf.departments && conf.departments.includes(dn)
+        );
+        if (deptConf) {
+          const info = deptConf[1];
+          whConfirmedInfo = {
+            confirmed_by: info.confirmed_by || '-',
+            confirmed_at: info.confirmed_at || '-',
+            signature_data: info.signature_data,
+          };
+          break;
+        }
+      }
+    }
+
+    if (whConfirmedInfo) {
+      const statusText = whConfirmedInfo.pending ? `待确认` : '';
+      const infoText = `确认人：${whConfirmedInfo.confirmed_by || '-'}${statusText ? '    ' + statusText : '    确认时间：' + (whConfirmedInfo.confirmed_at || '-')}`;
       doc.text(infoText, tableX + 2, sigTop + 2, { width: sigWidth - 4, align: 'left' });
-      if (info.signature_data) {
+      if (whConfirmedInfo.signature_data) {
         try {
-          const base64Data = info.signature_data.replace(/^data:image\/\w+;base64,/, '');
+          const base64Data = whConfirmedInfo.signature_data.replace(/^data:image\/\w+;base64,/, '');
           const buffer = Buffer.from(base64Data, 'base64');
           doc.image(buffer, tableX + 2, sigTop + 12, {
             width: sigWidth - 4, height: signatureHeight - 14,
@@ -1318,8 +1380,8 @@ async function generateWarehousePDF(purchaseId) {
         }
       }
     } else {
-      // 总仓无需确认
-      doc.text('总仓入库，无需部门确认', tableX + 2, sigTop + 8);
+      // 无确认人配置
+      doc.text('该仓库暂无确认人配置', tableX + 2, sigTop + 8);
     }
     return signatureHeight;
   }
