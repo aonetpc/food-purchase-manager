@@ -1079,8 +1079,8 @@ export default function WarehousePurchaseList() {
                             </>
                           )}
 
-                          {/* 预付款：发起预付款审批 */}
-                          {p.purchase_type === 'prepay' && !p.prepay_sp_no && (p.status === 'pending_approval' || p.status === 'confirmed') && (
+                          {/* 预付款：发起预付款审批（未发起过或已结束的审批） */}
+                          {p.purchase_type === 'prepay' && (p.status === 'pending_approval' || p.status === 'confirmed') && (!p.prepay_sp_no || (p.prepay_sp_no && p.prepay_status !== 'pending' && p.prepay_status !== 'approving')) && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1090,12 +1090,12 @@ export default function WarehousePurchaseList() {
                               className="btn-primary text-xs flex items-center gap-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
                             >
                               <Send size={14} />
-                              发起预付审批
+                              发起预付审批{p.prepay_sp_no ? '(重新)' : ''}
                             </button>
                           )}
 
                           {/* 预付款审批中：刷新状态 */}
-                          {p.purchase_type === 'prepay' && p.prepay_sp_no && p.prepay_status === 'pending' && (
+                          {p.purchase_type === 'prepay' && p.prepay_sp_no && (p.prepay_status === 'pending' || p.prepay_status === 'approving') && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

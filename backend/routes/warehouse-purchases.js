@@ -3010,8 +3010,10 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     if (!allowedPrepayStatuses.includes(row.status)) {
       return res.status(400).json({ error: '当前状态不可发起预付款审批' });
     }
-    if (row.prepay_sp_no && row.prepay_status === 'pending') {
-      return res.status(400).json({ error: '预付款审批已发起，请等待结果' });
+    // 仅当审批仍在进行中（pending/approving）时阻止重复发起
+    // 已撤回/已拒绝/已通过等状态允许重新发起
+    if (row.prepay_sp_no && (row.prepay_status === 'pending' || row.prepay_status === 'approving')) {
+      return res.status(400).json({ error: '预付款审批进行中，请等待结果或撤回后重新发起' });
     }
 
     const config = await getWecomConfig();
