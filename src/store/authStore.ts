@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 
-export type UserRole = 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman';
+export type UserRole = 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman' | 'purchaser';
 
 export interface MenuItem {
   code: string;

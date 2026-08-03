@@ -7,7 +7,7 @@ interface UserItem {
   id: string;
   username: string;
   name: string;
-  role: 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman';
+  role: 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman' | 'purchaser';
   role_id: string;
   roles?: { id: string; code: string; name: string }[];
   status: number;
@@ -25,6 +25,7 @@ const ROLE_LABELS: Record<string, { label: string; color: string }> = {
   viewer: { label: '普通员工', color: 'bg-gray-100 text-gray-700' },
   temp_auditor: { label: '外请审核员', color: 'bg-blue-100 text-blue-700' },
   temp_chairman: { label: '外请董事长', color: 'bg-teal-100 text-teal-700' },
+  purchaser: { label: '采购员', color: 'bg-green-100 text-green-700' },
 };
 
 const ROLE_OPTIONS = [
@@ -34,6 +35,7 @@ const ROLE_OPTIONS = [
   { value: 'viewer', label: '普通员工' },
   { value: 'temp_auditor', label: '外请审核员' },
   { value: 'temp_chairman', label: '外请董事长' },
+  { value: 'purchaser', label: '采购员' },
 ];
 
 export default function UserManager() {

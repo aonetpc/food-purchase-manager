@@ -311,11 +311,12 @@ export default function Layout() {
                   <div className="hidden sm:block text-left">
                     <p className="text-sm font-medium text-gray-800">{user.name}</p>
                     <p className="text-xs text-gray-500">
-                    {user.role === 'admin' ? '管理员' : 
-                     user.role === 'finance' ? '财务' : 
+                    {user.role === 'admin' ? '管理员' :
+                     user.role === 'finance' ? '财务' :
                      user.role === 'boss' ? '董事长' :
                      user.role === 'temp_auditor' ? '外请审核员' :
-                     user.role === 'temp_chairman' ? '外请董事长' : '普通员工'}
+                     user.role === 'temp_chairman' ? '外请董事长' :
+                     user.role === 'purchaser' ? '采购员' : '普通员工'}
                   </p>
                   </div>
                   <ChevronDown size={16} className="text-gray-400 hidden sm:block" />
