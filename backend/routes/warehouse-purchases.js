@@ -2246,7 +2246,12 @@ router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
     if (spStatus === 1 || spStatus === '1') {
       newApprovalStatus = 'pending';
     } else if (spStatus === 2 || spStatus === '2') {
-      newStatus = 'approved';
+      // 采购审批通过：预付款订单直接进入 confirmed 状态（允许收货），不受预付款审批状态影响
+      if (row.purchase_type === 'prepay') {
+        newStatus = 'confirmed';
+      } else {
+        newStatus = 'approved';
+      }
       newApprovalStatus = 'approved';
     } else if (spStatus === 3 || spStatus === '3') {
       newStatus = 'rejected';
@@ -2971,7 +2976,8 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     if (row.purchase_type !== 'prepay') {
       return res.status(400).json({ error: '该采购单不是预付款类型' });
     }
-    if (row.status !== 'draft' && row.status !== 'confirmed') {
+    const allowedPrepayStatuses = ['draft', 'pending_approval', 'confirmed'];
+    if (!allowedPrepayStatuses.includes(row.status)) {
       return res.status(400).json({ error: '当前状态不可发起预付款审批' });
     }
     if (row.prepay_sp_no && row.prepay_status === 'pending') {

@@ -1028,7 +1028,7 @@ export default function WarehousePurchaseList() {
                           )}
 
                           {/* 预付款：发起预付款审批 */}
-                          {p.purchase_type === 'prepay' && !p.prepay_sp_no && p.status !== 'draft' && (
+                          {p.purchase_type === 'prepay' && !p.prepay_sp_no && (p.status === 'pending_approval' || p.status === 'confirmed') && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
