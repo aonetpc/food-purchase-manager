@@ -2322,7 +2322,9 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const purchaseRow = rows[0];
-    if (purchaseRow.status !== 'approved') {
+    // 允许审批通过的采购单录入收货，也允许状态异常（confirmed但无收货数据）的预付订单重新录入
+    const isPrepayFix = purchaseRow.purchase_type === 'prepay' && purchaseRow.status === 'confirmed' && toNum(purchaseRow.actual_amount) <= 0;
+    if (purchaseRow.status !== 'approved' && !isPrepayFix) {
       await connection.rollback();
       return res.status(400).json({ error: '只有审批通过的采购单可以录入收货' });
     }

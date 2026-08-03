@@ -1125,8 +1125,8 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* 预付款已确认未核销：手动核销 */}
-                          {p.purchase_type === 'prepay' && p.status === 'confirmed' && !p.writeoff_status && (
+                          {/* 预付款已确认且有收货数据：手动核销 */}
+                          {p.purchase_type === 'prepay' && p.status === 'confirmed' && !p.writeoff_status && safeNum(p.actual_amount) > 0 && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1141,7 +1141,7 @@ export default function WarehousePurchaseList() {
                           )}
 
                           {/* 预付款少付待尾款报销 */}
-                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && (
+                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && safeNum(p.actual_amount) > 0 && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1152,6 +1152,21 @@ export default function WarehousePurchaseList() {
                             >
                               <RotateCcw size={14} />
                               发起尾款报销
+                            </button>
+                          )}
+
+                          {/* 预付订单状态异常（confirmed但无收货数据）：允许重新录入收货 */}
+                          {p.purchase_type === 'prepay' && p.status === 'confirmed' && safeNum(p.actual_amount) <= 0 && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openReceiveModal(p);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-primary text-xs flex items-center gap-1 bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                            >
+                              <PackageCheck size={14} />
+                              重新录入收货
                             </button>
                           )}
 
