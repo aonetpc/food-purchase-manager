@@ -2729,7 +2729,7 @@ router.get('/:id/pdf', async (req, res) => {
   }
 });
 
-// 12. POST /:id/refresh-status — 刷新报销审批状态
+// 12. POST /:id/refresh-status — 刷新订单状态（确认进度或报销审批状态）
 router.post('/:id/refresh-status', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2739,8 +2739,16 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
     }
     const row = rows[0];
 
+    // 如果订单还在确认中，没有报销单号，直接返回最新数据（用于刷新确认进度）
+    if (row.status === 'confirming' && !row.reimbursement_sp_no) {
+      const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+      return res.json(normalizePurchaseRow(updatedRows[0]));
+    }
+
     if (!row.reimbursement_sp_no) {
-      return res.status(400).json({ error: '该采购单尚未发起报销审批' });
+      // 订单已确认但尚未发起报销（可能是自动发起失败），直接返回最新数据
+      const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+      return res.json(normalizePurchaseRow(updatedRows[0]));
     }
 
     const config = await getWecomConfig();
