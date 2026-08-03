@@ -2895,13 +2895,27 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
       newReimburseStatus = 'approved';
       newStatus = 'reimbursed';
       // 预付款少付尾款报销通过后，标记核销完成
-      if (row.purchase_type === 'prepay' && row.writeoff_status === 'manual') {
+      if ((row.purchase_type === 'prepay' && row.writeoff_status === 'manual') ||
+          (row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing')) {
         writeoffDone = true;
       }
     } else if (spStatus === 1) {
       newReimburseStatus = 'processing';
     } else if (spStatus === 3) {
       newReimburseStatus = 'rejected';
+      // 预付款尾款报销被拒绝时，恢复 writeoff_status 以便重新发起
+      if (row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing') {
+        await pool.query(
+          'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ?, writeoff_status = ? WHERE id = ?',
+          [newReimburseStatus, newStatus, 'manual', id]
+        );
+        const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+        res.json({
+          ...normalizePurchaseRow(updatedRows[0]),
+          ...{ reimbursement_sp_no: row.reimbursement_sp_no }
+        });
+        return;
+      }
     }
 
     let latestApprover = null;
@@ -2967,8 +2981,12 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
     const spNo = await submitWarehouseReimbursement(row, itemRows, req.user?.wecom_userid);
 
     await pool.query(
-      'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',
-      ['pending', spNo, 'reimbursing', id]
+      row.purchase_type === 'prepay' && row.writeoff_status === 'manual'
+        ? 'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ?, writeoff_status = ? WHERE id = ?'
+        : 'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',
+      row.purchase_type === 'prepay' && row.writeoff_status === 'manual'
+        ? ['pending', spNo, 'reimbursing', 'reimbursing', id]
+        : ['pending', spNo, 'reimbursing', id]
     );
 
     const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);

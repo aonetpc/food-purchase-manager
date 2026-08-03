@@ -1145,7 +1145,7 @@ export default function WarehousePurchaseList() {
                           )}
 
                           {/* 预付款少付待尾款报销 */}
-                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && safeNum(p.actual_amount) > 0 && (
+                          {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && safeNum(p.actual_amount) > 0 && p.status !== 'reimbursing' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
