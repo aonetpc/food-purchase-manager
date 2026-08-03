@@ -418,7 +418,11 @@ export default function WarehousePurchaseCreate() {
       reason: l.reason,
       instant_use_override: null,
     }));
-    setLines((prev) => [...prev, ...newLines]);
+    // 检查现有行是否都是空行（未选择物资），如果是则用导入数据替换
+    setLines((prev) => {
+      const allEmpty = prev.every((l) => !l.item_id && !l.item_name);
+      return allEmpty ? newLines : [...prev, ...newLines];
+    });
     setShowBatchPaste(false);
   };
 

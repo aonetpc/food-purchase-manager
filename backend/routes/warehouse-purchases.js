@@ -465,7 +465,10 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
       // Contact 类型：根据模板 config.contact.mode 决定是部门还是成员
       // mode=user（成员模式）：value 用 members [{userid, name}]
       // mode=department（部门模式）：value 用 departments [{openapi_id, name}]
-      const creatorUserid = options.creatorUserid || config.applicant_userid;
+      const creatorUserid = options.creatorUserid || '';
+      if (!options.creatorUserid) {
+        console.warn('[企微-Contact] creatorUserid 为空，请确保接口层已校验当前用户绑定企微账号');
+      }
       const deptContactMode = contactModes?.[fieldMapping.department]?.mode || '';
       console.log(`[企微-Contact] 控件id=${fieldMapping.department}, 模板mode=${deptContactMode || '(未配置,默认department)'}`);
 
@@ -791,8 +794,12 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
   // 检查模板中所有 requiredControls 是否已出现在 contents 中
   // 若缺失则根据控件类型填充一个默认值
   const filledIds = new Set(contents.map(c => c.id));
-  // creatorUserid 已在函数顶部从 options 解构，此处确保非空字符串
-  const effectiveCreatorUserid = String(creatorUserid || config.applicant_userid);
+  // creatorUserid 必须使用当前登录用户的企微ID，不再回退到配置的 applicant_userid
+  // 接口层已校验，此处仅做非空保护
+  const effectiveCreatorUserid = String(creatorUserid || '');
+  if (!effectiveCreatorUserid) {
+    console.warn('[审批构建] creatorUserid 为空，请确保接口层已校验当前用户绑定企微账号');
+  }
 
   if (requiredControls && requiredControls.size > 0) {
     for (const ctrlId of requiredControls) {
@@ -2050,6 +2057,14 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '请先完成企微仓库审批配置（仓库审批模板ID和申请人用户ID）' });
     }
 
+    // 校验当前用户是否绑定企微账号
+    const currentWecomUserid = req.user?.wecom_userid;
+    if (!currentWecomUserid) {
+      clearTimeout(timeout);
+      return res.status(400).json({ error: '当前用户未绑定企微账号，无法发起审批。请联系管理员在用户管理中绑定企微账号。' });
+    }
+    console.log(`[提交审批] 当前登录用户wecom_userid: ${currentWecomUserid}`);
+
     console.log(`[提交审批] 步骤3: 查询明细`);
     const [itemRows] = await pool.query(
       `SELECT wpi.*, d.name as department_name, d.wecom_dept_id
@@ -2876,6 +2891,12 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '请配置预付款审批模板ID' });
     }
 
+    // 校验当前用户是否绑定企微账号
+    const prepayWecomUserid = req.user?.wecom_userid;
+    if (!prepayWecomUserid) {
+      return res.status(400).json({ error: '当前用户未绑定企微账号，无法发起审批。请联系管理员在用户管理中绑定企微账号。' });
+    }
+
     const prepayAmount = toNum(row.prepay_amount);
     if (prepayAmount <= 0) {
       return res.status(400).json({ error: '预付款金额必须大于0' });
@@ -2898,6 +2919,7 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       rowId: id,
       prepayMode: true,
       template_id_override: config.prepay_approval_template_id,
+      creatorUserid: prepayWecomUserid,
       requiredControls: prepayReqControls,
       controlTitles: prepayTitles,
       contactModes: prepayContactModes,
