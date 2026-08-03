@@ -21,6 +21,8 @@ import {
   ChevronRight,
   FileText,
   ClipboardCheck,
+  Paperclip,
+  Upload,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
@@ -105,6 +107,7 @@ interface WarehousePurchase {
   prepay_sp_no?: string;
   prepay_status?: string;
   writeoff_status?: string;
+  prepay_attachments?: Array<{ filename: string; path: string; mime: string; size: number }> | null;
 }
 
 // 列表分页响应
@@ -222,6 +225,12 @@ export default function WarehousePurchaseList() {
 
   // 操作中的采购单ID（按钮 loading）
   const [actioningId, setActioningId] = useState<string | null>(null);
+
+  // 预付款审批弹窗
+  const [showPrepayModal, setShowPrepayModal] = useState(false);
+  const [prepayTarget, setPrepayTarget] = useState<WarehousePurchase | null>(null);
+  const [prepayAttachments, setPrepayAttachments] = useState<Array<{ filename: string; base64: string; mimeType: string }>>([]);
+  const [prepaySubmitting, setPrepaySubmitting] = useState(false);
 
   // ===== 加载列表 =====
   const fetchList = useCallback(async () => {
@@ -468,15 +477,49 @@ export default function WarehousePurchaseList() {
   };
 
   // ===== 预付款相关操作 =====
-  const handleSubmitPrepay = async (id: string) => {
-    if (!window.confirm('确定发起预付款审批吗？')) return;
-    setActioningId(id);
+  const openPrepayModal = (p: WarehousePurchase) => {
+    setPrepayTarget(p);
+    setPrepayAttachments([]);
+    setShowPrepayModal(true);
+  };
+
+  const handlePrepayFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        setPrepayAttachments((prev) => [
+          ...prev,
+          { filename: file.name, base64, mimeType: file.type || 'application/octet-stream' },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const removePrepayAttachment = (index: number) => {
+    setPrepayAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSubmitPrepay = async () => {
+    if (!prepayTarget) return;
+    setPrepaySubmitting(true);
+    setActioningId(prepayTarget.id);
     try {
-      await api.post(`/warehouse-purchases/${id}/submit-prepay`);
+      await api.post(`/warehouse-purchases/${prepayTarget.id}/submit-prepay`, {
+        attachments: prepayAttachments,
+      });
+      setShowPrepayModal(false);
+      setPrepayTarget(null);
+      setPrepayAttachments([]);
       await fetchList();
     } catch (err: any) {
       setError(err.message || '发起预付款审批失败');
     } finally {
+      setPrepaySubmitting(false);
       setActioningId(null);
     }
   };
@@ -686,6 +729,15 @@ export default function WarehousePurchaseList() {
                           <>
                             <span>·</span>
                             <span className="text-orange-600">预付{formatCurrency(safeNum(p.prepay_amount))}</span>
+                          </>
+                        )}
+                        {p.prepay_attachments && p.prepay_attachments.length > 0 && (
+                          <>
+                            <span>·</span>
+                            <span className="text-gray-500 flex items-center gap-0.5">
+                              <Paperclip size={12} />
+                              {p.prepay_attachments.length}个附件
+                            </span>
                           </>
                         )}
                         {p.writeoff_status === 'auto' && (
@@ -1032,7 +1084,7 @@ export default function WarehousePurchaseList() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleSubmitPrepay(p.id);
+                                openPrepayModal(p);
                               }}
                               disabled={actioningId === p.id}
                               className="btn-primary text-xs flex items-center gap-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
@@ -1406,6 +1458,115 @@ export default function WarehousePurchaseList() {
               >
                 <PackageCheck size={16} />
                 {receiveSubmitting ? '提交中...' : '确认收货'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 预付款审批弹窗 ===== */}
+      {showPrepayModal && prepayTarget && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => !prepaySubmitting && setShowPrepayModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">发起预付款审批</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  采购单：{prepayTarget.purchase_no || prepayTarget.id}
+                </p>
+              </div>
+              <button
+                onClick={() => !prepaySubmitting && setShowPrepayModal(false)}
+                className="p-1 hover:bg-gray-100 rounded-md"
+                disabled={prepaySubmitting}
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* 金额和供应商信息 */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">预付款金额</label>
+                  <div className="px-3 py-2 bg-gray-50 rounded-lg text-gray-800">
+                    {formatCurrency(safeNum(prepayTarget.prepay_amount))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">收款人（供应商）</label>
+                  <div className="px-3 py-2 bg-gray-50 rounded-lg text-gray-800">
+                    {prepayTarget.supplier_name || '未指定'}
+                  </div>
+                </div>
+              </div>
+
+              {/* 附件上传区 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  附件上传（可选，图片或文件）
+                </label>
+                <label className="flex items-center justify-center gap-2 px-4 py-6 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-orange-400 hover:bg-orange-50/50 transition-colors">
+                  <Upload size={20} className="text-gray-400" />
+                  <span className="text-sm text-gray-500">点击选择文件（支持多选）</span>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handlePrepayFileChange}
+                    className="hidden"
+                    disabled={prepaySubmitting}
+                  />
+                </label>
+
+                {/* 已选附件列表 */}
+                {prepayAttachments.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {prepayAttachments.map((att, i) => (
+                      <div key={i} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Paperclip size={14} className="text-gray-400 flex-shrink-0" />
+                          <span className="text-sm text-gray-700 truncate">{att.filename}</span>
+                        </div>
+                        <button
+                          onClick={() => removePrepayAttachment(i)}
+                          disabled={prepaySubmitting}
+                          className="p-1 hover:bg-red-100 rounded text-red-500 disabled:opacity-50"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="text-xs text-gray-400">
+                提示：预付款审批将使用费用报销模板发起，收款人自动填写为供应商名称。
+                入库确认单PDF将在收货确认完成后自动生成，可后续手动打印。
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button
+                onClick={() => setShowPrepayModal(false)}
+                className="btn-secondary"
+                disabled={prepaySubmitting}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSubmitPrepay}
+                disabled={prepaySubmitting}
+                className="btn-primary flex items-center gap-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
+              >
+                <Send size={16} />
+                {prepaySubmitting ? '提交中...' : '发起审批'}
               </button>
             </div>
           </div>

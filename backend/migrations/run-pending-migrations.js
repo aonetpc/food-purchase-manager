@@ -100,6 +100,9 @@ async function main() {
   // 执行 037 迁移（预付款和月结采购支持）
   await runMigrationFile('037_prepay_and_monthly_purchase.sql');
 
+  // 执行 048 迁移（预付款审批附件字段）
+  await runMigrationFile('048_prepay_attachments.sql');
+
   // 再次检查
   console.log('\n📋 迁移后字段状态：');
   console.log(`  user_departments:    ${await checkColumn('purchase_confirmations', 'user_departments') ? '✅ 已存在' : '❌ 缺失'}`);

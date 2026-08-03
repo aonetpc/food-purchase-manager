@@ -194,6 +194,7 @@ function normalizePurchaseRow(row) {
     confirmed_users: confirmedUsers,
     pdf_url: pdfUrl,
     apply_pdf_url: applyPdfUrl,
+    prepay_attachments: parseJsonField(row.prepay_attachments) || null,
   };
 }
 
@@ -223,9 +224,10 @@ function normalizeItemRow(item) {
 // ================================================
 async function fetchWarehouseTemplateControlTypes(config, isPrepay = false, templateIdOverride = null) {
   const accessToken = await getAccessToken(config);
-  // 优先使用显式指定的模板ID，其次按 isPrepay 选择预付款模板，最后回退到仓库审批模板
+  // 优先使用显式指定的模板ID，其次按 isPrepay 选择预付款模板
+  // 预付款回退顺序：prepay_approval_template_id → approval_template_id（费用报销模板）→ warehouse_approval_template_id
   const tplId = templateIdOverride
-    || (isPrepay ? (config.prepay_approval_template_id || config.warehouse_approval_template_id) : config.warehouse_approval_template_id);
+    || (isPrepay ? (config.prepay_approval_template_id || config.approval_template_id || config.warehouse_approval_template_id) : config.warehouse_approval_template_id);
   console.log(`[企微] 获取审批模板详情... template_id=${tplId}`);
   const tplResp = await fetchWithTimeout(
     `https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${accessToken}`,
@@ -360,9 +362,9 @@ async function fetchWecomDepartments(accessToken) {
 }
 
 // 构建仓库审批 apply_data（采购审批 / 报销审批复用）
-// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, relatedApprovalSpNo, requiredControls, controlTitles, contactModes, templateIdOverride }
+// options: { date, amount, reason, items, useReceived, pdfPath, rowId, creatorUserid, payeeName, relatedApprovalSpNo, requiredControls, controlTitles, contactModes, templateIdOverride, attachments }
 async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, options) {
-  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride, pdfType = 'confirm' } = options;
+  const { date, amount, reason, items, useReceived = false, pdfPath = null, rowId, creatorUserid, payeeName, relatedApprovalSpNo = null, requiredControls, controlTitles, contactModes, templateIdOverride, pdfType = 'confirm', attachments = [] } = options;
 
   // ================= 控件ID自动发现（兜底） =================
   // 1) 校验 fieldMapping.department 对应的ID在 controlTypeMap中存在且类型是Contact
@@ -683,23 +685,38 @@ async function buildWarehouseApplyData(config, fieldMapping, controlTypeMap, sel
     });
   }
 
-  // PDF 附件（自动查找 File 类型控件）
-  if (pdfPath) {
+  // 文件附件（PDF + 手动上传附件，统一填充到 File 控件）
+  const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'File')?.[0];
+  const filesToAttach = [];
+
+  // PDF 附件
+  if (pdfPath && fileControlId && fs.existsSync(pdfPath)) {
     try {
-      const fileControlId = fieldMapping.attachment || Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'File')?.[0];
-      if (fileControlId && fs.existsSync(pdfPath)) {
-        const pdfLabel = pdfType === 'apply' ? '仓库采购申请单' : '仓库采购确认单';
-        const pdfFilename = `${pdfLabel}_${rowId || ''}.pdf`;
-        const mediaId = await uploadMedia(config, pdfPath, pdfFilename);
-        contents.push({
-          control: controlTypeMap[fileControlId] || 'File',
-          id: fileControlId,
-          value: { files: [{ file_id: mediaId, filename: pdfFilename }] },
-        });
-      }
+      const pdfLabel = pdfType === 'apply' ? '仓库采购申请单' : '仓库采购确认单';
+      const pdfFilename = `${pdfLabel}_${rowId || ''}.pdf`;
+      const mediaId = await uploadMedia(config, pdfPath, pdfFilename);
+      filesToAttach.push({ file_id: mediaId, filename: pdfFilename });
     } catch (uploadErr) {
       console.error('上传PDF附件失败:', uploadErr.message);
     }
+  }
+
+  // 手动上传的附件（mediaId 已在接口层上传获取）
+  if (attachments && attachments.length > 0 && fileControlId) {
+    for (const att of attachments) {
+      if (att.mediaId) {
+        filesToAttach.push({ file_id: att.mediaId, filename: att.filename || '附件' });
+      }
+    }
+  }
+
+  if (filesToAttach.length > 0 && fileControlId) {
+    contents.push({
+      control: controlTypeMap[fileControlId] || 'File',
+      id: fileControlId,
+      value: { files: filesToAttach },
+    });
+    console.log(`[审批构建] 填充File控件(id=${fileControlId}): ${filesToAttach.length}个文件`);
   }
 
   // ================= 报销模式：备注说明（涉及部门） =================
@@ -2985,11 +3002,15 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
     }
 
     const config = await getWecomConfig();
-    if (!config || !config.corp_id || !config.app_secret || !config.applicant_userid) {
+    if (!config || !config.corp_id || !config.app_secret) {
       return res.status(400).json({ error: '请先完成企微配置' });
     }
-    if (!config.prepay_approval_template_id) {
-      return res.status(400).json({ error: '请配置预付款审批模板ID' });
+    // 模板ID回退：prepay_approval_template_id → approval_template_id（费用报销模板）→ warehouse_approval_template_id
+    const effectivePrepayTplId = config.prepay_approval_template_id
+      || config.approval_template_id
+      || config.warehouse_approval_template_id;
+    if (!effectivePrepayTplId) {
+      return res.status(400).json({ error: '请先完成企微审批模板配置（费用报销模板或预付款模板）' });
     }
 
     // 校验当前用户是否绑定企微账号
@@ -3003,40 +3024,98 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '预付款金额必须大于0' });
     }
 
-    const fieldMapping = parseFieldMapping(config.prepay_field_mapping);
-    const { controlTypeMap, selectorOptionsMap: prepaySelectorOpts, requiredControls: prepayReqControls, controlTitles: prepayTitles, contactModes: prepayContactModes } = await fetchWarehouseTemplateControlTypes(config, true);
+    // 字段映射回退：prepay_field_mapping → approval_field_mapping（费用报销模板字段映射）
+    const fieldMapping = parseFieldMapping(config.prepay_field_mapping || config.approval_field_mapping);
+    const { controlTypeMap, selectorOptionsMap: prepaySelectorOpts, requiredControls: prepayReqControls, controlTitles: prepayTitles, contactModes: prepayContactModes } = await fetchWarehouseTemplateControlTypes(config, true, effectivePrepayTplId);
 
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    // 处理手动上传的附件（base64 → 保存文件 → 上传企微获取 mediaId）
+    const { attachments: rawAttachments = [] } = req.body;
+    const uploadedAttachments = []; // 传给 buildWarehouseApplyData 的 [{filename, mediaId}]
+    const savedAttachments = [];     // 持久化到 DB 的 [{filename, path, mime, size}]
+
+    if (Array.isArray(rawAttachments) && rawAttachments.length > 0) {
+      const attachDir = path.join(__dirname, '..', 'uploads', 'prepay_attachments', id);
+      if (!fs.existsSync(attachDir)) {
+        fs.mkdirSync(attachDir, { recursive: true });
+      }
+      for (let i = 0; i < rawAttachments.length; i++) {
+        const att = rawAttachments[i];
+        if (!att.filename || !att.base64) continue;
+        try {
+          const fileBuffer = Buffer.from(att.base64, 'base64');
+          const safeFilename = String(att.filename).replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
+          const savePath = path.join(attachDir, `${Date.now()}_${i}_${safeFilename}`);
+          fs.writeFileSync(savePath, fileBuffer);
+          const mimeType = att.mimeType || 'application/octet-stream';
+          const mediaId = await uploadMedia(config, savePath, safeFilename);
+          uploadedAttachments.push({ filename: safeFilename, mediaId });
+          savedAttachments.push({ filename: safeFilename, path: savePath, mime: mimeType, size: fileBuffer.length });
+          console.log(`[预付审批] 附件上传成功: ${safeFilename} (${fileBuffer.length} bytes)`);
+        } catch (attErr) {
+          console.error(`[预付审批] 附件上传失败: ${att.filename}`, attErr.message);
+        }
+      }
+    }
 
     const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, prepaySelectorOpts || {}, {
       date: dateStr,
       amount: prepayAmount,
       reason: `预付款 - ${row.supplier_name || '供应商'} - 仓库采购(${row.id.substring(0, 8)})`,
       items: [],
-      useReceived: false,
+      useReceived: true,
       pdfPath: null,
       rowId: id,
       prepayMode: true,
-      template_id_override: config.prepay_approval_template_id,
+      template_id_override: effectivePrepayTplId,
       creatorUserid: prepayWecomUserid,
+      payeeName: row.supplier_name || '供应商',
+      relatedApprovalSpNo: row.approval_sp_no || null,
       requiredControls: prepayReqControls,
       controlTitles: prepayTitles,
       contactModes: prepayContactModes,
+      attachments: uploadedAttachments,
     });
 
     const spNo = await submitApproval(config, applyData);
 
     await pool.query(
-      'UPDATE warehouse_purchases SET prepay_sp_no = ?, prepay_status = ? WHERE id = ?',
-      [spNo, 'pending', id]
+      'UPDATE warehouse_purchases SET prepay_sp_no = ?, prepay_status = ?, prepay_attachments = ? WHERE id = ?',
+      [spNo, 'pending', JSON.stringify(savedAttachments.length > 0 ? savedAttachments : null), id]
     );
 
     const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     res.json(normalizePurchaseRow(freshRows[0]));
   } catch (err) {
     console.error('发起预付款审批失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 12.1 GET /:id/prepay-attachments — 下载预付款审批附件
+router.get('/:id/prepay-attachments', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { index } = req.query;
+    const [rows] = await pool.query('SELECT prepay_attachments FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const attachments = parseJsonField(rows[0].prepay_attachments) || [];
+    if (attachments.length === 0) {
+      return res.status(404).json({ error: '无预付款附件' });
+    }
+    const idx = parseInt(index, 10) || 0;
+    const att = attachments[idx];
+    if (!att || !att.path || !fs.existsSync(att.path)) {
+      return res.status(404).json({ error: '附件文件不存在' });
+    }
+    res.download(att.path, att.filename);
+  } catch (err) {
+    console.error('下载预付款附件失败:', err);
     res.status(500).json({ error: err.message });
   }
 });
