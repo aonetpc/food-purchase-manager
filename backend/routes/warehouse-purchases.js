@@ -1486,12 +1486,9 @@ router.get('/confirm-page', async (req, res) => {
             if (task.wh_name) myWarehouseNames.push(task.wh_name);
           }
           allConfirmations.push({
-            wh_key: whKey,
-            wh_name: task.wh_name,
-            confirmers: task.confirmers,
+            userid: whKey,
+            name: task.wh_name,
             confirmed: !!task.confirmed,
-            confirmed_by: task.confirmed_by,
-            confirmed_by_name: task.confirmed_by_name,
             confirmed_at: task.confirmed_at,
           });
         }
@@ -1554,13 +1551,13 @@ router.get('/confirm-page', async (req, res) => {
       actual_amount: toNum(row.actual_amount),
       user,
       user_name: userName,
-      my_warehouses: myWarehouseNames,
+      my_departments: myWarehouseNames,
       my_items: myItems,
       my_total: myTotal,
       my_confirmation: myConfirmation,
       all_confirmations: allConfirmations,
-      total_tasks: totalTasks,
-      confirmed_tasks: confirmedTasks,
+      total_users: totalTasks,
+      confirmed_users: confirmedTasks,
       created_at: row.created_at,
     });
   } catch (err) {
@@ -1722,6 +1719,17 @@ router.post('/confirm-submit', async (req, res) => {
       allConfirmed = totalUsers > 0 && confirmedUsers === totalUsers;
     }
 
+    // 计算已确认的部门/仓库名称（用于前端显示）
+    let confirmedDeptNames = [];
+    if (isNewStructure) {
+      confirmedDeptNames = myWarehouseTasks.map(t => t.task.wh_name).filter(Boolean);
+    } else {
+      const userDeptData = userDepartments[user];
+      if (userDeptData && Array.isArray(userDeptData.departments)) {
+        confirmedDeptNames = userDeptData.departments;
+      }
+    }
+
     if (allConfirmed) {
       // 1. 生成 PDF（确认单）
       let pdfUrl = row.pdf_url;
@@ -1760,7 +1768,8 @@ router.post('/confirm-submit', async (req, res) => {
         success: true,
         message: '确认成功，已全部确认并发起报销',
         confirmed_at: now,
-        progress: { confirmed_tasks: confirmedTasks, total_tasks: totalTasks, all_confirmed: true },
+        confirmed_departments: confirmedDeptNames,
+        progress: { confirmed_users: confirmedTasks, total_users: totalTasks, all_confirmed: true },
         card_updated: cardUpdated,
         card_error: cardError,
         reimbursement_sp_no: reimbursementSpNo,
@@ -1773,7 +1782,8 @@ router.post('/confirm-submit', async (req, res) => {
       success: true,
       message: '确认成功',
       confirmed_at: now,
-      progress: { confirmed_tasks: confirmedTasks, total_tasks: totalTasks, all_confirmed: false },
+      confirmed_departments: confirmedDeptNames,
+      progress: { confirmed_users: confirmedTasks, total_users: totalTasks, all_confirmed: false },
       card_updated: cardUpdated,
       card_error: cardError,
     });

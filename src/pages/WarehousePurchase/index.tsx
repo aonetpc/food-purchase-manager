@@ -217,6 +217,7 @@ export default function WarehousePurchaseList() {
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [receiveTarget, setReceiveTarget] = useState<WarehousePurchase | null>(null);
   const [receiveRows, setReceiveRows] = useState<ReceiveFormRow[]>([]);
+  const [receiveLoading, setReceiveLoading] = useState(false);
   const [receiveSubmitting, setReceiveSubmitting] = useState(false);
 
   // 操作中的采购单ID（按钮 loading）
@@ -285,10 +286,30 @@ export default function WarehousePurchaseList() {
   };
 
   // ===== 打开收货弹窗 =====
-  const openReceiveModal = (p: WarehousePurchase) => {
+  const openReceiveModal = async (p: WarehousePurchase) => {
     setReceiveTarget(p);
+    setShowReceiveModal(true);
+    // 如果列表数据没有 items（未展开过），先加载详情
+    let items = p.items;
+    if (!items || items.length === 0) {
+      setReceiveLoading(true);
+      try {
+        const detail = await api.get<WarehousePurchase>(`/warehouse-purchases/${p.id}`);
+        items = detail.items || [];
+        // 同步更新 purchases 中的数据
+        setPurchases((prev) => prev.map((it) => (it.id === p.id ? { ...it, ...detail } : it)));
+      } catch (err: any) {
+        setError(err.message || '获取明细失败');
+        setShowReceiveModal(false);
+        setReceiveTarget(null);
+        setReceiveLoading(false);
+        return;
+      } finally {
+        setReceiveLoading(false);
+      }
+    }
     // 用明细初始化收货表单，默认实收数量=采购数量
-    const rows: ReceiveFormRow[] = (p.items || []).map((it) => ({
+    const rows: ReceiveFormRow[] = (items || []).map((it) => ({
       itemId: it.id,
       itemName: it.item_name,
       warehouseName: it.warehouse_name || '',
@@ -301,7 +322,6 @@ export default function WarehousePurchaseList() {
       not_arrived: false,
     }));
     setReceiveRows(rows);
-    setShowReceiveModal(true);
   };
 
   // ===== 提交收货 =====
@@ -1238,7 +1258,12 @@ export default function WarehousePurchaseList() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5">
-              {receiveRows.length === 0 ? (
+              {receiveLoading ? (
+                <div className="text-center py-10 text-gray-400 flex items-center justify-center gap-2">
+                  <RefreshCw size={16} className="animate-spin" />
+                  加载明细中...
+                </div>
+              ) : receiveRows.length === 0 ? (
                 <div className="text-center py-10 text-gray-400">暂无物资明细</div>
               ) : (
                 <div className="overflow-x-auto">

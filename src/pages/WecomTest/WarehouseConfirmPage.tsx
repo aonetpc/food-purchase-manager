@@ -584,12 +584,12 @@ export default function WarehouseConfirmPage() {
           </div>
         )}
 
-        {/* 其他确认人状态 */}
+        {/* 其他仓库/确认人状态 */}
         {data.all_confirmations.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm p-4">
             <h2 className="font-medium text-gray-800 mb-3 flex items-center gap-2 text-sm">
               <Users size={14} className="text-primary-500" />
-              其他确认人状态
+              确认进度详情
             </h2>
             <div className="space-y-1.5">
               {data.all_confirmations.map(c => (
