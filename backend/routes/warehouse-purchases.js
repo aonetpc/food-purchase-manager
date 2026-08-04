@@ -2415,8 +2415,8 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
         );
       }
 
-      // 即采即用：自动出库归零，成本归集到部门
-      if (isInstantUse) {
+      // 即采即用：仅部门仓自动出库归零（费用化）；总仓保留库存供其他部门领用
+      if (isInstantUse && ri.wh_type === 'dept') {
         await connection.query(
           `INSERT INTO stock_movements
            (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount,

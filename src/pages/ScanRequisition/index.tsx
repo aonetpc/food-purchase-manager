@@ -99,11 +99,31 @@ export default function ScanRequisition() {
       // 检查本地 session
       const stored = getSession();
       if (stored) {
-        setSession(stored);
+        // 从后端刷新绑定状态（审核通过后可能已变化）
+        let refreshed = stored;
+        try {
+          const whRes = await fetch(`${api.getBaseUrl()}/scan-requisition/my-warehouses`, {
+            headers: { 'Authorization': `Bearer ${stored.token}` }
+          });
+          if (whRes.ok) {
+            const myWhs = await whRes.json();
+            const bound = Array.isArray(myWhs) && myWhs.length > 0;
+            if (bound !== stored.has_bound_warehouse) {
+              refreshed = {
+                ...stored,
+                has_bound_warehouse: bound,
+                bound_warehouses: Array.isArray(myWhs) ? myWhs : [],
+              };
+              saveSession(refreshed);
+            }
+          }
+        } catch { /* 刷新失败不影响主流程 */ }
+
+        setSession(refreshed);
         // 始终拉取物资（设置出库仓库 + 物资列表）；未绑定额外拉入库仓库列表
-        await fetchItems(stored.token);
-        if (!stored.has_bound_warehouse) {
-          await fetchWarehouses(stored.token);
+        await fetchItems(refreshed.token);
+        if (!refreshed.has_bound_warehouse) {
+          await fetchWarehouses(refreshed.token);
         }
         setLoading(false);
         return;
@@ -412,25 +432,33 @@ export default function ScanRequisition() {
     !searchKeyword || item.item_name.toLowerCase().includes(searchKeyword.toLowerCase())
   );
 
+  // 按分类分组
+  const groupedItems = filteredItems.reduce((acc, item) => {
+    const cat = item.category_name || '未分类';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {} as Record<string, InventoryItem[]>);
+
   const cartTotal = cart.reduce((sum, c) => sum + c.cartQty * c.reference_price, 0);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
       {/* 顶部 */}
-      <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-4 py-4 sticky top-0 z-20 shadow-md">
+      <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-4 py-3 sticky top-0 z-20 shadow-md">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Package className="w-5 h-5" />
-            <span className="font-bold text-lg">
+            <Package className="w-4 h-4" />
+            <span className="font-bold text-base">
               {outboundWarehouse ? `${outboundWarehouse.name} · 领料` : '扫码领料'}
             </span>
           </div>
-          <div className="text-sm">
+          <div className="text-xs">
             <span className="font-medium">{session?.user.name}</span>
             {session?.user.phone && <span className="ml-2 opacity-75">{session.user.phone}</span>}
           </div>
         </div>
-        <div className="mt-1 text-xs opacity-80">
+        <div className="mt-0.5 text-[11px] opacity-80">
           {outboundWarehouse
             ? `从「${outboundWarehouse.name}」出库`
             : '微信扫码领料'}
@@ -466,50 +494,58 @@ export default function ScanRequisition() {
         </div>
       )}
 
-      {/* 物资列表 */}
-      <div className="px-4 py-3 space-y-2">
+      {/* 物资列表（按分类分组） */}
+      <div className="px-4 py-3">
         {items.length === 0 ? (
           <div className="text-center py-16 text-gray-400">
             <Package className="w-12 h-12 mx-auto mb-3 opacity-40" />
             <p>暂无可领用物资</p>
           </div>
         ) : (
-          filteredItems.map(item => {
-            const inCart = cart.find(c => c.item_id === item.item_id);
-            return (
-              <div key={item.item_id} className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-800 truncate">{item.item_name}</div>
-                  <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
-                    <span>库存: {item.quantity} {item.unit}</span>
-                    {item.reference_price > 0 && <span>¥{item.reference_price.toFixed(2)}/{item.unit}</span>}
-                    {item.instant_use && <span className="text-orange-500">即采即用</span>}
-                  </div>
-                </div>
-                {inCart ? (
-                  <div className="flex items-center gap-2 ml-3">
-                    <button onClick={() => updateCartQty(item.item_id, -1)}
-                      className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center active:scale-90 transition-transform">
-                      <Minus className="w-4 h-4 text-gray-600" />
-                    </button>
-                    <input type="number" value={inCart.cartQty}
-                      onChange={(e) => setCartQty(item.item_id, parseInt(e.target.value) || 0)}
-                      className="w-14 text-center text-sm border border-gray-200 rounded-lg py-1" />
-                    <button onClick={() => updateCartQty(item.item_id, 1)}
-                      className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center active:scale-90 transition-transform"
-                      disabled={inCart.cartQty >= item.quantity}>
-                      <Plus className="w-4 h-4 text-white" />
-                    </button>
-                  </div>
-                ) : (
-                  <button onClick={() => addToCart(item)}
-                    className="ml-3 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium active:scale-95 transition-transform">
-                    + 领用
-                  </button>
-                )}
+          Object.entries(groupedItems).map(([cat, catItems]) => (
+            <div key={cat} className="mb-4">
+              <div className="text-[11px] font-medium text-gray-400 px-1 mb-1.5">{cat}</div>
+              <div className="space-y-1.5">
+                {catItems.map(item => {
+                  const inCart = cart.find(c => c.item_id === item.item_id);
+                  const lowStock = item.quantity <= 5;
+                  return (
+                    <div key={item.item_id} className={`bg-white rounded-xl p-2.5 shadow-sm flex items-center justify-between ${item.instant_use ? 'border-l-3 border-l-orange-400' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-800 truncate">{item.item_name}</div>
+                        <div className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-2">
+                          <span className={lowStock ? 'text-red-500 font-medium' : ''}>库存: {item.quantity} {item.unit}</span>
+                          {item.reference_price > 0 && <span>¥{item.reference_price.toFixed(2)}/{item.unit}</span>}
+                          {item.instant_use && <span className="text-orange-500">即采即用</span>}
+                        </div>
+                      </div>
+                      {inCart ? (
+                        <div className="flex items-center gap-2 ml-3">
+                          <button onClick={() => updateCartQty(item.item_id, -1)}
+                            className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center active:scale-90 transition-transform">
+                            <Minus className="w-3.5 h-3.5 text-gray-600" />
+                          </button>
+                          <input type="number" value={inCart.cartQty}
+                            onChange={(e) => setCartQty(item.item_id, parseInt(e.target.value) || 0)}
+                            className="w-12 text-center text-xs border border-gray-200 rounded-lg py-1" />
+                          <button onClick={() => updateCartQty(item.item_id, 1)}
+                            className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center active:scale-90 transition-transform"
+                            disabled={inCart.cartQty >= item.quantity}>
+                            <Plus className="w-3.5 h-3.5 text-white" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => addToCart(item)}
+                          className="ml-3 px-2.5 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium active:scale-95 transition-transform">
+                          + 领用
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })
+            </div>
+          ))
         )}
       </div>
 
