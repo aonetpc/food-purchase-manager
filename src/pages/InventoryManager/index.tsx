@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Search, RefreshCw, AlertTriangle, Package, Warehouse as WarehouseIcon, Boxes } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/format';
+
+const MANAGER_ROLES = ['admin', 'finance', 'boss'];
 
 // 仓库汇总信息
 interface WarehouseSummary {
@@ -27,6 +30,8 @@ interface InventoryItem {
 }
 
 export default function InventoryManager() {
+  const { user } = useAuthStore();
+  const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
   const [summary, setSummary] = useState<WarehouseSummary[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -109,7 +114,9 @@ export default function InventoryManager() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-serif font-bold text-gray-800">库存管理</h1>
-          <p className="text-gray-500 mt-1">查看各仓库物资库存及预警情况</p>
+          <p className="text-gray-500 mt-1">
+            {isManager ? '查看各仓库物资库存及预警情况' : '查看本部门仓库及总仓物资库存'}
+          </p>
         </div>
         <button onClick={handleRefresh} className="btn-secondary flex items-center gap-2">
           <RefreshCw size={18} />

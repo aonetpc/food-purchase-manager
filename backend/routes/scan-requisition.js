@@ -111,6 +111,47 @@ async function executeOutbound(connection, { warehouseId, warehouseName, items, 
   }
 }
 
+/** 执行入库（向入库仓库增加库存） */
+async function executeInbound(connection, { warehouseId, warehouseName, items, operatorName, operatorId, requisitionNo }) {
+  for (const item of items) {
+    const qty = toNum(item.quantity);
+    if (qty <= 0) continue;
+
+    // 写入库流水
+    const unitPrice = toNum(item.unit_price);
+    const totalAmount = unitPrice ? qty * unitPrice : null;
+    const moveId = uuidv4();
+    await connection.query(
+      `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
+       VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'scan', ?, ?, NULL, ?)`,
+      [
+        moveId, warehouseId, item.item_id, item.item_name,
+        qty, item.unit, unitPrice || null, totalAmount,
+        `扫码领料入库 ${requisitionNo} - ${operatorName}`,
+        operatorId || null, operatorName || null,
+        warehouseName || null
+      ]
+    );
+
+    // 增加库存
+    const [existing] = await connection.query(
+      'SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?',
+      [warehouseId, item.item_id]
+    );
+    if (existing.length > 0) {
+      await connection.query(
+        'UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?',
+        [qty, item.unit, warehouseId, item.item_id]
+      );
+    } else {
+      await connection.query(
+        'INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)',
+        [uuidv4(), warehouseId, item.item_id, qty, item.unit]
+      );
+    }
+  }
+}
+
 // ================================================
 // 微信端接口（领料人）
 // ================================================
@@ -363,13 +404,23 @@ router.post('/', requireTempAuth, async (req, res) => {
         requisitionNo,
       });
 
+      // 执行入库（向入库仓库增加库存）
+      await executeInbound(connection, {
+        warehouseId: inboundWhId,
+        warehouseName: inboundWhName,
+        items,
+        operatorName: req.tempUser.name,
+        operatorId: req.tempUser.id,
+        requisitionNo,
+      });
+
       await connection.commit();
 
       return res.json({
         success: true,
         requisition_no: requisitionNo,
         status: 'auto',
-        message: '领料成功，已自动出库',
+        message: '领料成功，已自动出库并入库',
       });
     }
 
@@ -500,6 +551,16 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
     await executeOutbound(connection, {
       warehouseId: outboundWhId,
       warehouseName: outboundWhName,
+      items,
+      operatorName: requisition.user_name,
+      operatorId: requisition.temp_user_id,
+      requisitionNo: requisition.requisition_no,
+    });
+
+    // 执行入库（向入库仓库增加库存）
+    await executeInbound(connection, {
+      warehouseId: inboundWhId,
+      warehouseName: inboundWhName,
       items,
       operatorName: requisition.user_name,
       operatorId: requisition.temp_user_id,

@@ -10,6 +10,7 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/format';
 import BatchInboundModal from '@/components/BatchInboundModal';
 
@@ -78,7 +79,12 @@ const EMPTY_FORM: MovementForm = {
 
 const PAGE_SIZE = 20;
 
+const MANAGER_ROLES = ['admin', 'finance', 'boss'];
+
 export default function StockMovement() {
+  const { user } = useAuthStore();
+  const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
+
   const [warehouses, setWarehouses] = useState<WarehouseSummary[]>([]);
   const [movements, setMovements] = useState<StockMovementItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -274,29 +280,31 @@ export default function StockMovement() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">出入库记录</h1>
           <p className="text-gray-500 mt-1">查询物资出入库流水，支持手动入库 / 出库</p>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setBatchInboundOpen(true)}
-            className="btn-primary flex items-center gap-2 bg-success-500 hover:bg-success-600"
-          >
-            <ClipboardList size={18} />
-            <span>批量入库</span>
-          </button>
-          <button
-            onClick={() => openModal('inbound')}
-            className="btn-primary flex items-center gap-2 bg-success-500 hover:bg-success-600"
-          >
-            <ArrowDownToLine size={18} />
-            <span>手动入库</span>
-          </button>
-          <button
-            onClick={() => openModal('outbound')}
-            className="btn-primary flex items-center gap-2 bg-danger-500 hover:bg-danger-600"
-          >
-            <ArrowUpFromLine size={18} />
-            <span>手动出库</span>
-          </button>
-        </div>
+        {isManager && (
+          <div className="flex gap-3">
+            <button
+              onClick={() => setBatchInboundOpen(true)}
+              className="btn-primary flex items-center gap-2 bg-success-500 hover:bg-success-600"
+            >
+              <ClipboardList size={18} />
+              <span>批量入库</span>
+            </button>
+            <button
+              onClick={() => openModal('inbound')}
+              className="btn-primary flex items-center gap-2 bg-success-500 hover:bg-success-600"
+            >
+              <ArrowDownToLine size={18} />
+              <span>手动入库</span>
+            </button>
+            <button
+              onClick={() => openModal('outbound')}
+              className="btn-primary flex items-center gap-2 bg-danger-500 hover:bg-danger-600"
+            >
+              <ArrowUpFromLine size={18} />
+              <span>手动出库</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {error && (

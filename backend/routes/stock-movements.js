@@ -13,19 +13,65 @@ function cleanNumber(val) {
   return isNaN(n) ? null : n;
 }
 
+/** 判断用户是否为管理角色（admin/finance/boss） */
+async function isManagerUser(userId) {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 1 FROM (
+        SELECT role_id FROM user_roles WHERE user_id = ?
+        UNION
+        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+      ) t
+      JOIN roles r ON r.id = t.role_id
+      WHERE r.code IN ('admin', 'finance', 'boss')
+      LIMIT 1
+    `, [userId, userId]);
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** 获取用户可访问的仓库权限条件 */
+async function getUserWarehouseFilter(user) {
+  if (await isManagerUser(user.id)) {
+    return { sql: '', params: [] };
+  }
+  const deptId = user.department_id;
+  if (!deptId) {
+    return { sql: ' AND 1=0', params: [] };
+  }
+  return {
+    sql: ' AND (w.department_id = ? OR w.type = ?)',
+    params: [deptId, 'main'],
+  };
+}
+
+/** 检查操作权限：只有管理角色才能入库/出库 */
+async function requireManagerForOperation(req, res, next) {
+  if (await isManagerUser(req.user.id)) {
+    return next();
+  }
+  return res.status(403).json({ error: '无权限执行此操作，仅管理人员可操作出入库' });
+}
+
 // 出入库流水查询
 router.get('/', async (req, res) => {
   try {
     const { warehouse_id, movement_type, start_date, end_date, page = 1, page_size = 50 } = req.query;
+    const user = req.user;
     const offset = (Number(page) - 1) * Number(page_size);
 
+    const perm = await getUserWarehouseFilter(user);
     let sql = `
       SELECT sm.*, w.name as warehouse_name
       FROM stock_movements sm
       JOIN warehouses w ON sm.warehouse_id = w.id
       WHERE 1=1
     `;
-    const params = [];
+    const params = [...perm.params];
+    sql += perm.sql;
+
     if (warehouse_id) { sql += ' AND sm.warehouse_id = ?'; params.push(warehouse_id); }
     if (movement_type) { sql += ' AND sm.movement_type = ?'; params.push(movement_type); }
     if (start_date) { sql += ' AND sm.created_at >= ?'; params.push(start_date); }
@@ -35,13 +81,19 @@ router.get('/', async (req, res) => {
 
     const [rows] = await pool.query(sql, params);
 
-    // 总数
-    let countSql = 'SELECT COUNT(*) as total FROM stock_movements WHERE 1=1';
-    const countParams = [];
-    if (warehouse_id) { countSql += ' AND warehouse_id = ?'; countParams.push(warehouse_id); }
-    if (movement_type) { countSql += ' AND movement_type = ?'; countParams.push(movement_type); }
-    if (start_date) { countSql += ' AND created_at >= ?'; countParams.push(start_date); }
-    if (end_date) { countSql += ' AND created_at <= ?'; countParams.push(end_date + ' 23:59:59'); }
+    // 总数（同样权限过滤）
+    const permCount = await getUserWarehouseFilter(user);
+    let countSql = `
+      SELECT COUNT(*) as total FROM stock_movements sm
+      JOIN warehouses w ON sm.warehouse_id = w.id
+      WHERE 1=1
+    `;
+    const countParams = [...permCount.params];
+    countSql += permCount.sql;
+    if (warehouse_id) { countSql += ' AND sm.warehouse_id = ?'; countParams.push(warehouse_id); }
+    if (movement_type) { countSql += ' AND sm.movement_type = ?'; countParams.push(movement_type); }
+    if (start_date) { countSql += ' AND sm.created_at >= ?'; countParams.push(start_date); }
+    if (end_date) { countSql += ' AND sm.created_at <= ?'; countParams.push(end_date + ' 23:59:59'); }
     const [countResult] = await pool.query(countSql, countParams);
 
     res.json({ data: rows, total: countResult[0].total, page: Number(page), page_size: Number(page_size) });
@@ -51,8 +103,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 手动入库
-router.post('/inbound', async (req, res) => {
+// 手动入库（仅管理人员）
+router.post('/inbound', requireManagerForOperation, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { warehouse_id, item_id, item_name, unit, reason, operator_id, operator_name, department_id, department_name } = req.body;
@@ -92,9 +144,9 @@ router.post('/inbound', async (req, res) => {
   }
 });
 
-// 批量入库（支持复制粘贴解析后导入）
+// 批量入库（仅管理人员）
 // body: { warehouse_id, operator_id, operator_name, department_id, department_name, items: [{ item_id, item_name, quantity, unit, unit_price, reason }] }
-router.post('/batch-inbound', async (req, res) => {
+router.post('/batch-inbound', requireManagerForOperation, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { warehouse_id, operator_id, operator_name, department_id, department_name, items } = req.body;
@@ -175,8 +227,8 @@ router.post('/batch-inbound', async (req, res) => {
   }
 });
 
-// 手动出库
-router.post('/outbound', async (req, res) => {
+// 手动出库（仅管理人员）
+router.post('/outbound', requireManagerForOperation, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name, department_id, department_name } = req.body;
