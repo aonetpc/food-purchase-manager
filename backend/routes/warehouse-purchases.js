@@ -1081,11 +1081,10 @@ async function generatePurchaseApplyPDF(purchaseId) {
     groupedItems[whName].push(item);
   }
 
-  // 表头与列宽（物资名称/规格/单价/数量/单位/金额/理由）
-  const headers = ['物资名称', '规格', '单价/单位', '数量', '单位', '金额', '理由'];
+  // 表头与列宽（物资名称/单价/单位/数量/单位/金额/理由）
+  const headers = ['物资名称', '单价/单位', '数量', '单位', '金额', '理由'];
   const colWidths = [
-    tableWidth * 0.22,
-    tableWidth * 0.15,
+    tableWidth * 0.29,
     tableWidth * 0.13,
     tableWidth * 0.06,
     tableWidth * 0.06,
@@ -1166,12 +1165,10 @@ async function generatePurchaseApplyPDF(purchaseId) {
       const price = toNum(item.requested_unit_price);
       const qty = toNum(item.requested_quantity);
       const amt = toNum(item.requested_amount);
-      const spec = item.spec || '';
       const unit = item.requested_unit || '';
       const reason = item.reason || '';
       const cells = [
         item.item_name,
-        spec,
         `${price.toFixed(2)}/${unit}`,
         String(qty),
         unit,
@@ -1282,10 +1279,9 @@ async function generateWarehousePDF(purchaseId) {
   }
 
   // 表头与列宽（按任务要求）
-  const headers = ['物资名称', '规格', '单价/单位', '数量', '单位', '金额'];
+  const headers = ['物资名称', '单价/单位', '数量', '单位', '金额'];
   const colWidths = [
-    tableWidth * 0.25,
-    tableWidth * 0.15,
+    tableWidth * 0.32,
     tableWidth * 0.18,
     tableWidth * 0.10,
     tableWidth * 0.10,
@@ -1449,14 +1445,12 @@ async function generateWarehousePDF(purchaseId) {
       const price = hasReceived ? toNum(item.received_unit_price) : toNum(item.requested_unit_price);
       const qty = hasReceived ? toNum(item.received_quantity) : toNum(item.requested_quantity);
       const amt = hasReceived ? toNum(item.received_amount) : toNum(item.requested_amount);
-      const spec = hasReceived ? (item.received_spec || item.spec || '') : (item.spec || '');
       const unit = hasReceived ? (item.received_unit || item.requested_unit || '') : (item.requested_unit || '');
       const itemName = notArrived ? `${item.item_name}（未到货）` : item.item_name;
       const qtyDisplay = notArrived ? '0' : String(qty);
       const amtDisplay = notArrived ? '¥0.00' : `¥${amt.toFixed(2)}`;
       const cells = [
         itemName,
-        spec,
         `${price.toFixed(2)}/${unit}`,
         qtyDisplay,
         unit,
