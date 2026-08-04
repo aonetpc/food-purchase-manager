@@ -3,6 +3,16 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 
+// 清洗数字字符串：移除千分位逗号、全角逗号、空白、货币符号等
+function cleanNumber(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return val;
+  const s = String(val).replace(/[,，\s¥￥$]/g, '').trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+}
+
 // 出入库流水查询
 router.get('/', async (req, res) => {
   try {
@@ -45,8 +55,10 @@ router.get('/', async (req, res) => {
 router.post('/inbound', async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name, department_id, department_name } = req.body;
-    if (!warehouse_id || !item_id || !quantity || !unit) {
+    const { warehouse_id, item_id, item_name, unit, reason, operator_id, operator_name, department_id, department_name } = req.body;
+    const quantity = cleanNumber(req.body.quantity);
+    const unit_price = cleanNumber(req.body.unit_price);
+    if (!warehouse_id || !item_id || quantity === null || !unit) {
       return res.status(400).json({ error: '仓库、物资、数量、单位不能为空' });
     }
 
@@ -54,11 +66,11 @@ router.post('/inbound', async (req, res) => {
 
     // 记录流水（带部门归集）
     const id = uuidv4();
-    const total_amount = unit_price ? Number(quantity) * Number(unit_price) : null;
+    const total_amount = unit_price !== null ? quantity * unit_price : null;
     await conn.query(
       `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
        VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
-      [id, warehouse_id, item_id, item_name, quantity, unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
+      [id, warehouse_id, item_id, item_name, quantity, unit, unit_price, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
     );
 
     // 更新库存（不存在则插入）
@@ -109,8 +121,9 @@ router.post('/batch-inbound', async (req, res) => {
         failedList.push({ line: lineNo, item_name: item_name || '', error: '物资未匹配' });
         continue;
       }
-      const qty = Number(quantity);
-      if (!quantity || isNaN(qty) || qty <= 0) {
+      // 清洗数量/单价（兼容 Excel 复制带千分位逗号、¥符号等）
+      const qty = cleanNumber(quantity);
+      if (qty === null || qty <= 0) {
         failedList.push({ line: lineNo, item_name: item_name || '', error: '数量无效' });
         continue;
       }
@@ -122,8 +135,8 @@ router.post('/batch-inbound', async (req, res) => {
       try {
         // 记录流水
         const id = uuidv4();
-        const price = unit_price ? Number(unit_price) : null;
-        const total_amount = price ? qty * price : null;
+        const price = cleanNumber(unit_price);
+        const total_amount = price !== null ? qty * price : null;
         await conn.query(
           `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
            VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'batch-manual', ?, ?, ?, ?)`,

@@ -6,6 +6,9 @@ import {
   RefreshCw,
   ClipboardList,
   Package,
+  Trash2,
+  Plus,
+  AlertTriangle,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
@@ -38,10 +41,10 @@ interface Props {
   warehouses: Wh[];
 }
 
-// 解析行状态
+// 草稿行状态：matched 可入库，item_missing/item_similar 需处理，error 不可入库
 type RowStatus = 'matched' | 'item_missing' | 'item_similar' | 'error';
 
-interface ParsedRow {
+interface DraftRow {
   id: string;
   rawText: string;
   rowIndex: number;
@@ -58,6 +61,12 @@ interface ParsedRow {
 
 const genId = () => Math.random().toString(36).substring(2, 11);
 
+// 清洗数字字符串：移除千分位逗号、全角逗号、空白、货币符号等
+function cleanNumberStr(val: string): string {
+  if (!val) return '';
+  return String(val).replace(/[,，\s¥￥$]/g, '').trim();
+}
+
 // 扁平化分类树
 const flattenCats = (
   nodes: CatNode[],
@@ -72,12 +81,84 @@ const flattenCats = (
   return result;
 };
 
+// 解析单行（共用逻辑）
+function parseLine(line: string, idx: number, allItems: WhItem[]): DraftRow {
+  // 优先 Tab，其次逗号，最后空白
+  let cols = line.split('\t');
+  if (cols.length < 2) cols = line.split(/[,，]/);
+  if (cols.length < 2) cols = line.split(/\s+/);
+  cols = cols.map((c) => c.trim());
+
+  if (cols.length < 1 || !cols[0]) {
+    return {
+      id: genId(),
+      rawText: line,
+      rowIndex: idx,
+      name: '',
+      unit: '',
+      quantity: '',
+      unitPrice: '',
+      reason: '',
+      status: 'error',
+      error: '格式不正确，至少需要物资名称',
+    };
+  }
+
+  const name = cols[0];
+  let unit = '';
+  let quantity = '1';
+  let unitPrice = '0';
+  let reason = '';
+
+  if (cols.length <= 3) {
+    // 简写格式：名称 [数量] 单价
+    if (cols.length === 2) {
+      quantity = cols[1];
+    } else if (cols.length === 3) {
+      quantity = cols[1];
+      unitPrice = cols[2];
+    }
+  } else {
+    // 完整格式：名称 | 单位 | 数量 | 单价 | 理由
+    unit = cols[1] || '';
+    quantity = cols[2] || '1';
+    unitPrice = cols[3] || '0';
+    reason = cols[4] || '';
+  }
+
+  // 本地精确匹配
+  const matchedItem = allItems.find((it) => it.name === name);
+  let status: RowStatus = 'matched';
+  if (!matchedItem) status = 'item_missing';
+
+  // 匹配到物资时补全单位/参考价
+  if (matchedItem) {
+    if (!unit && matchedItem.unit) unit = matchedItem.unit;
+    if ((!unitPrice || unitPrice === '0') && matchedItem.reference_price != null) {
+      unitPrice = String(matchedItem.reference_price);
+    }
+  }
+
+  return {
+    id: genId(),
+    rawText: line,
+    rowIndex: idx,
+    name,
+    unit,
+    quantity,
+    unitPrice,
+    reason,
+    status,
+    matchedItem,
+  };
+}
+
 export default function BatchInboundModal({ open, onClose, onSuccess, warehouses }: Props) {
   const { user } = useAuthStore();
   const [warehouseId, setWarehouseId] = useState<string>('');
   const [pasteText, setPasteText] = useState('');
-  const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
-  const [step, setStep] = useState<'paste' | 'preview'>('paste');
+  const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
+  const [step, setStep] = useState<'paste' | 'draft'>('paste');
   const [allItems, setAllItems] = useState<WhItem[]>([]);
   const [categoryTree, setCategoryTree] = useState<CatNode[]>([]);
   const [parsing, setParsing] = useState(false);
@@ -88,9 +169,10 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
     failed_count: number;
     failed: { line: number; item_name: string; error: string }[];
   } | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   // 新增物资弹窗
-  const [resolveRow, setResolveRow] = useState<ParsedRow | null>(null);
+  const [resolveRow, setResolveRow] = useState<DraftRow | null>(null);
   const [newItemForm, setNewItemForm] = useState({
     name: '',
     categoryId: '',
@@ -106,13 +188,13 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
   useEffect(() => {
     if (open) {
       setPasteText('');
-      setParsedRows([]);
+      setDraftRows([]);
       setStep('paste');
       setWarehouseId('');
       setSubmitError('');
       setSubmitResult(null);
+      setShowConfirm(false);
       setResolveRow(null);
-      // 加载所有物资和分类树
       Promise.all([
         api.get<WhItem[]>('/warehouses/items').catch(() => []),
         api.get<CatNode[]>('/warehouses/categories/tree').catch(() => []),
@@ -130,89 +212,18 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
       return;
     }
     const lines = pasteText.trim().split('\n').filter((l) => l.trim());
-    const rows: ParsedRow[] = [];
+    const rows: DraftRow[] = [];
     const needSearchIdx: number[] = [];
 
     lines.forEach((line, idx) => {
-      // 优先 Tab，其次逗号，最后空白
-      let cols = line.split('\t');
-      if (cols.length < 2) cols = line.split(/[,，]/);
-      if (cols.length < 2) cols = line.split(/\s+/);
-      cols = cols.map((c) => c.trim());
-
       // 跳过表头
       if (idx === 0) {
         const hits = (line.match(/物资名称|单位|数量|单价|理由/g) || []).length;
         if (hits >= 2) return;
       }
-
-      if (cols.length < 1 || !cols[0]) {
-        rows.push({
-          id: genId(),
-          rawText: line,
-          rowIndex: idx,
-          name: '',
-          unit: '',
-          quantity: '',
-          unitPrice: '',
-          reason: '',
-          status: 'error',
-          error: '格式不正确，至少需要物资名称',
-        });
-        return;
-      }
-
-      const name = cols[0];
-      let unit = '';
-      let quantity = '1';
-      let unitPrice = '0';
-      let reason = '';
-
-      if (cols.length <= 3) {
-        // 简写格式：名称 [数量] 单价
-        if (cols.length === 2) {
-          quantity = cols[1];
-        } else if (cols.length === 3) {
-          quantity = cols[1];
-          unitPrice = cols[2];
-        }
-      } else {
-        // 完整格式：名称 | 单位 | 数量 | 单价 | 理由
-        unit = cols[1] || '';
-        quantity = cols[2] || '1';
-        unitPrice = cols[3] || '0';
-        reason = cols[4] || '';
-      }
-
-      // 本地精确匹配
-      const matchedItem = allItems.find((it) => it.name === name);
-
-      let status: RowStatus = 'matched';
-      if (!matchedItem) {
-        status = 'item_missing';
-        needSearchIdx.push(rows.length);
-      }
-
-      // 匹配到物资时补全单位/参考价
-      if (matchedItem) {
-        if (!unit && matchedItem.unit) unit = matchedItem.unit;
-        if ((!unitPrice || unitPrice === '0') && matchedItem.reference_price != null) {
-          unitPrice = String(matchedItem.reference_price);
-        }
-      }
-
-      rows.push({
-        id: genId(),
-        rawText: line,
-        rowIndex: idx,
-        name,
-        unit,
-        quantity,
-        unitPrice,
-        reason,
-        status,
-        matchedItem,
-      });
+      const row = parseLine(line, idx, allItems);
+      if (row.status === 'item_missing') needSearchIdx.push(rows.length);
+      rows.push(row);
     });
 
     // 第二遍：本地未匹配的调用相似度查询
@@ -247,27 +258,89 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
       setParsing(false);
     }
 
-    setParsedRows(rows);
-    setStep('preview');
+    setDraftRows(rows);
+    setStep('draft');
     setSubmitError('');
     setSubmitResult(null);
   };
 
-  const matchedCount = useMemo(
-    () => parsedRows.filter((r) => r.status === 'matched').length,
-    [parsedRows],
-  );
-  const needResolveCount = useMemo(
-    () => parsedRows.filter((r) => r.status !== 'matched' && r.status !== 'error').length,
-    [parsedRows],
-  );
-  const errorCount = useMemo(
-    () => parsedRows.filter((r) => r.status === 'error').length,
-    [parsedRows],
-  );
+  // ===== 统计（草稿模式核心） =====
+  const stats = useMemo(() => {
+    const valid = draftRows.filter((r) => r.status === 'matched');
+    const needResolve = draftRows.filter((r) => r.status !== 'matched' && r.status !== 'error').length;
+    const errorCount = draftRows.filter((r) => r.status === 'error').length;
+    let totalQty = 0;
+    let totalAmount = 0;
+    valid.forEach((r) => {
+      const q = Number(cleanNumberStr(r.quantity));
+      const p = Number(cleanNumberStr(r.unitPrice));
+      if (!isNaN(q)) totalQty += q;
+      if (!isNaN(q) && !isNaN(p)) totalAmount += q * p;
+    });
+    return {
+      matchedCount: valid.length,
+      needResolve,
+      errorCount,
+      totalQty,
+      totalAmount,
+      totalKinds: valid.length,
+    };
+  }, [draftRows]);
 
-  // ===== 新增物资 =====
-  const handleResolveItem = (row: ParsedRow) => {
+  // ===== 行编辑 =====
+  const updateRow = (id: string, patch: Partial<DraftRow>) => {
+    setDraftRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  };
+
+  const removeRow = (id: string) => {
+    setDraftRows((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  // 手动新增一行（从已有物资选择）
+  const addManualRow = () => {
+    const newRow: DraftRow = {
+      id: genId(),
+      rawText: '',
+      rowIndex: draftRows.length,
+      name: '',
+      unit: '',
+      quantity: '1',
+      unitPrice: '0',
+      reason: '',
+      status: 'item_missing',
+    };
+    setDraftRows((prev) => [...prev, newRow]);
+  };
+
+  // 手动选择物资后填入
+  const handleManualPick = (rowId: string, itemId: string) => {
+    const item = allItems.find((it) => it.id === itemId);
+    if (!item) return;
+    setDraftRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId) return r;
+        const newUnit = r.unit || item.unit || '';
+        const newPrice =
+          r.unitPrice && r.unitPrice !== '0'
+            ? r.unitPrice
+            : item.reference_price != null
+            ? String(item.reference_price)
+            : '0';
+        return {
+          ...r,
+          status: 'matched' as RowStatus,
+          matchedItem: item,
+          name: item.name,
+          unit: newUnit,
+          unitPrice: newPrice,
+          similarCandidates: undefined,
+        };
+      }),
+    );
+  };
+
+  // ===== 新增物资到物资库 =====
+  const handleResolveItem = (row: DraftRow) => {
     setResolveRow(row);
     setNewItemForm({
       name: row.name,
@@ -297,7 +370,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
         reference_price: newItemForm.refPrice ? parseFloat(newItemForm.refPrice) : null,
       });
       setAllItems((prev) => [created, ...prev]);
-      setParsedRows((prev) =>
+      setDraftRows((prev) =>
         prev.map((r) => {
           if (r.id !== resolveRow?.id) return r;
           const newUnit = r.unit || created.unit || '';
@@ -311,6 +384,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
             ...r,
             status: 'matched' as RowStatus,
             matchedItem: created,
+            name: created.name,
             unit: newUnit,
             unitPrice: newPrice,
           };
@@ -329,8 +403,8 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
   };
 
   // ===== 选择相似候选物资 =====
-  const handlePickSimilar = (row: ParsedRow, item: WhItem) => {
-    setParsedRows((prev) =>
+  const handlePickSimilar = (row: DraftRow, item: WhItem) => {
+    setDraftRows((prev) =>
       prev.map((r) => {
         if (r.id !== row.id) return r;
         const newUnit = r.unit || item.unit || '';
@@ -344,6 +418,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
           ...r,
           status: 'matched' as RowStatus,
           matchedItem: item,
+          name: item.name,
           unit: newUnit,
           unitPrice: newPrice,
           similarCandidates: undefined,
@@ -352,20 +427,13 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
     );
   };
 
-  // ===== 从已有物资列表手动映射 =====
-  const handleManualMap = (row: ParsedRow, itemId: string) => {
-    const item = allItems.find((it) => it.id === itemId);
-    if (!item) return;
-    handlePickSimilar(row, item);
-  };
-
-  // ===== 确认导入 =====
+  // ===== 提交入库 =====
   const handleConfirm = async () => {
     if (!warehouseId) {
       setSubmitError('请选择入库仓库');
       return;
     }
-    const validRows = parsedRows.filter((r) => r.status === 'matched' && r.matchedItem);
+    const validRows = draftRows.filter((r) => r.status === 'matched' && r.matchedItem);
     if (validRows.length === 0) {
       setSubmitError('没有可导入的有效数据');
       return;
@@ -385,9 +453,9 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
         items: validRows.map((r) => ({
           item_id: r.matchedItem!.id,
           item_name: r.name,
-          quantity: Number(r.quantity),
+          quantity: Number(cleanNumberStr(r.quantity)),
           unit: r.unit,
-          unit_price: r.unitPrice ? Number(r.unitPrice) : null,
+          unit_price: r.unitPrice ? Number(cleanNumberStr(r.unitPrice)) : null,
           reason: r.reason,
         })),
       });
@@ -401,8 +469,19 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
         onSuccess();
         onClose();
       } else {
-        // 部分成功也刷新列表
+        // 部分成功也刷新列表，但保留草稿让用户处理失败行
         onSuccess();
+        // 移除已成功的行（按 item_id + quantity 匹配移除）
+        const failedKeys = new Set(
+          (result.failed || []).map((f) => `${f.item_name}`),
+        );
+        setDraftRows((prev) =>
+          prev.filter((r) => {
+            if (r.status !== 'matched') return true; // 未处理的行保留
+            return failedKeys.has(r.name);
+          }),
+        );
+        setShowConfirm(false);
       }
     } catch (err: any) {
       setSubmitError(err.message || '批量入库失败');
@@ -413,13 +492,15 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
 
   if (!open) return null;
 
+  const selectedWh = warehouses.find((w) => w.warehouse_id === warehouseId);
+
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={() => !submitting && onClose()}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -430,7 +511,9 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
             </div>
             <div>
               <h2 className="text-base font-semibold text-gray-800">批量粘贴入库</h2>
-              <p className="text-xs text-gray-500">从 Excel/WPS 复制数据，快速入库</p>
+              <p className="text-xs text-gray-500">
+                {step === 'paste' ? '从 Excel/WPS 复制数据，快速入库' : '草稿预览 · 确认无误后写入数据库'}
+              </p>
             </div>
           </div>
           <button
@@ -451,7 +534,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
             <select
               value={warehouseId}
               onChange={(e) => setWarehouseId(e.target.value)}
-              disabled={submitting || step === 'preview'}
+              disabled={submitting || step === 'draft'}
               className="input-field flex-1 disabled:bg-gray-100"
             >
               <option value="">请选择仓库</option>
@@ -473,7 +556,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
                 placeholder={
-                  '格式：物资名称 单位 数量 单价 理由\n例如：\n洗洁精5L 桶 10 35.00 日常补充\n灯泡LED12W 个 20 8.50 月度补充\n\n简写（2列）：物资名称 数量\n简写（3列）：物资名称 数量 单价'
+                  '格式：物资名称 单位 数量 单价 理由\n例如：\n洗洁精5L 桶 10 35.00 日常补充\n灯泡LED12W 个 20 8.50 月度补充\n\n简写（2列）：物资名称 数量\n简写（3列）：物资名称 数量 单价\n\n支持千分位逗号（如 2,000.00）'
                 }
                 className="w-full h-56 border border-gray-200 rounded-lg px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-success-500/20 focus:border-success-500 resize-none"
               />
@@ -491,13 +574,42 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                 ，单位/理由留空
               </p>
               <p className="mt-1">
-                未匹配的物资可在预览页一键新增到物资库，或从已有物资中手动映射
+                ✅ 支持 Excel 带千分位逗号的数字（如 <code className="bg-amber-100 px-1 rounded">2,000.00</code>）
+              </p>
+              <p className="mt-1">
+                解析后进入<strong>草稿预览</strong>，可编辑/删除/新增，确认无误后再写入数据库
               </p>
             </div>
           </div>
         ) : (
-          /* ===== 步骤2：预览 ===== */
+          /* ===== 步骤2：草稿预览 ===== */
           <div className="flex-1 overflow-y-auto p-4">
+            {/* 统计卡 */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+              <div className="bg-green-50 border border-green-200 rounded-lg p-2.5">
+                <div className="text-xs text-green-600">已匹配</div>
+                <div className="text-lg font-bold text-green-700">{stats.matchedCount}</div>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+                <div className="text-xs text-blue-600">物资种数</div>
+                <div className="text-lg font-bold text-blue-700">{stats.totalKinds}</div>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5">
+                <div className="text-xs text-purple-600">数量合计</div>
+                <div className="text-lg font-bold text-purple-700">{stats.totalQty}</div>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                <div className="text-xs text-amber-600">入库总额</div>
+                <div className="text-lg font-bold text-amber-700">¥{stats.totalAmount.toFixed(2)}</div>
+              </div>
+              <div className={`border rounded-lg p-2.5 ${stats.needResolve + stats.errorCount > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                <div className="text-xs text-gray-600">需处理/错误</div>
+                <div className={`text-lg font-bold ${stats.needResolve + stats.errorCount > 0 ? 'text-red-700' : 'text-gray-700'}`}>
+                  {stats.needResolve + stats.errorCount}
+                </div>
+              </div>
+            </div>
+
             {/* 提交结果提示 */}
             {submitResult && (
               <div
@@ -513,7 +625,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                   {submitResult.failed_count > 0 && (
                     <>
                       <AlertCircle size={14} className="ml-2" />
-                      失败 {submitResult.failed_count} 条
+                      失败 {submitResult.failed_count} 条（失败行已保留在草稿，可修改后再次提交）
                     </>
                   )}
                 </div>
@@ -529,123 +641,186 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
               </div>
             )}
 
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3 text-xs">
-                <span className="inline-flex items-center gap-1">
-                  <CheckCircle size={14} className="text-green-500" />
-                  已匹配 <strong className="text-green-600">{matchedCount}</strong>
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <AlertCircle size={14} className="text-amber-500" />
-                  需处理 <strong className="text-amber-600">{needResolveCount}</strong>
-                </span>
-                {errorCount > 0 && (
-                  <span className="inline-flex items-center gap-1">
-                    <AlertCircle size={14} className="text-red-500" />
-                    错误 <strong className="text-red-600">{errorCount}</strong>
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => setStep('paste')}
-                disabled={submitting}
-                className="text-xs text-primary-600 hover:text-primary-700 flex items-center gap-1 disabled:opacity-50"
-              >
-                <RefreshCw size={12} /> 重新粘贴
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              {parsedRows.map((row) => (
+            {/* 草稿列表（每行可编辑） */}
+            <div className="space-y-2">
+              {draftRows.map((row, idx) => (
                 <div
                   key={row.id}
-                  className={`p-2 rounded-lg border text-xs transition-all ${
+                  className={`p-3 rounded-lg border transition-all ${
                     row.status === 'matched'
-                      ? 'border-green-200 bg-green-50/50'
+                      ? 'border-green-200 bg-green-50/30'
                       : row.status === 'error'
-                      ? 'border-red-200 bg-red-50/50'
-                      : 'border-amber-200 bg-amber-50/50'
+                      ? 'border-red-200 bg-red-50/30'
+                      : 'border-amber-200 bg-amber-50/30'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {row.status === 'matched' ? (
-                        <CheckCircle size={16} className="text-green-500 flex-shrink-0" />
-                      ) : row.status === 'error' ? (
-                        <AlertCircle size={16} className="text-red-500 flex-shrink-0" />
-                      ) : (
-                        <AlertCircle size={16} className="text-amber-500 flex-shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <div className="font-medium text-gray-800 truncate">
-                          {row.name || row.rawText}
-                        </div>
-                        <div className="text-gray-500">
-                          {row.quantity} {row.unit} · ¥{row.unitPrice}
-                          {row.reason && ` · ${row.reason}`}
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs text-gray-400 mt-2 flex-shrink-0 w-6">#{idx + 1}</span>
+                    <div className="flex-1 grid grid-cols-12 gap-2">
+                      {/* 物资名称 */}
+                      <div className="col-span-12 md:col-span-4">
+                        <label className="block text-[10px] text-gray-500 mb-0.5">物资名称</label>
+                        {row.status === 'matched' ? (
+                          <input
+                            type="text"
+                            value={row.name}
+                            onChange={(e) => updateRow(row.id, { name: e.target.value })}
+                            className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-primary-400"
+                          />
+                        ) : row.status === 'item_similar' ? (
+                          <div className="space-y-1">
+                            <input
+                              type="text"
+                              value={row.name}
+                              onChange={(e) => updateRow(row.id, { name: e.target.value })}
+                              className="w-full text-xs border border-amber-300 rounded px-2 py-1 focus:outline-none focus:border-amber-400"
+                            />
+                            <select
+                              className="w-full text-xs border border-amber-300 rounded px-1.5 py-1 bg-white"
+                              onChange={(e) => {
+                                const item = row.similarCandidates?.find((c) => c.id === e.target.value);
+                                if (item) handlePickSimilar(row, item);
+                              }}
+                              value=""
+                            >
+                              <option value="">选择相似物资...</option>
+                              {row.similarCandidates?.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name} ({c.unit || '-'})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : row.status === 'item_missing' ? (
+                          <div className="space-y-1">
+                            <input
+                              type="text"
+                              value={row.name}
+                              onChange={(e) => updateRow(row.id, { name: e.target.value })}
+                              className="w-full text-xs border border-amber-300 rounded px-2 py-1 focus:outline-none focus:border-amber-400"
+                            />
+                            <select
+                              className="w-full text-xs border border-amber-300 rounded px-1.5 py-1 bg-white"
+                              onChange={(e) => {
+                                if (e.target.value) handleManualPick(row.id, e.target.value);
+                              }}
+                              value=""
+                            >
+                              <option value="">映射已有物资...</option>
+                              {allItems.slice(0, 100).map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name} ({c.unit || '-'})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-red-600 py-1">{row.error || '错误'}</div>
+                        )}
+                      </div>
+
+                      {/* 单位 */}
+                      <div className="col-span-3 md:col-span-2">
+                        <label className="block text-[10px] text-gray-500 mb-0.5">单位</label>
+                        <input
+                          type="text"
+                          value={row.unit}
+                          onChange={(e) => updateRow(row.id, { unit: e.target.value })}
+                          placeholder="如 个"
+                          className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-primary-400"
+                        />
+                      </div>
+
+                      {/* 数量 */}
+                      <div className="col-span-3 md:col-span-2">
+                        <label className="block text-[10px] text-gray-500 mb-0.5">数量</label>
+                        <input
+                          type="text"
+                          value={row.quantity}
+                          onChange={(e) => updateRow(row.id, { quantity: e.target.value })}
+                          placeholder="如 10"
+                          className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-primary-400"
+                        />
+                      </div>
+
+                      {/* 单价 */}
+                      <div className="col-span-3 md:col-span-2">
+                        <label className="block text-[10px] text-gray-500 mb-0.5">单价</label>
+                        <input
+                          type="text"
+                          value={row.unitPrice}
+                          onChange={(e) => updateRow(row.id, { unitPrice: e.target.value })}
+                          placeholder="如 35.00"
+                          className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-primary-400"
+                        />
+                      </div>
+
+                      {/* 小计 */}
+                      <div className="col-span-3 md:col-span-2">
+                        <label className="block text-[10px] text-gray-500 mb-0.5">小计</label>
+                        <div className="text-xs font-semibold text-gray-700 py-1">
+                          ¥
+                          {(() => {
+                            const q = Number(cleanNumberStr(row.quantity));
+                            const p = Number(cleanNumberStr(row.unitPrice));
+                            if (isNaN(q) || isNaN(p)) return '-';
+                            return (q * p).toFixed(2);
+                          })()}
                         </div>
                       </div>
+
+                      {/* 理由（整行） */}
+                      <div className="col-span-9 md:col-span-10">
+                        <label className="block text-[10px] text-gray-500 mb-0.5">理由</label>
+                        <input
+                          type="text"
+                          value={row.reason}
+                          onChange={(e) => updateRow(row.id, { reason: e.target.value })}
+                          placeholder="如 日常补充"
+                          className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-primary-400"
+                        />
+                      </div>
                     </div>
-                    <div className="flex-shrink-0">
+
+                    {/* 操作按钮 */}
+                    <div className="flex flex-col gap-1 flex-shrink-0">
                       {row.status === 'item_missing' && (
-                        <div className="flex items-center gap-1">
-                          <select
-                            className="text-xs border border-amber-300 rounded px-1.5 py-1 bg-white max-w-[180px]"
-                            onChange={(e) => {
-                              if (e.target.value) handleManualMap(row, e.target.value);
-                            }}
-                            value=""
-                          >
-                            <option value="">映射已有物资...</option>
-                            {allItems.slice(0, 100).map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name} ({c.unit || '-'})
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => handleResolveItem(row)}
-                            className="text-xs bg-primary-500 text-white px-2 py-1 rounded hover:bg-primary-600 whitespace-nowrap"
-                          >
-                            新增
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleResolveItem(row)}
+                          className="text-xs bg-primary-500 text-white px-2 py-1 rounded hover:bg-primary-600 whitespace-nowrap"
+                          title="新增到物资库"
+                        >
+                          新增物资
+                        </button>
                       )}
                       {row.status === 'item_similar' && (
-                        <div className="flex items-center gap-1">
-                          <select
-                            className="text-xs border border-amber-300 rounded px-1.5 py-1 bg-white max-w-[180px]"
-                            onChange={(e) => {
-                              const item = row.similarCandidates?.find((c) => c.id === e.target.value);
-                              if (item) handlePickSimilar(row, item);
-                            }}
-                            value=""
-                          >
-                            <option value="">选择相似物资...</option>
-                            {row.similarCandidates?.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name} ({c.unit || '-'})
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => handleResolveItem(row)}
-                            className="text-xs bg-primary-500 text-white px-2 py-1 rounded hover:bg-primary-600 whitespace-nowrap"
-                          >
-                            新增
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleResolveItem(row)}
+                          className="text-xs bg-primary-500 text-white px-2 py-1 rounded hover:bg-primary-600 whitespace-nowrap"
+                          title="新增到物资库"
+                        >
+                          新增物资
+                        </button>
                       )}
-                      {row.status === 'error' && (
-                        <span className="text-xs text-red-500">{row.error}</span>
-                      )}
-                      {row.status === 'matched' && (
-                        <span className="text-xs text-green-600">已匹配</span>
-                      )}
+                      <button
+                        onClick={() => removeRow(row.id)}
+                        className="text-xs bg-red-50 text-red-600 px-2 py-1 rounded hover:bg-red-100 whitespace-nowrap flex items-center gap-1 justify-center"
+                        title="删除该行"
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </div>
                   </div>
                 </div>
               ))}
+
+              {/* 手动新增一行 */}
+              <button
+                onClick={addManualRow}
+                className="w-full py-2 border-2 border-dashed border-gray-200 rounded-lg text-xs text-gray-500 hover:border-primary-300 hover:text-primary-600 hover:bg-primary-50/30 flex items-center justify-center gap-1"
+              >
+                <Plus size={14} /> 手动添加一行
+              </button>
             </div>
           </div>
         )}
@@ -668,6 +843,13 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
           ) : (
             <>
               <button
+                onClick={() => setStep('paste')}
+                disabled={submitting}
+                className="btn-secondary flex items-center gap-1 disabled:opacity-50"
+              >
+                <RefreshCw size={14} /> 重新粘贴
+              </button>
+              <button
                 onClick={onClose}
                 disabled={submitting}
                 className="btn-secondary flex-1 disabled:opacity-50"
@@ -675,11 +857,11 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                 {submitResult ? '关闭' : '取消'}
               </button>
               <button
-                onClick={handleConfirm}
-                disabled={matchedCount === 0 || submitting}
+                onClick={() => setShowConfirm(true)}
+                disabled={stats.matchedCount === 0 || submitting}
                 className="btn-primary flex-1 bg-success-500 hover:bg-success-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting ? '提交中...' : `确认入库 (${matchedCount} 条)`}
+                确认入库 ({stats.matchedCount} 条)
               </button>
             </>
           )}
@@ -689,6 +871,61 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
           <div className="mx-6 mb-3 flex items-center gap-2 text-danger-600 bg-danger-50 p-2.5 rounded-lg text-xs">
             <AlertCircle size={14} />
             <span>{submitError}</span>
+          </div>
+        )}
+
+        {/* ===== 二次确认弹窗 ===== */}
+        {showConfirm && (
+          <div
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+            onClick={() => !submitting && setShowConfirm(false)}
+          >
+            <div
+              className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle size={20} className="text-amber-500" />
+                <h3 className="text-base font-semibold text-gray-800">确认入库</h3>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 mb-3 text-sm">
+                <div className="flex justify-between mb-1">
+                  <span className="text-gray-500">入库仓库：</span>
+                  <span className="font-medium text-gray-800">{selectedWh?.warehouse_name || '-'}</span>
+                </div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-gray-500">物资种数：</span>
+                  <span className="font-medium text-gray-800">{stats.totalKinds} 种</span>
+                </div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-gray-500">数量合计：</span>
+                  <span className="font-medium text-gray-800">{stats.totalQty}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">入库总额：</span>
+                  <span className="font-bold text-amber-700">¥{stats.totalAmount.toFixed(2)}</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mb-4">
+                确认后将写入数据库并更新库存，无法撤销。请再次核对金额是否正确。
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  disabled={submitting}
+                  className="btn-secondary flex-1 text-sm disabled:opacity-50"
+                >
+                  再核对一下
+                </button>
+                <button
+                  onClick={handleConfirm}
+                  disabled={submitting}
+                  className="btn-primary flex-1 text-sm bg-success-500 hover:bg-success-600 disabled:opacity-50"
+                >
+                  {submitting ? '提交中...' : '确认入库'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

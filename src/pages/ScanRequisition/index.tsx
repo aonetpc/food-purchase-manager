@@ -63,6 +63,9 @@ export default function ScanRequisition() {
   const [resultMsg, setResultMsg] = useState('');
   const [resultSuccess, setResultSuccess] = useState(false);
 
+  // 从 URL 读取仓库 ID（用于按仓库多维度二维码扫码后自动预选）
+  const whFromUrl = searchParams.get('wh') || '';
+
   // ================================================
   // 初始化
   // ================================================
@@ -122,6 +125,7 @@ export default function ScanRequisition() {
   const handleWechatAuth = async () => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
+    const whFromUrl = urlParams.get('wh') || '';
 
     if (!code) {
       // 获取 appid 并跳转授权
@@ -130,7 +134,11 @@ export default function ScanRequisition() {
         const appId = configRes.app_id;
         if (!appId) { setError('微信配置未初始化'); setLoading(false); return; }
 
-        const redirectUri = encodeURIComponent(window.location.origin + '/scan-requisition');
+        // redirect_uri 保留 wh 参数，授权回跳后仍能定位到对应仓库
+        const redirectPath = whFromUrl
+          ? `${window.location.origin}/scan-requisition?wh=${whFromUrl}`
+          : `${window.location.origin}/scan-requisition`;
+        const redirectUri = encodeURIComponent(redirectPath);
         const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=${Date.now()}#wechat_redirect`;
         window.location.href = authUrl;
       } catch (err: any) {
@@ -199,6 +207,10 @@ export default function ScanRequisition() {
       });
       const data = await res.json();
       setWarehouses(data);
+      // 扫码入口二维码带 wh 参数，自动预选对应仓库
+      if (whFromUrl && data && data.some((w: Warehouse) => w.id === whFromUrl)) {
+        setSelectedWarehouse(whFromUrl);
+      }
     } catch (err: any) {
       setError(err.message || '获取仓库列表失败');
     } finally {
