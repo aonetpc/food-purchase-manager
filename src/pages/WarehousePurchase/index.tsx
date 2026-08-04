@@ -23,10 +23,12 @@ import {
   ClipboardCheck,
   Paperclip,
   Upload,
+  User,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
 import WarehousePurchaseProgress from '@/components/WarehousePurchaseProgress';
+import { useAuthStore } from '@/store/authStore';
 
 // ====== 类型定义 ======
 
@@ -109,6 +111,7 @@ interface WarehousePurchase {
   prepay_status?: string;
   writeoff_status?: string;
   prepay_attachments?: Array<{ filename: string; path: string; mime: string; size: number }> | null;
+  created_by_name?: string;
 }
 
 // 列表分页响应
@@ -201,6 +204,7 @@ const getConfirmProgress = (p: WarehousePurchase): { confirmed: number; total: n
 
 export default function WarehousePurchaseList() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuthStore();
 
   // 列表数据
   const [purchases, setPurchases] = useState<WarehousePurchase[]>([]);
@@ -764,6 +768,15 @@ export default function WarehousePurchaseList() {
                         )}
                         <span>·</span>
                         <span>{formatDateTime(p.created_at)}</span>
+                        {p.created_by_name && (
+                          <>
+                            <span>·</span>
+                            <span className="flex items-center gap-1 text-gray-600">
+                              <User size={12} />
+                              {p.created_by_name}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -942,7 +955,7 @@ export default function WarehousePurchaseList() {
 
                         {/* 操作按钮区（根据状态显示不同按钮） */}
                         <div className="flex gap-2 flex-wrap pt-1">
-                          {/* draft: 编辑、提交审批、删除 */}
+                          {/* draft: 编辑、提交审批 */}
                           {p.status === 'draft' && (
                             <>
                               <button
@@ -975,17 +988,19 @@ export default function WarehousePurchaseList() {
                                   </>
                                 )}
                               </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(p.id);
-                                }}
-                                disabled={actioningId === p.id}
-                                className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto disabled:opacity-50"
-                              >
-                                <Trash2 size={14} />
-                                删除
-                              </button>
+                              {isAdmin && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDelete(p.id);
+                                  }}
+                                  disabled={actioningId === p.id}
+                                  className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto disabled:opacity-50"
+                                >
+                                  <Trash2 size={14} />
+                                  删除
+                                </button>
+                              )}
                             </>
                           )}
 

@@ -11,6 +11,7 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/rbac');
+const { requireRole } = require('../middleware/roleAuth');
 const {
   getWecomConfig,
   sendMarkdownViaWebhook,
@@ -2997,8 +2998,8 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
   }
 });
 
-// 14. DELETE /:id — 删除采购单
-router.delete('/:id', requireAuth, async (req, res) => {
+// 14. DELETE /:id — 删除采购单（仅管理员）
+router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
