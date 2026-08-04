@@ -178,7 +178,7 @@ export default function WarehouseBatchPasteModal({
 
       // 跳过表头（第一行且关键词命中≥2个）
       if (idx === 0) {
-        const hits = (line.match(/物资名称|规格|单位|数量|单价|仓库|供应商|理由/g) || []).length;
+        const hits = (line.match(/物资名称|单位|数量|单价|仓库|供应商|理由/g) || []).length;
         if (hits >= 2) return;
       }
 
@@ -572,10 +572,10 @@ export default function WarehouseBatchPasteModal({
                 onChange={(e) => setPasteText(e.target.value)}
                 placeholder={
                   useFixedSupplier
-                    ? '格式：物资名称 规格 单位 数量 单价 仓库名称 采购理由\n例如：\n洗洁精 5L 桶 10 35.00 厨房仓 日常补充\n灯泡 LED12W 个 20 8.50 总仓\n（供应商已自动使用表头选择的：' +
+                    ? '格式：物资名称 单位 数量 单价 仓库名称 采购理由\n例如：\n洗洁精5L 桶 10 35.00 厨房仓 日常补充\n灯泡LED12W 个 20 8.50 总仓\n（供应商已自动使用表头选择的：' +
                       (fixedSupplier?.name || '') +
                       '）\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
-                    : '格式：物资名称 规格 单位 数量 单价 仓库名称 供应商 采购理由\n例如：\n洗洁精 5L 桶 10 35.00 厨房仓 永辉超市 日常补充\n灯泡 LED12W 个 20 8.50 总仓 飞利浦 月度补充\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
+                    : '格式：物资名称 单位 数量 单价 仓库名称 供应商 采购理由\n例如：\n洗洁精5L 桶 10 35.00 厨房仓 永辉超市 日常补充\n灯泡LED12W 个 20 8.50 总仓 飞利浦 月度补充\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
                 }
                 className="w-full h-56 border border-gray-200 rounded-lg px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none"
               />
@@ -588,8 +588,8 @@ export default function WarehouseBatchPasteModal({
                 列顺序：
                 <code className="bg-amber-100 px-1 rounded">
                   {useFixedSupplier
-                    ? '物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 采购理由'
-                    : '物资名称 | 规格 | 单位 | 数量 | 单价 | 仓库名称 | 供应商 | 采购理由'}
+                    ? '物资名称（含规格） | 单位 | 数量 | 单价 | 仓库名称 | 采购理由'
+                    : '物资名称（含规格） | 单位 | 数量 | 单价 | 仓库名称 | 供应商 | 采购理由'}
                 </code>
               </p>
               {useFixedSupplier ? (

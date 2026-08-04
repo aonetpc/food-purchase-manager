@@ -468,9 +468,6 @@ export default function WarehouseConfirmPage() {
                       <div className="flex justify-between">
                         <span className="text-gray-700 flex-1">
                           {item.item_name}
-                          {item.spec && (
-                            <span className="text-xs text-gray-400 ml-1">/ {item.spec}</span>
-                          )}
                         </span>
                         <span className="text-gray-700 ml-2">¥{Number(item.received_amount || 0).toFixed(2)}</span>
                       </div>

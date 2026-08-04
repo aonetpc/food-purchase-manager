@@ -20,7 +20,6 @@ interface InventoryItem {
   item_name: string;
   sku: string;
   category_name: string;
-  spec: string;
   quantity: number;
   unit: string;
   min_stock: number;
@@ -256,7 +255,6 @@ export default function InventoryManager() {
                   <th>物资名称</th>
                   <th>SKU</th>
                   <th>分类</th>
-                  <th>规格</th>
                   <th className="text-right">当前库存</th>
                   <th>单位</th>
                   <th className="text-right">最低库存</th>
@@ -273,7 +271,6 @@ export default function InventoryManager() {
                       <td className="font-medium text-gray-800 whitespace-nowrap">{item.item_name}</td>
                       <td className="text-gray-500 font-mono text-xs whitespace-nowrap">{item.sku}</td>
                       <td className="text-gray-600 whitespace-nowrap">{item.category_name}</td>
-                      <td className="text-gray-600 whitespace-nowrap">{item.spec}</td>
                       <td className={`text-right font-semibold whitespace-nowrap ${low ? 'text-danger-600' : 'text-gray-800'}`}>
                         {item.quantity}
                       </td>

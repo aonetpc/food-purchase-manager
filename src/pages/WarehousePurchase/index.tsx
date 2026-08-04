@@ -915,7 +915,6 @@ export default function WarehousePurchaseList() {
                                   <tr>
                                     <th className="px-3 py-2 text-left">仓库</th>
                                     <th className="px-3 py-2 text-left">物资名称</th>
-                                    <th className="px-3 py-2 text-left">规格</th>
                                     <th className="px-3 py-2 text-left">单位</th>
                                     <th className="px-3 py-2 text-right">数量</th>
                                     <th className="px-3 py-2 text-right">单价</th>
@@ -931,7 +930,6 @@ export default function WarehousePurchaseList() {
                                         {it.warehouse_name || '-'}
                                       </td>
                                       <td className="px-3 py-2 text-gray-700">{it.item_name}</td>
-                                      <td className="px-3 py-2 text-gray-500">{it.spec || '-'}</td>
                                       <td className="px-3 py-2 text-gray-500">{it.unit || '-'}</td>
                                       <td className="px-3 py-2 text-right text-gray-700">
                                         {safeNum(it.quantity)}
@@ -1396,8 +1394,6 @@ export default function WarehousePurchaseList() {
                       <tr>
                         <th className="px-3 py-2 text-left">仓库</th>
                         <th className="px-3 py-2 text-left">物资名称</th>
-                        <th className="px-3 py-2 text-left">规格</th>
-                        <th className="px-3 py-2 text-left">单位</th>
                         <th className="px-3 py-2 text-right">实收数量</th>
                         <th className="px-3 py-2 text-right">单价</th>
                         <th className="px-3 py-2 text-right">金额</th>
@@ -1416,36 +1412,24 @@ export default function WarehousePurchaseList() {
                             </td>
                             <td className="px-3 py-2 text-gray-800 font-medium">
                               {row.itemName}
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="text"
-                                value={row.received_spec}
-                                onChange={(e) =>
-                                  setReceiveRows((prev) =>
-                                    prev.map((r, i) =>
-                                      i === idx ? { ...r, received_spec: e.target.value } : r,
-                                    ),
-                                  )
-                                }
-                                disabled={disabled}
-                                className="w-28 border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="text"
-                                value={row.received_unit}
-                                onChange={(e) =>
-                                  setReceiveRows((prev) =>
-                                    prev.map((r, i) =>
-                                      i === idx ? { ...r, received_unit: e.target.value } : r,
-                                    ),
-                                  )
-                                }
-                                disabled={disabled}
-                                className="w-20 border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
-                              />
+                              {!row.not_arrived && (
+                                <div className="mt-1">
+                                  <input
+                                    type="text"
+                                    value={row.received_spec || ''}
+                                    onChange={(e) =>
+                                      setReceiveRows((prev) =>
+                                        prev.map((r, i) =>
+                                          i === idx ? { ...r, received_spec: e.target.value } : r,
+                                        ),
+                                      )
+                                    }
+                                    placeholder="实收规格（可选）"
+                                    disabled={disabled}
+                                    className="w-full text-xs border border-gray-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
+                                  />
+                                </div>
+                              )}
                             </td>
                             <td className="px-3 py-2">
                               <input
