@@ -250,17 +250,55 @@ router.get('/items', async (req, res) => {
   }
 });
 
+// 相似度查询：用于批量导入时检测输错字的物资
+// 返回精确匹配 + 候选列表（LIKE 粗筛）
+router.get('/items/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || !q.trim()) return res.json({ exact: null, candidates: [] });
+
+    const keyword = q.trim();
+    // 1. 精确匹配（name 完全相等）
+    const [exact] = await pool.query(
+      'SELECT wi.*, wc.name as category_name, wc.full_path as category_full_path FROM warehouse_items wi LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id WHERE wi.name = ? AND wi.status = 1',
+      [keyword]
+    );
+    // 2. 候选：name 包含关键词 或 关键词包含 name
+    const [candidates] = await pool.query(
+      `SELECT wi.*, wc.name as category_name, wc.full_path as category_full_path
+       FROM warehouse_items wi
+       LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+       WHERE wi.status = 1 AND wi.name != ? AND (wi.name LIKE ? OR ? LIKE CONCAT('%', wi.name, '%'))
+       ORDER BY wi.created_at DESC LIMIT 10`,
+      [keyword, `%${keyword}%`, keyword]
+    );
+    res.json({ exact: exact[0] || null, candidates });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 新建物资
 router.post('/items', async (req, res) => {
   try {
     const { name, category_id, sku, spec, unit = '个', reference_price = 0, instant_use = 0 } = req.body;
     if (!name) return res.status(400).json({ error: '物资名称不能为空' });
 
+    // 查重：启用状态下同名物资不允许重复创建（合并规格后 name 即唯一标识）
+    const [dup] = await pool.query(
+      'SELECT id FROM warehouse_items WHERE name = ? AND status = 1',
+      [name.trim()]
+    );
+    if (dup.length > 0) {
+      return res.status(409).json({ error: '已存在同名物资，请直接使用或修改名称', existing_id: dup[0].id });
+    }
+
     const id = uuidv4();
     await pool.query(
       `INSERT INTO warehouse_items (id, category_id, name, sku, spec, unit, reference_price, instant_use)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, category_id || null, name, sku || null, spec || null, unit, reference_price, instant_use ? 1 : 0]
+      [id, category_id || null, name.trim(), sku || null, spec || '', unit, reference_price, instant_use ? 1 : 0]
     );
 
     const [rows] = await pool.query(`

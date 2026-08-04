@@ -87,7 +87,6 @@ interface ItemForm {
   name: string;
   sku: string;
   category_id: string;
-  spec: string;
   unit: string;
   reference_price: string;
   instant_use: boolean;
@@ -123,7 +122,6 @@ const emptyItemForm = (): ItemForm => ({
   name: '',
   sku: '',
   category_id: '',
-  spec: '',
   unit: '',
   reference_price: '',
   instant_use: false,
@@ -447,7 +445,6 @@ export default function WarehouseManager() {
       name: item.name,
       sku: item.sku || '',
       category_id: item.category_id || '',
-      spec: item.spec || '',
       unit: item.unit || '',
       reference_price: item.reference_price != null ? String(item.reference_price) : '',
       instant_use: Number(item.instant_use) === 1,
@@ -477,7 +474,6 @@ export default function WarehouseManager() {
       name: itemForm.name.trim(),
       sku: itemForm.sku.trim() || null,
       category_id: itemForm.category_id || null,
-      spec: itemForm.spec.trim() || null,
       unit: itemForm.unit.trim(),
       reference_price: itemForm.reference_price ? parseFloat(itemForm.reference_price) : null,
       instant_use: itemForm.instant_use ? 1 : 0,
@@ -492,7 +488,11 @@ export default function WarehouseManager() {
       }
       setShowItemModal(false);
     } catch (err: any) {
-      setItemFormError(err.message || '保存失败');
+      if (err.status === 409 || err.code === 409) {
+        setItemFormError('已存在同名物资，请修改名称或使用已有物资');
+      } else {
+        setItemFormError(err.message || '保存失败');
+      }
     }
   };
 
@@ -836,7 +836,6 @@ export default function WarehouseManager() {
                       <th>物资名称</th>
                       <th>SKU</th>
                       <th>分类</th>
-                      <th>规格</th>
                       <th>单位</th>
                       <th className="text-right">参考单价</th>
                       <th>属性</th>
@@ -851,7 +850,6 @@ export default function WarehouseManager() {
                         <td className="text-gray-600">
                           {item.category_full_path || item.category_name || '-'}
                         </td>
-                        <td className="text-gray-600">{item.spec || '-'}</td>
                         <td className="text-gray-700">{item.unit || '-'}</td>
                         <td className="text-right font-medium text-primary-600">
                           {item.reference_price != null
@@ -1161,17 +1159,6 @@ export default function WarehouseManager() {
                       </option>
                     ))}
                   </select>
-                </div>
-                {/* 规格 */}
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">规格</label>
-                  <input
-                    type="text"
-                    value={itemForm.spec}
-                    onChange={(e) => setItemForm({ ...itemForm, spec: e.target.value })}
-                    placeholder="如：500ml、10kg/箱"
-                    className="input-field"
-                  />
                 </div>
                 {/* 参考单价 */}
                 <div className="col-span-2">

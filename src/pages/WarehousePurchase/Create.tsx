@@ -67,7 +67,6 @@ interface LineItem {
   key: string;
   item_id: string;
   item_name: string;
-  spec: string;
   unit: string;
   quantity: string;
   unit_price: string;
@@ -144,7 +143,6 @@ const emptyLine = (): LineItem => ({
   key: genKey(),
   item_id: '',
   item_name: '',
-  spec: '',
   unit: '',
   quantity: '1',
   unit_price: '0',
@@ -201,11 +199,41 @@ export default function WarehousePurchaseCreate() {
   const [quickAddData, setQuickAddData] = useState({
     name: '',
     category_id: '',
-    spec: '',
     unit: '个',
     reference_price: '',
   });
   const [quickAddLoading, setQuickAddLoading] = useState(false);
+  // 实时查重：输入名称时检测是否已存在
+  const [dupHint, setDupHint] = useState<{ name: string; id: string } | null>(null);
+  const [dupChecking, setDupChecking] = useState(false);
+
+  // 防抖查重
+  useEffect(() => {
+    const name = quickAddData.name.trim();
+    if (!name || !showQuickAdd) {
+      setDupHint(null);
+      return;
+    }
+    setDupChecking(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api.get<{ exact: WarehouseItem | null; candidates: WarehouseItem[] }>(
+          '/warehouses/items/search',
+          { params: { q: name } },
+        );
+        if (result.exact) {
+          setDupHint({ name: result.exact.name, id: result.exact.id });
+        } else {
+          setDupHint(null);
+        }
+      } catch {
+        setDupHint(null);
+      } finally {
+        setDupChecking(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [quickAddData.name, showQuickAdd]);
 
   // ===== 初始化：加载仓库、物资、分类树、部门、库存 =====
   useEffect(() => {
@@ -253,7 +281,6 @@ export default function WarehousePurchaseCreate() {
           key: genKey(),
           item_id: it.item_id || '',
           item_name: it.item_name,
-          spec: it.spec || '',
           unit: it.unit || '',
           quantity: String(safeNum(it.quantity)),
           unit_price: String(safeNum(it.unit_price)),
@@ -343,13 +370,12 @@ export default function WarehousePurchaseCreate() {
     setShowAddPanel(true);
   };
 
-  // 选择物资：自动填充规格和单位，单价默认用参考价
+  // 选择物资：自动填充单位，单价默认用参考价
   const pickItem = (item: WarehouseItem) => {
     if (!editingLineKey) return;
     updateLine(editingLineKey, {
       item_id: item.id,
       item_name: item.name,
-      spec: item.spec || '',
       unit: item.unit || '',
       unit_price:
         item.reference_price != null ? String(safeNum(item.reference_price)) : '0',
@@ -358,7 +384,7 @@ export default function WarehousePurchaseCreate() {
     setEditingLineKey(null);
     // 重置快速添加表单
     setShowQuickAdd(false);
-    setQuickAddData({ name: '', category_id: '', spec: '', unit: '个', reference_price: '' });
+    setQuickAddData({ name: '', category_id: '', unit: '个', reference_price: '' });
   };
 
   // 快速添加物资并自动选中
@@ -369,7 +395,6 @@ export default function WarehousePurchaseCreate() {
       const newItem = await api.post<WarehouseItem>('/warehouses/items', {
         name: quickAddData.name.trim(),
         category_id: quickAddData.category_id || null,
-        spec: quickAddData.spec.trim() || null,
         unit: quickAddData.unit.trim() || '个',
         reference_price: parseFloat(quickAddData.reference_price) || 0,
       });
@@ -380,7 +405,6 @@ export default function WarehousePurchaseCreate() {
         updateLine(editingLineKey, {
           item_id: newItem.id,
           item_name: newItem.name,
-          spec: newItem.spec || '',
           unit: newItem.unit || '',
           unit_price: newItem.reference_price != null ? String(safeNum(newItem.reference_price)) : '0',
         });
@@ -389,9 +413,14 @@ export default function WarehousePurchaseCreate() {
       }
       // 重置快速添加表单
       setShowQuickAdd(false);
-      setQuickAddData({ name: '', category_id: '', spec: '', unit: '个', reference_price: '' });
+      setQuickAddData({ name: '', category_id: '', unit: '个', reference_price: '' });
     } catch (err: any) {
-      alert(err.message || '添加物资失败');
+      // 409 表示已存在同名物资
+      if (err.status === 409 || err.code === 409) {
+        alert('已存在同名物资，请从左侧列表中选择，或修改名称后再添加');
+      } else {
+        alert(err.message || '添加物资失败');
+      }
     } finally {
       setQuickAddLoading(false);
     }
@@ -421,7 +450,6 @@ export default function WarehousePurchaseCreate() {
       key: genKey(),
       item_id: l.item_id,
       item_name: l.item_name,
-      spec: l.spec,
       unit: l.unit,
       quantity: l.quantity || '1',
       unit_price: l.unit_price || '0',
@@ -495,7 +523,6 @@ export default function WarehousePurchaseCreate() {
       items: validLines.map((l) => ({
         item_id: l.item_id || null,
         item_name: l.item_name.trim(),
-        spec: l.spec.trim() || null,
         unit: l.unit.trim(),
         quantity: parseFloat(l.quantity) || 0,
         unit_price: parseFloat(l.unit_price) || 0,
@@ -726,7 +753,6 @@ export default function WarehousePurchaseCreate() {
               <thead>
                 <tr>
                   <th className="whitespace-nowrap">物资名称</th>
-                  <th className="whitespace-nowrap">规格</th>
                   <th className="whitespace-nowrap">单位</th>
                   <th className="whitespace-nowrap text-right">数量</th>
                   <th className="whitespace-nowrap text-right">单价(元)</th>
@@ -762,16 +788,6 @@ export default function WarehousePurchaseCreate() {
                           </span>
                         )}
                       </button>
-                    </td>
-                    {/* 规格 */}
-                    <td>
-                      <input
-                        type="text"
-                        value={line.spec}
-                        onChange={(e) => updateLine(line.key, { spec: e.target.value })}
-                        placeholder="规格"
-                        className="w-24 border border-gray-200 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                      />
                     </td>
                     {/* 单位 */}
                     <td>
@@ -981,10 +997,18 @@ export default function WarehousePurchaseCreate() {
                       type="text"
                       value={quickAddData.name}
                       onChange={(e) => updateQuickAdd('name', e.target.value)}
-                      placeholder="输入物资名称"
+                      placeholder="输入物资名称（含规格，如：食用油5L）"
                       className="input-field"
                       autoFocus
                     />
+                    {dupChecking && (
+                      <p className="text-xs text-gray-400 mt-1">检查中...</p>
+                    )}
+                    {dupHint && (
+                      <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                        ⚠️ 已存在同名物资「{dupHint.name}」，请直接从左侧列表选择
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-gray-600 mb-1 block">分类</label>
@@ -998,16 +1022,6 @@ export default function WarehousePurchaseCreate() {
                         <option key={cat.id} value={cat.id}>{cat.name}</option>
                       ))}
                     </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 mb-1 block">规格</label>
-                    <input
-                      type="text"
-                      value={quickAddData.spec}
-                      onChange={(e) => updateQuickAdd('spec', e.target.value)}
-                      placeholder="如：开尔5W暖光"
-                      className="input-field"
-                    />
                   </div>
                   <div>
                     <label className="text-xs text-gray-600 mb-1 block">单位</label>
@@ -1115,7 +1129,7 @@ export default function WarehousePurchaseCreate() {
                       <div className="min-w-0">
                         <p className="font-medium text-gray-800 text-sm truncate">{it.name}</p>
                         <p className="text-xs text-gray-500">
-                          {it.spec || '无规格'} · {it.unit || '无单位'}
+                          {it.unit || '无单位'}
                           {it.reference_price != null
                             ? ` · ¥${safeNum(it.reference_price).toFixed(2)}`
                             : ''}

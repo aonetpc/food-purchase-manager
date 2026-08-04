@@ -44,7 +44,6 @@ interface Supplier {
 export interface PasteLine {
   item_id: string;
   item_name: string;
-  spec: string;
   unit: string;
   quantity: string;
   unit_price: string;
@@ -56,14 +55,13 @@ export interface PasteLine {
 }
 
 // 解析行状态
-type RowStatus = 'matched' | 'item_missing' | 'warehouse_missing' | 'supplier_missing' | 'error';
+type RowStatus = 'matched' | 'item_missing' | 'item_similar' | 'warehouse_missing' | 'supplier_missing' | 'error';
 
 interface ParsedRow {
   id: string;
   rawText: string;
   rowIndex: number;
   name: string;
-  spec: string;
   unit: string;
   quantity: string;
   unitPrice: string;
@@ -74,6 +72,8 @@ interface ParsedRow {
   matchedItem?: WhItem;
   matchedWarehouse?: Wh;
   matchedSupplier?: Supplier;
+  // 相似度候选列表（status='item_similar' 时使用）
+  similarCandidates?: WhItem[];
   error?: string;
 }
 
@@ -131,7 +131,6 @@ export default function WarehouseBatchPasteModal({
   const [newItemForm, setNewItemForm] = useState({
     name: '',
     categoryId: '',
-    spec: '',
     unit: '',
     refPrice: '',
   });
@@ -162,11 +161,14 @@ export default function WarehouseBatchPasteModal({
     setLocalSuppliers(initialSuppliers);
   }, [initialSuppliers]);
 
-  // ===== 解析粘贴文本 =====
-  const parseText = () => {
+  // ===== 解析粘贴文本（异步：未匹配时调用相似度查询） =====
+  const [parsing, setParsing] = useState(false);
+  const parseText = async () => {
     const lines = pasteText.trim().split('\n').filter((l) => l.trim());
     const rows: ParsedRow[] = [];
 
+    // 第一遍：解析所有行，本地精确匹配
+    const needSearchIdx: number[] = []; // 需要相似度查询的行索引
     lines.forEach((line, idx) => {
       // 优先 Tab（保留 Excel 空列），其次逗号，最后空白
       let cols = line.split('\t');
@@ -186,7 +188,6 @@ export default function WarehouseBatchPasteModal({
           rawText: line,
           rowIndex: idx,
           name: '',
-          spec: '',
           unit: '',
           quantity: '',
           unitPrice: '',
@@ -200,7 +201,6 @@ export default function WarehouseBatchPasteModal({
       }
 
       const name = cols[0];
-      let spec = '';
       let unit = '';
       let quantity = '1';
       let unitPrice = '0';
@@ -217,25 +217,22 @@ export default function WarehouseBatchPasteModal({
           unitPrice = cols[2];
         }
       } else {
-        // 完整格式：名称 | 规格 | 单位 | 数量 | 单价 | 仓库 | 供应商 | 理由
-        spec = cols[1] || '';
-        unit = cols[2] || '';
-        quantity = cols[3] || '1';
-        unitPrice = cols[4] || '0';
-        warehouse = cols[5] || '';
-        // 固定表头供应商模式下不解析供应商列，第7列视为理由
+        // 完整格式：名称 | 单位 | 数量 | 单价 | 仓库 | 供应商 | 理由
+        // 合并方案后规格已并入名称，不再单独解析规格列
+        unit = cols[1] || '';
+        quantity = cols[2] || '1';
+        unitPrice = cols[3] || '0';
+        warehouse = cols[4] || '';
         if (useFixedSupplier) {
-          reason = cols[6] || '';
+          reason = cols[5] || '';
         } else {
-          supplier = cols[6] || '';
-          reason = cols[7] || '';
+          supplier = cols[5] || '';
+          reason = cols[6] || '';
         }
       }
 
-      // 匹配物资库（先精确名称+规格，回退只按名称）
-      const matchedItem =
-        localItems.find((it) => it.name === name && (!spec || it.spec === spec)) ||
-        localItems.find((it) => it.name === name);
+      // 合并方案：name 即唯一标识，本地精确匹配
+      const matchedItem = localItems.find((it) => it.name === name);
 
       // 匹配仓库
       let matchedWarehouse: Wh | undefined;
@@ -253,16 +250,17 @@ export default function WarehouseBatchPasteModal({
 
       let status: RowStatus = 'matched';
       if (!matchedItem) {
+        // 本地未匹配，稍后调用相似度查询
         status = 'item_missing';
+        needSearchIdx.push(rows.length); // 记录行在 rows 中的位置
       } else if (warehouse && !matchedWarehouse) {
         status = 'warehouse_missing';
       } else if (!useFixedSupplier && supplier && !matchedSupplier) {
         status = 'supplier_missing';
       }
 
-      // 匹配到物资时补全规格/单位/参考价
+      // 匹配到物资时补全单位/参考价
       if (matchedItem) {
-        if (!spec && matchedItem.spec) spec = matchedItem.spec;
         if (!unit && matchedItem.unit) unit = matchedItem.unit;
         if ((!unitPrice || unitPrice === '0') && matchedItem.reference_price != null) {
           unitPrice = String(matchedItem.reference_price);
@@ -274,7 +272,6 @@ export default function WarehouseBatchPasteModal({
         rawText: line,
         rowIndex: idx,
         name,
-        spec,
         unit,
         quantity,
         unitPrice,
@@ -287,6 +284,43 @@ export default function WarehouseBatchPasteModal({
         matchedSupplier,
       });
     });
+
+    // 第二遍：对本地未匹配的行调用相似度查询接口
+    if (needSearchIdx.length > 0) {
+      setParsing(true);
+      await Promise.all(
+        needSearchIdx.map(async (rowIdx) => {
+          const row = rows[rowIdx];
+          try {
+            const result = await api.get<{ exact: WhItem | null; candidates: WhItem[] }>(
+              '/warehouses/items/search',
+              { params: { q: row.name } },
+            );
+            if (result.exact) {
+              // 后端精确匹配（可能本地列表未及时更新）
+              row.matchedItem = result.exact;
+              if (!row.unit && result.exact.unit) row.unit = result.exact.unit;
+              if ((!row.unitPrice || row.unitPrice === '0') && result.exact.reference_price != null) {
+                row.unitPrice = String(result.exact.reference_price);
+              }
+              // 重新判断状态
+              if (row.warehouse && !row.matchedWarehouse) row.status = 'warehouse_missing';
+              else if (!useFixedSupplier && row.supplier && !row.matchedSupplier) row.status = 'supplier_missing';
+              else row.status = 'matched';
+            } else if (result.candidates && result.candidates.length > 0) {
+              // 有相似候选，标记待确认
+              row.status = 'item_similar';
+              row.similarCandidates = result.candidates;
+            } else {
+              row.status = 'item_missing';
+            }
+          } catch {
+            // 查询失败保持 item_missing
+          }
+        }),
+      );
+      setParsing(false);
+    }
 
     setParsedRows(rows);
     setStep('preview');
@@ -312,7 +346,6 @@ export default function WarehouseBatchPasteModal({
     setNewItemForm({
       name: row.name,
       categoryId: flatCats[0]?.id || '',
-      spec: row.spec,
       unit: row.unit,
       refPrice: row.unitPrice,
     });
@@ -334,7 +367,6 @@ export default function WarehouseBatchPasteModal({
       const created = await api.post<WhItem>('/warehouses/items', {
         name: newItemForm.name.trim(),
         category_id: newItemForm.categoryId || null,
-        spec: newItemForm.spec.trim() || null,
         unit: newItemForm.unit.trim(),
         reference_price: newItemForm.refPrice ? parseFloat(newItemForm.refPrice) : null,
       });
@@ -345,7 +377,6 @@ export default function WarehouseBatchPasteModal({
       setParsedRows((prev) =>
         prev.map((r) => {
           if (r.id !== resolveRow?.id) return r;
-          const newSpec = r.spec || created.spec || '';
           const newUnit = r.unit || created.unit || '';
           const newPrice =
             r.unitPrice && r.unitPrice !== '0'
@@ -360,7 +391,6 @@ export default function WarehouseBatchPasteModal({
             ...r,
             status: newStatus,
             matchedItem: created,
-            spec: newSpec,
             unit: newUnit,
             unitPrice: newPrice,
           };
@@ -369,10 +399,42 @@ export default function WarehouseBatchPasteModal({
       setResolveRow(null);
       setResolveType(null);
     } catch (err: any) {
-      setNewItemError(err.message || '新增物资失败');
+      // 409 表示已存在同名物资，提示用户使用映射
+      if (err.status === 409 || err.code === 409) {
+        setNewItemError('已存在同名物资，请关闭此弹窗后使用"映射物资"功能选择已有物资');
+      } else {
+        setNewItemError(err.message || '新增物资失败');
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  // ===== 选择相似候选物资 =====
+  const handlePickSimilar = (row: ParsedRow, item: WhItem) => {
+    setParsedRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== row.id) return r;
+        const newUnit = r.unit || item.unit || '';
+        const newPrice =
+          r.unitPrice && r.unitPrice !== '0'
+            ? r.unitPrice
+            : item.reference_price != null
+            ? String(item.reference_price)
+            : '0';
+        let newStatus: RowStatus = 'matched';
+        if (r.warehouse && !r.matchedWarehouse) newStatus = 'warehouse_missing';
+        else if (!useFixedSupplier && r.supplier && !r.matchedSupplier) newStatus = 'supplier_missing';
+        return {
+          ...r,
+          status: newStatus,
+          matchedItem: item,
+          unit: newUnit,
+          unitPrice: newPrice,
+          similarCandidates: undefined,
+        };
+      }),
+    );
   };
 
   // ===== 仓库映射 =====
@@ -453,7 +515,6 @@ export default function WarehouseBatchPasteModal({
     const lines: PasteLine[] = validRows.map((r) => ({
       item_id: r.matchedItem?.id || '',
       item_name: r.name,
-      spec: r.spec,
       unit: r.unit,
       quantity: r.quantity,
       unit_price: r.unitPrice,
@@ -607,7 +668,6 @@ export default function WarehouseBatchPasteModal({
                         </div>
                         <div className="text-gray-500">
                           {row.quantity} {row.unit} · ¥{row.unitPrice}
-                          {row.spec && ` · ${row.spec}`}
                           {row.warehouse && ` · ${row.warehouse}`}
                           {useFixedSupplier && fixedSupplier
                             ? ` · 供应商: ${fixedSupplier.name}`
@@ -626,6 +686,31 @@ export default function WarehouseBatchPasteModal({
                         >
                           新增物资
                         </button>
+                      )}
+                      {row.status === 'item_similar' && (
+                        <div className="flex items-center gap-1">
+                          <select
+                            className="text-xs border border-amber-300 rounded px-1.5 py-1 bg-white max-w-[180px]"
+                            onChange={(e) => {
+                              const item = row.similarCandidates?.find((c) => c.id === e.target.value);
+                              if (item) handlePickSimilar(row, item);
+                            }}
+                            value=""
+                          >
+                            <option value="">选择相似物资...</option>
+                            {row.similarCandidates?.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} ({c.unit})
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => handleResolveItem(row)}
+                            className="text-xs bg-primary-500 text-white px-2 py-1 rounded hover:bg-primary-600 whitespace-nowrap"
+                          >
+                            新增
+                          </button>
+                        </div>
                       )}
                       {row.status === 'warehouse_missing' && (
                         <button
@@ -666,10 +751,10 @@ export default function WarehouseBatchPasteModal({
               </button>
               <button
                 onClick={parseText}
-                disabled={!pasteText.trim()}
+                disabled={!pasteText.trim() || parsing}
                 className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                解析预览
+                {parsing ? '解析中...' : '解析预览'}
               </button>
             </>
           ) : (
@@ -733,16 +818,6 @@ export default function WarehouseBatchPasteModal({
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">规格</label>
-                    <input
-                      type="text"
-                      value={newItemForm.spec}
-                      onChange={(e) => setNewItemForm({ ...newItemForm, spec: e.target.value })}
-                      placeholder="如 500ml"
-                      className="input-field text-sm"
-                    />
-                  </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       单位 <span className="text-danger-500">*</span>
