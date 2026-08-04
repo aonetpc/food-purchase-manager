@@ -80,6 +80,88 @@ router.post('/inbound', async (req, res) => {
   }
 });
 
+// 批量入库（支持复制粘贴解析后导入）
+// body: { warehouse_id, operator_id, operator_name, department_id, department_name, items: [{ item_id, item_name, quantity, unit, unit_price, reason }] }
+router.post('/batch-inbound', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { warehouse_id, operator_id, operator_name, department_id, department_name, items } = req.body;
+    if (!warehouse_id) {
+      conn.release();
+      return res.status(400).json({ error: '仓库不能为空' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      conn.release();
+      return res.status(400).json({ error: '导入数据不能为空' });
+    }
+
+    await conn.beginTransaction();
+
+    const successList = [];
+    const failedList = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const { item_id, item_name, quantity, unit, unit_price, reason } = it;
+      const lineNo = i + 1;
+
+      if (!item_id) {
+        failedList.push({ line: lineNo, item_name: item_name || '', error: '物资未匹配' });
+        continue;
+      }
+      const qty = Number(quantity);
+      if (!quantity || isNaN(qty) || qty <= 0) {
+        failedList.push({ line: lineNo, item_name: item_name || '', error: '数量无效' });
+        continue;
+      }
+      if (!unit) {
+        failedList.push({ line: lineNo, item_name: item_name || '', error: '单位为空' });
+        continue;
+      }
+
+      try {
+        // 记录流水
+        const id = uuidv4();
+        const price = unit_price ? Number(unit_price) : null;
+        const total_amount = price ? qty * price : null;
+        await conn.query(
+          `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
+           VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'batch-manual', ?, ?, ?, ?)`,
+          [id, warehouse_id, item_id, item_name || null, qty, unit, price, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
+        );
+
+        // 更新库存（不存在则插入）
+        const [existing] = await conn.query('SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?', [warehouse_id, item_id]);
+        if (existing.length > 0) {
+          await conn.query('UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?', [qty, unit, warehouse_id, item_id]);
+        } else {
+          await conn.query('INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)', [uuidv4(), warehouse_id, item_id, qty, unit]);
+        }
+
+        successList.push({ line: lineNo, item_id, item_name: item_name || '', quantity: qty, unit });
+      } catch (e) {
+        failedList.push({ line: lineNo, item_name: item_name || '', error: e.message || '入库失败' });
+      }
+    }
+
+    await conn.commit();
+    res.json({
+      success: true,
+      total: items.length,
+      success_count: successList.length,
+      failed_count: failedList.length,
+      success: successList,
+      failed: failedList,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
 // 手动出库
 router.post('/outbound', async (req, res) => {
   const conn = await pool.getConnection();

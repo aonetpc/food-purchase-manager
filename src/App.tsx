@@ -149,7 +149,7 @@ export default function App() {
             </ProtectedRoute>
           } />
           <Route path="scan-audit" element={
-            <ProtectedRoute requiredPermission="action:warehouse:manage">
+            <ProtectedRoute requiredPermission="menu:scan-audit">
               <ScanAudit />
             </ProtectedRoute>
           } />

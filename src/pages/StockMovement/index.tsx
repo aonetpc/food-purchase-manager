@@ -7,9 +7,11 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
+import BatchInboundModal from '@/components/BatchInboundModal';
 
 // 仓库汇总信息（用于仓库下拉）
 interface WarehouseSummary {
@@ -96,6 +98,9 @@ export default function StockMovement() {
   const [materialOptions, setMaterialOptions] = useState<InventoryItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+
+  // 批量入库弹窗
+  const [batchInboundOpen, setBatchInboundOpen] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -270,6 +275,13 @@ export default function StockMovement() {
           <p className="text-gray-500 mt-1">查询物资出入库流水，支持手动入库 / 出库</p>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => setBatchInboundOpen(true)}
+            className="btn-primary flex items-center gap-2 bg-success-500 hover:bg-success-600"
+          >
+            <ClipboardList size={18} />
+            <span>批量入库</span>
+          </button>
           <button
             onClick={() => openModal('inbound')}
             className="btn-primary flex items-center gap-2 bg-success-500 hover:bg-success-600"
@@ -575,6 +587,14 @@ export default function StockMovement() {
           </div>
         </div>
       )}
+
+      {/* 批量入库弹窗 */}
+      <BatchInboundModal
+        open={batchInboundOpen}
+        onClose={() => setBatchInboundOpen(false)}
+        onSuccess={() => fetchMovements(1)}
+        warehouses={warehouses}
+      />
     </div>
   );
 }
