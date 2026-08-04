@@ -85,9 +85,9 @@ export default function ScanRequisition() {
           const stored = getSession();
           if (stored && stored.token === token) {
             setSession(stored);
-            if (stored.has_bound_warehouse) {
-              await fetchItems(token);
-            } else {
+            // 始终拉取物资（设置出库仓库 + 物资列表）；未绑定额外拉入库仓库列表
+            await fetchItems(token);
+            if (!stored.has_bound_warehouse) {
               await fetchWarehouses(token);
             }
             setLoading(false);
@@ -100,9 +100,9 @@ export default function ScanRequisition() {
       const stored = getSession();
       if (stored) {
         setSession(stored);
-        if (stored.has_bound_warehouse) {
-          await fetchItems(stored.token);
-        } else {
+        // 始终拉取物资（设置出库仓库 + 物资列表）；未绑定额外拉入库仓库列表
+        await fetchItems(stored.token);
+        if (!stored.has_bound_warehouse) {
           await fetchWarehouses(stored.token);
         }
         setLoading(false);
@@ -168,12 +168,12 @@ export default function ScanRequisition() {
       searchParams.delete('state');
       setSearchParams(searchParams, { replace: true });
 
+      // 始终拉取物资（设置出库仓库 + 物资列表）；未绑定额外拉入库仓库列表
+      await fetchItems(res.token);
       if (res.is_new_user) {
         setShowRegister(true);
         setLoading(false);
-      } else if (res.has_bound_warehouse) {
-        await fetchItems(res.token);
-      } else {
+      } else if (!res.has_bound_warehouse) {
         await fetchWarehouses(res.token);
       }
     } catch (err: any) {
@@ -241,7 +241,8 @@ export default function ScanRequisition() {
       saveSession(updated);
       setSession(updated);
       setShowRegister(false);
-      await fetchWarehouses(updated.token);
+      // 注册后同时拉取出库仓库物资 + 入库仓库列表（供选择）
+      await Promise.all([fetchItems(updated.token), fetchWarehouses(updated.token)]);
     } catch (err: any) { setError(err.message); }
   };
 
