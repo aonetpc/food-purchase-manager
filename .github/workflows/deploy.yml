@@ -37,6 +37,8 @@ jobs:
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
+            sudo mkdir -p /opt/food-purchase/backend/scripts
+            sudo cp -r backend/scripts/* /opt/food-purchase/backend/scripts/
             sudo mkdir -p /opt/food-purchase/backend/utils
             sudo cp -r backend/utils/. /opt/food-purchase/backend/utils/
             sudo cp -r backend/fonts /opt/food-purchase/backend/
@@ -717,6 +719,11 @@ jobs:
               echo "Running migration: $sql_file"
               mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
             done
+
+            # 清空测试库存数据：inventory归零 + 删除出入库流水
+            echo "🧹 Clearing test inventory data..."
+            mysql -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/scripts/cleanup_inventory.sql 2>/dev/null || true
+            echo "✅ Inventory cleanup done"
 
             # 修复打卡记录数据：删除重复记录 + 修复UTC时间（失败不中断部署）
             echo "🔧 Fixing checkin data (duplicates + UTC time)..."
