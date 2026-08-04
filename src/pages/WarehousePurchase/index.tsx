@@ -112,6 +112,7 @@ interface WarehousePurchase {
   writeoff_status?: string;
   prepay_attachments?: Array<{ filename: string; path: string; mime: string; size: number }> | null;
   created_by_name?: string;
+  created_by?: string;
 }
 
 // 列表分页响应
@@ -204,7 +205,7 @@ const getConfirmProgress = (p: WarehousePurchase): { confirmed: number; total: n
 
 export default function WarehousePurchaseList() {
   const navigate = useNavigate();
-  const { isAdmin } = useAuthStore();
+  const { isAdmin, user } = useAuthStore();
 
   // 列表数据
   const [purchases, setPurchases] = useState<WarehousePurchase[]>([]);
@@ -574,8 +575,14 @@ export default function WarehousePurchaseList() {
   };
 
   // ===== 删除 =====
+  // 权限：管理员可删除任意状态；非管理员只能删除自己创建的草稿单
   const handleDelete = async (id: string) => {
-    if (!window.confirm('确定删除该采购单吗？删除后不可恢复。')) return;
+    const target = purchases.find((p) => p.id === id);
+    const isDraft = target?.status === 'draft';
+    const confirmMsg = isDraft
+      ? '确定删除该采购单吗？删除后不可恢复。'
+      : '该采购单非草稿状态，删除后不可恢复且关联数据将一并清除，确定继续吗？';
+    if (!window.confirm(confirmMsg)) return;
     setActioningId(id);
     try {
       await api.delete(`/warehouse-purchases/${id}`);
@@ -988,7 +995,7 @@ export default function WarehousePurchaseList() {
                                   </>
                                 )}
                               </button>
-                              {isAdmin && (
+                              {(isAdmin || p.created_by === user?.id) && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -1294,6 +1301,21 @@ export default function WarehousePurchaseList() {
                                 </button>
                               )}
                             </>
+                          )}
+
+                          {/* 管理员：删除非草稿状态采购单（草稿状态已在上方块内显示删除按钮） */}
+                          {isAdmin && p.status !== 'draft' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto disabled:opacity-50"
+                            >
+                              <Trash2 size={14} />
+                              删除
+                            </button>
                           )}
                         </div>
                       </>

@@ -2998,20 +2998,36 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
   }
 });
 
-// 14. DELETE /:id — 删除采购单（仅管理员）
-router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
+// 14. DELETE /:id — 删除采购单
+// 权限规则：
+//   - 管理员（admin）：可删除任意状态的采购单
+//   - 非管理员：只能删除自己创建的草稿单（status='draft' 且 created_by=当前用户）
+router.delete('/:id', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
     const { id } = req.params;
-    const [rows] = await connection.query('SELECT id, status FROM warehouse_purchases WHERE id = ?', [id]);
+    const [rows] = await connection.query(
+      'SELECT id, status, created_by FROM warehouse_purchases WHERE id = ?',
+      [id]
+    );
     if (rows.length === 0) {
       await connection.rollback();
       return res.status(404).json({ error: '采购单不存在' });
     }
-    if (rows[0].status !== 'draft' && rows[0].status !== 'cancelled') {
+
+    const row = rows[0];
+    const userRole = req.user?.role;
+    const isAdmin = userRole === 'admin';
+    const isDraftOwner = row.status === 'draft' && row.created_by === req.user.id;
+
+    if (!isAdmin && !isDraftOwner) {
       await connection.rollback();
-      return res.status(400).json({ error: '只有草稿或已取消的采购单可以删除' });
+      // 区分错误信息：非草稿 / 非本人
+      if (row.status !== 'draft') {
+        return res.status(400).json({ error: '只能删除草稿状态的采购单' });
+      }
+      return res.status(403).json({ error: '无权限删除他人创建的采购单' });
     }
 
     await connection.query('DELETE FROM warehouse_purchase_items WHERE purchase_id = ?', [id]);
