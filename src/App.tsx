@@ -43,6 +43,8 @@ import WarehousePurchaseCreate from '@/pages/WarehousePurchase/Create';
 import InventoryManager from '@/pages/InventoryManager';
 import StockMovement from '@/pages/StockMovement';
 import SupplierReconciliation from '@/pages/SupplierReconciliation';
+import ScanRequisition from '@/pages/ScanRequisition';
+import ScanAudit from '@/pages/ScanAudit';
 
 export default function App() {
   return (
@@ -60,6 +62,9 @@ export default function App() {
         <Route path="/temp/checkin" element={<TempCheckin />} />
         <Route path="/temp/profile" element={<TempProfile />} />
         <Route path="/temp" element={<Navigate to="/temp/login" replace />} />
+
+        {/* 扫码领料 - 独立页面，微信扫码进入 */}
+        <Route path="/scan-requisition" element={<ScanRequisition />} />
 
         {/* 企微端审核管理路由 - 内部人员使用 */}
         <Route path="/m/temp-audit" element={<MobileTempAudit />} />
@@ -141,6 +146,11 @@ export default function App() {
           <Route path="stock-movement" element={
             <ProtectedRoute requiredPermission="menu:stock-movement">
               <StockMovement />
+            </ProtectedRoute>
+          } />
+          <Route path="scan-audit" element={
+            <ProtectedRoute requiredPermission="action:warehouse:manage">
+              <ScanAudit />
             </ProtectedRoute>
           } />
           <Route path="warehouse-purchase" element={
