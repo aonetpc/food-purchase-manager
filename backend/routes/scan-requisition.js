@@ -64,6 +64,14 @@ async function getMainWarehouseId() {
   return rows.length > 0 ? rows[0] : null;
 }
 
+/** 获取指定仓库（按ID），不存在则回退总仓 */
+async function getWarehouseById(warehouseId) {
+  if (!warehouseId) return await getMainWarehouseId();
+  const [rows] = await pool.query('SELECT id, name FROM warehouses WHERE id = ? AND status = 1 LIMIT 1', [warehouseId]);
+  if (rows.length > 0) return rows[0];
+  return await getMainWarehouseId();
+}
+
 /** 执行出库（事务：扣库存 + 写流水） */
 async function executeOutbound(connection, { warehouseId, warehouseName, items, operatorName, operatorId, requisitionNo }) {
   for (const item of items) {
@@ -250,11 +258,11 @@ router.get('/my-warehouses', requireTempAuth, async (req, res) => {
   }
 });
 
-/** 获取总仓库存>0 的物资列表 */
+/** 获取指定仓库（出库仓库）库存>0 的物资列表，wh 缺省回退总仓 */
 router.get('/items', requireTempAuth, async (req, res) => {
   try {
-    const mainWh = await getMainWarehouseId();
-    if (!mainWh) {
+    const wh = await getWarehouseById(req.query.wh);
+    if (!wh) {
       return res.json([]);
     }
 
@@ -268,10 +276,10 @@ router.get('/items', requireTempAuth, async (req, res) => {
       LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
       WHERE i.warehouse_id = ? AND i.quantity > 0 AND wi.status = 1
       ORDER BY wc.sort_order ASC, wi.name ASC
-    `, [mainWh.id]);
+    `, [wh.id]);
 
     res.json({
-      warehouse: mainWh,
+      warehouse: wh,
       items: rows.map(r => ({
         ...r,
         quantity: toNum(r.quantity),
@@ -288,7 +296,9 @@ router.get('/items', requireTempAuth, async (req, res) => {
 router.post('/', requireTempAuth, async (req, res) => {
   const connection = await pool.getConnection();
   try {
-    const { items, warehouse_id, warehouse_name } = req.body;
+    // warehouse_id = 出库仓库（扫码二维码对应仓库，物资从这里出）
+    // inbound_warehouse_id = 入库仓库（领料目标部门仓库）
+    const { items, warehouse_id, warehouse_name, inbound_warehouse_id, inbound_warehouse_name } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: '领料清单不能为空' });
@@ -302,41 +312,51 @@ router.post('/', requireTempAuth, async (req, res) => {
       }
     }
 
-    // 查询用户是否已绑定仓库
+    // 出库仓库（扫码 wh 传入，缺省回退总仓）
+    const outboundWh = await getWarehouseById(warehouse_id);
+    if (!outboundWh) {
+      return res.status(400).json({ error: '出库仓库不存在，请重新扫码' });
+    }
+
+    // 查询用户是否已绑定入库仓库
     const [boundWarehouses] = await pool.query(
       'SELECT warehouse_id FROM scan_user_warehouses WHERE temp_user_id = ?',
       [req.tempUser.id]
     );
 
     const isBound = boundWarehouses.length > 0;
-    const targetWarehouseId = isBound ? boundWarehouses[0].warehouse_id : warehouse_id;
-    const targetWarehouseName = isBound
-      ? (await pool.query('SELECT name FROM warehouses WHERE id = ?', [targetWarehouseId]))[0][0]?.name
-      : warehouse_name;
+    // 入库仓库：已绑定用绑定仓库，否则用前端传入的 inbound_warehouse_id
+    let inboundWhId = isBound ? boundWarehouses[0].warehouse_id : inbound_warehouse_id;
+    let inboundWhName = inbound_warehouse_name;
+    if (isBound) {
+      const [bwRow] = await pool.query('SELECT name FROM warehouses WHERE id = ?', [inboundWhId]);
+      inboundWhName = bwRow.length > 0 ? bwRow[0].name : inbound_warehouse_name;
+    }
 
-    if (!targetWarehouseId) {
+    if (!inboundWhId) {
       return res.status(400).json({ error: '请选择领料仓库' });
     }
 
     const requisitionNo = await generateRequisitionNo();
     const id = uuidv4();
-    const status = isBound ? 'auto' : 'pending';
 
-    // 如果已绑定仓库，直接出库
+    // 如果已绑定入库仓库，直接出库
     if (isBound) {
       await connection.beginTransaction();
 
       await connection.query(
-        `INSERT INTO scan_requisitions (id, requisition_no, temp_user_id, user_name, user_phone, warehouse_id, warehouse_name, items, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto', NOW())`,
+        `INSERT INTO scan_requisitions (id, requisition_no, temp_user_id, user_name, user_phone, warehouse_id, warehouse_name, outbound_warehouse_id, outbound_warehouse_name, items, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', NOW())`,
         [id, requisitionNo, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
-         targetWarehouseId, targetWarehouseName, JSON.stringify(items)]
+         inboundWhId, inboundWhName,
+         outboundWh.id, outboundWh.name,
+         JSON.stringify(items)]
       );
 
-      // 执行出库
+      // 执行出库（从出库仓库扣库存）
       await executeOutbound(connection, {
-        warehouseId: targetWarehouseId,
-        warehouseName: targetWarehouseName,
+        warehouseId: outboundWh.id,
+        warehouseName: outboundWh.name,
         items,
         operatorName: req.tempUser.name,
         operatorId: req.tempUser.id,
@@ -353,12 +373,14 @@ router.post('/', requireTempAuth, async (req, res) => {
       });
     }
 
-    // 未绑定仓库：创建待审核领料单
+    // 未绑定入库仓库：创建待审核领料单
     await connection.query(
-      `INSERT INTO scan_requisitions (id, requisition_no, temp_user_id, user_name, user_phone, warehouse_id, warehouse_name, items, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+      `INSERT INTO scan_requisitions (id, requisition_no, temp_user_id, user_name, user_phone, warehouse_id, warehouse_name, outbound_warehouse_id, outbound_warehouse_name, items, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
       [id, requisitionNo, req.tempUser.id, req.tempUser.name, req.tempUser.phone,
-       targetWarehouseId, targetWarehouseName, JSON.stringify(items)]
+       inboundWhId, inboundWhName,
+       outboundWh.id, outboundWh.name,
+       JSON.stringify(items)]
     );
 
     res.json({
@@ -429,11 +451,8 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const { id } = req.params;
-    const { warehouse_id } = req.body;
-
-    if (!warehouse_id) {
-      return res.status(400).json({ error: '请选择出库仓库' });
-    }
+    // inbound_warehouse_id = 入库仓库（领料目标部门仓库，可选覆盖领料单上的入库仓库）
+    const { inbound_warehouse_id } = req.body;
 
     await connection.beginTransaction();
 
@@ -451,35 +470,53 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
     const requisition = rows[0];
     const items = typeof requisition.items === 'string' ? JSON.parse(requisition.items) : requisition.items;
 
-    // 查询仓库名称
-    const [whRows] = await connection.query('SELECT name FROM warehouses WHERE id = ?', [warehouse_id]);
-    if (whRows.length === 0) {
+    // 出库仓库 = 领料单提交时确定的扫码仓库（outbound_warehouse_id）
+    const outboundWhId = requisition.outbound_warehouse_id || requisition.warehouse_id;
+    if (!outboundWhId) {
       await connection.rollback();
-      return res.status(400).json({ error: '仓库不存在' });
+      return res.status(400).json({ error: '领料单缺少出库仓库信息' });
     }
-    const warehouseName = whRows[0].name;
+    const [outWhRows] = await connection.query('SELECT name FROM warehouses WHERE id = ?', [outboundWhId]);
+    if (outWhRows.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ error: '出库仓库不存在' });
+    }
+    const outboundWhName = outWhRows[0].name;
 
-    // 执行出库
+    // 入库仓库（领料目标部门仓库）：优先用管理员指定的，否则用领料单上的
+    const inboundWhId = inbound_warehouse_id || requisition.warehouse_id;
+    if (!inboundWhId) {
+      await connection.rollback();
+      return res.status(400).json({ error: '请选择入库仓库（领料部门）' });
+    }
+    const [inWhRows] = await connection.query('SELECT name FROM warehouses WHERE id = ?', [inboundWhId]);
+    if (inWhRows.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ error: '入库仓库不存在' });
+    }
+    const inboundWhName = inWhRows[0].name;
+
+    // 执行出库（从出库仓库扣库存）
     await executeOutbound(connection, {
-      warehouseId: warehouse_id,
-      warehouseName,
+      warehouseId: outboundWhId,
+      warehouseName: outboundWhName,
       items,
       operatorName: requisition.user_name,
       operatorId: requisition.temp_user_id,
       requisitionNo: requisition.requisition_no,
     });
 
-    // 更新领料单状态
+    // 更新领料单状态（入库仓库 + 出库仓库）
     await connection.query(
-      `UPDATE scan_requisitions SET status = 'approved', auditor_id = ?, auditor_name = ?, approved_at = NOW(), warehouse_id = ?, warehouse_name = ? WHERE id = ?`,
-      [req.user.id, req.user.name, warehouse_id, warehouseName, id]
+      `UPDATE scan_requisitions SET status = 'approved', auditor_id = ?, auditor_name = ?, approved_at = NOW(), warehouse_id = ?, warehouse_name = ?, outbound_warehouse_id = ?, outbound_warehouse_name = ? WHERE id = ?`,
+      [req.user.id, req.user.name, inboundWhId, inboundWhName, outboundWhId, outboundWhName, id]
     );
 
-    // 绑定领料人-仓库（后续免审核）
+    // 绑定领料人-入库仓库（后续免审核，自动从扫码仓库出库到该入库仓库）
     await connection.query(
       `INSERT IGNORE INTO scan_user_warehouses (id, temp_user_id, warehouse_id, warehouse_name, assigned_by, assigned_at)
        VALUES (?, ?, ?, ?, ?, NOW())`,
-      [uuidv4(), requisition.temp_user_id, warehouse_id, warehouseName, req.user.id]
+      [uuidv4(), requisition.temp_user_id, inboundWhId, inboundWhName, req.user.id]
     );
 
     await connection.commit();

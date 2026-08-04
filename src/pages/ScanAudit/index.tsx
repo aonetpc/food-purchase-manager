@@ -33,6 +33,8 @@ interface Requisition {
   user_phone: string;
   warehouse_id: string;
   warehouse_name: string;
+  outbound_warehouse_id?: string;
+  outbound_warehouse_name?: string;
   items: RequisitionItem[];
   status: 'pending' | 'approved' | 'rejected' | 'auto';
   auditor_name: string | null;
@@ -45,6 +47,8 @@ interface Warehouse {
   id: string;
   name: string;
   department_name?: string;
+  type?: 'main' | 'dept';
+  status?: number;
 }
 
 const statusConfig = {
@@ -96,17 +100,18 @@ export default function ScanAudit() {
   const fetchWarehouses = async () => {
     try {
       const res = await api.get<Warehouse[]>('/warehouses');
-      setWarehouses(res.filter((w: any) => w.type !== 'main' && w.status === 1));
+      // 保留全部启用仓库（含总仓，用于二维码面板）；审核弹窗选入库仓库时再用 type='dept' 过滤
+      setWarehouses(res.filter((w: any) => w.status === 1));
     } catch {}
   };
 
   const handleApprove = async () => {
     if (!selected) return;
-    if (!approveWarehouse) { setError('请选择出库仓库'); return; }
+    if (!approveWarehouse) { setError('请选择入库仓库（领料部门）'); return; }
     setActioning(true);
     setError('');
     try {
-      await api.post(`/scan-requisition/${selected.id}/approve`, { warehouse_id: approveWarehouse });
+      await api.post(`/scan-requisition/${selected.id}/approve`, { inbound_warehouse_id: approveWarehouse });
       setSelected(null);
       setApproveWarehouse('');
       await fetchList();
@@ -301,44 +306,91 @@ export default function ScanAudit() {
           {warehouses.length === 0 ? (
             <div className="text-center py-6 text-gray-400 text-sm">暂无仓库，请先在仓库管理中创建</div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {warehouses.map(wh => {
+            <>
+              {/* 总仓单独置顶大卡片（最常用） */}
+              {warehouses.filter(w => w.type === 'main').map(wh => {
                 const url = buildScanUrl(wh.id);
                 return (
-                  <div key={wh.id} className="border border-gray-200 rounded-lg p-3 text-center hover:shadow-sm transition-shadow">
-                    <div className="flex justify-center mb-2">
+                  <div key={wh.id} className="mb-3 border-2 border-green-300 bg-green-50/40 rounded-xl p-4 flex flex-col sm:flex-row items-center gap-4">
+                    <div className="flex-shrink-0">
                       <QRCodeCanvas
                         value={url}
-                        size={140}
+                        size={180}
                         ref={(el: any) => { qrRefs.current[wh.id] = el?.getCanvas?.() || el; }}
                         includeMargin
                       />
                     </div>
-                    <div className="text-sm font-semibold text-gray-800">{wh.name}</div>
-                    {wh.department_name && (
-                      <div className="text-[10px] text-gray-400 mt-0.5">{wh.department_name}</div>
-                    )}
-                    <div className="flex gap-1 mt-2 justify-center">
-                      <button
-                        onClick={() => handleDownloadQr(wh)}
-                        className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-[10px] hover:bg-gray-200 flex items-center gap-0.5"
-                        title="下载二维码 PNG"
-                      >
-                        <Download size={11} /> PNG
-                      </button>
-                      <button
-                        onClick={() => handleCopyUrl(url, wh.id)}
-                        className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-[10px] hover:bg-blue-100 flex items-center gap-0.5"
-                        title="复制链接"
-                      >
-                        {copiedId === wh.id ? <Check size={11} /> : <Copy size={11} />}
-                        {copiedId === wh.id ? '已复制' : '链接'}
-                      </button>
+                    <div className="flex-1 text-center sm:text-left">
+                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-green-500 text-white rounded-full text-xs font-medium mb-1">
+                        <Package size={12} /> 总仓 · 最常用
+                      </div>
+                      <div className="text-lg font-bold text-gray-800">{wh.name}</div>
+                      <p className="text-xs text-gray-500 mt-1">各仓库常来总仓扫码领料，建议打印贴在总仓门口</p>
+                      <div className="flex gap-2 mt-2 justify-center sm:justify-start">
+                        <button
+                          onClick={() => handleDownloadQr(wh)}
+                          className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-200 flex items-center gap-1"
+                        >
+                          <Download size={13} /> 下载 PNG
+                        </button>
+                        <button
+                          onClick={() => handleCopyUrl(url, wh.id)}
+                          className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-100 flex items-center gap-1"
+                        >
+                          {copiedId === wh.id ? <Check size={13} /> : <Copy size={13} />}
+                          {copiedId === wh.id ? '已复制' : '复制链接'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
               })}
-            </div>
+
+              {/* 部门仓库二维码网格 */}
+              {warehouses.filter(w => w.type !== 'main').length > 0 && (
+                <>
+                  <div className="text-xs font-medium text-gray-500 mb-2 mt-1">部门仓库</div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {warehouses.filter(w => w.type !== 'main').map(wh => {
+                      const url = buildScanUrl(wh.id);
+                      return (
+                        <div key={wh.id} className="border border-gray-200 rounded-lg p-3 text-center hover:shadow-sm transition-shadow">
+                          <div className="flex justify-center mb-2">
+                            <QRCodeCanvas
+                              value={url}
+                              size={140}
+                              ref={(el: any) => { qrRefs.current[wh.id] = el?.getCanvas?.() || el; }}
+                              includeMargin
+                            />
+                          </div>
+                          <div className="text-sm font-semibold text-gray-800">{wh.name}</div>
+                          {wh.department_name && (
+                            <div className="text-[10px] text-gray-400 mt-0.5">{wh.department_name}</div>
+                          )}
+                          <div className="flex gap-1 mt-2 justify-center">
+                            <button
+                              onClick={() => handleDownloadQr(wh)}
+                              className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-[10px] hover:bg-gray-200 flex items-center gap-0.5"
+                              title="下载二维码 PNG"
+                            >
+                              <Download size={11} /> PNG
+                            </button>
+                            <button
+                              onClick={() => handleCopyUrl(url, wh.id)}
+                              className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-[10px] hover:bg-blue-100 flex items-center gap-0.5"
+                              title="复制链接"
+                            >
+                              {copiedId === wh.id ? <Check size={11} /> : <Copy size={11} />}
+                              {copiedId === wh.id ? '已复制' : '链接'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
       )}
@@ -394,7 +446,7 @@ export default function ScanAudit() {
                     )}
                   </div>
                   {req.status === 'pending' && (
-                    <button onClick={() => { setSelected(req); setApproveWarehouse(req.warehouse_id || ''); }}
+                    <button onClick={() => { setSelected(req); setApproveWarehouse(req.warehouse_id || ''); setRejectReason(''); }}
                       className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 active:scale-95 transition-all flex items-center gap-1">
                       审核 <ChevronRight className="w-4 h-4" />
                     </button>
@@ -459,17 +511,26 @@ export default function ScanAudit() {
                 </div>
               </div>
 
-              {/* 出库仓库选择 */}
+              {/* 出库仓库（只读，扫码时确定） */}
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">出库仓库</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">出库仓库（扫码来源）</label>
+                <div className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
+                  {selected.outbound_warehouse_name || selected.warehouse_name || '未指定'}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">物资从此仓库出库扣减库存（领料人扫码时确定）</p>
+              </div>
+
+              {/* 入库仓库选择（领料部门） */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">入库仓库（领料部门） <span className="text-red-500">*</span></label>
                 <select value={approveWarehouse} onChange={e => setApproveWarehouse(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-                  <option value="">请选择仓库...</option>
-                  {warehouses.map(w => (
+                  <option value="">请选择入库部门仓库...</option>
+                  {warehouses.filter(w => w.type !== 'main').map(w => (
                     <option key={w.id} value={w.id}>{w.name}{w.department_name ? `（${w.department_name}）` : ''}</option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">审核通过后将自动扣减该仓库库存，并绑定领料人（后续免审核）</p>
+                <p className="text-xs text-gray-400 mt-1">审核通过后将绑定该入库仓库给领料人，后续扫码免审核</p>
               </div>
 
               {/* 驳回原因 */}

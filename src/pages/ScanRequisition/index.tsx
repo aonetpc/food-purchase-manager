@@ -57,13 +57,14 @@ export default function ScanRequisition() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [selectedWarehouse, setSelectedWarehouse] = useState('');
+  const [outboundWarehouse, setOutboundWarehouse] = useState<{ id: string; name: string } | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [resultMsg, setResultMsg] = useState('');
   const [resultSuccess, setResultSuccess] = useState(false);
 
-  // 从 URL 读取仓库 ID（用于按仓库多维度二维码扫码后自动预选）
+  // 从 URL 读取仓库 ID（扫码二维码对应的出库仓库，物资从这里出）
   const whFromUrl = searchParams.get('wh') || '';
 
   // ================================================
@@ -186,12 +187,18 @@ export default function ScanRequisition() {
   // ================================================
   const fetchItems = async (token: string) => {
     try {
-      const res = await fetch(`${api.getBaseUrl()}/scan-requisition/items`, {
+      const url = whFromUrl
+        ? `${api.getBaseUrl()}/scan-requisition/items?wh=${encodeURIComponent(whFromUrl)}`
+        : `${api.getBaseUrl()}/scan-requisition/items`;
+      const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
       if (data.items) {
         setItems(data.items);
+      }
+      if (data.warehouse) {
+        setOutboundWarehouse({ id: data.warehouse.id, name: data.warehouse.name });
       }
     } catch (err: any) {
       setError(err.message || '获取物资列表失败');
@@ -207,10 +214,7 @@ export default function ScanRequisition() {
       });
       const data = await res.json();
       setWarehouses(data);
-      // 扫码入口二维码带 wh 参数，自动预选对应仓库
-      if (whFromUrl && data && data.some((w: Warehouse) => w.id === whFromUrl)) {
-        setSelectedWarehouse(whFromUrl);
-      }
+      // 注意：wh 参数是出库仓库（物资来源），不预选为入库仓库；入库仓库由用户选择或绑定
     } catch (err: any) {
       setError(err.message || '获取仓库列表失败');
     } finally {
@@ -286,7 +290,7 @@ export default function ScanRequisition() {
     if (!session) { setError('登录状态失效'); return; }
 
     if (!session.has_bound_warehouse && !selectedWarehouse) {
-      setError('请选择领料仓库'); return;
+      setError('请选择入库仓库（领料部门）'); return;
     }
 
     setSubmitting(true);
@@ -300,8 +304,12 @@ export default function ScanRequisition() {
           unit: c.unit,
           unit_price: c.reference_price,
         })),
-        warehouse_id: selectedWarehouse,
-        warehouse_name: warehouses.find(w => w.id === selectedWarehouse)?.name || '',
+        // warehouse_id = 出库仓库（扫码二维码对应仓库，物资从这里出）
+        warehouse_id: outboundWarehouse?.id || whFromUrl || '',
+        warehouse_name: outboundWarehouse?.name || '',
+        // inbound_warehouse_id = 入库仓库（领料目标部门仓库，物资入到这里）
+        inbound_warehouse_id: selectedWarehouse,
+        inbound_warehouse_name: warehouses.find(w => w.id === selectedWarehouse)?.name || '',
       };
 
       const res = await fetch(`${api.getBaseUrl()}/scan-requisition`, {
@@ -412,31 +420,39 @@ export default function ScanRequisition() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5" />
-            <span className="font-bold text-lg">仓库领料</span>
+            <span className="font-bold text-lg">
+              {outboundWarehouse ? `${outboundWarehouse.name} · 领料` : '扫码领料'}
+            </span>
           </div>
           <div className="text-sm">
             <span className="font-medium">{session?.user.name}</span>
             {session?.user.phone && <span className="ml-2 opacity-75">{session.user.phone}</span>}
           </div>
         </div>
-        {session?.has_bound_warehouse && session.bound_warehouses.length > 0 && (
-          <div className="mt-1 text-xs opacity-80">
-            领料仓库：{session.bound_warehouses.map(w => w.name).join('、')}
-          </div>
-        )}
+        <div className="mt-1 text-xs opacity-80">
+          {outboundWarehouse
+            ? `从「${outboundWarehouse.name}」出库`
+            : '微信扫码领料'}
+          {session?.has_bound_warehouse && session.bound_warehouses.length > 0 && (
+            <span className="ml-2">· 入库至：{session.bound_warehouses.map(w => w.name).join('、')}</span>
+          )}
+        </div>
       </div>
 
-      {/* 首次选择仓库 */}
+      {/* 首次选择入库仓库（领料部门） */}
       {!session?.has_bound_warehouse && warehouses.length > 0 && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
-          <label className="block text-sm font-medium text-amber-800 mb-1">选择领料仓库（首次需审核）</label>
+          <label className="block text-sm font-medium text-amber-800 mb-1">选择入库仓库（领料部门，首次需审核）</label>
           <select value={selectedWarehouse} onChange={(e) => setSelectedWarehouse(e.target.value)}
             className="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20">
-            <option value="">请选择仓库...</option>
+            <option value="">请选择入库部门仓库...</option>
             {warehouses.map(w => (
               <option key={w.id} value={w.id}>{w.name}{w.department_name ? `（${w.department_name}）` : ''}</option>
             ))}
           </select>
+          {outboundWarehouse && (
+            <p className="text-xs text-amber-600 mt-1">物资将从「{outboundWarehouse.name}」出库到所选部门仓库</p>
+          )}
         </div>
       )}
 
