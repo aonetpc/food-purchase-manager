@@ -111,13 +111,50 @@ async function executeOutbound(connection, { warehouseId, warehouseName, items, 
   }
 }
 
-/** 执行入库（向入库仓库增加库存） */
+/** 查询物资的即买即用属性，返回 itemId -> instant_use(0/1) 的映射 */
+async function getItemInstantUseMap(connection, items) {
+  const itemIds = items.map(i => i.item_id).filter(Boolean);
+  if (itemIds.length === 0) return {};
+  const placeholders = itemIds.map(() => '?').join(',');
+  const [rows] = await connection.query(
+    `SELECT id, instant_use FROM warehouse_items WHERE id IN (${placeholders})`,
+    itemIds
+  );
+  const map = {};
+  for (const r of rows) {
+    map[r.id] = Number(r.instant_use) === 1;
+  }
+  return map;
+}
+
+/** 执行入库（向入库仓库增加库存），自动跳过即买即用物资 */
 async function executeInbound(connection, { warehouseId, warehouseName, items, operatorName, operatorId, requisitionNo }) {
+  // 查询即买即用属性
+  const instantUseMap = await getItemInstantUseMap(connection, items);
+
   for (const item of items) {
     const qty = toNum(item.quantity);
     if (qty <= 0) continue;
 
-    // 写入库流水
+    // 即买即用物资：不入库，仅记录消耗流水
+    if (instantUseMap[item.item_id]) {
+      const unitPrice = toNum(item.unit_price);
+      const totalAmount = unitPrice ? qty * unitPrice : null;
+      await connection.query(
+        `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
+         VALUES (?, ?, ?, ?, 'expense', ?, ?, ?, ?, ?, 'scan', ?, ?, NULL, ?)`,
+        [
+          uuidv4(), warehouseId, item.item_id, item.item_name,
+          -Math.abs(qty), item.unit, unitPrice || null, totalAmount,
+          `即买即用消耗 ${requisitionNo} - ${operatorName}`,
+          operatorId || null, operatorName || null,
+          warehouseName || null
+        ]
+      );
+      continue;
+    }
+
+    // 普通物资：写入库流水 + 增加库存
     const unitPrice = toNum(item.unit_price);
     const totalAmount = unitPrice ? qty * unitPrice : null;
     const moveId = uuidv4();

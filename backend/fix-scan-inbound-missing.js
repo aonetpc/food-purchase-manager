@@ -9,6 +9,7 @@
  *   1. 查找所有已审核/自动出库的领料单（status IN ('approved', 'auto')）
  *   2. 对每条领料单，检查是否已存在对应的入库流水
  *   3. 若缺失，则补录入库流水 + 更新入库仓库库存
+ *   4. 即买即用物资（instant_use=1）跳过入库，仅记录消耗流水
  *
  * 幂等：通过检查 reason 字段中的领料单号避免重复补录
  */
@@ -89,6 +90,20 @@ async function fixScanInboundMissing() {
       // 需要补录
       console.log(`   🔧 ${req.requisition_no}: 补录入库到「${inboundWhName}」...`);
 
+      // 查询即买即用属性
+      const itemIds = items.map(i => i.item_id).filter(Boolean);
+      let instantUseMap = {};
+      if (itemIds.length > 0) {
+        const placeholders = itemIds.map(() => '?').join(',');
+        const [iuRows] = await conn.query(
+          `SELECT id, instant_use FROM warehouse_items WHERE id IN (${placeholders})`,
+          itemIds
+        );
+        for (const r of iuRows) {
+          instantUseMap[r.id] = Number(r.instant_use) === 1;
+        }
+      }
+
       await conn.beginTransaction();
 
       try {
@@ -98,6 +113,23 @@ async function fixScanInboundMissing() {
 
           const unitPrice = toNum(item.unit_price);
           const totalAmount = unitPrice ? qty * unitPrice : null;
+
+          // 即买即用物资：不入库，仅记录消耗流水
+          if (instantUseMap[item.item_id]) {
+            await conn.query(
+              `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
+               VALUES (?, ?, ?, ?, 'expense', ?, ?, ?, ?, ?, 'scan', ?, ?, NULL, ?)`,
+              [
+                uuidv4(), inboundWhId, item.item_id, item.item_name,
+                -Math.abs(qty), item.unit, unitPrice || null, totalAmount,
+                `即买即用消耗 ${req.requisition_no} - ${req.user_name}`,
+                req.temp_user_id || null, req.user_name || null,
+                inboundWhName || null
+              ]
+            );
+            console.log(`      - ${item.item_name}: ${qty} ${item.unit} (即买即用，仅记录消耗)`);
+            continue;
+          }
 
           // 写入库流水
           await conn.query(

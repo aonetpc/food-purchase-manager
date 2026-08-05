@@ -35,6 +35,7 @@ jobs:
             sudo cp backend/fix-worker-names.js /opt/food-purchase/backend/
             sudo cp backend/fix-signature-data.js /opt/food-purchase/backend/
             sudo cp backend/fix-scan-inbound-missing.js /opt/food-purchase/backend/
+            sudo cp backend/fix-scan-inbound-instant-use.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
@@ -740,6 +741,11 @@ jobs:
             echo "🔧 Fixing missing scan inbound records..."
             cd /opt/food-purchase/backend
             node fix-scan-inbound-missing.js || echo "⚠️ fix-scan-inbound-missing failed, continuing..."
+
+            # 修复即买即用物资错误入库到部门仓库的历史数据（失败不中断部署）
+            echo "🔧 Fixing instant-use items incorrectly inbounded to dept warehouse..."
+            cd /opt/food-purchase/backend
+            node fix-scan-inbound-instant-use.js || echo "⚠️ fix-scan-inbound-instant-use failed, continuing..."
 
             sudo systemctl restart food-purchase-backend
             sleep 3
