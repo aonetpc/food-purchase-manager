@@ -97,7 +97,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
   try {
     // 先查出所有部门，作为列顺序（确保无数据的部门列也显示）
     const [deptRows] = await pool.query(
-      `SELECT id, name FROM departments WHERE status = 1 ORDER BY sort_order ASC, created_at ASC`
+      `SELECT id, name FROM departments ORDER BY created_at ASC`
     );
     const deptIdsSorted = deptRows.map(d => d.id);
 
@@ -161,7 +161,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
     }
 
     const [deptRows] = await pool.query(
-      `SELECT id, name FROM departments WHERE status = 1 ORDER BY sort_order ASC, created_at ASC`
+      `SELECT id, name FROM departments ORDER BY created_at ASC`
     );
     const deptIdsSorted = deptRows.map(d => d.id);
 
@@ -400,7 +400,7 @@ async function generateReportPDF({ title, subtitle, matrix }) {
 
 router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
   try {
-    const [deptRows] = await pool.query(`SELECT id, name FROM departments WHERE status = 1 ORDER BY sort_order ASC, created_at ASC`);
+    const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY created_at ASC`);
     const deptIdsSorted = deptRows.map(d => d.id);
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,
@@ -438,7 +438,7 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
       return res.status(400).json({ error: '参数 month 格式错误' });
     }
-    const [deptRows] = await pool.query(`SELECT id, name FROM departments WHERE status = 1 ORDER BY sort_order ASC, created_at ASC`);
+    const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY created_at ASC`);
     const deptIdsSorted = deptRows.map(d => d.id);
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,

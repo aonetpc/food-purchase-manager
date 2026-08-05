@@ -84,11 +84,13 @@ async function fixScanInboundMissing() {
         continue;
       }
 
-      // 检查是否已存在入库流水（通过 reason 字段匹配领料单号）
+      // 检查是否已存在入库/消耗流水（通过 reason 字段匹配领料单号）
+      // 注意：需要同时检查 inbound 和 expense（即买即用消耗），
+      //       因为 fix-scan-inbound-instant-use 可能已将 inbound 改为 expense
       const inboundReason = `扫码领料入库 ${req.requisition_no}`;
       const [existing] = await conn.query(
         `SELECT COUNT(*) as cnt FROM stock_movements
-         WHERE warehouse_id = ? AND reason LIKE ? AND movement_type = 'inbound'`,
+         WHERE warehouse_id = ? AND reason LIKE ?`,
         [inboundWhId, `%${req.requisition_no}%`]
       );
 

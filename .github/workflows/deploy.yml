@@ -36,6 +36,7 @@ jobs:
             sudo cp backend/fix-signature-data.js /opt/food-purchase/backend/
             sudo cp backend/fix-scan-inbound-missing.js /opt/food-purchase/backend/
             sudo cp backend/fix-scan-inbound-instant-use.js /opt/food-purchase/backend/
+            sudo cp backend/fix-dedup-expense.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
@@ -722,6 +723,13 @@ jobs:
               mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
             done
 
+            # 数据库迁移：确保 stock_movements 的 movement_type ENUM 包含 'expense'
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              ALTER TABLE stock_movements MODIFY COLUMN movement_type
+              ENUM('inbound','outbound','adjust','expense') NOT NULL
+              COMMENT '类型：入库/出库/盘点调整/即买即用消耗';
+            " 2>/dev/null || true
+
             # 修复打卡记录数据：删除重复记录 + 修复UTC时间（失败不中断部署）
             echo "🔧 Fixing checkin data (duplicates + UTC time)..."
             cd /opt/food-purchase/backend
@@ -746,6 +754,11 @@ jobs:
             echo "🔧 Fixing instant-use items incorrectly inbounded to dept warehouse..."
             cd /opt/food-purchase/backend
             node fix-scan-inbound-instant-use.js || echo "⚠️ fix-scan-inbound-instant-use failed, continuing..."
+
+            # 去重：清理重复的即买即用消耗流水（失败不中断部署）
+            echo "🔧 Deduping duplicate expense records..."
+            cd /opt/food-purchase/backend
+            node fix-dedup-expense.js || echo "⚠️ fix-dedup-expense failed, continuing..."
 
             # 重启后端服务（失败不中断部署，稍后 health check 会验证）
             echo "🔄 Restarting backend service..."
