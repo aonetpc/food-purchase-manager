@@ -111,7 +111,7 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null, allCateg
 }
 
 /** ============== 1. 固定资产库存 ============== */
-router.get('/fixed-assets', requireAuth, async (req, res) => {
+router.get('/fixed-assets', async (req, res) => {
   try {
     // 先查出所有部门，作为列顺序（确保无数据的部门列也显示）
     const [deptRows] = await pool.query(
@@ -190,7 +190,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
 });
 
 /** ============== 2. 原材料当月消耗 ============== */
-router.get('/material-consumption', requireAuth, async (req, res) => {
+router.get('/material-consumption', async (req, res) => {
   try {
     const { month } = req.query;
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
@@ -277,7 +277,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
 
 /** ============== 3. 单元格明细（点击弹窗） ============== */
 /** 固定资产明细 */
-router.get('/fixed-assets/detail', requireAuth, async (req, res) => {
+router.get('/fixed-assets/detail', async (req, res) => {
   try {
     const { category_id, department_id } = req.query;
     if (!category_id || !department_id) {
@@ -304,7 +304,7 @@ router.get('/fixed-assets/detail', requireAuth, async (req, res) => {
 });
 
 /** 原材料消耗明细 */
-router.get('/material-consumption/detail', requireAuth, async (req, res) => {
+router.get('/material-consumption/detail', async (req, res) => {
   try {
     const { category_id, department_id, month } = req.query;
     if (!category_id || !department_id || !month) {
@@ -459,7 +459,7 @@ async function generateReportPDF({ title, subtitle, matrix }) {
   });
 }
 
-router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
+router.get('/pdf/fixed-assets', async (req, res) => {
   try {
     const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY created_at ASC`);
     const deptIdsSorted = deptRows.map(d => d.id);
@@ -511,7 +511,7 @@ router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
+router.get('/pdf/material-consumption', async (req, res) => {
   try {
     const { month } = req.query;
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
@@ -572,7 +572,7 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
 
 /** ============== 5. 部门费用明细 ============== */
 /** 列表查询（带筛选+分页） */
-router.get('/expense-detail', requireAuth, async (req, res) => {
+router.get('/expense-detail', async (req, res) => {
   try {
     const {
       month,
@@ -674,7 +674,7 @@ router.get('/expense-detail', requireAuth, async (req, res) => {
 });
 
 /** 部门费用明细 PDF 导出 */
-router.get('/pdf/expense-detail', requireAuth, async (req, res) => {
+router.get('/pdf/expense-detail', async (req, res) => {
   try {
     const {
       month,

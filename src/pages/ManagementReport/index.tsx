@@ -81,18 +81,18 @@ function calcChangeRate(cur: number, last: number): number | null {
   return Math.round(((c - l) / l) * 1000) / 10;
 }
 
-function TrendBadge({ rate }: { rate: number | null }) {
+function TrendBadge({ rate, compact }: { rate: number | null; compact?: boolean }) {
   if (rate === null) return <span className="text-gray-300 text-xs">—</span>;
-  if (rate === 100) return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium">较上月 新增 ↑</span>;
-  if (rate === 0) return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">较上月 —</span>;
+  if (rate === 100) return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium">{compact ? '新' : '新增'} ↑</span>;
+  if (rate === 0) return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">{compact ? '—' : '持平'}</span>;
   const sign = rate > 0 ? '+' : '';
   if (rate > 0) {
-    return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium">较上月 {sign}{rate}% ↑</span>;
+    return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium">{sign}{rate}% ↑</span>;
   }
   if (rate < 0) {
-    return <span className="inline-flex items-center gap-0.5 text-green-600 text-xs font-medium">较上月 {sign}{rate}% ↓</span>;
+    return <span className="inline-flex items-center gap-0.5 text-green-600 text-xs font-medium">{sign}{rate}% ↓</span>;
   }
-  return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">较上月 0%</span>;
+  return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">0%</span>;
 }
 
 function DetailModal({ open, title, onClose, rows, columns }: {
@@ -301,18 +301,16 @@ export default function ManagementReport() {
   };
 
   const downloadPDF = async () => {
-    const base = import.meta.env.VITE_API_BASE_URL || '';
+    const apiBase = import.meta.env.VITE_API_URL || '/api';
     const token = api.getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
 
     let url = '';
     let filename = '';
     if (tab === 'fixed-assets') {
-      url = `${base}/api/reports/pdf/fixed-assets`;
+      url = `${apiBase}/reports/pdf/fixed-assets`;
       filename = `固定资产库存_${new Date().toLocaleDateString('zh-CN')}.pdf`;
     } else if (tab === 'material-consumption') {
-      url = `${base}/api/reports/pdf/material-consumption?month=${yearMonth}`;
+      url = `${apiBase}/reports/pdf/material-consumption?month=${yearMonth}`;
       filename = `原材料消耗_${yearMonth}.pdf`;
     } else if (tab === 'expense-detail') {
       const params = new URLSearchParams({ month: yearMonth });
@@ -320,16 +318,46 @@ export default function ManagementReport() {
       if (expFilterL2) params.set('category_id', expFilterL2);
       else if (expFilterL1) params.set('category_parent_id', expFilterL1);
       if (expKeyword.trim()) params.set('keyword', expKeyword.trim());
-      url = `${base}/api/reports/pdf/expense-detail?${params.toString()}`;
+      url = `${apiBase}/reports/pdf/expense-detail?${params.toString()}`;
       filename = `部门费用明细_${yearMonth}.pdf`;
     } else {
       return;
     }
 
     try {
-      const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error('下载失败');
+      const headers: Record<string, string> = {
+        'Accept': 'application/pdf',
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      const res = await fetch(url, { headers, signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        let errMsg = `下载失败 (HTTP ${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errMsg = errData.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
+        let errMsg = '服务器返回了非PDF内容';
+        try {
+          const errData = await res.json();
+          if (errData?.error) errMsg = errData.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
       const blob = await res.blob();
+      if (blob.size === 0) throw new Error('PDF文件为空');
+
       const downloadUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
@@ -338,8 +366,12 @@ export default function ManagementReport() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(downloadUrl);
-    } catch (e) {
-      alert('PDF 下载失败，请重新登录后重试');
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        alert('PDF生成超时，请稍后重试');
+      } else {
+        alert(`PDF下载失败：${e.message || '未知错误'}`);
+      }
     }
   };
 
@@ -527,7 +559,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                     <th key={dept} className="min-w-[90px] text-right whitespace-nowrap">
                       <span>{dept}</span>
                       {data.lastMonth && (
-                        <div><TrendBadge rate={calcChangeRate(data.totals[data.departments.indexOf(dept)] || 0, data.lastMonth.totals[data.departments.indexOf(dept)] || 0)} /></div>
+                        <div className="mt-0.5"><TrendBadge rate={calcChangeRate(data.totals[data.departments.indexOf(dept)] || 0, data.lastMonth.totals[data.departments.indexOf(dept)] || 0)} compact /></div>
                       )}
                     </th>
                   ))}
@@ -569,7 +601,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                             return (
                               <td key={dept} className="text-right">
                                 {v === 0 ? (
-                                  <span className="text-gray-200">-</span>
+                                  <span className="text-gray-300">—</span>
                                 ) : (
                                   <button
                                     onClick={() => onCellClick({
@@ -597,18 +629,19 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                     );
                   });
                 })()}
-                <tr className="bg-gray-100/80 border-t-2 border-gray-200">
-                  <td className="sticky left-0 bg-gray-100 z-[1] font-bold text-gray-700">合计</td>
+                <tr className="bg-gradient-to-r from-gray-100 to-gray-50 border-t-2 border-gray-300 shadow-sm">
+                  <td className="sticky left-0 bg-gradient-to-r from-gray-100 to-gray-50 z-[2] font-bold text-gray-700">合计</td>
                   {data.departments.map((dept, i) => {
                     const v = Number(data.totals[i]) || 0;
                     return (
-                      <td key={dept} className="text-right font-bold text-gray-800 whitespace-nowrap">
-                        <span className="sm:hidden">{compressAmount(v)}</span>
-                        <span className="hidden sm:inline">{formatCurrency(v)}</span>
+                      <td key={dept} className="text-right font-semibold text-gray-700 whitespace-nowrap">
+                        {v === 0 ? <span className="text-gray-300">—</span> :
+                        <span className="sm:hidden">{compressAmount(v)}</span>}
+                        <span className={v === 0 ? '' : 'hidden sm:inline'}>{v !== 0 ? formatCurrency(v) : '—'}</span>
                       </td>
                     );
                   })}
-                  <td className="sticky right-0 bg-gray-100 z-[1] text-right font-extrabold text-primary-700 whitespace-nowrap">
+                  <td className="sticky right-0 bg-gradient-to-l from-gray-50 to-gray-100 z-[2] text-right font-extrabold text-primary-700 whitespace-nowrap">
                     <span className="sm:hidden">{compressAmount(data.grandTotal)}</span>
                     <span className="hidden sm:inline">{formatCurrency(data.grandTotal)}</span>
                   </td>
@@ -666,7 +699,7 @@ function ExpenseDetailCard({
           </select>
           <select
             value={filterL1}
-            onChange={(e) => setFilterL1(e.target.value)}
+            onChange={(e) => { setFilterL1(e.target.value); setFilterL2(''); }}
             className="px-3 py-2 rounded-md border border-gray-200 bg-white text-sm min-w-[140px] flex-1 sm:flex-none"
           >
             <option value="">全部 L1 分类</option>
@@ -692,12 +725,19 @@ function ExpenseDetailCard({
             />
           </div>
         </div>
-        <button
-          onClick={onSearch}
-          className="btn-primary flex items-center justify-center gap-1.5 text-sm"
-        >
-          <Filter size={16}/>查询
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setFilterDept(''); setFilterL1(''); setFilterL2(''); setKeyword(''); setPage(1); }}
+            className="px-3 py-2 rounded-md border border-gray-200 bg-white text-sm text-gray-500 hover:bg-gray-50"
+            title="重置筛选"
+          >重置</button>
+          <button
+            onClick={onSearch}
+            className="btn-primary flex items-center justify-center gap-1.5 text-sm"
+          >
+            <Filter size={16}/>查询
+          </button>
+        </div>
       </div>
 
       {/* 汇总条 */}
