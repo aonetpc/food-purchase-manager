@@ -121,7 +121,7 @@ async function fixSignature() {
   } catch (err) {
     console.error('❌ 修复失败:', err);
   } finally {
-    await pool.end();
+    try { await pool.end(); } catch (e) {}
   }
 }
 
