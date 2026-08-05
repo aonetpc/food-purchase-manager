@@ -131,11 +131,9 @@ async function fixCheckinData() {
   } catch (err) {
     console.error('\n❌ 修复失败：', err.message);
     console.error(err.stack);
-    process.exit(1);
   } finally {
     if (conn) conn.release();
-    process.exit(0);
   }
 }
 
-fixCheckinData();
+fixCheckinData().then(() => process.exit(0)).catch(() => process.exit(0));

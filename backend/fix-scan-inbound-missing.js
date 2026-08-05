@@ -197,4 +197,4 @@ async function fixScanInboundMissing() {
   }
 }
 
-fixScanInboundMissing();
+fixScanInboundMissing().then(() => process.exit(0)).catch(() => process.exit(0));

@@ -125,4 +125,4 @@ async function fixSignature() {
   }
 }
 
-fixSignature();
+fixSignature().then(() => process.exit(0)).catch(() => process.exit(0));

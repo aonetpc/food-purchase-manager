@@ -135,4 +135,4 @@ async function fixScanInboundInstantUse() {
   }
 }
 
-fixScanInboundInstantUse();
+fixScanInboundInstantUse().then(() => process.exit(0)).catch(() => process.exit(0));

@@ -70,11 +70,9 @@ async function fixWorkerNames() {
   } catch (err) {
     console.error('\n❌ 同步失败：', err.message);
     console.error(err.stack);
-    process.exit(1);
   } finally {
     if (conn) conn.release();
-    process.exit(0);
   }
 }
 
-fixWorkerNames();
+fixWorkerNames().then(() => process.exit(0)).catch(() => process.exit(0));
