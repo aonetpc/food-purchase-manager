@@ -10,6 +10,19 @@ function formatMoney(n) {
   return v === 0 ? 0 : v;
 }
 
+// 子部门 → 父部门 名称映射（子部门费用归并到父部门）
+const DEPT_MERGE_MAP = {
+  '小卖部': '房务',
+  '员工餐': '厨房',
+  '早餐': '厨房',
+  '礼品': '院办',
+};
+
+// 将子部门名称替换为父部门名称
+function mergeDeptName(name) {
+  return DEPT_MERGE_MAP[name] || name;
+}
+
 /** 构建二维表数据（按分类×部门矩阵）
  *  @param rawRows [{ category_id, category, category_parent_id, category_parent, dept_id, dept_name, amount }]
  *  @param deptIdsSorted   部门ID排序（可传空则按出现顺序）
@@ -17,32 +30,52 @@ function formatMoney(n) {
  *  @param allCategories   所有分类列表 [{ l1Id, l1Name, l2Id, l2Name }]，用于显示无数据的分类行
  */
 function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null, allCategories = null) {
-  // 1. 整理部门顺序
+  // 0. 部门归并：将子部门名称替换为父部门名称
+  const mergedRows = rawRows.map(r => ({
+    ...r,
+    dept_name: mergeDeptName(r.dept_name || '未命名部门'),
+  }));
+
+  // 1. 构建归并后的部门映射（按名称去重，子部门已归并到父部门）
+  const deptNameToId = new Map(); // deptName -> deptId（取第一个出现的ID）
   const deptMap = new Map(); // deptId -> {id, name}
-  for (const r of rawRows) {
+  for (const r of mergedRows) {
     if (!r.dept_id) continue;
-    if (!deptMap.has(r.dept_id)) {
-      deptMap.set(r.dept_id, { id: r.dept_id, name: r.dept_name || '未命名部门' });
+    const name = r.dept_name;
+    if (!deptNameToId.has(name)) {
+      deptNameToId.set(name, r.dept_id);
+      deptMap.set(r.dept_id, { id: r.dept_id, name });
     }
   }
+
+  // 2. 构建部门列表（过滤掉子部门，只保留父部门）
   let depts;
   if (deptIdsSorted && deptIdsSorted.length > 0) {
-    depts = deptIdsSorted.map(id => {
-      if (deptMap.has(id)) return deptMap.get(id);
-      return { id, name: (deptNameMap && deptNameMap[id]) || '未命名部门' };
-    });
-    for (const [id, d] of deptMap.entries()) {
-      if (!deptIdsSorted.includes(id)) depts.push(d);
+    const seenNames = new Set();
+    depts = [];
+    for (const id of deptIdsSorted) {
+      const rawName = (deptNameMap && deptNameMap[id]) || (deptMap.has(id) ? deptMap.get(id).name : null);
+      if (!rawName) continue;
+      const mergedName = mergeDeptName(rawName);
+      if (seenNames.has(mergedName)) continue;
+      seenNames.add(mergedName);
+      depts.push({ id, name: mergedName });
+    }
+    for (const [, d] of deptMap.entries()) {
+      if (!seenNames.has(d.name)) {
+        seenNames.add(d.name);
+        depts.push(d);
+      }
     }
   } else {
     depts = Array.from(deptMap.values());
   }
   const deptIdx = {};
-  depts.forEach((d, i) => { deptIdx[d.id] = i; });
+  depts.forEach((d, i) => { deptIdx[d.name] = i; });
   const deptNames = depts.map(d => d.name);
   const emptyValues = () => new Array(depts.length).fill(0);
 
-  // 2. 整理分类（如果传入了 allCategories，先用它们初始化）
+  // 3. 整理分类（如果传入了 allCategories，先用它们初始化）
   const l1Map = {};
   if (allCategories && allCategories.length > 0) {
     for (const cat of allCategories) {
@@ -57,8 +90,8 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null, allCateg
     }
   }
 
-  // 3. 填充数据
-  for (const r of rawRows) {
+  // 4. 填充数据（使用归并后的行，按部门名称匹配索引）
+  for (const r of mergedRows) {
     const l1Id = r.category_parent_id || '__no_parent__';
     const l1Name = r.category_parent || '未分类';
     const l2Id = r.category_id;
@@ -70,7 +103,7 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null, allCateg
       l1Map[l1Id].children.set(l2Id, { l2Id, name: l2Name, values: emptyValues() });
     }
     const node = l1Map[l1Id].children.get(l2Id);
-    const idx = deptIdx[r.dept_id];
+    const idx = deptIdx[r.dept_name];
     if (idx !== undefined) {
       node.values[idx] = (node.values[idx] || 0) + toNum(r.amount);
     }
@@ -503,7 +536,8 @@ router.get('/pdf/fixed-assets', async (req, res) => {
       matrix,
     });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="固定资产库存价值_${todayStr}.pdf"`);
+    const safeName1 = encodeURIComponent(`固定资产库存价值_${todayStr}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename="report.pdf"; filename*=UTF-8''${safeName1}`);
     res.send(buf);
   } catch (err) {
     console.error('[pdf fixed-assets] error:', err);
@@ -562,7 +596,8 @@ router.get('/pdf/material-consumption', async (req, res) => {
       matrix,
     });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="原材料消耗_${month}.pdf"`);
+    const safeName2 = encodeURIComponent(`原材料消耗_${month}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename="report.pdf"; filename*=UTF-8''${safeName2}`);
     res.send(buf);
   } catch (err) {
     console.error('[pdf material-consumption] error:', err);
@@ -869,7 +904,8 @@ router.get('/pdf/expense-detail', async (req, res) => {
       doc.on('error', reject);
     });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="部门费用明细_${month}.pdf"`);
+    const safeName3 = encodeURIComponent(`部门费用明细_${month}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename="report.pdf"; filename*=UTF-8''${safeName3}`);
     res.send(buf);
   } catch (err) {
     console.error('[pdf expense-detail] error:', err);

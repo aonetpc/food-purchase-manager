@@ -520,18 +520,18 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
     <div className="card">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
+          <h2 className="text-base font-semibold text-gray-800">{title}</h2>
           {!hideMonthLabel && monthLabel && (
-            <p className="text-xs text-gray-400 mt-0.5">{monthLabel}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{monthLabel}</p>
           )}
           {hideMonthLabel && (
-            <p className="text-xs text-gray-400 mt-0.5">实时快照，不受月份选择影响</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">实时快照，不受月份选择影响</p>
           )}
         </div>
         {data && (
           <div className="text-right">
-            <p className="text-xs text-gray-400">{totalLabel}</p>
-            <p className="text-2xl font-bold text-primary-600">{formatCurrency(data.grandTotal)}</p>
+            <p className="text-[11px] text-gray-400">{totalLabel}</p>
+            <p className="text-xl font-bold text-primary-600">{formatCurrency(data.grandTotal)}</p>
             {data.lastMonth && (
               <TrendBadge rate={calcChangeRate(data.grandTotal, data.lastMonth.grandTotal)} />
             )}
@@ -549,21 +549,21 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
       )}
 
       {!loading && data && data.rows.length > 0 && (
-        <div className="overflow-x-auto -mx-6 px-6 sm:-mx-8 sm:px-8">
+        <div className="overflow-x-auto overflow-y-hidden -mx-6 px-6 sm:-mx-8 sm:px-8">
           <div className="min-w-[640px]">
-            <table className="data-table w-full text-sm">
+            <table className="data-table w-full text-xs">
               <thead>
                 <tr>
-                  <th className="sticky left-0 bg-gray-50 z-10 min-w-[120px]">分类</th>
+                  <th className="sticky left-0 bg-gray-50 z-10 min-w-[110px]">分类</th>
                   {data.departments.map(dept => (
-                    <th key={dept} className="min-w-[90px] text-right whitespace-nowrap">
+                    <th key={dept} className="min-w-[80px] text-right whitespace-nowrap">
                       <span>{dept}</span>
                       {data.lastMonth && (
                         <div className="mt-0.5"><TrendBadge rate={calcChangeRate(data.totals[data.departments.indexOf(dept)] || 0, data.lastMonth.totals[data.departments.indexOf(dept)] || 0)} compact /></div>
                       )}
                     </th>
                   ))}
-                  <th className="sticky right-0 bg-gray-50 z-10 min-w-[100px] text-right font-bold">合计</th>
+                  <th className="sm:sticky sm:right-0 bg-gray-50 z-10 min-w-[90px] text-right font-bold">合计</th>
                 </tr>
               </thead>
               <tbody>
@@ -587,11 +587,11 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                     const isFirstOfL1 = !prevRow || prevRow.l1Id !== row.l1Id;
                     return (
                       <Fragment key={row.l2Id}>
-                        {showL1Gap && <tr key={`gap-${idx}`}><td colSpan={data.departments.length + 2} className="bg-transparent h-3 border-0 p-0"></td></tr>}
+                        {showL1Gap && <tr key={`gap-${idx}`}><td colSpan={data.departments.length + 2} className="bg-transparent h-2 border-0 p-0"></td></tr>}
                         <tr className={`hover:bg-primary-50/40 transition-colors ${color.bg} ${isFirstOfL1 ? 'border-t border-gray-200' : ''}`}>
                           <td className={`sticky left-0 ${color.sticky} z-[1]`}>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs text-gray-400 font-medium w-12 truncate">{row.l1Name}</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-400 font-medium w-10 truncate">{row.l1Name}</span>
                               <span className="font-medium text-gray-800 truncate">{row.l2Name}</span>
                             </div>
                           </td>
@@ -611,7 +611,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                                       departmentName: dept,
                                       value: v,
                                     })}
-                                    className="inline-block px-2 py-0.5 rounded-md hover:bg-primary-100 text-primary-700 font-semibold transition-colors"
+                                    className="inline-block px-1.5 py-0.5 rounded-md hover:bg-primary-100 text-primary-700 font-semibold transition-colors"
                                   >
                                     <span className="sm:hidden">{compressAmount(v)}</span>
                                     <span className="hidden sm:inline">{formatCurrency(v)}</span>
@@ -620,7 +620,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                               </td>
                             );
                           })}
-                          <td className={`sticky right-0 ${color.sticky} z-[1] text-right font-bold text-gray-800 whitespace-nowrap`}>
+                          <td className={`sm:sticky sm:right-0 ${color.sticky} z-[1] text-right font-bold text-gray-800 whitespace-nowrap`}>
                             <span className="sm:hidden">{compressAmount(row.total)}</span>
                             <span className="hidden sm:inline">{formatCurrency(row.total)}</span>
                           </td>
@@ -641,7 +641,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                       </td>
                     );
                   })}
-                  <td className="sticky right-0 bg-gradient-to-l from-gray-50 to-gray-100 z-[2] text-right font-extrabold text-primary-700 whitespace-nowrap">
+                  <td className="sm:sticky sm:right-0 bg-gradient-to-l from-gray-50 to-gray-100 z-[2] text-right font-extrabold text-primary-700 whitespace-nowrap">
                     <span className="sm:hidden">{compressAmount(data.grandTotal)}</span>
                     <span className="hidden sm:inline">{formatCurrency(data.grandTotal)}</span>
                   </td>
@@ -649,8 +649,8 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
               </tbody>
             </table>
           </div>
-          <p className="text-xs text-gray-400 mt-3 sm:hidden">💡 左右滑动查看各部门数据；点击金额可查看明细</p>
-          <p className="text-xs text-gray-400 mt-3 hidden sm:block">💡 点击金额可查看明细，点击右上角导出PDF</p>
+          <p className="text-[11px] text-gray-400 mt-2 sm:hidden">💡 左右滑动查看各部门数据；点击金额可查看明细</p>
+          <p className="text-[11px] text-gray-400 mt-2 hidden sm:block">💡 点击金额可查看明细，点击右上角导出PDF</p>
         </div>
       )}
     </div>
