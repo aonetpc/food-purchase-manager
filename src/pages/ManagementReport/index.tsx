@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, FileDown, X, TrendingUp, TrendingDown, Minus, AlertCircle, ClipboardCheck, Search, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileDown, X, AlertCircle, ClipboardCheck, Search, Filter } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { api } from '@/lib/api';
@@ -77,19 +77,22 @@ function calcChangeRate(cur: number, last: number): number | null {
   const c = Number(cur) || 0;
   const l = Number(last) || 0;
   if (l === 0 && c === 0) return null;
-  if (l === 0) return c > 0 ? 999 : -999;
+  if (l === 0) return c > 0 ? 100 : 0;
   return Math.round(((c - l) / l) * 1000) / 10;
 }
 
 function TrendBadge({ rate }: { rate: number | null }) {
   if (rate === null) return <span className="text-gray-300 text-xs">—</span>;
+  if (rate === 100) return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium">较上月 新增 ↑</span>;
+  if (rate === 0) return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">较上月 —</span>;
+  const sign = rate > 0 ? '+' : '';
   if (rate > 0) {
-    return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium"><TrendingUp size={12}/>{rate >= 999 ? '↑' : `${rate}%`}</span>;
+    return <span className="inline-flex items-center gap-0.5 text-red-500 text-xs font-medium">较上月 {sign}{rate}% ↑</span>;
   }
   if (rate < 0) {
-    return <span className="inline-flex items-center gap-0.5 text-green-600 text-xs font-medium"><TrendingDown size={12}/>{rate <= -999 ? '↓' : `${rate}%`}</span>;
+    return <span className="inline-flex items-center gap-0.5 text-green-600 text-xs font-medium">较上月 {sign}{rate}% ↓</span>;
   }
-  return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs"><Minus size={12}/>0%</span>;
+  return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">较上月 0%</span>;
 }
 
 function DetailModal({ open, title, onClose, rows, columns }: {
@@ -297,18 +300,46 @@ export default function ManagementReport() {
     }
   };
 
-  const downloadPDF = () => {
+  const downloadPDF = async () => {
+    const base = import.meta.env.VITE_API_BASE_URL || '';
+    const token = api.getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    let url = '';
+    let filename = '';
     if (tab === 'fixed-assets') {
-      window.open(`${import.meta.env.VITE_API_BASE_URL || ''}/api/reports/pdf/fixed-assets`, '_blank');
+      url = `${base}/api/reports/pdf/fixed-assets`;
+      filename = `固定资产库存_${new Date().toLocaleDateString('zh-CN')}.pdf`;
     } else if (tab === 'material-consumption') {
-      window.open(`${import.meta.env.VITE_API_BASE_URL || ''}/api/reports/pdf/material-consumption?month=${yearMonth}`, '_blank');
+      url = `${base}/api/reports/pdf/material-consumption?month=${yearMonth}`;
+      filename = `原材料消耗_${yearMonth}.pdf`;
     } else if (tab === 'expense-detail') {
       const params = new URLSearchParams({ month: yearMonth });
       if (expFilterDept) params.set('department_id', expFilterDept);
       if (expFilterL2) params.set('category_id', expFilterL2);
       else if (expFilterL1) params.set('category_parent_id', expFilterL1);
       if (expKeyword.trim()) params.set('keyword', expKeyword.trim());
-      window.open(`${import.meta.env.VITE_API_BASE_URL || ''}/api/reports/pdf/expense-detail?${params.toString()}`, '_blank');
+      url = `${base}/api/reports/pdf/expense-detail?${params.toString()}`;
+      filename = `部门费用明细_${yearMonth}.pdf`;
+    } else {
+      return;
+    }
+
+    try {
+      const res = await fetch(url, { headers });
+      if (!res.ok) throw new Error('下载失败');
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (e) {
+      alert('PDF 下载失败，请重新登录后重试');
     }
   };
 
@@ -504,52 +535,68 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((row, idx) => {
-                  const prevRow = idx === 0 ? null : data.rows[idx - 1];
-                  const showL1Gap = prevRow && prevRow.l1Id !== row.l1Id;
-                  return (
-                    <Fragment key={row.l2Id}>
-                      {showL1Gap && <tr key={`gap-${idx}`}><td colSpan={data.departments.length + 2} className="bg-transparent h-0 border-0 p-0"></td></tr>}
-                      <tr className="hover:bg-primary-50/40 transition-colors">
-                        <td className="sticky left-0 bg-white z-[1]">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs text-gray-400 font-medium w-10 truncate">{row.l1Name}</span>
-                            <span className="font-medium text-gray-800 truncate">{row.l2Name}</span>
-                          </div>
-                        </td>
-                        {data.departments.map((dept, i) => {
-                          const v = Number(row.values[i]) || 0;
-                          const deptId = data.departmentIds[i];
-                          return (
-                            <td key={dept} className="text-right">
-                              {v === 0 ? (
-                                <span className="text-gray-200">-</span>
-                              ) : (
-                                <button
-                                  onClick={() => onCellClick({
-                                    categoryId: row.l2Id,
-                                    categoryName: row.l2Name,
-                                    departmentId: deptId,
-                                    departmentName: dept,
-                                    value: v,
-                                  })}
-                                  className="inline-block px-2 py-0.5 rounded-md hover:bg-primary-100 text-primary-700 font-semibold transition-colors"
-                                >
-                                  <span className="sm:hidden">{compressAmount(v)}</span>
-                                  <span className="hidden sm:inline">{formatCurrency(v)}</span>
-                                </button>
-                              )}
-                            </td>
-                          );
-                        })}
-                        <td className="sticky right-0 bg-white z-[1] text-right font-bold text-gray-800 whitespace-nowrap">
-                          <span className="sm:hidden">{compressAmount(row.total)}</span>
-                          <span className="hidden sm:inline">{formatCurrency(row.total)}</span>
-                        </td>
-                      </tr>
-                    </Fragment>
-                  );
-                })}
+                {(() => {
+                  const l1ColorMap: Record<string, { bg: string; sticky: string }> = {};
+                  let colorIdx = 0;
+                  const colorSchemes = [
+                    { bg: 'bg-white', sticky: 'bg-white' },
+                    { bg: 'bg-slate-50/60', sticky: 'bg-slate-50' },
+                  ];
+                  for (const row of data.rows) {
+                    if (!l1ColorMap[row.l1Id]) {
+                      l1ColorMap[row.l1Id] = colorSchemes[colorIdx % colorSchemes.length];
+                      colorIdx++;
+                    }
+                  }
+                  return data.rows.map((row, idx) => {
+                    const prevRow = idx === 0 ? null : data.rows[idx - 1];
+                    const showL1Gap = prevRow && prevRow.l1Id !== row.l1Id;
+                    const color = l1ColorMap[row.l1Id];
+                    const isFirstOfL1 = !prevRow || prevRow.l1Id !== row.l1Id;
+                    return (
+                      <Fragment key={row.l2Id}>
+                        {showL1Gap && <tr key={`gap-${idx}`}><td colSpan={data.departments.length + 2} className="bg-transparent h-3 border-0 p-0"></td></tr>}
+                        <tr className={`hover:bg-primary-50/40 transition-colors ${color.bg} ${isFirstOfL1 ? 'border-t border-gray-200' : ''}`}>
+                          <td className={`sticky left-0 ${color.sticky} z-[1]`}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-gray-400 font-medium w-12 truncate">{row.l1Name}</span>
+                              <span className="font-medium text-gray-800 truncate">{row.l2Name}</span>
+                            </div>
+                          </td>
+                          {data.departments.map((dept, i) => {
+                            const v = Number(row.values[i]) || 0;
+                            const deptId = data.departmentIds[i];
+                            return (
+                              <td key={dept} className="text-right">
+                                {v === 0 ? (
+                                  <span className="text-gray-200">-</span>
+                                ) : (
+                                  <button
+                                    onClick={() => onCellClick({
+                                      categoryId: row.l2Id,
+                                      categoryName: row.l2Name,
+                                      departmentId: deptId,
+                                      departmentName: dept,
+                                      value: v,
+                                    })}
+                                    className="inline-block px-2 py-0.5 rounded-md hover:bg-primary-100 text-primary-700 font-semibold transition-colors"
+                                  >
+                                    <span className="sm:hidden">{compressAmount(v)}</span>
+                                    <span className="hidden sm:inline">{formatCurrency(v)}</span>
+                                  </button>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className={`sticky right-0 ${color.sticky} z-[1] text-right font-bold text-gray-800 whitespace-nowrap`}>
+                            <span className="sm:hidden">{compressAmount(row.total)}</span>
+                            <span className="hidden sm:inline">{formatCurrency(row.total)}</span>
+                          </td>
+                        </tr>
+                      </Fragment>
+                    );
+                  });
+                })()}
                 <tr className="bg-gray-100/80 border-t-2 border-gray-200">
                   <td className="sticky left-0 bg-gray-100 z-[1] font-bold text-gray-700">合计</td>
                   {data.departments.map((dept, i) => {

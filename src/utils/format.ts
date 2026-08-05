@@ -1,6 +1,6 @@
 export const formatCurrency = (amount: number): string => {
   const num = Number(amount) || 0;
-  return `¥${num.toFixed(2)}`;
+  return `¥${num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 export const formatPercent = (value: number): string => {
