@@ -170,16 +170,18 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,
              wc.parent_id as category_parent_id, wc_p.name as category_parent,
-             sm.department_id as dept_id, sm.department_name as dept_name,
+             w.department_id as dept_id, d.name as dept_name,
              SUM(IFNULL(sm.total_amount, 0)) as amount
       FROM stock_movements sm
       JOIN warehouse_items wi ON sm.item_id = wi.id
       JOIN warehouse_categories wc ON wi.category_id = wc.id
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      LEFT JOIN departments d ON w.department_id = d.id
       WHERE sm.movement_type IN ('inbound', 'expense')
         AND sm.related_type = 'scan'
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
-      GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, sm.department_id, sm.department_name
+      GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `, [month]);
 
     const matrix = buildMatrix(rows, deptIdsSorted);
@@ -193,16 +195,18 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
       const [lastRows] = await pool.query(`
         SELECT wc.id as category_id, wc.name as category,
                wc.parent_id as category_parent_id, wc_p.name as category_parent,
-               sm.department_id as dept_id, sm.department_name as dept_name,
+               w.department_id as dept_id, d.name as dept_name,
                SUM(IFNULL(sm.total_amount, 0)) as amount
         FROM stock_movements sm
         JOIN warehouse_items wi ON sm.item_id = wi.id
         JOIN warehouse_categories wc ON wi.category_id = wc.id
         LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+        LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+        LEFT JOIN departments d ON w.department_id = d.id
         WHERE sm.movement_type IN ('inbound', 'expense')
           AND sm.related_type = 'scan'
           AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
-        GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, sm.department_id, sm.department_name
+        GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
       `, [lastYM]);
       const lastMatrix = buildMatrix(lastRows, deptIdsSorted);
       lastMonth = { grandTotal: lastMatrix.grandTotal, totals: lastMatrix.totals, month: lastYM };
@@ -258,10 +262,11 @@ router.get('/material-consumption/detail', requireAuth, async (req, res) => {
              DATE_FORMAT(sm.created_at, '%Y-%m-%d %H:%i') as created_at
       FROM stock_movements sm
       JOIN warehouse_items wi ON sm.item_id = wi.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
       WHERE sm.movement_type IN ('inbound', 'expense')
         AND sm.related_type = 'scan'
         AND wi.category_id = ?
-        AND sm.department_id = ?
+        AND w.department_id = ?
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
       ORDER BY sm.created_at DESC
     `, [category_id, department_id, month]);
@@ -443,16 +448,18 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,
              wc.parent_id as category_parent_id, wc_p.name as category_parent,
-             sm.department_id as dept_id, sm.department_name as dept_name,
+             w.department_id as dept_id, d.name as dept_name,
              SUM(IFNULL(sm.total_amount, 0)) as amount
       FROM stock_movements sm
       JOIN warehouse_items wi ON sm.item_id = wi.id
       JOIN warehouse_categories wc ON wi.category_id = wc.id
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      LEFT JOIN departments d ON w.department_id = d.id
       WHERE sm.movement_type IN ('inbound', 'expense')
         AND sm.related_type = 'scan'
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
-      GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, sm.department_id, sm.department_name
+      GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `, [month]);
     const matrix = buildMatrix(rows, deptIdsSorted);
     const [y, m] = month.split('-');
