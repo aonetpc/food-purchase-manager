@@ -45,6 +45,7 @@ import StockMovement from '@/pages/StockMovement';
 import SupplierReconciliation from '@/pages/SupplierReconciliation';
 import ScanRequisition from '@/pages/ScanRequisition';
 import ScanAudit from '@/pages/ScanAudit';
+import ManagementReport from '@/pages/ManagementReport';
 
 export default function App() {
   return (
@@ -151,6 +152,11 @@ export default function App() {
           <Route path="scan-audit" element={
             <ProtectedRoute requiredPermission="menu:scan-audit">
               <ScanAudit />
+            </ProtectedRoute>
+          } />
+          <Route path="management-report" element={
+            <ProtectedRoute requiredPermission="menu:management-report">
+              <ManagementReport />
             </ProtectedRoute>
           } />
           <Route path="warehouse-purchase" element={

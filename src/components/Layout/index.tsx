@@ -33,6 +33,9 @@ import {
   Warehouse,
   Boxes,
   ArrowLeftRight,
+  FileBarChart,
+  Scale,
+  Check,
 } from 'lucide-react';
 import { useAuthStore, type MenuItem } from '@/store/authStore';
 import { usePurchaseStore } from '@/store/purchaseStore';
@@ -70,7 +73,7 @@ const iconMap: Record<string, any> = {
 const menuGroups = [
   { name: '常用', paths: ['/daily', '/purchase-entry', '/reimbursement'] },
   { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement', '/scan-audit'] },
-  { name: '统计', paths: ['/monthly', '/yearly', '/ingredients', '/temp-stats'] },
+  { name: '统计', paths: ['/monthly', '/management-report', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
   { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
 ];
@@ -134,6 +137,7 @@ export default function Layout() {
     { code: 'menu:daily', name: '每日采购清单', path: '/daily', icon: 'ShoppingCart' },
     { code: 'menu:monthly', name: '月度价格分析', path: '/monthly', icon: 'TrendingUp' },
     { code: 'menu:yearly', name: '年度均价查询', path: '/yearly', icon: 'BarChart3' },
+    { code: 'menu:management-report', name: '管理报表', path: '/management-report', icon: 'FileBarChart' },
     { code: 'menu:ingredients', name: '食材价格查询', path: '/ingredients', icon: 'Search' },
     { code: 'menu:purchase-entry', name: '采购录入', path: '/purchase-entry', icon: 'ClipboardList' },
     { code: 'menu:reimbursement', name: '报销管理', path: '/reimbursement', icon: 'Receipt' },

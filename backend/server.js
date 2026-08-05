@@ -22,6 +22,9 @@ const warehousePurchasesRouter = require('./routes/warehouse-purchases');
 // 扫码领料模块
 const scanRequisitionRouter = require('./routes/scan-requisition');
 
+// 管理报表模块
+const reportsRouter = require('./routes/reports');
+
 // 外请人员打卡模块
 const tempAuthRouter = require('./routes/temp-auth');
 const tempPositionsRouter = require('./routes/temp-positions');
@@ -89,6 +92,9 @@ app.use('/api/warehouse-purchases', warehousePurchasesRouter);
 
 // 扫码领料接口（微信端部分不需登录：config, wx-login；PC端需登录）
 app.use('/api/scan-requisition', scanRequisitionRouter);
+
+// 管理报表接口（需登录）
+app.use('/api/reports', requireAuth, reportsRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
