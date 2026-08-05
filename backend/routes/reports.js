@@ -128,7 +128,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
-      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+      ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
       l1Id: c.l1Id, l1Name: c.l1Name,
@@ -208,7 +208,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
-      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+      ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
       l1Id: c.l1Id, l1Name: c.l1Name,
@@ -466,7 +466,7 @@ router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
-      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+      ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
       l1Id: c.l1Id, l1Name: c.l1Name,
@@ -520,7 +520,7 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
-      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+      ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
       l1Id: c.l1Id, l1Name: c.l1Name,

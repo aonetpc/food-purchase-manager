@@ -2478,11 +2478,10 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       await connection.rollback();
       return res.status(400).json({ error: '请先完成企业微信配置' });
     }
-    const hasWebhook = !!config.webhook_url;
     const hasApiConfig = config.corp_id && config.app_secret && config.agent_id;
-    if (!hasWebhook && !hasApiConfig) {
+    if (!hasApiConfig) {
       await connection.rollback();
-      return res.status(400).json({ error: '请先完成企业微信群聊或应用配置' });
+      return res.status(400).json({ error: '请先完成企业微信自建应用配置（corp_id/app_secret/agent_id）' });
     }
 
     const [itemRows] = await connection.query(
@@ -2626,23 +2625,12 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       mdContent += `\n\n`;
     }
 
-    // 发送群消息
+    // 发送个人模板卡片消息（不发送群消息）
     let wecomMsgId = null;
-    try {
-      if (hasWebhook) {
-        await sendMarkdownViaWebhook(config.webhook_url, mdContent);
-        wecomMsgId = 'webhook';
-      }
-    } catch (sendErr) {
-      console.error('群消息发送失败:', sendErr.message);
-    }
-
-    // 对每个确认人发送模板卡片（逐人发送，touser 为单个 userid）
     const sentToUsers = [];
     const failedUsers = [];
     const sentResponseCodes = []; // { userid, responseCode }
-    if (hasApiConfig) {
-      for (const [userid, data] of Object.entries(userTaskMap)) {
+    for (const [userid, data] of Object.entries(userTaskMap)) {
         try {
           const userWhNames = Array.from(data.whNames);
           const userItems = data.items;
@@ -2685,7 +2673,6 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
           console.error(`发送个人模板卡片消息失败 ${userid}:`, sendErr.message);
           failedUsers.push({ userid, error: sendErr.message });
         }
-      }
     }
 
     // 构建 user_departments 存库（按仓库维度组织，记录该仓库的确认人列表）
@@ -2709,22 +2696,13 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
       };
     }
 
-    // 如果没有匹配到任何确认人：群消息仍发送，但不自动确认，提示用户去配置确认人
+    // 如果没有匹配到任何确认人：不发送任何消息，提示用户去配置确认人
     if (!hasConfirmers) {
-      await connection.query(
-        'UPDATE warehouse_purchases SET wecom_msg_id = ?, user_departments = ?, user_confirmations = ? WHERE id = ?',
-        [wecomMsgId, JSON.stringify({}), JSON.stringify({}), id]
-      );
-      await connection.commit();
-      const tip = '已发送群消息，但未匹配到任何确认人。请在「仓库管理」或「部门管理」中为相关仓库/部门配置确认人（企业微信userid）后再发送确认通知。';
-      res.json({
-        success: true,
-        message: tip,
-        wecom_msg_id: wecomMsgId,
-        sent_to_users: [],
-        failed_users: [],
-        user_departments: {},
-        auto_confirmed: false,
+      await connection.rollback();
+      const tip = '未匹配到任何确认人。请在「仓库管理」或「部门管理」中为相关仓库/部门配置确认人（企业微信userid）后再发送确认通知。';
+      res.status(400).json({
+        success: false,
+        error: tip,
         no_confirmer: true,
       });
     } else {
@@ -2735,15 +2713,9 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
 
       await connection.commit();
 
-      // 如果未配置企微应用信息，补充提示
-      let extraMsg = '';
-      if (!hasApiConfig) {
-        extraMsg = '（未配置企微应用 corp_id/app_secret/agent_id，未发送个人应用消息，仅发送了群消息）';
-      }
-
       res.json({
         success: true,
-        message: `确认通知已发送${extraMsg}`,
+        message: `确认通知已发送`,
         wecom_msg_id: wecomMsgId,
         sent_to_users: sentToUsers,
         failed_users: failedUsers,
