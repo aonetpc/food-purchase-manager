@@ -33,6 +33,17 @@ function extractRequisitionNo(reason) {
   return match ? match[0] : null;
 }
 
+function formatDateTime(val) {
+  if (!val) return '-';
+  if (val instanceof Date) return val.toISOString().slice(0, 16);
+  if (typeof val === 'string') return val.slice(0, 16);
+  if (typeof val === 'object') {
+    const s = val.String || val.string || val.val || JSON.stringify(val);
+    return s.slice(0, 16);
+  }
+  return String(val).slice(0, 16);
+}
+
 async function dedupExpense() {
   console.log('\n🔧 去重 v2：清理重复的即买即用消耗流水\n');
   console.log('═'.repeat(60));
@@ -102,7 +113,7 @@ async function dedupExpense() {
 
       const [reqNo, itemId, whId] = key.split('|');
       console.log(`   📂 ${reqNo} / ${keep.item_name} / 仓库ID:${whId}`);
-      console.log(`      保留最早记录: ${keep.created_at.toISOString().slice(0, 16)} (${correctQty}${keep.unit || ''})`);
+      console.log(`      保留最早记录: ${formatDateTime(keep.created_at)} (${correctQty}${keep.unit || ''})`);
       console.log(`      删除 ${duplicates.length} 条重复记录`);
       if (extraQty > 0) {
         console.log(`      ⚠️  多扣库存: ${extraQty}${keep.unit || ''}，将补回`);

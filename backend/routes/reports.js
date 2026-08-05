@@ -14,8 +14,9 @@ function formatMoney(n) {
  *  @param rawRows [{ category_id, category, category_parent_id, category_parent, dept_id, dept_name, amount }]
  *  @param deptIdsSorted   部门ID排序（可传空则按出现顺序）
  *  @param deptNameMap     部门ID->名称映射（用于补齐无数据的部门名称）
+ *  @param allCategories   所有分类列表 [{ l1Id, l1Name, l2Id, l2Name }]，用于显示无数据的分类行
  */
-function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null) {
+function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null, allCategories = null) {
   // 1. 整理部门顺序
   const deptMap = new Map(); // deptId -> {id, name}
   for (const r of rawRows) {
@@ -26,12 +27,10 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null) {
   }
   let depts;
   if (deptIdsSorted && deptIdsSorted.length > 0) {
-    // 包含所有 deptIdsSorted 中的部门（即使无数据），无数据的用 deptNameMap 补名称
     depts = deptIdsSorted.map(id => {
       if (deptMap.has(id)) return deptMap.get(id);
       return { id, name: (deptNameMap && deptNameMap[id]) || '未命名部门' };
     });
-    // 追加未出现在sorted里的（rawRows中有但sorted里没有的）
     for (const [id, d] of deptMap.entries()) {
       if (!deptIdsSorted.includes(id)) depts.push(d);
     }
@@ -41,9 +40,24 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null) {
   const deptIdx = {};
   depts.forEach((d, i) => { deptIdx[d.id] = i; });
   const deptNames = depts.map(d => d.name);
+  const emptyValues = () => new Array(depts.length).fill(0);
 
-  // 2. 整理分类（L1+L2结构，扁平化为行，保留L1/L2层级信息用于前端渲染可选分组）
-  const l1Map = {}; // l1Id -> { l1Id, name, sort: 0, children: Map<l2Id, {l2Id, name, values:number[]}> }
+  // 2. 整理分类（如果传入了 allCategories，先用它们初始化）
+  const l1Map = {};
+  if (allCategories && allCategories.length > 0) {
+    for (const cat of allCategories) {
+      if (!l1Map[cat.l1Id]) {
+        l1Map[cat.l1Id] = { l1Id: cat.l1Id, name: cat.l1Name, children: new Map() };
+      }
+      if (!l1Map[cat.l1Id].children.has(cat.l2Id)) {
+        l1Map[cat.l1Id].children.set(cat.l2Id, {
+          l2Id: cat.l2Id, name: cat.l2Name, values: emptyValues()
+        });
+      }
+    }
+  }
+
+  // 3. 填充数据
   for (const r of rawRows) {
     const l1Id = r.category_parent_id || '__no_parent__';
     const l1Name = r.category_parent || '未分类';
@@ -53,8 +67,7 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null) {
       l1Map[l1Id] = { l1Id, name: l1Name, children: new Map() };
     }
     if (!l1Map[l1Id].children.has(l2Id)) {
-      const values = new Array(depts.length).fill(0);
-      l1Map[l1Id].children.set(l2Id, { l2Id, name: l2Name, values });
+      l1Map[l1Id].children.set(l2Id, { l2Id, name: l2Name, values: emptyValues() });
     }
     const node = l1Map[l1Id].children.get(l2Id);
     const idx = deptIdx[r.dept_id];
@@ -63,7 +76,7 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null) {
     }
   }
 
-  // 3. 扁平化 rows
+  // 4. 扁平化 rows
   const rows = [];
   for (const l1 of Object.values(l1Map)) {
     for (const node of l1.children.values()) {
@@ -74,14 +87,14 @@ function buildMatrix(rawRows, deptIdsSorted = null, deptNameMap = null) {
         l1Name: l1.name,
         l2Id: node.l2Id,
         l2Name: node.name,
-        category: node.name,        // 兼容字段
+        category: node.name,
         values: vals,
         total: formatMoney(rowTotal),
       });
     }
   }
 
-  // 4. 合计行
+  // 5. 合计行
   const totals = new Array(depts.length).fill(0);
   for (const row of rows) {
     row.values.forEach((v, i) => { totals[i] = (totals[i] || 0) + toNum(v); });
@@ -108,6 +121,20 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
     const deptNameMap = {};
     for (const d of deptRows) deptNameMap[d.id] = d.name;
 
+    // 查询所有 L1/L2 分类（确保无数据的分类也显示）
+    const [catRows] = await pool.query(`
+      SELECT wc.id as l2Id, wc.name as l2Name,
+             wc.parent_id as l1Id, wc_p.name as l1Name
+      FROM warehouse_categories wc
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE wc.parent_id IS NOT NULL
+      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+    `);
+    const allCategories = catRows.map(c => ({
+      l1Id: c.l1Id, l1Name: c.l1Name,
+      l2Id: c.l2Id, l2Name: c.l2Name
+    }));
+
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,
              wc.parent_id as category_parent_id, wc_p.name as category_parent,
@@ -124,7 +151,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `);
 
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap);
+    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
 
     // 环比（上月末 → 当前）
     let lastMonth = null;
@@ -148,7 +175,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
           AND DATE(i.updated_at) < ?
         GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
       `, [firstOfMonthStr]);
-      const lastMatrix = buildMatrix(lastRows, deptIdsSorted, deptNameMap);
+      const lastMatrix = buildMatrix(lastRows, deptIdsSorted, deptNameMap, allCategories);
       lastMonth = { grandTotal: lastMatrix.grandTotal, totals: lastMatrix.totals };
     } catch (e) { /* 环比失败不影响主数据 */ }
 
@@ -174,6 +201,20 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
     const deptNameMap = {};
     for (const d of deptRows) deptNameMap[d.id] = d.name;
 
+    // 查询所有 L1/L2 分类（确保无数据的分类也显示）
+    const [catRows] = await pool.query(`
+      SELECT wc.id as l2Id, wc.name as l2Name,
+             wc.parent_id as l1Id, wc_p.name as l1Name
+      FROM warehouse_categories wc
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE wc.parent_id IS NOT NULL
+      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+    `);
+    const allCategories = catRows.map(c => ({
+      l1Id: c.l1Id, l1Name: c.l1Name,
+      l2Id: c.l2Id, l2Name: c.l2Name
+    }));
+
     // 扫码领料入库到部门仓 = 部门消耗（movement_type='inbound'）
     // 即买即用消耗（movement_type='expense'）
     const [rows] = await pool.query(`
@@ -193,7 +234,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `, [month]);
 
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap);
+    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
 
     // 上月环比
     let lastMonth = null;
@@ -217,7 +258,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
           AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
         GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
       `, [lastYM]);
-      const lastMatrix = buildMatrix(lastRows, deptIdsSorted, deptNameMap);
+      const lastMatrix = buildMatrix(lastRows, deptIdsSorted, deptNameMap, allCategories);
       lastMonth = { grandTotal: lastMatrix.grandTotal, totals: lastMatrix.totals, month: lastYM };
     } catch (e) { /* ignore */ }
 
@@ -418,6 +459,20 @@ router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
     const deptIdsSorted = deptRows.map(d => d.id);
     const deptNameMap = {};
     for (const d of deptRows) deptNameMap[d.id] = d.name;
+
+    const [catRows] = await pool.query(`
+      SELECT wc.id as l2Id, wc.name as l2Name,
+             wc.parent_id as l1Id, wc_p.name as l1Name
+      FROM warehouse_categories wc
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE wc.parent_id IS NOT NULL
+      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+    `);
+    const allCategories = catRows.map(c => ({
+      l1Id: c.l1Id, l1Name: c.l1Name,
+      l2Id: c.l2Id, l2Name: c.l2Name
+    }));
+
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,
              wc.parent_id as category_parent_id, wc_p.name as category_parent,
@@ -432,7 +487,7 @@ router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
       WHERE w.type = 'dept' AND i.quantity > 0
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `);
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap);
+    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
     const todayStr = new Date().toLocaleDateString('zh-CN');
     const buf = await generateReportPDF({
       title: '固定资产库存价值表',
@@ -458,6 +513,20 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
     const deptIdsSorted = deptRows.map(d => d.id);
     const deptNameMap = {};
     for (const d of deptRows) deptNameMap[d.id] = d.name;
+
+    const [catRows] = await pool.query(`
+      SELECT wc.id as l2Id, wc.name as l2Name,
+             wc.parent_id as l1Id, wc_p.name as l1Name
+      FROM warehouse_categories wc
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE wc.parent_id IS NOT NULL
+      ORDER BY wc_p.sort ASC, wc.sort ASC, wc.id ASC
+    `);
+    const allCategories = catRows.map(c => ({
+      l1Id: c.l1Id, l1Name: c.l1Name,
+      l2Id: c.l2Id, l2Name: c.l2Name
+    }));
+
     const [rows] = await pool.query(`
       SELECT wc.id as category_id, wc.name as category,
              wc.parent_id as category_parent_id, wc_p.name as category_parent,
@@ -474,7 +543,7 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `, [month]);
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap);
+    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
     const [y, m] = month.split('-');
     const subtitle = `统计月份：${y}年${parseInt(m)}月    合计消耗：¥${toNum(matrix.grandTotal).toFixed(2)}`;
     const buf = await generateReportPDF({
