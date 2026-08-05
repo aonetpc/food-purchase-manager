@@ -121,13 +121,14 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
     const deptNameMap = {};
     for (const d of deptRows) deptNameMap[d.id] = d.name;
 
-    // 查询所有 L1/L2 分类（确保无数据的分类也显示）
+    // 查询固定资产 L1/L2 分类（确保无数据的分类也显示）
     const [catRows] = await pool.query(`
       SELECT wc.id as l2Id, wc.name as l2Name,
              wc.parent_id as l1Id, wc_p.name as l1Name
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
+        AND wc_p.name = '固定资产'
       ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
@@ -148,6 +149,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
       LEFT JOIN departments d ON w.department_id = d.id
       WHERE w.type = 'dept'
         AND i.quantity > 0
+        AND wc_p.name = '固定资产'
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `);
 
@@ -172,6 +174,7 @@ router.get('/fixed-assets', requireAuth, async (req, res) => {
         LEFT JOIN departments d ON w.department_id = d.id
         WHERE w.type = 'dept'
           AND i.quantity > 0
+          AND wc_p.name = '固定资产'
           AND DATE(i.updated_at) < ?
         GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
       `, [firstOfMonthStr]);
@@ -201,13 +204,14 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
     const deptNameMap = {};
     for (const d of deptRows) deptNameMap[d.id] = d.name;
 
-    // 查询所有 L1/L2 分类（确保无数据的分类也显示）
+    // 查询原材料 L1/L2 分类（确保无数据的分类也显示）
     const [catRows] = await pool.query(`
       SELECT wc.id as l2Id, wc.name as l2Name,
              wc.parent_id as l1Id, wc_p.name as l1Name
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
+        AND wc_p.name = '原材料'
       ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
@@ -231,6 +235,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
       WHERE sm.movement_type IN ('inbound', 'expense')
         AND sm.related_type = 'scan'
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
+        AND wc_p.name = '原材料'
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `, [month]);
 
@@ -256,6 +261,7 @@ router.get('/material-consumption', requireAuth, async (req, res) => {
         WHERE sm.movement_type IN ('inbound', 'expense')
           AND sm.related_type = 'scan'
           AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
+          AND wc_p.name = '原材料'
         GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
       `, [lastYM]);
       const lastMatrix = buildMatrix(lastRows, deptIdsSorted, deptNameMap, allCategories);
@@ -466,6 +472,7 @@ router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
+        AND wc_p.name = '固定资产'
       ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
@@ -485,6 +492,7 @@ router.get('/pdf/fixed-assets', requireAuth, async (req, res) => {
       JOIN warehouses w ON i.warehouse_id = w.id
       LEFT JOIN departments d ON w.department_id = d.id
       WHERE w.type = 'dept' AND i.quantity > 0
+        AND wc_p.name = '固定资产'
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `);
     const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
@@ -520,6 +528,7 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
       FROM warehouse_categories wc
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       WHERE wc.parent_id IS NOT NULL
+        AND wc_p.name = '原材料'
       ORDER BY wc_p.sort_order ASC, wc.sort_order ASC, wc.id ASC
     `);
     const allCategories = catRows.map(c => ({
@@ -541,6 +550,7 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
       WHERE sm.movement_type IN ('inbound', 'expense')
         AND sm.related_type = 'scan'
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
+        AND wc_p.name = '原材料'
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
     `, [month]);
     const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
