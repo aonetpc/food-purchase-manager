@@ -478,4 +478,311 @@ router.get('/pdf/material-consumption', requireAuth, async (req, res) => {
   }
 });
 
+/** ============== 5. 部门费用明细 ============== */
+/** 列表查询（带筛选+分页） */
+router.get('/expense-detail', requireAuth, async (req, res) => {
+  try {
+    const {
+      month,
+      department_id,
+      category_id,
+      category_parent_id,
+      keyword,
+      page = 1,
+      page_size = 50,
+    } = req.query;
+
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '参数 month 格式错误' });
+    }
+
+    const where = [
+      `sm.movement_type IN ('inbound', 'expense')`,
+      `sm.related_type = 'scan'`,
+      `DATE_FORMAT(sm.created_at, '%Y-%m') = ?`,
+    ];
+    const params = [month];
+
+    if (department_id) {
+      where.push(`w.department_id = ?`);
+      params.push(department_id);
+    }
+    if (category_parent_id) {
+      where.push(`wc.parent_id = ?`);
+      params.push(category_parent_id);
+    } else if (category_id) {
+      where.push(`wi.category_id = ?`);
+      params.push(category_id);
+    }
+    if (keyword) {
+      where.push(`(wi.name LIKE ? OR wi.sku LIKE ?)`);
+      const kw = `%${keyword}%`;
+      params.push(kw, kw);
+    }
+
+    const whereSql = where.join(' AND ');
+
+    // 汇总
+    const [summaryRow] = await pool.query(`
+      SELECT COUNT(*) as total_count,
+             SUM(IFNULL(sm.total_amount, 0)) as total_amount
+      FROM stock_movements sm
+      JOIN warehouse_items wi ON sm.item_id = wi.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      LEFT JOIN departments d ON w.department_id = d.id
+      LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+      WHERE ${whereSql}
+    `, params);
+
+    const count = toNum(summaryRow[0].total_count);
+    const totalAmount = toNum(summaryRow[0].total_amount);
+
+    // 分页
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const pageSize = Math.min(500, Math.max(1, parseInt(page_size) || 50));
+    const offset = (pageNum - 1) * pageSize;
+
+    const [rows] = await pool.query(`
+      SELECT sm.id, wi.name as item_name, wi.sku,
+             wc.id as category_id, wc.name as category_name,
+             wc_p.id as category_parent_id, wc_p.name as category_parent_name,
+             w.department_id, d.name as department_name,
+             ABS(sm.quantity) as quantity, sm.unit,
+             IFNULL(sm.unit_price, 0) as unit_price,
+             IFNULL(sm.total_amount, 0) as total_amount,
+             sm.movement_type, sm.operator_name, sm.reason,
+             DATE_FORMAT(sm.created_at, '%Y-%m-%d %H:%i') as created_at
+      FROM stock_movements sm
+      JOIN warehouse_items wi ON sm.item_id = wi.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      LEFT JOIN departments d ON w.department_id = d.id
+      LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE ${whereSql}
+      ORDER BY sm.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, pageSize, offset]);
+
+    res.json({
+      page: pageNum,
+      page_size: pageSize,
+      total_count: count,
+      total_amount: totalAmount,
+      list: rows.map(r => ({
+        ...r,
+        quantity: toNum(r.quantity),
+        unit_price: toNum(r.unit_price),
+        total_amount: toNum(r.total_amount),
+      })),
+    });
+  } catch (err) {
+    console.error('[expense-detail] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** 部门费用明细 PDF 导出 */
+router.get('/pdf/expense-detail', requireAuth, async (req, res) => {
+  try {
+    const {
+      month,
+      department_id,
+      category_id,
+      category_parent_id,
+      keyword,
+    } = req.query;
+
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '参数 month 格式错误' });
+    }
+
+    const where = [
+      `sm.movement_type IN ('inbound', 'expense')`,
+      `sm.related_type = 'scan'`,
+      `DATE_FORMAT(sm.created_at, '%Y-%m') = ?`,
+    ];
+    const params = [month];
+
+    if (department_id) {
+      where.push(`w.department_id = ?`);
+      params.push(department_id);
+    }
+    if (category_parent_id) {
+      where.push(`wc.parent_id = ?`);
+      params.push(category_parent_id);
+    } else if (category_id) {
+      where.push(`wi.category_id = ?`);
+      params.push(category_id);
+    }
+    if (keyword) {
+      where.push(`(wi.name LIKE ? OR wi.sku LIKE ?)`);
+      const kw = `%${keyword}%`;
+      params.push(kw, kw);
+    }
+
+    const whereSql = where.join(' AND ');
+
+    const [rows] = await pool.query(`
+      SELECT sm.id, wi.name as item_name, wi.sku,
+             wc.name as category_name, wc_p.name as category_parent_name,
+             d.name as department_name,
+             ABS(sm.quantity) as quantity, sm.unit,
+             IFNULL(sm.unit_price, 0) as unit_price,
+             IFNULL(sm.total_amount, 0) as total_amount,
+             sm.movement_type, sm.operator_name,
+             DATE_FORMAT(sm.created_at, '%Y-%m-%d %H:%i') as created_at
+      FROM stock_movements sm
+      JOIN warehouse_items wi ON sm.item_id = wi.id
+      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+      LEFT JOIN departments d ON w.department_id = d.id
+      LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE ${whereSql}
+      ORDER BY sm.created_at DESC
+    `, params);
+
+    const doc = new PDFDocument({ size: 'A4', margin: 30 });
+    const chineseFont = findChineseFont();
+    const chineseBoldFont = findChineseBoldFont();
+    const hasChineseFont = !!chineseFont;
+    if (hasChineseFont) {
+      doc.registerFont('Chinese-Regular', chineseFont);
+      doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
+    }
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+
+    const pageW = doc.page.width - 60;
+    const marginLeft = 30;
+
+    const [y, m] = month.split('-');
+    const deptName = department_id ? '指定部门' : '全部部门';
+    const totalAmt = rows.reduce((s, r) => s + toNum(r.total_amount), 0);
+
+    doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+       .text('部门费用明细表', marginLeft, 30, { width: pageW, align: 'center' });
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica')
+       .text(`${y}年${parseInt(m)}月    ${deptName}    合计：${rows.length}笔 / ¥${toNum(totalAmt).toFixed(2)}`,
+             marginLeft, 55, { width: pageW, align: 'center' });
+
+    const headers = ['物资名称', '分类', '部门', '数量', '单价', '金额', '方式', '操作人', '时间'];
+    const colW = [
+      pageW * 0.18, // 物资名称
+      pageW * 0.14, // 分类
+      pageW * 0.10, // 部门
+      pageW * 0.07, // 数量
+      pageW * 0.08, // 单价
+      pageW * 0.09, // 金额
+      pageW * 0.08, // 方式
+      pageW * 0.08, // 操作人
+      pageW * 0.18, // 时间
+    ];
+    const rowH = 16;
+    let yPos = 85;
+
+    function checkPage(newY) {
+      const pageBottom = doc.page.height - 50;
+      if (newY > pageBottom) {
+        doc.addPage({ size: 'A4', margin: 30 });
+        return 50;
+      }
+      return newY;
+    }
+
+    function drawCell(x, cellY, text, w, opts = {}) {
+      const font = opts.bold ? 'Chinese-Bold' : 'Chinese-Regular';
+      const hFont = opts.bold ? 'Helvetica-Bold' : 'Helvetica';
+      doc.font(hasChineseFont ? font : hFont).fontSize(opts.header ? 9 : 8);
+      const lineH = doc.currentLineHeight();
+      const tY = cellY + (rowH - lineH) / 2;
+      doc.save();
+      doc.rect(x, cellY, w, rowH).stroke('#d1d5db');
+      doc.restore();
+      doc.text(String(text), x + 3, tY, {
+        width: w - 6,
+        align: opts.align || 'left',
+        ellipsis: true,
+      });
+    }
+
+    // 表头
+    {
+      let x = marginLeft;
+      doc.save();
+      doc.rect(marginLeft, yPos, pageW, rowH).fill('#f3f4f6').stroke('#d1d5db');
+      doc.restore();
+      for (let i = 0; i < headers.length; i++) {
+        const align = i === 0 || i === 1 || i === 2 || i === 6 || i === 7 || i === 8 ? 'left' : 'right';
+        drawCell(x, yPos, headers[i], colW[i], { header: true, bold: true, align });
+        x += colW[i];
+      }
+      yPos += rowH;
+    }
+
+    // 数据行
+    for (const r of rows) {
+      yPos = checkPage(yPos);
+      const way = r.movement_type === 'expense' ? '即买即用' : '扫码入库';
+      const values = [
+        r.item_name || '-',
+        r.category_parent_name && r.category_name ? `${r.category_parent_name}/${r.category_name}` : (r.category_name || '-'),
+        r.department_name || '-',
+        toNum(r.quantity),
+        toNum(r.unit_price).toFixed(2),
+        toNum(r.total_amount).toFixed(2),
+        way,
+        r.operator_name || '-',
+        r.created_at || '-',
+      ];
+      let x = marginLeft;
+      for (let i = 0; i < values.length; i++) {
+        const align = i === 0 || i === 1 || i === 2 || i === 6 || i === 7 || i === 8 ? 'left' : 'right';
+        drawCell(x, yPos, values[i], colW[i], { align });
+        x += colW[i];
+      }
+      yPos += rowH;
+    }
+
+    // 合计行
+    yPos = checkPage(yPos);
+    {
+      let x = marginLeft;
+      doc.save();
+      doc.rect(marginLeft, yPos, pageW, rowH).fill('#e5e7eb').stroke('#d1d5db');
+      doc.restore();
+      drawCell(marginLeft, yPos, '合计', colW[0], { bold: true });
+      let rest = colW[0];
+      for (let i = 1; i < 4; i++) rest += colW[i];
+      // 清空中间列
+      drawCell(marginLeft + colW[0], yPos, '', pageW - colW[0] - colW[5] - colW[6] - colW[7] - colW[8], { bold: true });
+      drawCell(marginLeft + pageW - colW[5] - colW[6] - colW[7] - colW[8], yPos, `${rows.length}笔`, colW[5], { bold: true, align: 'right' });
+      drawCell(marginLeft + pageW - colW[6] - colW[7] - colW[8], yPos, '', colW[6], { bold: true });
+      drawCell(marginLeft + pageW - colW[7] - colW[8], yPos, '', colW[7], { bold: true });
+      drawCell(marginLeft + pageW - colW[8], yPos, '', colW[8], { bold: true });
+      // 重新写金额到第5列（金额列）
+      const amtColStart = headers.slice(0, 5).reduce((s, _, i) => s + colW[i], 0);
+      drawCell(marginLeft + amtColStart - colW[5], yPos, `¥${toNum(totalAmt).toFixed(2)}`, colW[5], { bold: true, align: 'right' });
+      yPos += rowH;
+    }
+
+    yPos += 10;
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(
+      `生成时间：${new Date().toLocaleString('zh-CN')}`,
+      marginLeft, yPos, { width: pageW, align: 'right' }
+    );
+
+    doc.end();
+    const buf = await new Promise((resolve, reject) => {
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="部门费用明细_${month}.pdf"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[pdf expense-detail] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -1,9 +1,20 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, FileDown, X, TrendingUp, TrendingDown, Minus, AlertCircle, ClipboardCheck, Building2 } from 'lucide-react';
+import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
+import { ChevronLeft, ChevronRight, FileDown, X, TrendingUp, TrendingDown, Minus, AlertCircle, ClipboardCheck, Search, Filter } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
+import { useDepartmentStore } from '@/store/departmentStore';
+
+// 仓库分类树节点（最多 2 级）
+interface CategoryNode {
+  id: string;
+  name: string;
+  parent_id?: string | null;
+  level: number;
+  sort_order?: number;
+  children?: CategoryNode[];
+}
 
 type TabKey = 'fixed-assets' | 'material-consumption' | 'inventory-check' | 'expense-detail';
 
@@ -25,7 +36,34 @@ type MatrixData = {
   month?: string;
 };
 
-/** 移动端数字缩写 */
+type ExpenseRow = {
+  id: string;
+  item_name: string;
+  sku?: string;
+  category_id?: string;
+  category_name?: string;
+  category_parent_id?: string;
+  category_parent_name?: string;
+  department_id?: string;
+  department_name?: string;
+  quantity: number;
+  unit?: string;
+  unit_price: number;
+  total_amount: number;
+  movement_type: 'inbound' | 'expense';
+  operator_name?: string;
+  reason?: string;
+  created_at?: string;
+};
+
+type ExpenseDetailData = {
+  page: number;
+  page_size: number;
+  total_count: number;
+  total_amount: number;
+  list: ExpenseRow[];
+};
+
 function compressAmount(n: number | 0 | null | undefined): string {
   const v = Number(n) || 0;
   if (v === 0) return '-';
@@ -39,7 +77,7 @@ function calcChangeRate(cur: number, last: number): number | null {
   const c = Number(cur) || 0;
   const l = Number(last) || 0;
   if (l === 0 && c === 0) return null;
-  if (l === 0) return c > 0 ? 999 : -999; // 无对比值
+  if (l === 0) return c > 0 ? 999 : -999;
   return Math.round(((c - l) / l) * 1000) / 10;
 }
 
@@ -54,7 +92,6 @@ function TrendBadge({ rate }: { rate: number | null }) {
   return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs"><Minus size={12}/>0%</span>;
 }
 
-/** 明细弹窗 */
 function DetailModal({ open, title, onClose, rows, columns }: {
   open: boolean;
   title: string;
@@ -108,6 +145,21 @@ function DetailModal({ open, title, onClose, rows, columns }: {
   );
 }
 
+/** 把L1/L2分类树拍平成级联选项 */
+function flattenCategories(tree: CategoryNode[] | undefined): { value: string; label: string; level: number; parentId?: string }[] {
+  const out: { value: string; label: string; level: number; parentId?: string }[] = [];
+  if (!tree) return out;
+  for (const n of tree) {
+    out.push({ value: n.id, label: n.name, level: 1, parentId: undefined });
+    if (n.children) {
+      for (const c of n.children) {
+        out.push({ value: c.id, label: c.name, level: 2, parentId: n.id });
+      }
+    }
+  }
+  return out;
+}
+
 export default function ManagementReport() {
   const [tab, setTab] = useState<TabKey>('fixed-assets');
   const [currentMonth, setCurrentMonth] = useState<Date>(() => {
@@ -124,6 +176,17 @@ export default function ManagementReport() {
   const [detailTitle, setDetailTitle] = useState('');
   const [detailRows, setDetailRows] = useState<any[] | null>(null);
   const [detailCols, setDetailCols] = useState<any[]>([]);
+
+  // 部门费用明细状态
+  const { departments, fetchDepartments } = useDepartmentStore();
+  const [whCategories, setWhCategories] = useState<CategoryNode[] | undefined>(undefined);
+  const [expFilterDept, setExpFilterDept] = useState<string>('');
+  const [expFilterL1, setExpFilterL1] = useState<string>('');
+  const [expFilterL2, setExpFilterL2] = useState<string>('');
+  const [expKeyword, setExpKeyword] = useState('');
+  const [expPage, setExpPage] = useState(1);
+  const [expData, setExpData] = useState<ExpenseDetailData | null>(null);
+  const [expLoading, setExpLoading] = useState(false);
 
   const yearMonth = format(currentMonth, 'yyyy-MM');
   const monthLabel = format(currentMonth, 'yyyy年MM月', { locale: zhCN });
@@ -148,8 +211,45 @@ export default function ManagementReport() {
     } finally { setMaterialLoading(false); }
   }, []);
 
-  useEffect(() => { loadFixed(); }, [loadFixed]);
+  const loadExpense = useCallback(async (ym: string, page: number) => {
+    setExpLoading(true);
+    try {
+      const params = new URLSearchParams({
+        month: ym,
+        page: String(page),
+        page_size: '50',
+      });
+      if (expFilterDept) params.set('department_id', expFilterDept);
+      if (expFilterL2) {
+        params.set('category_id', expFilterL2);
+      } else if (expFilterL1) {
+        params.set('category_parent_id', expFilterL1);
+      }
+      if (expKeyword.trim()) params.set('keyword', expKeyword.trim());
+      const data = await api.get(`/reports/expense-detail?${params.toString()}`);
+      setExpData(data as ExpenseDetailData);
+    } catch (e) {
+      console.error(e);
+    } finally { setExpLoading(false); }
+  }, [expFilterDept, expFilterL1, expFilterL2, expKeyword]);
+
+  useEffect(() => { loadFixed(); fetchDepartments(); }, [loadFixed, fetchDepartments]);
   useEffect(() => { loadMaterial(yearMonth); }, [yearMonth, loadMaterial]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const t = await api.get<CategoryNode[]>('/warehouses/categories/tree');
+        setWhCategories(Array.isArray(t) ? t : (t as any).data ?? []);
+      } catch (e) { /* ignore */ }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'expense-detail') {
+      setExpPage(1);
+      loadExpense(yearMonth, 1);
+    }
+  }, [tab, yearMonth, loadExpense]);
 
   const handlePrevMonth = () => setCurrentMonth(prev => subMonths(prev, 1));
   const handleNextMonth = () => {
@@ -202,6 +302,13 @@ export default function ManagementReport() {
       window.open(`${import.meta.env.VITE_API_BASE_URL || ''}/api/reports/pdf/fixed-assets`, '_blank');
     } else if (tab === 'material-consumption') {
       window.open(`${import.meta.env.VITE_API_BASE_URL || ''}/api/reports/pdf/material-consumption?month=${yearMonth}`, '_blank');
+    } else if (tab === 'expense-detail') {
+      const params = new URLSearchParams({ month: yearMonth });
+      if (expFilterDept) params.set('department_id', expFilterDept);
+      if (expFilterL2) params.set('category_id', expFilterL2);
+      else if (expFilterL1) params.set('category_parent_id', expFilterL1);
+      if (expKeyword.trim()) params.set('keyword', expKeyword.trim());
+      window.open(`${import.meta.env.VITE_API_BASE_URL || ''}/api/reports/pdf/expense-detail?${params.toString()}`, '_blank');
     }
   };
 
@@ -210,7 +317,18 @@ export default function ManagementReport() {
     tab === 'material-consumption' ? materialData : null;
   const currentLoading =
     tab === 'fixed-assets' ? fixedLoading :
-    tab === 'material-consumption' ? materialLoading : false;
+    tab === 'material-consumption' ? materialLoading :
+    tab === 'expense-detail' ? expLoading : false;
+
+  // 部门费用明细的筛选分类级联
+  const flatCats = useMemo(() => flattenCategories(whCategories), [whCategories]);
+  const l1Options = flatCats.filter(c => c.level === 1);
+  const l2Options = flatCats.filter(c => c.level === 2 && (expFilterL1 ? c.parentId === expFilterL1 : true));
+
+  const handleSearch = () => {
+    setExpPage(1);
+    loadExpense(yearMonth, 1);
+  };
 
   return (
     <div className="space-y-4 sm:space-y-6 pb-16">
@@ -220,7 +338,8 @@ export default function ManagementReport() {
           <p className="text-gray-500 mt-1 text-sm">
             {tab === 'fixed-assets' && '各部门固定资产库存价值，实时快照'}
             {tab === 'material-consumption' && '各部门当月原材料消耗（扫码领用）'}
-            {(tab === 'inventory-check' || tab === 'expense-detail') && '开发中，敬请期待'}
+            {tab === 'inventory-check' && '开发中，敬请期待'}
+            {tab === 'expense-detail' && '当月扫码领用消耗明细，支持筛选和导出'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -229,7 +348,7 @@ export default function ManagementReport() {
             <div className="px-4 py-1 min-w-[120px] text-center font-medium text-sm">{monthLabel}</div>
             <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-md"><ChevronRight size={18}/></button>
           </div>
-          {(tab === 'fixed-assets' || tab === 'material-consumption') && currentData && (
+          {(tab === 'fixed-assets' || tab === 'material-consumption' || tab === 'expense-detail') && (
             <button
               onClick={downloadPDF}
               className="btn-primary flex items-center gap-1.5 text-sm"
@@ -244,13 +363,32 @@ export default function ManagementReport() {
       <div className="no-print flex gap-2 overflow-x-auto pb-1">
         <TabButton label="固定资产库存" active={tab === 'fixed-assets'} onClick={() => setTab('fixed-assets')} />
         <TabButton label="原材料消耗" active={tab === 'material-consumption'} onClick={() => setTab('material-consumption')} />
-        <TabButton label="月末盘点" active={tab === 'inventory-check'} onClick={() => setTab('inventory-check')} disabled badge="开发中" />
-        <TabButton label="部门费用明细" active={tab === 'expense-detail'} onClick={() => setTab('expense-detail')} disabled badge="开发中" />
+        <TabButton label="月末盘点" active={tab === 'inventory-check'} onClick={() => setTab('inventory-check')} disabled />
+        <TabButton label="部门费用明细" active={tab === 'expense-detail'} onClick={() => setTab('expense-detail')} />
       </div>
 
       {/* Content */}
-      {(tab === 'inventory-check' || tab === 'expense-detail') ? (
+      {tab === 'inventory-check' ? (
         <PlaceholderCard type={tab} />
+      ) : tab === 'expense-detail' ? (
+        <ExpenseDetailCard
+          loading={expLoading}
+          data={expData}
+          departments={departments}
+          filterDept={expFilterDept}
+          setFilterDept={setExpFilterDept}
+          l1Options={l1Options}
+          filterL1={expFilterL1}
+          setFilterL1={(v) => { setExpFilterL1(v); setExpFilterL2(''); }}
+          l2Options={l2Options}
+          filterL2={expFilterL2}
+          setFilterL2={setExpFilterL2}
+          keyword={expKeyword}
+          setKeyword={setExpKeyword}
+          onSearch={handleSearch}
+          page={expPage}
+          setPage={(p) => { setExpPage(p); loadExpense(yearMonth, p); }}
+        />
       ) : (
         <MatrixCard
           title={tab === 'fixed-assets' ? '固定资产 · 库存价值' : '原材料 · 当月消耗'}
@@ -292,14 +430,12 @@ function TabButton({ label, active, onClick, disabled, badge }: { label: string;
 }
 
 function PlaceholderCard({ type }: { type: TabKey }) {
-  const title = type === 'inventory-check' ? '月末盘点' : '部门费用明细';
-  const desc = type === 'inventory-check'
-    ? '预计支持：各仓库月末库存快照、与账面差异对比、盘点录入、差异报告。'
-    : '预计支持：按时间段、按部门、按分类筛选消耗明细，支持导出。';
+  const title = '月末盘点';
+  const desc = '预计支持：各仓库月末库存快照、与账面差异对比、盘点录入、差异报告。';
   return (
     <div className="card flex flex-col items-center justify-center py-20 text-center">
       <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
-        {type === 'inventory-check' ? <ClipboardCheck size={32} className="text-gray-400"/> : <Building2 size={32} className="text-gray-400"/>}
+        <ClipboardCheck size={32} className="text-gray-400"/>
       </div>
       <h3 className="text-lg font-semibold text-gray-700 mb-1">{title}</h3>
       <p className="text-sm text-gray-400 max-w-md">{desc}</p>
@@ -345,7 +481,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
       {!loading && (!data || data.rows.length === 0) && (
         <div className="py-16 text-center text-gray-400">
           <AlertCircle size={36} className="mx-auto mb-2 opacity-50"/>
-          <p>暂无数据</p>
+          <p>暂无数据，请切换月份或确认是否有领料记录</p>
         </div>
       )}
 
@@ -372,9 +508,9 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                   const prevRow = idx === 0 ? null : data.rows[idx - 1];
                   const showL1Gap = prevRow && prevRow.l1Id !== row.l1Id;
                   return (
-                    <>
+                    <Fragment key={row.l2Id}>
                       {showL1Gap && <tr key={`gap-${idx}`}><td colSpan={data.departments.length + 2} className="bg-transparent h-0 border-0 p-0"></td></tr>}
-                      <tr key={row.l2Id} className="hover:bg-primary-50/40 transition-colors">
+                      <tr className="hover:bg-primary-50/40 transition-colors">
                         <td className="sticky left-0 bg-white z-[1]">
                           <div className="flex items-center gap-1.5">
                             <span className="text-xs text-gray-400 font-medium w-10 truncate">{row.l1Name}</span>
@@ -411,7 +547,7 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
                           <span className="hidden sm:inline">{formatCurrency(row.total)}</span>
                         </td>
                       </tr>
-                    </>
+                    </Fragment>
                   );
                 })}
                 <tr className="bg-gray-100/80 border-t-2 border-gray-200">
@@ -436,6 +572,205 @@ function MatrixCard({ title, totalLabel, data, loading, onCellClick, hideMonthLa
           <p className="text-xs text-gray-400 mt-3 sm:hidden">💡 左右滑动查看各部门数据；点击金额可查看明细</p>
           <p className="text-xs text-gray-400 mt-3 hidden sm:block">💡 点击金额可查看明细，点击右上角导出PDF</p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function ExpenseDetailCard({
+  loading, data, departments,
+  filterDept, setFilterDept,
+  l1Options, filterL1, setFilterL1,
+  l2Options, filterL2, setFilterL2,
+  keyword, setKeyword, onSearch,
+  page, setPage,
+}: {
+  loading: boolean;
+  data: ExpenseDetailData | null;
+  departments: { id: string; name: string }[];
+  filterDept: string;
+  setFilterDept: (v: string) => void;
+  l1Options: { value: string; label: string }[];
+  filterL1: string;
+  setFilterL1: (v: string) => void;
+  l2Options: { value: string; label: string }[];
+  filterL2: string;
+  setFilterL2: (v: string) => void;
+  keyword: string;
+  setKeyword: (v: string) => void;
+  onSearch: () => void;
+  page: number;
+  setPage: (p: number) => void;
+}) {
+  const totalPages = data ? Math.max(1, Math.ceil(data.total_count / data.page_size)) : 1;
+
+  return (
+    <div className="card">
+      {/* 筛选条 */}
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-3 mb-4 p-3 sm:p-0 bg-gray-50 sm:bg-transparent -mx-6 px-6 sm:-mx-0 sm:px-0 rounded-lg sm:rounded-none">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-3 flex-1">
+          <select
+            value={filterDept}
+            onChange={(e) => setFilterDept(e.target.value)}
+            className="px-3 py-2 rounded-md border border-gray-200 bg-white text-sm min-w-[140px] flex-1 sm:flex-none"
+          >
+            <option value="">全部部门</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <select
+            value={filterL1}
+            onChange={(e) => setFilterL1(e.target.value)}
+            className="px-3 py-2 rounded-md border border-gray-200 bg-white text-sm min-w-[140px] flex-1 sm:flex-none"
+          >
+            <option value="">全部 L1 分类</option>
+            {l1Options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <select
+            value={filterL2}
+            onChange={(e) => setFilterL2(e.target.value)}
+            className="px-3 py-2 rounded-md border border-gray-200 bg-white text-sm min-w-[140px] flex-1 sm:flex-none"
+            disabled={l2Options.length === 0}
+          >
+            <option value="">全部 L2 分类</option>
+            {l2Options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <div className="relative flex-1 min-w-[160px]">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSearch(); }}
+              placeholder="搜索物资名称 / SKU"
+              className="w-full pl-9 pr-3 py-2 rounded-md border border-gray-200 bg-white text-sm"
+            />
+          </div>
+        </div>
+        <button
+          onClick={onSearch}
+          className="btn-primary flex items-center justify-center gap-1.5 text-sm"
+        >
+          <Filter size={16}/>查询
+        </button>
+      </div>
+
+      {/* 汇总条 */}
+      {data && !loading && (
+        <div className="flex flex-wrap items-center gap-4 mb-3 text-sm">
+          <div>
+            <span className="text-gray-400 mr-2">总笔数</span>
+            <span className="font-semibold text-gray-800">{data.total_count}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 mr-2">总金额</span>
+            <span className="font-bold text-primary-700 text-lg">{formatCurrency(data.total_amount)}</span>
+          </div>
+        </div>
+      )}
+
+      {loading && <div className="py-16 text-center text-gray-400">加载中...</div>}
+
+      {!loading && (!data || data.list.length === 0) && (
+        <div className="py-16 text-center text-gray-400">
+          <AlertCircle size={36} className="mx-auto mb-2 opacity-50"/>
+          <p>当月暂无消耗记录</p>
+          <p className="text-xs mt-1">建议切换月份或调整筛选条件</p>
+        </div>
+      )}
+
+      {!loading && data && data.list.length > 0 && (
+        <>
+          {/* 表格（桌面端） */}
+          <div className="hidden sm:block overflow-x-auto -mx-8 px-8">
+            <table className="data-table w-full text-sm min-w-[1000px]">
+              <thead>
+                <tr>
+                  <th>物资名称</th>
+                  <th className="min-w-[120px]">分类</th>
+                  <th className="min-w-[80px]">部门</th>
+                  <th className="text-right min-w-[70px]">数量</th>
+                  <th className="text-right min-w-[80px]">单价</th>
+                  <th className="text-right min-w-[90px]">金额</th>
+                  <th className="min-w-[80px]">方式</th>
+                  <th className="min-w-[80px]">操作人</th>
+                  <th className="min-w-[140px]">时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.list.map(r => (
+                  <tr key={r.id}>
+                    <td>
+                      <div className="font-medium text-gray-800">{r.item_name}</div>
+                      {r.sku && <div className="text-xs text-gray-400 mt-0.5">{r.sku}</div>}
+                    </td>
+                    <td>
+                      {r.category_parent_name && <span className="text-xs text-gray-400 mr-1">{r.category_parent_name}/</span>}
+                      <span className="text-sm">{r.category_name || '-'}</span>
+                    </td>
+                    <td>{r.department_name || '-'}</td>
+                    <td className="text-right">{r.quantity} {r.unit || ''}</td>
+                    <td className="text-right">{formatCurrency(r.unit_price)}</td>
+                    <td className="text-right font-semibold text-gray-800">{formatCurrency(r.total_amount)}</td>
+                    <td>
+                      <span className={`inline-block px-2 py-0.5 text-xs rounded-full ${r.movement_type === 'expense'
+                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                        : 'bg-green-50 text-green-700 border border-green-200'}`}>
+                        {r.movement_type === 'expense' ? '即买即用' : '扫码入库'}
+                      </span>
+                    </td>
+                    <td>{r.operator_name || '-'}</td>
+                    <td className="text-gray-500">{r.created_at || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 卡片（移动端） */}
+          <div className="sm:hidden space-y-2 -mx-6">
+            {data.list.map(r => (
+              <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-4 mx-3 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-gray-800 truncate">{r.item_name}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {r.category_parent_name && `${r.category_parent_name}/`}{r.category_name || '未分类'} · {r.department_name || '-'}
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className={`text-xs rounded-full px-2 py-0.5 ${r.movement_type === 'expense'
+                      ? 'bg-amber-50 text-amber-700'
+                      : 'bg-green-50 text-green-700'}`}>
+                      {r.movement_type === 'expense' ? '即买即用' : '扫码入库'}
+                    </div>
+                    <div className="font-bold text-lg text-primary-700 mt-1">{formatCurrency(r.total_amount)}</div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-gray-50 flex items-center justify-between text-xs text-gray-500">
+                  <span>{r.quantity} {r.unit || '件'} × {formatCurrency(r.unit_price)}</span>
+                  <span>{r.created_at || '-'}</span>
+                </div>
+                {r.operator_name && <div className="mt-1 text-xs text-gray-400">操作人：{r.operator_name}</div>}
+              </div>
+            ))}
+          </div>
+
+          {/* 分页 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 mt-6 no-print">
+              <button
+                onClick={() => setPage(Math.max(1, page - 1))}
+                disabled={page <= 1}
+                className="px-3 py-1.5 rounded-md border border-gray-200 text-sm disabled:opacity-40"
+              >上一页</button>
+              <span className="text-sm text-gray-500">{page} / {totalPages}</span>
+              <button
+                onClick={() => setPage(Math.min(totalPages, page + 1))}
+                disabled={page >= totalPages}
+                className="px-3 py-1.5 rounded-md border border-gray-200 text-sm disabled:opacity-40"
+              >下一页</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
