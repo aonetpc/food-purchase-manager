@@ -36,6 +36,17 @@ async function fixScanInboundInstantUse() {
   try {
     conn = await pool.getConnection();
 
+    // 0. 先确保 movement_type ENUM 包含 'expense'
+    try {
+      await conn.query(
+        `ALTER TABLE stock_movements
+         MODIFY COLUMN movement_type ENUM('inbound','outbound','adjust','expense') NOT NULL COMMENT '类型：入库/出库/盘点调整/即买即用消耗'`
+      );
+      console.log('✅ 已确保 movement_type 包含 expense\n');
+    } catch (e) {
+      // 已包含则忽略
+    }
+
     // 1. 查找所有扫码领料入库流水中，物资为即买即用的记录
     console.log('🔍 步骤1：查找即买即用物资的错误入库记录...');
     const [movements] = await conn.query(`
@@ -119,10 +130,8 @@ async function fixScanInboundInstantUse() {
 
   } catch (err) {
     console.error('修复脚本执行失败:', err);
-    process.exit(1);
   } finally {
     if (conn) conn.release();
-    process.exit(0);
   }
 }
 
