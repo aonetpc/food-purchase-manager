@@ -37,6 +37,7 @@ jobs:
             sudo cp backend/fix-scan-inbound-missing.js /opt/food-purchase/backend/
             sudo cp backend/fix-scan-inbound-instant-use.js /opt/food-purchase/backend/
             sudo cp backend/fix-dedup-expense.js /opt/food-purchase/backend/
+            sudo cp backend/fix-dedup-expense-v2.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
