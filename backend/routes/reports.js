@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const PDFDocument = require('pdfkit');
 const { findChineseFont, findChineseBoldFont, toNum } = require('../utils/pdf');
-const requireAuth = require('../middleware/auth');
+const { requireAuth } = require('../middleware/rbac');
 
 function formatMoney(n) {
   const v = toNum(n);
