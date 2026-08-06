@@ -1822,20 +1822,20 @@ router.post('/confirm-submit', async (req, res) => {
     }
 
     if (allConfirmed) {
-      // 1. 生成 PDF（确认单）
+      // 1. 生成 PDF（确认单）+ 设置 confirmed_at 确认完成时间
       let pdfUrl = row.pdf_url;
       try {
         await generateWarehousePDF(id);
         pdfUrl = `/api/warehouse-purchases/${id}/pdf?type=confirm`;
-        await connection.query('UPDATE warehouse_purchases SET pdf_url = ?, status = ? WHERE id = ?', [pdfUrl, 'confirmed', id]);
+        await connection.query('UPDATE warehouse_purchases SET pdf_url = ?, status = ?, confirmed_at = NOW() WHERE id = ?', [pdfUrl, 'confirmed', id]);
       } catch (pdfErr) {
         console.error('仓库采购PDF生成失败:', pdfErr.message);
-        await connection.query('UPDATE warehouse_purchases SET status = ? WHERE id = ?', ['confirmed', id]);
+        await connection.query('UPDATE warehouse_purchases SET status = ?, confirmed_at = NOW() WHERE id = ?', ['confirmed', id]);
       }
 
       // 2. 根据 purchase_type 分流
       if (row.purchase_type === 'monthly') {
-        // 月结采购：不发起报销，标记待月结付款
+        // 月结采购：不发起报销，标记待月结付款（confirmed_at 已在上一步设置）
         await connection.query(
           'UPDATE warehouse_purchases SET monthly_pending = 1 WHERE id = ?',
           [id]
