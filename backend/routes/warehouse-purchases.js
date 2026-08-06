@@ -1853,7 +1853,23 @@ router.post('/confirm-submit', async (req, res) => {
         return;
       }
 
-      // 非月结：发起报销审批
+      if (row.purchase_type === 'prepay') {
+        // 预付款采购：确认后不立即发起报销，等待手动核销后再发起尾款报销
+        // 预付款流程：确认 → 核销 → 尾款报销
+        await connection.commit();
+        res.json({
+          success: true,
+          message: '确认成功，预付款采购单待核销处理',
+          confirmed_at: now,
+          confirmed_departments: confirmedDeptNames,
+          progress: { confirmed_users: confirmedTasks, total_users: totalTasks, all_confirmed: true },
+          card_updated: cardUpdated,
+          card_error: cardError,
+        });
+        return;
+      }
+
+      // 现购采购：发起报销审批
       let reimbursementSpNo = null;
       try {
         const [itemRows] = await pool.query(
@@ -3339,13 +3355,14 @@ router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
     const prepayAmount = toNum(row.prepay_amount);
     let diffAmount = 0;
     let writeoffAmount = prepayAmount;
+    let needReimbursement = false; // 核销完成后是否需要发起尾款报销
 
     if (prepayAmount >= actualAmount) {
       writeoffAmount = actualAmount;
       diffAmount = prepayAmount - actualAmount;
       await connection.query(
         `UPDATE warehouse_purchases
-         SET writeoff_status = 'auto', writeoff_amount = ?
+         SET writeoff_status = 'auto', writeoff_amount = ?, status = 'completed'
          WHERE id = ?`,
         [actualAmount, id]
       );
@@ -3363,11 +3380,12 @@ router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
         }
       }
       await connection.commit();
-      res.json({
+      return res.json({
         message: `核销完成：预付¥${prepayAmount.toFixed(2)}，实际¥${actualAmount.toFixed(2)}，多付¥${diffAmount.toFixed(2)}已计入供应商余额`,
         diff_amount: diffAmount,
         writeoff_amount: writeoffAmount,
         type: 'overpay',
+        need_reimbursement: false,
       });
     } else {
       writeoffAmount = prepayAmount;
@@ -3379,12 +3397,42 @@ router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
         [prepayAmount, id]
       );
       await connection.commit();
-      res.json({
-        message: `核销完成：预付¥${prepayAmount.toFixed(2)}，实际¥${actualAmount.toFixed(2)}，少付¥${remainAmount.toFixed(2)}待后续报销`,
-        diff_amount: remainAmount,
-        writeoff_amount: writeoffAmount,
-        type: 'underpay',
-      });
+
+      // 核销完成后自动发起尾款报销
+      try {
+        const [itemRows] = await pool.query(
+          `SELECT wpi.*, d.name as department_name
+           FROM warehouse_purchase_items wpi
+           LEFT JOIN warehouses w ON wpi.warehouse_id = w.id
+           LEFT JOIN departments d ON w.department_id = d.id
+           WHERE wpi.purchase_id = ? ORDER BY wpi.sort_order ASC, wpi.id ASC`,
+          [id]
+        );
+        const freshRow = { ...row, actual_amount: actualAmount, prepay_amount: prepayAmount };
+        const reimbursementSpNo = await submitWarehouseReimbursement(freshRow, itemRows, req.user?.wecom_userid);
+        await pool.query(
+          'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',
+          ['pending', reimbursementSpNo, 'reimbursing', id]
+        );
+        return res.json({
+          message: `核销完成：预付¥${prepayAmount.toFixed(2)}，实际¥${actualAmount.toFixed(2)}，少付¥${remainAmount.toFixed(2)}已自动发起尾款报销`,
+          diff_amount: remainAmount,
+          writeoff_amount: writeoffAmount,
+          type: 'underpay',
+          need_reimbursement: true,
+          reimbursement_sp_no: reimbursementSpNo,
+        });
+      } catch (approvalErr) {
+        console.error('自动发起尾款报销失败:', approvalErr.message);
+        return res.json({
+          message: `核销完成：预付¥${prepayAmount.toFixed(2)}，实际¥${actualAmount.toFixed(2)}，少付¥${remainAmount.toFixed(2)}，但自动发起报销失败，请手动处理`,
+          diff_amount: remainAmount,
+          writeoff_amount: writeoffAmount,
+          type: 'underpay',
+          need_reimbursement: false,
+          reimbursement_error: approvalErr.message,
+        });
+      }
     }
   } catch (err) {
     await connection.rollback();
