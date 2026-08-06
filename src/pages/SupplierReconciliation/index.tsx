@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import {
   Scale, FileSpreadsheet, Receipt, Calendar, Plus, RefreshCw, Eye,
   Trash2, CheckCircle, Clock, CheckCircle2, XCircle, AlertTriangle,
-  ChevronDown, ChevronUp, Send, DollarSign, Wallet, Calculator
+  ChevronDown, ChevronUp, Send, DollarSign, Wallet, Calculator,
+  Paperclip, Upload
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
@@ -110,11 +111,23 @@ export default function SupplierReconciliation() {
   const [loadingWriteoffs, setLoadingWriteoffs] = useState(true);
   const [writeoffStatusFilter, setWriteoffStatusFilter] = useState<string>('pending');
 
+  // ====== 待月结采购单 state ======
+  const [pendingSuppliers, setPendingSuppliers] = useState<any[]>([]);
+  const [loadingPending, setLoadingPending] = useState(true);
+  const [expandedSupplierId, setExpandedSupplierId] = useState<string | null>(null);
+  const [supplierPurchases, setSupplierPurchases] = useState<Record<string, any[]>>({});
+  const [selectedPurchases, setSelectedPurchases] = useState<Set<string>>(new Set());
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentReason, setPaymentReason] = useState('');
+  const [paymentRemark, setPaymentRemark] = useState('');
+  const [paymentAttachments, setPaymentAttachments] = useState<Array<{ filename: string; base64: string; mimeType: string }>>([]);
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
-  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => { fetchStats(); fetchPendingSuppliers(); }, []);
   useEffect(() => { fetchStatements(); }, [stmtStatusFilter, stmtMonthFilter]);
   useEffect(() => { fetchWriteoffs(); }, [writeoffStatusFilter]);
 
@@ -220,6 +233,139 @@ export default function SupplierReconciliation() {
     } catch (e: any) { setError(e.message); }
   }
 
+  // ====== 待月结采购单 ======
+  async function fetchPendingSuppliers() {
+    setLoadingPending(true); setError('');
+    try {
+      const data = await api.get<any[]>('/reconciliation/monthly/pending-suppliers');
+      setPendingSuppliers(data);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingPending(false); }
+  }
+
+  async function fetchSupplierPending(supplierId: string) {
+    setError('');
+    try {
+      const data = await api.get<any[]>(`/reconciliation/monthly/supplier/${supplierId}/pending`);
+      setSupplierPurchases(prev => ({ ...prev, [supplierId]: data }));
+    } catch (e: any) { setError(e.message); }
+  }
+
+  function togglePurchaseSelection(purchaseId: string) {
+    setSelectedPurchases(prev => {
+      const next = new Set(prev);
+      if (next.has(purchaseId)) next.delete(purchaseId);
+      else next.add(purchaseId);
+      return next;
+    });
+  }
+
+  function toggleSupplierAll(supplierId: string, purchases: any[]) {
+    setSelectedPurchases(prev => {
+      const next = new Set(prev);
+      const allSelected = purchases.length > 0 && purchases.every(p => next.has(p.id));
+      if (allSelected) {
+        purchases.forEach(p => next.delete(p.id));
+      } else {
+        purchases.forEach(p => next.add(p.id));
+      }
+      return next;
+    });
+  }
+
+  function getSelectedPurchasesDetail(): any[] {
+    const result: any[] = [];
+    Object.values(supplierPurchases).forEach(purchases => {
+      purchases.forEach(p => {
+        if (selectedPurchases.has(p.id)) result.push(p);
+      });
+    });
+    return result;
+  }
+
+  function getSelectedSupplierNames(): string {
+    const selected = getSelectedPurchasesDetail();
+    const names = new Set<string>();
+    selected.forEach(p => { if (p.supplier_name) names.add(p.supplier_name); });
+    return Array.from(names).join('、');
+  }
+
+  function getSelectedTotal(): number {
+    return getSelectedPurchasesDetail().reduce((sum, p) => sum + (p.total_amount || 0), 0);
+  }
+
+  function generatePaymentReason(): string {
+    const selected = getSelectedPurchasesDetail();
+    if (selected.length === 0) return '';
+    const supplierName = getSelectedSupplierNames();
+    const total = getSelectedTotal();
+    return `月结采购付款-${supplierName}（${selected.length}张，合计¥${formatCurrency(total)}）`;
+  }
+
+  function generatePaymentRemark(): string {
+    const selected = getSelectedPurchasesDetail();
+    if (selected.length === 0) return '';
+    const supplierName = getSelectedSupplierNames();
+    const purchaseNos = selected.map(p => p.id).join('、');
+    const total = getSelectedTotal();
+    return `供应商：${supplierName}\n采购单号：${purchaseNos}\n本月结账共${selected.length}张，合计¥${formatCurrency(total)}`;
+  }
+
+  function openPaymentModal() {
+    if (selectedPurchases.size === 0) return;
+    setPaymentReason(generatePaymentReason());
+    setPaymentRemark(generatePaymentRemark());
+    setPaymentAttachments([]);
+    setShowPaymentModal(true);
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const newAttachments: Array<{ filename: string; base64: string; mimeType: string }> = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1] || '');
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      newAttachments.push({ filename: file.name, base64, mimeType: file.type });
+    }
+    setPaymentAttachments(prev => [...prev, ...newAttachments]);
+    e.target.value = '';
+  }
+
+  function removeAttachment(idx: number) {
+    setPaymentAttachments(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function handleMonthlyPaymentSubmit() {
+    if (selectedPurchases.size === 0) return;
+    setSubmittingPayment(true); setError('');
+    try {
+      await api.post('/reconciliation/monthly/payment/submit', {
+        purchase_ids: Array.from(selectedPurchases),
+        reason: paymentReason,
+        remark: paymentRemark,
+        attachments: paymentAttachments,
+      });
+      showToast('付款申请已提交');
+      setShowPaymentModal(false);
+      setSelectedPurchases(new Set<string>());
+      setPaymentReason('');
+      setPaymentRemark('');
+      setPaymentAttachments([]);
+      fetchPendingSuppliers();
+      fetchStats();
+    } catch (e: any) { setError(e.message); }
+    finally { setSubmittingPayment(false); }
+  }
+
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       {/* 标题 */}
@@ -303,6 +449,129 @@ export default function SupplierReconciliation() {
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm">
                 <Plus className="w-4 h-4" /> 生成月结账单
               </button>
+            </div>
+
+            {/* ====== 待月结采购单区域 ====== */}
+            <div className="border-b border-slate-200">
+              {/* 标题栏 */}
+              <div className="px-4 py-3 flex items-center justify-between bg-amber-50/50 border-b border-amber-100">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-sm font-semibold text-slate-800">待月结采购单</h3>
+                  <span className="text-xs text-slate-500">（{pendingSuppliers.length} 个供应商）</span>
+                </div>
+                <button onClick={fetchPendingSuppliers}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-slate-300 rounded-lg hover:bg-slate-100">
+                  <RefreshCw className="w-4 h-4" /> 刷新
+                </button>
+              </div>
+
+              {/* 供应商卡片列表 */}
+              <div className="divide-y divide-slate-100">
+                {loadingPending && (
+                  <div className="px-4 py-10 text-center text-slate-400">加载中...</div>
+                )}
+                {!loadingPending && pendingSuppliers.length === 0 && (
+                  <div className="px-4 py-10 text-center text-slate-400">
+                    <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                    暂无待月结采购单
+                  </div>
+                )}
+                {pendingSuppliers.map(supplier => {
+                  const sid = supplier.id;
+                  const expanded = expandedSupplierId === sid;
+                  const purchases = supplierPurchases[sid] || [];
+                  const selectedInSupplier = purchases.filter(p => selectedPurchases.has(p.id));
+                  const allSelected = purchases.length > 0 && selectedInSupplier.length === purchases.length;
+                  const supplierName = supplier.name || supplier.supplier_name || '-';
+                  return (
+                    <div key={sid}>
+                      {/* 供应商行 */}
+                      <button
+                        onClick={() => {
+                          const newId = expanded ? null : sid;
+                          setExpandedSupplierId(newId);
+                          if (newId && !supplierPurchases[newId]) fetchSupplierPending(newId);
+                        }}
+                        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50/60 text-left"
+                      >
+                        {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                        <span className="font-medium text-slate-800">{supplierName}</span>
+                        <span className="text-xs text-slate-500">
+                          {supplier.pending_count ?? purchases.length ?? 0} 张待月结
+                        </span>
+                        <span className="ml-auto text-sm font-semibold text-slate-700">
+                          {formatCurrency(supplier.pending_amount ?? 0)}
+                        </span>
+                        {selectedInSupplier.length > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                            已选 {selectedInSupplier.length}
+                          </span>
+                        )}
+                      </button>
+                      {/* 展开的采购单列表 */}
+                      {expanded && (
+                        <div className="bg-slate-50/40 px-4 pb-3">
+                          {purchases.length === 0 && !supplierPurchases[sid] && (
+                            <div className="py-4 text-center text-sm text-slate-400">加载中...</div>
+                          )}
+                          {purchases.length === 0 && supplierPurchases[sid] && (
+                            <div className="py-4 text-center text-sm text-slate-400">该供应商暂无待月结采购单</div>
+                          )}
+                          {purchases.length > 0 && (
+                            <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                              <table className="w-full text-xs">
+                                <thead className="bg-slate-50 text-slate-600">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left w-8">
+                                      <input type="checkbox" checked={allSelected}
+                                        onChange={() => toggleSupplierAll(sid, purchases)} />
+                                    </th>
+                                    <th className="px-3 py-2 text-left">单号</th>
+                                    <th className="px-3 py-2 text-left">日期</th>
+                                    <th className="px-3 py-2 text-right">金额</th>
+                                    <th className="px-3 py-2 text-left">状态</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {purchases.map(p => (
+                                    <tr key={p.id} className="hover:bg-slate-50/60">
+                                      <td className="px-3 py-2">
+                                        <input type="checkbox" checked={selectedPurchases.has(p.id)}
+                                          onChange={() => togglePurchaseSelection(p.id)} />
+                                      </td>
+                                      <td className="px-3 py-2 font-mono">{p.id.substring(0, 12)}</td>
+                                      <td className="px-3 py-2">{p.purchase_date}</td>
+                                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(p.total_amount || 0)}</td>
+                                      <td className="px-3 py-2">
+                                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{p.status}</span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 底部操作栏 */}
+              {selectedPurchases.size > 0 && (
+                <div className="px-4 py-3 bg-indigo-50/60 border-t border-indigo-100 flex items-center justify-between">
+                  <div className="text-sm text-slate-700">
+                    已选 <span className="font-semibold text-indigo-700">{selectedPurchases.size}</span> 张采购单，
+                    合计 <span className="font-semibold text-indigo-700">{formatCurrency(getSelectedTotal())}</span>
+                  </div>
+                  <button onClick={openPaymentModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm">
+                    <Send className="w-4 h-4" /> 发起付款申请
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* 列表 */}
@@ -620,6 +889,62 @@ export default function SupplierReconciliation() {
             <div className="flex justify-end">
               <button onClick={() => setShowDetailModal(null)}
                 className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50">关闭</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ============== 付款申请 Modal ============== */}
+      {showPaymentModal && (
+        <Modal onClose={() => setShowPaymentModal(false)} title="发起月结付款申请" size="lg">
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <InfoBox label="收款人" value={getSelectedSupplierNames() || '-'} />
+              <InfoBox label="付款金额" value={formatCurrency(getSelectedTotal())} />
+              <InfoBox label="关联采购单数" value={`${selectedPurchases.size} 张`} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">付款事由</label>
+              <input type="text" value={paymentReason} onChange={e => setPaymentReason(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">备注说明</label>
+              <textarea rows={4} value={paymentRemark} onChange={e => setPaymentRemark(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">附件</label>
+              <div className="border border-dashed border-slate-300 rounded-lg p-4">
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 cursor-pointer">
+                  <Upload className="w-4 h-4" /> 选择文件
+                  <input type="file" multiple className="hidden" onChange={handleFileUpload} />
+                </label>
+                {paymentAttachments.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {paymentAttachments.map((att, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 text-sm">
+                        <span className="inline-flex items-center gap-1.5 text-slate-700 truncate">
+                          <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
+                          <span className="truncate">{att.filename}</span>
+                        </span>
+                        <button onClick={() => removeAttachment(idx)}
+                          className="text-slate-400 hover:text-red-600 ml-2 shrink-0">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setShowPaymentModal(false)}
+                className="px-4 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50">取消</button>
+              <button onClick={handleMonthlyPaymentSubmit} disabled={submittingPayment}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                <Send className="w-4 h-4" /> {submittingPayment ? '提交中...' : '提交付款申请'}
+              </button>
             </div>
           </div>
         </Modal>

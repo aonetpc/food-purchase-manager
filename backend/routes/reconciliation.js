@@ -6,6 +6,8 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/rbac');
 const {
@@ -456,6 +458,312 @@ router.get('/stats/overview', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('[overview stats]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
+// 月结采购直接付款接口（不走月结账单流程，手动选择采购单批量付款）
+// ================================================
+
+// 获取有待月结采购单的供应商列表
+router.get('/monthly/pending-suppliers', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT supplier_id, supplier_name,
+             COUNT(*) as purchase_count,
+             IFNULL(SUM(total_amount), 0) as total_amount
+      FROM warehouse_purchases
+      WHERE purchase_type = 'monthly'
+        AND status = 'confirmed'
+        AND monthly_pending = 1
+        AND monthly_statement_id IS NULL
+      GROUP BY supplier_id, supplier_name
+      ORDER BY supplier_name
+    `);
+    res.json(rows.map(r => ({
+      supplier_id: r.supplier_id,
+      supplier_name: r.supplier_name || '未命名',
+      purchase_count: r.purchase_count,
+      total_amount: toNum(r.total_amount),
+    })));
+  } catch (err) {
+    console.error('[pending suppliers]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取某供应商下所有待月结采购单
+router.get('/monthly/supplier/:id/pending', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query(`
+      SELECT id, purchase_no, purchase_date, supplier_name, total_amount,
+             actual_amount, confirmed_at, approval_sp_no, pdf_url
+      FROM warehouse_purchases
+      WHERE supplier_id = ?
+        AND purchase_type = 'monthly'
+        AND status = 'confirmed'
+        AND monthly_pending = 1
+        AND monthly_statement_id IS NULL
+      ORDER BY confirmed_at DESC
+    `, [id]);
+    res.json(rows.map(r => ({
+      ...r,
+      total_amount: toNum(r.total_amount),
+      actual_amount: toNum(r.actual_amount),
+    })));
+  } catch (err) {
+    console.error('[supplier pending purchases]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 批量发起月结付款审批
+router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
+  try {
+    const { purchase_ids, attachments: rawAttachments = [], reason: customReason, remark: customRemark } = req.body;
+    if (!Array.isArray(purchase_ids) || purchase_ids.length === 0) {
+      return res.status(400).json({ error: '请至少选择一张采购单' });
+    }
+
+    // 查询选中的采购单
+    const placeholders = purchase_ids.map(() => '?').join(',');
+    const [purchases] = await pool.query(
+      `SELECT id, purchase_no, supplier_id, supplier_name, total_amount, actual_amount, approval_sp_no, confirmed_at
+       FROM warehouse_purchases
+       WHERE id IN (${placeholders})
+         AND purchase_type = 'monthly'
+         AND status = 'confirmed'
+         AND monthly_pending = 1`,
+      purchase_ids
+    );
+
+    if (purchases.length === 0) {
+      return res.status(400).json({ error: '选中的采购单不可付款（可能已被处理）' });
+    }
+
+    // 校验同一供应商
+    const supplierIds = [...new Set(purchases.map(p => p.supplier_id))];
+    if (supplierIds.length > 1) {
+      return res.status(400).json({ error: '只能选择同一供应商的采购单进行付款' });
+    }
+
+    const supplierName = purchases[0].supplier_name || '供应商';
+    const totalAmount = purchases.reduce((sum, p) => sum + toNum(p.total_amount), 0);
+    const purchaseNos = purchases.map(p => p.purchase_no || p.id.substring(0, 8));
+
+    // 付款事由和备注
+    const reason = customReason || `月结采购付款-${supplierName}（${purchases.length}张，合计¥${totalAmount.toFixed(2)}）`;
+    const remark = customRemark || `供应商：${supplierName}\n采购单号：${purchaseNos.join('、')}\n本月结账共${purchases.length}张，合计¥${totalAmount.toFixed(2)}`;
+
+    // 获取企微配置
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret || !config.approval_template_id || !config.applicant_userid) {
+      return res.status(400).json({ error: '请先在企微管理页完成审批配置（模板ID和申请人）' });
+    }
+
+    // 解析字段映射
+    let fieldMapping = {};
+    if (config.approval_field_mapping) {
+      fieldMapping = typeof config.approval_field_mapping === 'string'
+        ? (JSON.parse(config.approval_field_mapping) || {})
+        : config.approval_field_mapping;
+    }
+
+    // 获取模板控件类型
+    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
+    const tokenData = await tokenRes.json();
+    let controlTypeMap = {};
+    if (tokenData.access_token) {
+      const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template_id: config.approval_template_id }),
+      });
+      const tplData = await tplRes.json();
+      if (tplData.errcode === 0 && tplData.template_content?.controls) {
+        for (const ctrl of tplData.template_content.controls) {
+          if (ctrl.property?.id && ctrl.property?.control) {
+            controlTypeMap[ctrl.property.id] = ctrl.property.control;
+          }
+        }
+      }
+    }
+
+    function getControlType(key, fallback) {
+      const mappedId = fieldMapping[key];
+      return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
+    }
+
+    // 处理附件上传
+    const uploadedAttachments = [];
+    if (Array.isArray(rawAttachments) && rawAttachments.length > 0) {
+      const attachDir = path.join(__dirname, '..', 'uploads', 'monthly_payment_attachments');
+      if (!fs.existsSync(attachDir)) fs.mkdirSync(attachDir, { recursive: true });
+      for (let i = 0; i < rawAttachments.length; i++) {
+        const att = rawAttachments[i];
+        if (!att.filename || !att.base64) continue;
+        try {
+          const fileBuffer = Buffer.from(att.base64, 'base64');
+          const safeFilename = String(att.filename).replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
+          const savePath = path.join(attachDir, `${Date.now()}_${i}_${safeFilename}`);
+          fs.writeFileSync(savePath, fileBuffer);
+          const mediaId = await uploadMedia(config, savePath, safeFilename);
+          uploadedAttachments.push({ filename: safeFilename, mediaId });
+        } catch (attErr) {
+          console.error('[月结付款] 附件上传失败:', att.filename, attErr.message);
+        }
+      }
+    }
+
+    // 构建审批数据
+    const contents = [];
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const todayTimestamp = Math.floor(new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() / 1000);
+
+    if (fieldMapping.date) {
+      contents.push({ control: getControlType('date', 'Date'), id: fieldMapping.date, value: { date: { type: 'day', s_timestamp: String(todayTimestamp) } } });
+    }
+    if (fieldMapping.amount) {
+      contents.push({ control: getControlType('amount', 'Money'), id: fieldMapping.amount, value: { new_money: totalAmount.toFixed(2) } });
+    }
+    if (fieldMapping.reason) {
+      contents.push({ control: getControlType('reason', 'Text'), id: fieldMapping.reason, value: { text: reason } });
+    }
+    // 收款人 = 供应商名称
+    if (fieldMapping.payee_name) {
+      contents.push({ control: getControlType('payee_name', 'Text'), id: fieldMapping.payee_name, value: { text: supplierName } });
+    }
+    if (fieldMapping.bank_name && config.bank_name) {
+      contents.push({ control: getControlType('bank_name', 'Text'), id: fieldMapping.bank_name, value: { text: String(config.bank_name) } });
+    }
+    if (fieldMapping.bank_account && config.bank_account) {
+      contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
+    }
+    // 付款方式
+    let paymentLabel = '转账';
+    if (fieldMapping.payment_method && config.default_payment_key) {
+      let paymentOptions = {};
+      if (config.payment_options) {
+        paymentOptions = typeof config.payment_options === 'string'
+          ? (JSON.parse(config.payment_options) || {})
+          : config.payment_options;
+      }
+      paymentLabel = String(paymentOptions[config.default_payment_key] || '转账');
+      contents.push({
+        control: getControlType('payment_method', 'Selector'),
+        id: fieldMapping.payment_method,
+        value: { selector: { type: 'single', options: [{ key: paymentLabel, value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } },
+      });
+    }
+    // 明细
+    if (fieldMapping.details) {
+      let detailText = `月结供应商：${supplierName}\n采购单数：${purchases.length}张\n合计金额：¥${totalAmount.toFixed(2)}\n\n`;
+      for (const p of purchases) {
+        detailText += `${p.purchase_no || p.id.substring(0, 8)}  ¥${toNum(p.total_amount).toFixed(2)}\n`;
+      }
+      contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
+    }
+    // 备注说明
+    if (fieldMapping.remark) {
+      contents.push({ control: getControlType('remark', 'Text'), id: fieldMapping.remark, value: { text: remark } });
+    } else {
+      // 自动发现备注控件
+      const remarkEntry = Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'Text' || ctype === 'Textarea');
+      if (remarkEntry) {
+        contents.push({ control: remarkEntry[1], id: remarkEntry[0], value: { text: remark } });
+      }
+    }
+    // 附件
+    if (fieldMapping.attachment && uploadedAttachments.length > 0) {
+      contents.push({
+        control: getControlType('attachment', 'File'),
+        id: fieldMapping.attachment,
+        value: { files: uploadedAttachments.map(a => ({ file_id: a.mediaId })) },
+      });
+    }
+
+    // 关联审批单（多个采购审批单号）
+    const spNos = purchases.map(p => p.approval_sp_no).filter(Boolean);
+    if (spNos.length > 0) {
+      let relatedControlId = fieldMapping.related_approval || null;
+      if (!relatedControlId) {
+        const relatedEntry = Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'RelatedApproval');
+        if (relatedEntry) relatedControlId = relatedEntry[0];
+      }
+      if (relatedControlId) {
+        const relatedItems = [];
+        for (const spNo of spNos) {
+          try {
+            const detail = await getApprovalDetail(config, String(spNo));
+            relatedItems.push({
+              sp_no: String(detail?.sp_no || spNo),
+              sp_name: detail?.sp_name || '仓库采购申请',
+              template_id: detail?.template_id || '',
+            });
+          } catch {
+            relatedItems.push({ sp_no: String(spNo), sp_name: '仓库采购申请', template_id: '' });
+          }
+        }
+        contents.push({
+          control: 'RelatedApproval',
+          id: relatedControlId,
+          value: { related_approval: relatedItems },
+        });
+      }
+    }
+
+    const applyData = {
+      creator_userid: String(config.applicant_userid),
+      template_id: String(config.approval_template_id),
+      use_template_approver: 1,
+      apply_data: { contents },
+      summary_list: [
+        { summary_info: [{ text: `付款事由：${reason}`, lang: 'zh_CN' }] },
+        { summary_info: [{ text: `付款金额：¥${totalAmount.toFixed(2)}`, lang: 'zh_CN' }] },
+        { summary_info: [{ text: `收款人：${supplierName}`, lang: 'zh_CN' }] },
+      ],
+    };
+
+    const spNo = await submitApproval(config, applyData);
+
+    // 更新所有选中采购单状态
+    await pool.query(
+      `UPDATE warehouse_purchases SET monthly_pending = 0, monthly_payment_sp_no = ? WHERE id IN (${placeholders})`,
+      [spNo, ...purchase_ids]
+    );
+
+    res.json({ success: true, sp_no: spNo, total_amount: totalAmount, purchase_count: purchases.length });
+  } catch (err) {
+    console.error('[monthly payment submit]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 刷新月结付款审批状态
+router.post('/monthly/payment/refresh', requireAuth, async (req, res) => {
+  try {
+    const { sp_no } = req.body;
+    if (!sp_no) return res.status(400).json({ error: '缺少审批单号 sp_no' });
+
+    const config = await getWecomConfig();
+    if (!config) return res.status(400).json({ error: '企微配置缺失' });
+
+    const detail = await getApprovalDetail(config, sp_no);
+    const spStatus = detail.info?.sp_status;
+
+    if (spStatus === 2) {
+      // 付款通过
+      await pool.query(
+        'UPDATE warehouse_purchases SET monthly_paid_at = NOW() WHERE monthly_payment_sp_no = ?',
+        [sp_no]
+      );
+    }
+
+    res.json({ success: true, sp_status: spStatus });
+  } catch (err) {
+    console.error('[monthly payment refresh]', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1833,7 +1833,27 @@ router.post('/confirm-submit', async (req, res) => {
         await connection.query('UPDATE warehouse_purchases SET status = ? WHERE id = ?', ['confirmed', id]);
       }
 
-      // 2. 发起报销审批
+      // 2. 根据 purchase_type 分流
+      if (row.purchase_type === 'monthly') {
+        // 月结采购：不发起报销，标记待月结付款
+        await connection.query(
+          'UPDATE warehouse_purchases SET monthly_pending = 1 WHERE id = ?',
+          [id]
+        );
+        await connection.commit();
+        res.json({
+          success: true,
+          message: '确认成功，月结采购单已入账待付款',
+          confirmed_at: now,
+          confirmed_departments: confirmedDeptNames,
+          progress: { confirmed_users: confirmedTasks, total_users: totalTasks, all_confirmed: true },
+          card_updated: cardUpdated,
+          card_error: cardError,
+        });
+        return;
+      }
+
+      // 非月结：发起报销审批
       let reimbursementSpNo = null;
       try {
         const [itemRows] = await pool.query(

@@ -1149,34 +1149,12 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* 预付款已确认且有收货数据：手动核销 */}
-                          {p.purchase_type === 'prepay' && p.status === 'confirmed' && !p.writeoff_status && safeNum(p.actual_amount) > 0 && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleWriteoffPrepay(p.id);
-                              }}
-                              disabled={actioningId === p.id}
-                              className="btn-secondary text-xs flex items-center gap-1 text-orange-600 disabled:opacity-50"
-                            >
-                              <RefreshCw size={14} />
-                              手动核销
-                            </button>
-                          )}
-
-                          {/* 预付款少付待尾款报销 */}
+                          {/* 预付款核销状态显示（操作已移至对账中心） */}
                           {p.purchase_type === 'prepay' && p.writeoff_status === 'manual' && safeNum(p.actual_amount) > 0 && p.status !== 'reimbursing' && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleResubmit(p.id);
-                              }}
-                              disabled={actioningId === p.id}
-                              className="btn-primary text-xs flex items-center gap-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50"
-                            >
-                              <RotateCcw size={14} />
-                              发起尾款报销
-                            </button>
+                            <span className="text-xs text-orange-600 inline-flex items-center gap-1">
+                              <AlertCircle size={14} />
+                              待核销（请到对账中心处理）
+                            </span>
                           )}
 
                           {/* 预付订单状态异常（confirmed但无收货数据）：允许重新录入收货 */}

@@ -130,7 +130,7 @@ export default function App() {
             </ProtectedRoute>
           } />
           <Route path="supplier-reconciliation" element={
-            <ProtectedRoute requiredPermission="action:reimbursement:manage">
+            <ProtectedRoute requiredPermission="menu:supplier-reconciliation">
               <SupplierReconciliation />
             </ProtectedRoute>
           } />
