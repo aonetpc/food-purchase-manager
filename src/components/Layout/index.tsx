@@ -72,7 +72,7 @@ const iconMap: Record<string, any> = {
 
 const menuGroups = [
   { name: '常用', paths: ['/daily', '/purchase-entry', '/reimbursement'] },
-  { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement', '/scan-audit'] },
+  { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit'] },
   { name: '统计', paths: ['/monthly', '/management-report', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
   { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
