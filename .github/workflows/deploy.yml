@@ -38,6 +38,7 @@ jobs:
             sudo cp backend/fix-scan-inbound-instant-use.js /opt/food-purchase/backend/
             sudo cp backend/fix-dedup-expense.js /opt/food-purchase/backend/
             sudo cp backend/fix-dedup-expense-v2.js /opt/food-purchase/backend/
+            sudo cp backend/fix-instant-use-expense.js /opt/food-purchase/backend/
             sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
             sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
             sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
@@ -760,6 +761,11 @@ jobs:
             echo "🔧 Deduping duplicate expense records..."
             cd /opt/food-purchase/backend
             node fix-dedup-expense.js || echo "⚠️ fix-dedup-expense failed, continuing..."
+
+            # 修复：仓库采购即采即用出库 movement_type outbound→expense（失败不中断部署）
+            echo "🔧 Fixing instant-use expense movement_type..."
+            cd /opt/food-purchase/backend
+            node fix-instant-use-expense.js || echo "⚠️ fix-instant-use-expense failed, continuing..."
 
             # 重启后端服务（失败不中断部署，稍后 health check 会验证）
             echo "🔄 Restarting backend service..."
