@@ -170,6 +170,8 @@ export default function WarehousePurchaseCreate() {
   // 采购类型状态
   const [purchaseType, setPurchaseType] = useState<'normal' | 'prepay' | 'monthly'>('normal');
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [supplierInputMode, setSupplierInputMode] = useState<'select' | 'temp'>('select');
+  const [tempSupplierName, setTempSupplierName] = useState<string>('');
   const [prepayAmount, setPrepayAmount] = useState<number>(0);
 
   // 表单状态
@@ -275,7 +277,14 @@ export default function WarehousePurchaseCreate() {
         const detail = await api.get<PurchaseDetailDTO>(`/warehouse-purchases/${id}`);
         if (cancelled) return;
         setPurchaseType(detail.purchase_type || 'normal');
-        setSelectedSupplierId(detail.supplier_id || '');
+        // 编辑模式回填：有 supplier_id 用选择模式，只有 supplier_name 用临时输入模式
+        if (detail.supplier_id) {
+          setSupplierInputMode('select');
+          setSelectedSupplierId(detail.supplier_id);
+        } else if (detail.supplier_name) {
+          setSupplierInputMode('temp');
+          setTempSupplierName(detail.supplier_name);
+        }
         setPrepayAmount(detail.prepay_amount ? safeNum(detail.prepay_amount) : 0);
         const restoredLines: LineItem[] = (detail.items || []).map((it: any) => ({
           key: genKey(),
@@ -486,9 +495,14 @@ export default function WarehousePurchaseCreate() {
 
   // ===== 校验 =====
   const validate = (): string | null => {
-    // 预付款/月结需要选择供应商
-    if ((purchaseType === 'prepay' || purchaseType === 'monthly') && !selectedSupplierId) {
-      return '预付款和月结采购必须选择供应商';
+    // 预付款/月结需要供应商（选择已有或临时输入）
+    if (purchaseType === 'prepay' || purchaseType === 'monthly') {
+      if (supplierInputMode === 'select' && !selectedSupplierId) {
+        return '请选择供应商或切换为临时输入';
+      }
+      if (supplierInputMode === 'temp' && !tempSupplierName.trim()) {
+        return '请输入供应商名称';
+      }
     }
     // 预付款需要填写预付金额
     if (purchaseType === 'prepay' && (!prepayAmount || prepayAmount <= 0)) {
@@ -514,11 +528,17 @@ export default function WarehousePurchaseCreate() {
   const buildPayload = () => {
     const validLines = lines.filter((l) => l.item_id || l.item_name);
     const selectedSupplier = suppliers.find(s => s.id === selectedSupplierId);
+    const needSupplier = purchaseType === 'prepay' || purchaseType === 'monthly';
+    // 临时输入模式：supplier_id = null，supplier_name = 输入值
+    const supplierId = needSupplier ? (supplierInputMode === 'temp' ? null : selectedSupplierId || null) : null;
+    const supplierName = needSupplier
+      ? (supplierInputMode === 'temp' ? tempSupplierName.trim() : selectedSupplier?.name || null)
+      : null;
     return {
       remark,
       purchase_type: purchaseType,
-      supplier_id: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplierId || null : null,
-      supplier_name: (purchaseType === 'prepay' || purchaseType === 'monthly') ? selectedSupplier?.name || null : null,
+      supplier_id: supplierId,
+      supplier_name: supplierName,
       prepay_amount: purchaseType === 'prepay' ? prepayAmount : 0,
       items: validLines.map((l) => ({
         item_id: l.item_id || null,
@@ -661,18 +681,53 @@ export default function WarehousePurchaseCreate() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 供应商 <span className="text-danger-500">*</span>
               </label>
-              <select
-                value={selectedSupplierId}
-                onChange={(e) => setSelectedSupplierId(e.target.value)}
-                className="input-field"
-              >
-                <option value="">请选择供应商</option>
-                {suppliers.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}{s.prepay_balance && s.prepay_balance > 0 ? ` (余额¥${Number(s.prepay_balance).toFixed(2)})` : ''}
-                  </option>
-                ))}
-              </select>
+              {/* 模式切换按钮 */}
+              <div className="flex gap-1 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setSupplierInputMode('select')}
+                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                    supplierInputMode === 'select'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  选择已有
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSupplierInputMode('temp')}
+                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                    supplierInputMode === 'temp'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  临时输入
+                </button>
+              </div>
+              {supplierInputMode === 'select' ? (
+                <select
+                  value={selectedSupplierId}
+                  onChange={(e) => setSelectedSupplierId(e.target.value)}
+                  className="input-field"
+                >
+                  <option value="">请选择供应商</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.prepay_balance && s.prepay_balance > 0 ? ` (余额¥${Number(s.prepay_balance).toFixed(2)})` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={tempSupplierName}
+                  onChange={(e) => setTempSupplierName(e.target.value)}
+                  placeholder="请输入供应商名称（一次性使用，不会保存到供应商列表）"
+                  className="input-field"
+                />
+              )}
             </div>
           )}
           {/* 预付款金额 */}
