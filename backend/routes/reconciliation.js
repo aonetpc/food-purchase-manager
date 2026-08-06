@@ -381,11 +381,12 @@ router.delete('/:id', requireAuth, async (req, res) => {
 // 预付核销 Tab 接口
 // ================================================
 
-// 查询预付核销列表（writeoff_status = manual 的 prepay 采购单）
+// 查询预付核销列表（预付款采购单，支持 confirmed/reimbursing 等状态）
 router.get('/prepay-writeoff/list', requireAuth, async (req, res) => {
   try {
     const { status } = req.query;
-    let sql = `SELECT * FROM warehouse_purchases WHERE purchase_type = 'prepay' AND status = 'confirmed'`;
+    // 查询 confirmed 和 reimbursing 状态的预付款订单（含历史数据修复后的订单）
+    let sql = `SELECT * FROM warehouse_purchases WHERE purchase_type = 'prepay' AND status IN ('confirmed', 'reimbursing', 'completed')`;
     const params = [];
     if (status === 'pending') { sql += ' AND (writeoff_status = ? OR writeoff_status IS NULL)'; params.push('manual'); }
     else if (status) { sql += ' AND writeoff_status = ?'; params.push(status); }
@@ -394,11 +395,11 @@ router.get('/prepay-writeoff/list', requireAuth, async (req, res) => {
     const [rows] = await pool.query(sql, params);
     res.json(rows.map(r => {
       const prepaid = toNum(r.prepay_amount);
-      const actual = toNum(r.total_amount);
+      const actual = toNum(r.actual_amount) > 0 ? toNum(r.actual_amount) : toNum(r.total_amount);
       const diff = actual - prepaid;
       return {
         ...r,
-        total_amount: actual,
+        total_amount: actual, // 使用实际收货金额（优先 actual_amount，兜底 total_amount）
         prepay_amount: prepaid,
         difference_amount: diff,
         refund_or_tail: diff < 0 ? `多付：¥${Math.abs(diff).toFixed(2)}（已计入余额）` : diff > 0 ? `少付：¥${diff.toFixed(2)}（待尾款报销）` : '完全一致',
@@ -444,9 +445,9 @@ router.get('/stats/overview', requireAuth, async (req, res) => {
     );
     const pendingMonthly = { count: pendMonth[0].cnt, amount: toNum(pendMonth[0].amt) };
 
-    // 待人工核销预付款采购单（含未核销 NULL 及少付待尾款 manual）
+    // 待人工核销预付款采购单（含未核销 NULL 及少付待尾款 manual，支持 confirmed/reimbursing 状态）
     const [pendPrepay] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status='confirmed' AND (writeoff_status='manual' OR writeoff_status IS NULL)`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE total_amount END),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status IN ('confirmed', 'reimbursing') AND (writeoff_status='manual' OR writeoff_status IS NULL)`
     );
     const pendingPrepayWriteoff = { count: pendPrepay[0].cnt, amount: toNum(pendPrepay[0].amt) };
 
