@@ -265,8 +265,8 @@ router.get('/material-consumption', async (req, res) => {
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       LEFT JOIN warehouses w ON sm.warehouse_id = w.id
       LEFT JOIN departments d ON w.department_id = d.id
-      WHERE sm.movement_type IN ('inbound', 'expense')
-        AND sm.related_type = 'scan'
+      WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
+             OR sm.movement_type = 'expense')
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
         AND wc_p.name = '原材料'
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
@@ -291,8 +291,8 @@ router.get('/material-consumption', async (req, res) => {
         LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
         LEFT JOIN warehouses w ON sm.warehouse_id = w.id
         LEFT JOIN departments d ON w.department_id = d.id
-        WHERE sm.movement_type IN ('inbound', 'expense')
-          AND sm.related_type = 'scan'
+        WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
+               OR sm.movement_type = 'expense')
           AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
           AND wc_p.name = '原材料'
         GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
@@ -352,8 +352,8 @@ router.get('/material-consumption/detail', async (req, res) => {
       FROM stock_movements sm
       JOIN warehouse_items wi ON sm.item_id = wi.id
       LEFT JOIN warehouses w ON sm.warehouse_id = w.id
-      WHERE sm.movement_type IN ('inbound', 'expense')
-        AND sm.related_type = 'scan'
+      WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
+             OR sm.movement_type = 'expense')
         AND wi.category_id = ?
         AND w.department_id = ?
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
@@ -581,8 +581,8 @@ router.get('/pdf/material-consumption', async (req, res) => {
       LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
       LEFT JOIN warehouses w ON sm.warehouse_id = w.id
       LEFT JOIN departments d ON w.department_id = d.id
-      WHERE sm.movement_type IN ('inbound', 'expense')
-        AND sm.related_type = 'scan'
+      WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
+             OR sm.movement_type = 'expense')
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
         AND wc_p.name = '原材料'
       GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
@@ -624,8 +624,7 @@ router.get('/expense-detail', async (req, res) => {
     }
 
     const where = [
-      `sm.movement_type IN ('inbound', 'expense')`,
-      `sm.related_type = 'scan'`,
+      `((sm.movement_type = 'inbound' AND sm.related_type = 'scan') OR sm.movement_type = 'expense')`,
       `DATE_FORMAT(sm.created_at, '%Y-%m') = ?`,
     ];
     const params = [month];
@@ -724,8 +723,7 @@ router.get('/pdf/expense-detail', async (req, res) => {
     }
 
     const where = [
-      `sm.movement_type IN ('inbound', 'expense')`,
-      `sm.related_type = 'scan'`,
+      `((sm.movement_type = 'inbound' AND sm.related_type = 'scan') OR sm.movement_type = 'expense')`,
       `DATE_FORMAT(sm.created_at, '%Y-%m') = ?`,
     ];
     const params = [month];

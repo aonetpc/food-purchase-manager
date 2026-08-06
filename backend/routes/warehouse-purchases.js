@@ -2421,7 +2421,7 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
           `INSERT INTO stock_movements
            (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount,
             reason, related_type, related_id, operator_id, operator_name, department_id, department_name)
-           VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, 'purchase', ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, 'expense', ?, ?, ?, ?, ?, 'purchase', ?, ?, ?, ?, ?)`,
           [uuidv4(), ri.warehouse_id, ri.item_id, ri.item_name,
            -rQty, rUnit, rPrice, rAmount,
            `即采即用自动出库 ${purchaseRow.purchase_no || id}`,

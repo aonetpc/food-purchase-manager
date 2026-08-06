@@ -8,6 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Flame,
+  RefreshCw,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
@@ -41,7 +43,7 @@ interface StockMovementItem {
   warehouse_name: string;
   item_id: string;
   item_name: string;
-  movement_type: 'inbound' | 'outbound';
+  movement_type: 'inbound' | 'outbound' | 'expense' | 'adjust';
   quantity: number;
   unit: string;
   unit_price: number;
@@ -255,6 +257,22 @@ export default function StockMovement() {
         </span>
       );
     }
+    if (type === 'expense') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+          <Flame size={12} />
+          即买即用
+        </span>
+      );
+    }
+    if (type === 'adjust') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+          <RefreshCw size={12} />
+          盘点调整
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-700">
         <ArrowUpFromLine size={12} />
@@ -340,6 +358,8 @@ export default function StockMovement() {
             <option value="">全部类型</option>
             <option value="inbound">入库</option>
             <option value="outbound">出库</option>
+            <option value="expense">即买即用</option>
+            <option value="adjust">盘点调整</option>
           </select>
 
           {/* 日期范围 */}
