@@ -1,10 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   RefreshCw, AlertTriangle, Loader2, Package, Warehouse as WarehouseIcon,
   ClipboardList, FileText, CheckCircle2, Clock, Eye, Edit3, Gavel,
   Bell, Plus, ArrowLeft, Save, Send, Search, Filter, X,
   TrendingUp, AlertCircle, Check, RotateCcw, Trash2,
+  QrCode, FileDown, LineChart, BarChart3,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/format';
@@ -29,6 +31,7 @@ interface ProgressItem {
   operator_name?: string | null;
   reviewed_at?: string | null;
   take_count: number;
+  take_type?: 'monthly' | 'annual';
 }
 
 interface StockTakeListItem {
@@ -52,6 +55,7 @@ interface StockTakeListItem {
   total_system_value: number;
   total_actual_value: number;
   total_diff_value: number;
+  take_type?: 'monthly' | 'annual';
 }
 
 interface StockTakeItem {
@@ -111,6 +115,9 @@ interface StockTakeDetail {
   items: StockTakeItem[];
   notification_sent_at?: string | null;
   notification?: { sent: boolean; recipient: string; reason: string };
+  take_type?: 'monthly' | 'annual';
+  operator_signature?: string | null;
+  reviewer_signature?: string | null;
 }
 
 interface Warehouse {
@@ -211,7 +218,23 @@ export default function StockTakePanel() {
   const [createWarehouseId, setCreateWarehouseId] = useState('');
   const [createMonth, setCreateMonth] = useState(getDefaultMonth());
   const [createRemark, setCreateRemark] = useState('');
+  const [createTakeType, setCreateTakeType] = useState<'monthly' | 'annual'>('monthly');
   const [creating, setCreating] = useState(false);
+
+  // P3：盘点类型 Tab
+  const [takeTypeTab, setTakeTypeTab] = useState<'monthly' | 'annual' | 'trend'>('monthly');
+  // 重新生成链接
+  const [refreshUrlData, setRefreshUrlData] = useState<{
+    stock_take_id?: string;
+    operator_url: string; reviewer_url: string; operator_token: string; reviewer_token: string;
+  } | null>(null);
+  const [showUrlModal, setShowUrlModal] = useState(false);
+  const [refreshingUrl, setRefreshingUrl] = useState(false);
+  // 历史趋势
+  const [trendData, setTrendData] = useState<any[]>([]);
+  const [loadingTrend, setLoadingTrend] = useState(false);
+  const [trendWarehouseId, setTrendWarehouseId] = useState('');
+  const [trendPeriods, setTrendPeriods] = useState(6);
 
   // 详情 / 编辑 / 复核
   const [detail, setDetail] = useState<StockTakeDetail | null>(null);
@@ -235,10 +258,10 @@ export default function StockTakePanel() {
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
 
   // ---- 拉取进度看板 ----
-  const fetchProgress = useCallback(async (month: string) => {
+  const fetchProgress = useCallback(async (month: string, takeType: 'monthly' | 'annual' = takeTypeTab as 'monthly' | 'annual') => {
     setLoadingProgress(true);
     try {
-      const data = await api.get<ProgressItem[]>(`/stock-takes/progress/${month}`);
+      const data = await api.get<ProgressItem[]>(`/stock-takes/progress/${month}?take_type=${takeType}`);
       setProgress(data || []);
     } catch (err: any) {
       setError(err.message || '获取盘点进度失败');
@@ -246,13 +269,14 @@ export default function StockTakePanel() {
     } finally {
       setLoadingProgress(false);
     }
-  }, []);
+  }, [takeTypeTab]);
 
   // ---- 拉取盘点单列表 ----
-  const fetchList = useCallback(async (month: string) => {
+  const fetchList = useCallback(async () => {
     setLoadingList(true);
     try {
-      const data = await api.get<StockTakeListItem[]>('/stock-takes', { params: { period_month: month } });
+      const params: any = { period_month: selectedMonth, take_type: takeTypeTab };
+      const data = await api.get<StockTakeListItem[]>('/stock-takes', params);
       setList(data || []);
     } catch (err: any) {
       setError(err.message || '获取盘点单列表失败');
@@ -260,7 +284,7 @@ export default function StockTakePanel() {
     } finally {
       setLoadingList(false);
     }
-  }, []);
+  }, [selectedMonth, takeTypeTab]);
 
   // ---- 拉取仓库列表 ----
   useEffect(() => {
@@ -271,8 +295,19 @@ export default function StockTakePanel() {
   useEffect(() => {
     setError('');
     fetchProgress(selectedMonth);
-    fetchList(selectedMonth);
+    fetchList();
   }, [selectedMonth, fetchProgress, fetchList]);
+
+  // 切换盘点类型 Tab 时刷新数据
+  useEffect(() => {
+    if (takeTypeTab === 'trend') {
+      fetchTrend();
+    } else {
+      fetchProgress(selectedMonth, takeTypeTab);
+      fetchList();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [takeTypeTab]);
 
   // 成功提示3秒后清除
   useEffect(() => {
@@ -284,7 +319,7 @@ export default function StockTakePanel() {
 
   const refreshAll = useCallback(() => {
     fetchProgress(selectedMonth);
-    fetchList(selectedMonth);
+    fetchList();
   }, [selectedMonth, fetchProgress, fetchList]);
 
   // 可盘点仓库（仅 enable_stock_take=1）
@@ -298,6 +333,7 @@ export default function StockTakePanel() {
     setCreateWarehouseId('');
     setCreateMonth(selectedMonth);
     setCreateRemark('');
+    setCreateTakeType(takeTypeTab === 'annual' ? 'annual' : 'monthly');
     setShowCreateModal(true);
   };
 
@@ -308,14 +344,14 @@ export default function StockTakePanel() {
     setCreating(true);
     setError('');
     try {
-      const data = await api.post<StockTakeDetail>('/stock-takes', {
+      const data: any = await api.post<StockTakeDetail>('/stock-takes', {
         warehouse_id: createWarehouseId,
         period_month: createMonth,
         remark: createRemark || undefined,
+        take_type: createTakeType,
       });
       setShowCreateModal(false);
 
-      // 组装成功消息，包含通知状态
       let msg = data.message || '盘点单已创建';
       if (data.notification) {
         if (data.notification.sent) {
@@ -328,9 +364,12 @@ export default function StockTakePanel() {
       }
       setSuccessMsg(msg);
       refreshAll();
-      // 直接进入编辑
       if (data?.id) {
-        openEdit(data.id);
+        if (createTakeType === 'annual') {
+          openDetail(data.id, 'detail');
+        } else {
+          openEdit(data.id);
+        }
       }
     } catch (err: any) {
       setError(err.message || '发起盘点失败');
@@ -572,6 +611,39 @@ export default function StockTakePanel() {
   };
   const handleCancel = () => currentTakeId && handleCancelTake(currentTakeId, true);
 
+  // ---- 重新生成访问链接 ----
+  const handleRefreshToken = async (id: string) => {
+    setRefreshingUrl(true);
+    try {
+      const data = await api.post<any>(`/stock-takes/${id}/refresh-token`);
+      setRefreshUrlData({ ...data, stock_take_id: id });
+      setShowUrlModal(true);
+    } catch (err: any) {
+      setError(err.message || '生成链接失败');
+    } finally {
+      setRefreshingUrl(false);
+    }
+  };
+
+  // ---- 导出 PDF ----
+  const handleExportPdf = (id: string) => {
+    const base = import.meta.env.VITE_API_URL || '/api';
+    window.open(`${base}/stock-takes/${id}/report-pdf`, '_blank');
+  };
+
+  // ---- 历史趋势 ----
+  const fetchTrend = useCallback(async () => {
+    setLoadingTrend(true);
+    try {
+      const params: any = { periods: trendPeriods, take_type: takeTypeTab === 'trend' ? 'monthly' : (takeTypeTab as 'monthly' | 'annual') };
+      if (trendWarehouseId) params.warehouse_id = trendWarehouseId;
+      const data = await api.get<any[]>('/stock-takes/trends', params);
+      setTrendData(data || []);
+    } finally {
+      setLoadingTrend(false);
+    }
+  }, [takeTypeTab, trendPeriods, trendWarehouseId]);
+
   // ---- 复核：更新抽样核验数量 ----
   const updateSample = (itemDetailId: string, verifyQty: number | null) => {
     setReviewSamples((prev) =>
@@ -641,15 +713,13 @@ export default function StockTakePanel() {
   return (
     <div className="space-y-6">
       {/* 顶部页头 */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between mb-5 gap-4">
         <div>
-          <h1 className="text-2xl font-serif font-bold text-gray-800 flex items-center gap-2">
-            <ClipboardList size={26} className="text-primary-600" />
-            月末盘点
+          <h1 className="text-xl font-bold text-gray-800 mb-2 flex items-center gap-2">
+            <ClipboardList size={22} className="text-primary-600" />
+            库存盘点
           </h1>
-          <p className="text-gray-500 mt-1">
-            {isManager ? '管理各仓库月末盘点进度、复核与报告' : '查看与本仓库相关的月末盘点'}
-          </p>
+          <p className="text-sm text-gray-500">查看各仓库盘点进度、结果及历史趋势</p>
         </div>
         <div className="flex items-center gap-2">
           {view !== 'list' && (
@@ -658,18 +728,36 @@ export default function StockTakePanel() {
               <span>返回列表</span>
             </button>
           )}
-          {view === 'list' && isManager && (
+          {takeTypeTab !== 'trend' && view === 'list' && isManager && (
             <button onClick={openCreateModal} className="btn-primary flex items-center gap-2">
-              <Plus size={18} />
-              <span>发起盘点</span>
+              <Plus size={18} /> <span>发起{takeTypeTab === 'annual' ? '年度固定资产' : '月末原材料'}盘点</span>
             </button>
           )}
-          <button onClick={refreshAll} className="btn-secondary flex items-center gap-2">
-            <RefreshCw size={18} />
-            <span>刷新</span>
-          </button>
+          {view === 'list' && (
+            <button onClick={refreshAll} className="btn-secondary flex items-center gap-2">
+              <RefreshCw size={18} />
+              <span>刷新</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Tab 切换 */}
+      {view === 'list' && (
+        <div className="mb-5 border-b border-gray-200 -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="flex gap-2 flex-wrap">
+            <TabButton active={takeTypeTab === 'monthly'} onClick={() => setTakeTypeTab('monthly')}>
+              月末原材料盘点
+            </TabButton>
+            <TabButton active={takeTypeTab === 'annual'} onClick={() => setTakeTypeTab('annual')}>
+              年度固定资产盘点
+            </TabButton>
+            <TabButton active={takeTypeTab === 'trend'} onClick={() => setTakeTypeTab('trend')}>
+              历史趋势
+            </TabButton>
+          </div>
+        </div>
+      )}
 
       {/* 全局提示 */}
       {error && (
@@ -690,6 +778,8 @@ export default function StockTakePanel() {
       {/* ============ 视图：列表 / 看板 ============ */}
       {view === 'list' && (
         <>
+          {takeTypeTab !== 'trend' && (
+            <>
           {/* 月份选择 */}
           <div className="card flex flex-wrap items-center gap-3 py-4">
             <div className="flex items-center gap-2 text-gray-600">
@@ -773,6 +863,7 @@ export default function StockTakePanel() {
                                 setCreateWarehouseId(p.warehouse_id);
                                 setCreateMonth(selectedMonth);
                                 setCreateRemark('');
+                                setCreateTakeType(takeTypeTab === 'annual' ? 'annual' : 'monthly');
                                 setShowCreateModal(true);
                               }}
                               className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1"
@@ -831,6 +922,24 @@ export default function StockTakePanel() {
                               <Bell size={14} />
                             )}
                             催办
+                          </button>
+                        )}
+                        {isManager && p.status !== 'pending' && p.stock_take_id && (
+                          <button
+                            onClick={() => handleRefreshToken(p.stock_take_id!)}
+                            disabled={refreshingUrl}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {refreshingUrl ? <Loader2 size={14} className="animate-spin" /> : <QrCode size={14} />}
+                            重新生成链接
+                          </button>
+                        )}
+                        {p.status === 'completed' && p.stock_take_id && (
+                          <button
+                            onClick={() => handleExportPdf(p.stock_take_id!)}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1"
+                          >
+                            <FileDown size={14} /> 导出PDF
                           </button>
                         )}
                       </div>
@@ -904,7 +1013,7 @@ export default function StockTakePanel() {
                             <td className="text-gray-500 text-xs whitespace-nowrap">{formatDateTime(r.created_at)}</td>
                             <td className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-2">
-                                {isManager && r.status === 'draft' && (
+                                {(r.status === 'draft' || r.status === 'returned') && isManager && (
                                   <button
                                     onClick={() => handleCancelTake(r.id)}
                                     className="text-red-600 hover:text-red-700 text-sm flex items-center gap-0.5"
@@ -912,6 +1021,23 @@ export default function StockTakePanel() {
                                     <Trash2 size={14} /> 取消
                                   </button>
                                 )}
+                                {r.status === 'completed' && (
+                                  <button
+                                    onClick={() => handleExportPdf(r.id)}
+                                    className="text-emerald-600 hover:text-emerald-700 text-sm flex items-center gap-0.5"
+                                  >
+                                    <FileDown size={14} /> 导出PDF
+                                  </button>
+                                )}
+                                {((r.status === 'submitted' || r.status === 'reviewing') && canReview)
+                                  || ((r.status === 'draft' || r.status === 'returned' || r.status === 'completed') && isManager) ? (
+                                  <button
+                                    onClick={() => handleRefreshToken(r.id)}
+                                    className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-0.5"
+                                  >
+                                    <QrCode size={14} /> 链接
+                                  </button>
+                                ) : null}
                                 <button
                                   onClick={() => openDetail(r.id)}
                                   className="text-primary-600 hover:text-primary-700 text-sm flex items-center gap-0.5"
@@ -929,6 +1055,86 @@ export default function StockTakePanel() {
               )}
             </div>
           </div>
+            </>
+          )}
+
+          {/* 历史趋势 Tab */}
+          {takeTypeTab === 'trend' && (
+            <div>
+              <div className="flex items-end gap-3 mb-5 flex-wrap">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">仓库</label>
+                  <select value={trendWarehouseId} onChange={e => setTrendWarehouseId(e.target.value)}
+                    className="input-field w-60">
+                    <option value="">全部仓库</option>
+                    {stockTakeWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">期数（最近N月）</label>
+                  <select value={trendPeriods} onChange={e => setTrendPeriods(Number(e.target.value))}
+                    className="input-field w-40">
+                    <option value={6}>最近 6 期</option>
+                    <option value={12}>最近 12 期</option>
+                    <option value={24}>最近 24 期</option>
+                  </select>
+                </div>
+                <button onClick={fetchTrend} disabled={loadingTrend}
+                  className="btn-secondary flex items-center gap-2">
+                  {loadingTrend ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                  刷新
+                </button>
+              </div>
+
+              {loadingTrend ? (
+                <div className="bg-white rounded-xl p-10 text-center text-gray-400">
+                  <Loader2 size={24} className="animate-spin mx-auto mb-2" />
+                  加载中...
+                </div>
+              ) : trendData.length === 0 ? (
+                <div className="bg-white rounded-xl p-10 text-center text-gray-400">
+                  <BarChart3 size={36} className="mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm">暂无历史数据</p>
+                  <p className="text-xs text-gray-300 mt-1">完成盘点后会在此显示盈亏趋势</p>
+                </div>
+              ) : (
+                <>
+                  <React.Suspense fallback={<div className="bg-white rounded-xl p-10 text-center text-gray-400"><Loader2 size={24} className="animate-spin mx-auto" /></div>}>
+                    <TrendChart data={trendData} />
+                  </React.Suspense>
+                  <div className="mt-5 bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr>
+                            <th className="px-4 py-3 text-left font-medium">归属月份</th>
+                            <th className="px-4 py-3 text-left font-medium">仓库</th>
+                            <th className="px-4 py-3 text-left font-medium">盘点单号</th>
+                            <th className="px-4 py-3 text-right font-medium">盈亏金额</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {trendData.map((row, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50/50">
+                              <td className="px-4 py-3 font-medium text-gray-700">{row.period_month}</td>
+                              <td className="px-4 py-3 text-gray-700">{row.warehouse_name}</td>
+                              <td className="px-4 py-3 text-gray-500 font-mono text-xs">共 {row.take_count} 单</td>
+                              <td className={`px-4 py-3 text-right font-semibold ${
+                                Number(row.total_diff_value) > 0 ? 'text-emerald-600'
+                                  : Number(row.total_diff_value) < 0 ? 'text-red-600' : 'text-gray-500'
+                              }`}>
+                                {Number(row.total_diff_value) > 0 ? '+' : ''}{formatCurrency(Number(row.total_diff_value))}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -960,6 +1166,10 @@ export default function StockTakePanel() {
           onOpenReview={(id) => openReview(id)}
           onOpenEdit={(id) => openEdit(id)}
           canReview={canReview}
+          onRefreshToken={handleRefreshToken}
+          onExportPdf={handleExportPdf}
+          refreshingUrl={refreshingUrl}
+          refreshUrlData={refreshUrlData}
         />
       )}
 
@@ -1008,6 +1218,15 @@ export default function StockTakePanel() {
                   <p className="text-xs text-gray-400 mt-1">暂无开启月末盘点的仓库</p>
                 )}
               </div>
+              {/* 盘点类型 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">盘点类型 <span className="text-danger-500">*</span></label>
+                <select value={createTakeType} onChange={e => setCreateTakeType(e.target.value as any)}
+                  className="input-field" disabled={creating}>
+                  <option value="monthly">月末盘点（原材料分类）</option>
+                  <option value="annual">年度盘点（固定资产分类）</option>
+                </select>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">归属月份 <span className="text-danger-500">*</span></label>
                 <input
@@ -1017,6 +1236,16 @@ export default function StockTakePanel() {
                   className="input-field"
                   disabled={creating}
                 />
+              </div>
+              <div className={`mb-4 p-3 rounded-lg text-xs ${
+                createTakeType === 'annual' ? 'bg-purple-50 border border-purple-200 text-purple-700'
+                  : 'bg-blue-50 border border-blue-200 text-blue-700'
+              }`}>
+                {createTakeType === 'annual' ? (
+                  <>本次将只拉取【固定资产】一级分类下的库存物资生成盘点明细。<br />建议每年盘点一次，通常在年底进行。</>
+                ) : (
+                  <>本次将只拉取【原材料】一级分类下的库存物资生成盘点明细（排除固定资产）。<br />建议每月月初进行上月盘点。</>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
@@ -1080,6 +1309,52 @@ export default function StockTakePanel() {
           </div>
         </div>
       )}
+
+      {/* 访问链接弹窗 */}
+      {showUrlModal && refreshUrlData && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setShowUrlModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">访问链接已生成</h3>
+              <button onClick={() => setShowUrlModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                  <Package size={14} /> 盘点人访问链接（仓库管理员）
+                </p>
+                <div className="flex gap-2">
+                  <input readOnly value={refreshUrlData.operator_url}
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded bg-gray-50 font-mono text-xs" />
+                  <button onClick={() => {
+                    navigator.clipboard?.writeText(refreshUrlData.operator_url);
+                    alert('已复制');
+                  }} className="btn-secondary px-3 py-1.5 text-xs">复制</button>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                  <Gavel size={14} /> 财务复核访问链接（仅限财务/管理员）
+                </p>
+                <div className="flex gap-2">
+                  <input readOnly value={refreshUrlData.reviewer_url}
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded bg-gray-50 font-mono text-xs" />
+                  <button onClick={() => {
+                    navigator.clipboard?.writeText(refreshUrlData.reviewer_url);
+                    alert('已复制');
+                  }} className="btn-secondary px-3 py-1.5 text-xs">复制</button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-amber-600 mt-4 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              ⚠️ 以上链接有效期 7 天，过期后请重新生成。请勿公开分享，避免盘点数据被篡改。
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1113,6 +1388,10 @@ interface EditOrDetailViewProps {
   onOpenReview: (id: string) => void;
   onOpenEdit: (id: string) => void;
   canReview: boolean;
+  onRefreshToken: (id: string) => void;
+  onExportPdf: (id: string) => void;
+  refreshingUrl: boolean;
+  refreshUrlData: { stock_take_id?: string; operator_url: string; reviewer_url: string; operator_token: string; reviewer_token: string } | null;
 }
 
 function EditOrDetailView(props: EditOrDetailViewProps) {
@@ -1121,6 +1400,7 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
     catFilter, setCatFilter, keyword, setKeyword, onlyDiff, setOnlyDiff,
     editable, summary, modifiedCount, updateItem, fillAllWithSystem,
     saving, submitting, onSave, onSubmit, onCancel, onOpenReview, onOpenEdit, canReview,
+    onRefreshToken, onExportPdf, refreshingUrl, refreshUrlData,
   } = props;
 
   if (loading) {
@@ -1188,6 +1468,88 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
             <div className="text-sm">
               <p className="font-medium text-red-700">已被财务退回，请修改后重新提交</p>
               <p className="text-red-600 mt-0.5">退回原因：{returnReasonText}</p>
+            </div>
+          </div>
+        )}
+
+        {/* PC端只读提示 & H5二维码（仅详情视图） */}
+        {view === 'detail' && (
+          <div className="mb-5 mt-4 grid md:grid-cols-2 gap-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <h3 className="text-sm font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
+                💡 盘点操作指引
+              </h3>
+              <ul className="text-xs text-blue-600 space-y-1 list-disc list-inside">
+                <li>盘点录入和财务复核建议在手机端操作，方便手写签名</li>
+                <li>可扫描右侧二维码在手机打开，或点击「重新生成链接」发送到企微</li>
+                <li>草稿状态下PC端可直接编辑实盘数量，但签名仍需在手机端</li>
+              </ul>
+              <div className="mt-3 flex gap-2 flex-wrap">
+                <button onClick={() => onRefreshToken(detail.id)} disabled={refreshingUrl}
+                  className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1">
+                  <QrCode size={14} /> 重新生成访问链接
+                </button>
+                {detail.status === 'completed' && (
+                  <button onClick={() => onExportPdf(detail.id)}
+                    className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1">
+                    <FileDown size={14} /> 导出盘点报告
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col items-center justify-center">
+              <p className="text-xs text-gray-500 mb-2">手机扫码打开 H5 页面</p>
+              {refreshUrlData && refreshUrlData.stock_take_id === detail.id ? (
+                <div className="text-center space-y-2">
+                  <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-500">
+                    <div>
+                      <p className="mb-1">盘点人入口</p>
+                      <div className="bg-gray-50 p-2 rounded">
+                        <QRCodeSVG value={refreshUrlData.operator_url} size={80} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="mb-1">财务复核入口</p>
+                      <div className="bg-gray-50 p-2 rounded">
+                        <QRCodeSVG value={refreshUrlData.reviewer_url} size={80} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-gray-400 text-xs">
+                  点击左侧「重新生成访问链接」后展示
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 签名展示（已完成状态） */}
+        {detail?.status === 'completed' && (
+          <div className="mb-5 bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">双方签字确认</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center">
+                <p className="text-xs text-gray-500 mb-2">盘点人：{detail.operator_name || '-'}</p>
+                {detail.operator_signature ? (
+                  <img src={detail.operator_signature} alt="盘点人签名"
+                    className="max-h-20 mx-auto border border-gray-200 rounded p-1 bg-white" />
+                ) : (
+                  <div className="h-20 flex items-center justify-center text-gray-300 border border-dashed border-gray-200 rounded">未签名</div>
+                )}
+                <p className="text-[10px] text-gray-400 mt-1">盘点日期：{detail.updated_at?.slice(0, 10) || '-'}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-gray-500 mb-2">财务复核：{detail.reviewed_by_name || '-'}</p>
+                {detail.reviewer_signature ? (
+                  <img src={detail.reviewer_signature} alt="财务签名"
+                    className="max-h-20 mx-auto border border-gray-200 rounded p-1 bg-white" />
+                ) : (
+                  <div className="h-20 flex items-center justify-center text-gray-300 border border-dashed border-gray-200 rounded">未签名</div>
+                )}
+                <p className="text-[10px] text-gray-400 mt-1">复核日期：{detail.reviewed_at?.slice(0, 10) || '-'}</p>
+              </div>
             </div>
           </div>
         )}
@@ -1353,7 +1715,11 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                 保存
               </button>
-              <button onClick={onSubmit} disabled={saving || submitting} className="btn-primary flex items-center gap-2">
+              <button onClick={() => {
+                if (window.confirm('PC端提交复核无法完成手写签名。\\n建议在手机 H5 页面提交以完成盘点人手写签名。\\n\\n是否仍要在 PC 端继续提交（签名将留空，需在手机端补签）？')) {
+                  onSubmit();
+                }
+              }} disabled={saving || submitting} className="btn-primary flex items-center gap-2">
                 {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                 提交复核
               </button>
@@ -1586,3 +1952,19 @@ function ReviewView({ loading, detail, samples, error, canEdit, updateSample, on
     </div>
   );
 }
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick}
+      className={`relative px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
+        active
+          ? 'text-primary-600 border-primary-600'
+          : 'text-gray-500 border-transparent hover:text-gray-700 hover:border-gray-300'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const TrendChart = React.lazy(() => import('@/components/TrendChart'));
