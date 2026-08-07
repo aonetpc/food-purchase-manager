@@ -672,15 +672,6 @@ export default function StockTakePanel() {
               onChange={(e) => setSelectedMonth(e.target.value)}
               className="input-field w-44"
             />
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="input-field w-36"
-            >
-              {getRecentMonths(12).map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
             {selectedMonth === getDefaultMonth() && (
               <span className="tag tag-warning">默认上月</span>
             )}
