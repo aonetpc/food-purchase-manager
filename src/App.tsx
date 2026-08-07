@@ -46,6 +46,7 @@ import SupplierReconciliation from '@/pages/SupplierReconciliation';
 import ScanRequisition from '@/pages/ScanRequisition';
 import ScanAudit from '@/pages/ScanAudit';
 import ManagementReport from '@/pages/ManagementReport';
+import StockTakeOperate from '@/pages/StockTakeOperate';
 
 export default function App() {
   return (
@@ -66,6 +67,9 @@ export default function App() {
 
         {/* 扫码领料 - 独立页面，微信扫码进入 */}
         <Route path="/scan-requisition" element={<ScanRequisition />} />
+
+        {/* 月末盘点 H5 - 企微卡片链接进入，token免登录 */}
+        <Route path="/stock-take-operate" element={<StockTakeOperate />} />
 
         {/* 企微端审核管理路由 - 内部人员使用 */}
         <Route path="/m/temp-audit" element={<MobileTempAudit />} />

@@ -828,8 +828,8 @@ router.post('/:id/notify', requireAuth, async (req, res) => {
       WHERE id = ?
     `, [newToken, expiredAt, id]);
 
-    // 构建H5链接
-    const baseUrl = process.env.WECOM_APP_URL || process.env.FRONTEND_URL || '';
+    // 构建H5链接（与采购确认链接同逻辑：优先用企微配置的app_domain）
+    const baseUrl = config.app_domain || req.headers.origin || (req.protocol + '://' + req.get('host'));
     const h5Url = `${baseUrl}/stock-take-operate?token=${newToken}`;
 
     const title = type === 'init' ? '月末盘点通知' : '盘点催办提醒';
@@ -869,6 +869,190 @@ router.post('/:id/notify', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[stock-takes notify]', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
+// H5端接口（独立token认证，免登录）
+// 仓库管理员通过企微卡片链接打开盘点页面
+// ================================================
+
+/** 盘点token认证中间件 */
+async function requireStockTakeToken(req, res, next) {
+  try {
+    const token = req.query.token || req.headers['x-stock-take-token'] || '';
+    if (!token) {
+      return res.status(401).json({ error: '缺少访问token' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT st.*, w.name as warehouse_name, w.manager_userid, w.confirmer_userid
+      FROM stock_takes st
+      JOIN warehouses w ON st.warehouse_id = w.id
+      WHERE st.access_token = ?
+    `, [token]);
+
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'token无效或盘点单不存在' });
+    }
+
+    const take = rows[0];
+
+    // 检查token是否过期
+    if (take.access_expired_at && new Date(take.access_expired_at) < new Date()) {
+      return res.status(401).json({ error: '访问链接已过期，请联系管理员重新发送通知' });
+    }
+
+    // 检查盘点单状态（已完成的不允许再编辑，但可以查看）
+    req.stockTake = take;
+    req.stockTakeToken = token;
+    next();
+  } catch (err) {
+    console.error('[stock-take token auth]', err);
+    res.status(500).json({ error: '认证失败' });
+  }
+}
+
+/**
+ * H5页面初始化：获取盘点单信息+明细
+ * GET /stock-takes/h5/meta?token=xxx
+ */
+router.get('/h5/meta', requireStockTakeToken, async (req, res) => {
+  try {
+    const take = req.stockTake;
+
+    const [items] = await pool.query(`
+      SELECT sti.*, wc.name as category_name
+      FROM stock_take_items sti
+      LEFT JOIN warehouse_items wi ON sti.item_id = wi.id
+      LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+      WHERE sti.stock_take_id = ?
+      ORDER BY wc.name ASC, sti.item_name ASC
+    `, [take.id]);
+
+    // 统计信息
+    const filledCount = items.filter(i => i.actual_quantity !== null).length;
+    const diffCount = items.filter(i => i.difference !== 0).length;
+
+    res.json({
+      id: take.id,
+      take_no: take.take_no,
+      warehouse_id: take.warehouse_id,
+      warehouse_name: take.warehouse_name,
+      period_month: take.period_month,
+      status: take.status,
+      remark: take.remark,
+      manager_userid: take.manager_userid,
+      confirmer_userid: take.confirmer_userid,
+      items,
+      stats: {
+        total: items.length,
+        filled: filledCount,
+        diff: diffCount,
+      },
+    });
+  } catch (err) {
+    console.error('[stock-takes h5 meta]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * H5保存实盘（批量更新）
+ * PUT /stock-takes/h5/save?token=xxx
+ * body: { items: [{ id, actual_quantity, remark }] }
+ */
+router.put('/h5/save', requireStockTakeToken, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const take = req.stockTake;
+    const { items } = req.body;
+
+    if (!['draft', 'returned'].includes(take.status)) {
+      conn.release();
+      return res.status(400).json({ error: `当前状态(${take.status})不可编辑` });
+    }
+
+    await conn.beginTransaction();
+
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        const actualQty = it.actual_quantity !== null && it.actual_quantity !== undefined && it.actual_quantity !== ''
+          ? Number(it.actual_quantity) : null;
+        const diff = actualQty !== null ? actualQty - Number(it.system_quantity) : 0;
+        const actualValue = actualQty !== null ? actualQty * Number(it.unit_price) : 0;
+        await conn.query(`
+          UPDATE stock_take_items
+          SET actual_quantity = ?, difference = ?, actual_value = ?, remark = ?
+          WHERE id = ? AND stock_take_id = ?
+        `, [actualQty, diff, actualValue, it.remark || null, it.id, take.id]);
+      }
+    }
+
+    // 更新盘点单总价值和执行人信息
+    const [stats] = await conn.query(`
+      SELECT IFNULL(SUM(actual_value), 0) as total_actual
+      FROM stock_take_items WHERE stock_take_id = ?
+    `, [take.id]);
+
+    await conn.query(`
+      UPDATE stock_takes SET total_value = ?, updated_at = NOW()
+      WHERE id = ?
+    `, [Number(stats[0].total_actual), take.id]);
+
+    await conn.commit();
+    res.json({ success: true, message: '保存成功' });
+  } catch (err) {
+    await conn.rollback();
+    console.error('[stock-takes h5 save]', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * H5提交复核
+ * POST /stock-takes/h5/submit?token=xxx
+ */
+router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const take = req.stockTake;
+
+    if (!['draft', 'returned'].includes(take.status)) {
+      conn.release();
+      return res.status(400).json({ error: `当前状态(${take.status})不可提交` });
+    }
+
+    // 校验所有actual_quantity不为NULL
+    const [unfilled] = await conn.query(
+      'SELECT COUNT(*) as cnt FROM stock_take_items WHERE stock_take_id = ? AND actual_quantity IS NULL',
+      [take.id]
+    );
+    if (unfilled[0].cnt > 0) {
+      conn.release();
+      return res.status(400).json({ error: `还有${unfilled[0].cnt}项物资未录入实盘数量` });
+    }
+
+    await conn.beginTransaction();
+
+    // 记录执行人信息（从仓库管理员信息取）
+    const operatorName = take.warehouse_name ? `${take.warehouse_name}管理员` : '仓库管理员';
+    await conn.query(`
+      UPDATE stock_takes SET status = 'submitted', review_sample = NULL,
+             operator_wecom_userid = ?, operator_name = ?, updated_at = NOW()
+      WHERE id = ?
+    `, [take.manager_userid || take.confirmer_userid, operatorName, take.id]);
+
+    await conn.commit();
+    res.json({ success: true, message: '已提交，等待财务复核' });
+  } catch (err) {
+    await conn.rollback();
+    console.error('[stock-takes h5 submit]', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 

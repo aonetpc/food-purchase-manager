@@ -88,8 +88,8 @@ app.use('/api/warehouses', requireAuth, warehousesRouter);
 app.use('/api/inventory', requireAuth, inventoryRouter);
 app.use('/api/stock-movements', requireAuth, stockMovementsRouter);
 
-// 盘点管理接口（需登录）
-app.use('/api/stock-takes', requireAuth, stockTakesRouter);
+// 盘点管理接口（PC端需登录，H5端token免登录）
+app.use('/api/stock-takes', stockTakesRouter);
 
 // 仓库采购接口（部分接口不需要登录：confirm-page, confirm-submit, pdf下载）
 app.use('/api/warehouse-purchases', warehousePurchasesRouter);
