@@ -557,19 +557,20 @@ export default function StockTakePanel() {
   };
 
   // ---- 取消盘点（仅草稿） ----
-  const handleCancel = async () => {
-    if (!currentTakeId) return;
+  const handleCancelTake = async (takeId: string, goBackAfter = false) => {
     if (!window.confirm('确定要取消该盘点单吗？取消后盘点单将被删除，且不可恢复。')) {
       return;
     }
     try {
-      await api.delete(`/stock-takes/${currentTakeId}`);
+      await api.delete(`/stock-takes/${takeId}`);
       setSuccessMsg('盘点单已取消');
-      backToList();
+      refreshAll();
+      if (goBackAfter) backToList();
     } catch (err: any) {
       setError(err.message || '取消失败');
     }
   };
+  const handleCancel = () => currentTakeId && handleCancelTake(currentTakeId, true);
 
   // ---- 复核：更新抽样核验数量 ----
   const updateSample = (itemDetailId: string, verifyQty: number | null) => {
@@ -810,6 +811,14 @@ export default function StockTakePanel() {
                             <Eye size={14} /> 查看
                           </button>
                         )}
+                        {canNotify && p.status === 'draft' && (
+                          <button
+                            onClick={() => handleCancelTake(p.stock_take_id!)}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1"
+                          >
+                            <Trash2 size={14} /> 取消盘点
+                          </button>
+                        )}
                         {canNotify && (
                           <button
                             onClick={() => handleNotify(p.stock_take_id!)}
@@ -894,12 +903,22 @@ export default function StockTakePanel() {
                             <td className="text-gray-600 whitespace-nowrap">{r.created_by_name || '-'}</td>
                             <td className="text-gray-500 text-xs whitespace-nowrap">{formatDateTime(r.created_at)}</td>
                             <td className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={() => openDetail(r.id)}
-                                className="text-primary-600 hover:text-primary-700 text-sm flex items-center gap-0.5 ml-auto"
-                              >
-                                <Eye size={14} /> 详情
-                              </button>
+                              <div className="flex items-center justify-end gap-2">
+                                {isManager && r.status === 'draft' && (
+                                  <button
+                                    onClick={() => handleCancelTake(r.id)}
+                                    className="text-red-600 hover:text-red-700 text-sm flex items-center gap-0.5"
+                                  >
+                                    <Trash2 size={14} /> 取消
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => openDetail(r.id)}
+                                  className="text-primary-600 hover:text-primary-700 text-sm flex items-center gap-0.5"
+                                >
+                                  <Eye size={14} /> 详情
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );

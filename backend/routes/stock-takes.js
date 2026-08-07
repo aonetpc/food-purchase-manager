@@ -363,12 +363,22 @@ router.post('/', requireAuth, async (req, res) => {
           const baseUrl = config.app_domain || req.headers.origin || (req.protocol + '://' + req.get('host'));
           const h5Url = `${baseUrl}/stock-take-operate?token=${accessToken}`;
 
+          const initTaskId = `stocktake_${id}_${recipientId}_init_${Date.now()}`;
           const cardContent = {
             card_type: 'button_interaction',
+            source: { desc: '食材采购管理系统' },
             main_title: { title: `${wh[0].name} - ${period_month}月末盘点`, desc: '已创建盘点单，请尽快完成' },
             sub_title_text: `盘点单号：${takeNo}\n共${invItems.length}项物资待盘点`,
             emphasis_content: { title: period_month, desc: '归属月份' },
-            button_list: [{ text: '开始盘点', type: 1, url: h5Url }],
+            button_list: [{
+              text: '开始盘点',
+              style: 1,
+              type: 1,
+              key: `go_stocktake_${initTaskId}`,
+              url: h5Url,
+            }],
+            task_id: initTaskId,
+            card_action: { type: 1, url: h5Url },
           };
           await sendTemplateCardToUser(config, recipientId, cardContent);
 
@@ -886,16 +896,22 @@ router.post('/:id/notify', requireAuth, async (req, res) => {
     const h5Url = `${baseUrl}/stock-take-operate?token=${newToken}`;
 
     const title = type === 'init' ? '月末盘点通知' : '盘点催办提醒';
+    const notifyTaskId = `stocktake_${id}_${recipientId}_${type}_${Date.now()}`;
     const cardContent = {
       card_type: 'button_interaction',
+      source: { desc: '食材采购管理系统' },
       main_title: { title: `${take.warehouse_name} - ${take.period_month}月末盘点`, desc: title },
       sub_title_text: `盘点单号：${take.take_no}\n请尽快完成盘点并提交复核`,
       emphasis_content: { title: take.period_month, desc: '归属月份' },
       button_list: [{
         text: '开始盘点',
+        style: 1,
         type: 1,
+        key: `go_stocktake_${notifyTaskId}`,
         url: h5Url,
       }],
+      task_id: notifyTaskId,
+      card_action: { type: 1, url: h5Url },
     };
 
     let sendStatus = 'sent';
@@ -905,10 +921,6 @@ router.post('/:id/notify', requireAuth, async (req, res) => {
     } catch (e) {
       sendStatus = 'failed';
       failReason = e.message;
-      // 优化42014错误提示
-      if (e.message && e.message.includes('errcode=42014')) {
-        failReason = `用户(${recipientId})未安装应用或不在应用可见范围内，请在企微后台检查应用可见范围设置`;
-      }
     }
 
     // 记录通知
