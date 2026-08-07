@@ -388,12 +388,16 @@ router.post('/', requireAuth, async (req, res) => {
         }
       } catch (e) {
         console.error('[stock-takes auto notify]', e);
-        notifyResult.reason = e.message || '通知发送失败';
+        let errMsg = e.message || '通知发送失败';
+        if (errMsg.includes('errcode=42014')) {
+          errMsg = `用户(${recipientId})未安装应用或不在应用可见范围内，请在企微后台检查应用可见范围设置`;
+        }
+        notifyResult.reason = errMsg;
         await pool.query(`
           INSERT INTO stock_take_notifications (id, stock_take_id, warehouse_id,
             recipient_wecom_userid, type, channel, send_status, fail_reason)
           VALUES (?, ?, ?, ?, 'init', 'wecom_card', 'failed', ?)
-        `, [uuidv4(), id, warehouse_id, recipientId, notifyResult.reason]);
+        `, [uuidv4(), id, warehouse_id, recipientId, errMsg]);
       }
     } else {
       notifyResult.reason = '仓库未设置管理员/确认人';
@@ -483,7 +487,7 @@ router.put('/:id', requireAuth, async (req, res) => {
 });
 
 /**
- * 删除盘点单（仅draft/returned）
+ * 删除盘点单（仅草稿状态）
  * DELETE /stock-takes/:id
  */
 router.delete('/:id', requireAuth, async (req, res) => {
@@ -491,8 +495,8 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const [takeRows] = await pool.query('SELECT * FROM stock_takes WHERE id = ?', [id]);
     if (takeRows.length === 0) return res.status(404).json({ error: '盘点单不存在' });
-    if (!['draft', 'returned'].includes(takeRows[0].status)) {
-      return res.status(400).json({ error: '仅草稿或退回状态可删除' });
+    if (takeRows[0].status !== 'draft') {
+      return res.status(400).json({ error: '仅草稿状态可删除，已提交的需走退回流程' });
     }
 
     const conn = await pool.getConnection();
@@ -901,6 +905,10 @@ router.post('/:id/notify', requireAuth, async (req, res) => {
     } catch (e) {
       sendStatus = 'failed';
       failReason = e.message;
+      // 优化42014错误提示
+      if (e.message && e.message.includes('errcode=42014')) {
+        failReason = `用户(${recipientId})未安装应用或不在应用可见范围内，请在企微后台检查应用可见范围设置`;
+      }
     }
 
     // 记录通知

@@ -3,7 +3,7 @@ import {
   RefreshCw, AlertTriangle, Loader2, Package, Warehouse as WarehouseIcon,
   ClipboardList, FileText, CheckCircle2, Clock, Eye, Edit3, Gavel,
   Bell, Plus, ArrowLeft, Save, Send, Search, Filter, X,
-  TrendingUp, AlertCircle, Check, RotateCcw,
+  TrendingUp, AlertCircle, Check, RotateCcw, Trash2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
@@ -556,6 +556,21 @@ export default function StockTakePanel() {
     }
   };
 
+  // ---- 取消盘点（仅草稿） ----
+  const handleCancel = async () => {
+    if (!currentTakeId) return;
+    if (!window.confirm('确定要取消该盘点单吗？取消后盘点单将被删除，且不可恢复。')) {
+      return;
+    }
+    try {
+      await api.delete(`/stock-takes/${currentTakeId}`);
+      setSuccessMsg('盘点单已取消');
+      backToList();
+    } catch (err: any) {
+      setError(err.message || '取消失败');
+    }
+  };
+
   // ---- 复核：更新抽样核验数量 ----
   const updateSample = (itemDetailId: string, verifyQty: number | null) => {
     setReviewSamples((prev) =>
@@ -922,6 +937,7 @@ export default function StockTakePanel() {
           submitting={submitting}
           onSave={() => handleSave(false)}
           onSubmit={handleSubmit}
+          onCancel={handleCancel}
           onOpenReview={(id) => openReview(id)}
           onOpenEdit={(id) => openEdit(id)}
           canReview={canReview}
@@ -992,6 +1008,12 @@ export default function StockTakePanel() {
                   placeholder="可选，盘点说明..."
                   disabled={creating}
                 />
+              </div>
+              <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <AlertTriangle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  盘点明细将根据当前仓库库存自动生成并<span className="font-medium">锁定</span>，发起盘点后新采购的物品不会自动加入盘点范围。请确认盘点时机。
+                </p>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">
@@ -1068,6 +1090,7 @@ interface EditOrDetailViewProps {
   submitting: boolean;
   onSave: () => void;
   onSubmit: () => void;
+  onCancel: () => void;
   onOpenReview: (id: string) => void;
   onOpenEdit: (id: string) => void;
   canReview: boolean;
@@ -1078,7 +1101,7 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
     view, loading, detail, editItems, filteredItems, categories,
     catFilter, setCatFilter, keyword, setKeyword, onlyDiff, setOnlyDiff,
     editable, summary, modifiedCount, updateItem, fillAllWithSystem,
-    saving, submitting, onSave, onSubmit, onOpenReview, onOpenEdit, canReview,
+    saving, submitting, onSave, onSubmit, onCancel, onOpenReview, onOpenEdit, canReview,
   } = props;
 
   if (loading) {
@@ -1297,6 +1320,13 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {detail.status === 'draft' && (
+                <button onClick={onCancel} disabled={saving || submitting}
+                  className="btn-secondary flex items-center gap-2 border border-red-300 text-red-600 hover:bg-red-50">
+                  <Trash2 size={16} />
+                  取消盘点
+                </button>
+              )}
               {modifiedCount > 0 && (
                 <span className="text-xs text-warning-600">已修改 {modifiedCount} 项未保存</span>
               )}
