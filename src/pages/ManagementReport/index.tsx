@@ -64,6 +64,16 @@ type ExpenseDetailData = {
   list: ExpenseRow[];
 };
 
+type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed';
+
+interface StockTakeProgressItem {
+  warehouse_id: string;
+  warehouse_name: string;
+  department_name: string;
+  status: StockTakeStatus;
+  take_no: string;
+}
+
 function compressAmount(n: number | 0 | null | undefined): string {
   const v = Number(n) || 0;
   if (v === 0) return '-';
@@ -191,6 +201,10 @@ export default function ManagementReport() {
   const [expData, setExpData] = useState<ExpenseDetailData | null>(null);
   const [expLoading, setExpLoading] = useState(false);
 
+  // 盘点状态条
+  const [stockTakeProgress, setStockTakeProgress] = useState<StockTakeProgressItem[]>([]);
+  const [stockTakeLoading, setStockTakeLoading] = useState(false);
+
   const yearMonth = format(currentMonth, 'yyyy-MM');
   const monthLabel = format(currentMonth, 'yyyy年MM月', { locale: zhCN });
 
@@ -253,6 +267,25 @@ export default function ManagementReport() {
       loadExpense(yearMonth, 1);
     }
   }, [tab, yearMonth, loadExpense]);
+
+  // 月份变化时获取该月各仓库盘点状态
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStockTakeLoading(true);
+      try {
+        const data = await api.get<StockTakeProgressItem[]>(`/stock-takes/progress/${yearMonth}`);
+        if (!cancelled) {
+          setStockTakeProgress(Array.isArray(data) ? data : (data as any).data ?? []);
+        }
+      } catch (e) {
+        if (!cancelled) setStockTakeProgress([]);
+      } finally {
+        if (!cancelled) setStockTakeLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [yearMonth]);
 
   const handlePrevMonth = () => setCurrentMonth(prev => subMonths(prev, 1));
   const handleNextMonth = () => {
@@ -430,6 +463,13 @@ export default function ManagementReport() {
         <TabButton label="部门费用明细" active={tab === 'expense-detail'} onClick={() => setTab('expense-detail')} />
       </div>
 
+      {/* 盘点状态条 */}
+      <StockTakeStatusBar
+        month={format(currentMonth, 'M月')}
+        items={stockTakeProgress}
+        loading={stockTakeLoading}
+      />
+
       {/* Content */}
       {tab === 'inventory-check' ? (
         <PlaceholderCard type={tab} />
@@ -503,6 +543,66 @@ function PlaceholderCard({ type }: { type: TabKey }) {
       <h3 className="text-lg font-semibold text-gray-700 mb-1">{title}</h3>
       <p className="text-sm text-gray-400 max-w-md">{desc}</p>
       <p className="mt-3 text-xs text-gray-300">预计后续版本发布</p>
+    </div>
+  );
+}
+
+const STOCK_TAKE_STATUS_CONFIG: Record<StockTakeStatus, { icon: string; color: string }> = {
+  completed: { icon: '✅', color: 'text-green-600' },
+  draft: { icon: '⏳', color: 'text-amber-600' },
+  submitted: { icon: '⏳', color: 'text-amber-600' },
+  reviewing: { icon: '⏳', color: 'text-amber-600' },
+  returned: { icon: '⏳', color: 'text-amber-600' },
+  pending: { icon: '❌', color: 'text-red-500' },
+};
+
+function StockTakeStatusBar({ month, items, loading }: {
+  month: string;
+  items: StockTakeProgressItem[];
+  loading: boolean;
+}) {
+  // 加载中时显示紧凑的加载提示，避免展示旧月份的过期数据
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-2 flex items-center gap-2 text-sm text-gray-400">
+        <ClipboardCheck size={14} className="animate-pulse text-primary-400" />
+        <span>正在加载盘点状态...</span>
+      </div>
+    );
+  }
+
+  // 没有任何需盘点的仓库时不显示
+  if (items.length === 0) return null;
+
+  const allCompleted = items.every(i => i.status === 'completed');
+  const hasUncompleted = !allCompleted;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-2.5">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-700 whitespace-nowrap shrink-0">
+          <ClipboardCheck size={14} className="text-primary-500" />
+          <span>{month}盘点状态</span>
+        </div>
+        {allCompleted ? (
+          <span className="text-sm text-green-600 font-medium">✅ 全部仓库已完成盘点</span>
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            {items.map(item => {
+              const cfg = STOCK_TAKE_STATUS_CONFIG[item.status];
+              return (
+                <span key={item.warehouse_id} className={`inline-flex items-center gap-1 ${cfg.color}`}>
+                  <span>{cfg.icon}</span>
+                  <span className="font-medium">{item.warehouse_name}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {hasUncompleted && (
+        <p className="text-xs text-amber-600 mt-1.5">* 未盘点仓库的成本数据为暂估</p>
+      )}
     </div>
   );
 }

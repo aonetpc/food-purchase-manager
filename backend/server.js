@@ -18,6 +18,7 @@ const warehousesRouter = require('./routes/warehouses');
 const inventoryRouter = require('./routes/inventory');
 const stockMovementsRouter = require('./routes/stock-movements');
 const warehousePurchasesRouter = require('./routes/warehouse-purchases');
+const stockTakesRouter = require('./routes/stock-takes');
 
 // 扫码领料模块
 const scanRequisitionRouter = require('./routes/scan-requisition');
@@ -86,6 +87,9 @@ app.use('/api/suppliers', requireAuth, suppliersRouter);
 app.use('/api/warehouses', requireAuth, warehousesRouter);
 app.use('/api/inventory', requireAuth, inventoryRouter);
 app.use('/api/stock-movements', requireAuth, stockMovementsRouter);
+
+// 盘点管理接口（需登录）
+app.use('/api/stock-takes', requireAuth, stockTakesRouter);
 
 // 仓库采购接口（部分接口不需要登录：confirm-page, confirm-submit, pdf下载）
 app.use('/api/warehouse-purchases', warehousePurchasesRouter);

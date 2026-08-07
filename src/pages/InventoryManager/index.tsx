@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Search, RefreshCw, AlertTriangle, Package, Warehouse as WarehouseIcon, Boxes } from 'lucide-react';
+import { Search, RefreshCw, AlertTriangle, Package, Warehouse as WarehouseIcon, Boxes, ClipboardCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/format';
+import StockTakePanel from './StockTakePanel';
 
 const MANAGER_ROLES = ['admin', 'finance', 'boss'];
 
@@ -32,6 +33,7 @@ interface InventoryItem {
 export default function InventoryManager() {
   const { user } = useAuthStore();
   const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
+  const [activeTab, setActiveTab] = useState<'inventory' | 'stock-take'>('inventory');
   const [summary, setSummary] = useState<WarehouseSummary[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -131,6 +133,39 @@ export default function InventoryManager() {
         </div>
       )}
 
+      {/* Tab 切换 */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('inventory')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'inventory'
+              ? 'border-primary-600 text-primary-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Boxes size={16} />
+          库存明细
+        </button>
+        {isManager && (
+          <button
+            onClick={() => setActiveTab('stock-take')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'stock-take'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <ClipboardCheck size={16} />
+            月结盘点
+          </button>
+        )}
+      </div>
+
+      {/* 盘点 Tab */}
+      {activeTab === 'stock-take' && isManager ? (
+        <StockTakePanel />
+      ) : (
+      <>
       {/* 顶部汇总卡片：全部 + 各仓库 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {/* 全部仓库合计 */}
@@ -295,6 +330,8 @@ export default function InventoryManager() {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

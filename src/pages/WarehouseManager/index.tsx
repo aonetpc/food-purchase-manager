@@ -31,6 +31,7 @@ interface Warehouse {
   manager_userid?: string;
   confirmer_userid?: string;
   location?: string;
+  enable_stock_take?: number;
   created_at?: string;
 }
 
@@ -71,6 +72,7 @@ interface WarehouseForm {
   manager_userid: string;
   confirmer_userid: string;
   location: string;
+  enable_stock_take: boolean;
 }
 
 // 分类表单
@@ -110,6 +112,7 @@ const emptyWarehouseForm = (): WarehouseForm => ({
   manager_userid: '',
   confirmer_userid: '',
   location: '',
+  enable_stock_take: true,
 });
 
 const emptyCategoryForm = (): CategoryForm => ({
@@ -227,6 +230,7 @@ export default function WarehouseManager() {
       manager_userid: w.manager_userid || '',
       confirmer_userid: w.confirmer_userid || '',
       location: w.location || '',
+      enable_stock_take: w.enable_stock_take == null ? true : Number(w.enable_stock_take) === 1,
     });
     setWarehouseFormError('');
     setShowWarehouseModal(true);
@@ -251,6 +255,7 @@ export default function WarehouseManager() {
       manager_userid: warehouseForm.manager_userid.trim() || null,
       confirmer_userid: warehouseForm.confirmer_userid.trim() || null,
       location: warehouseForm.location.trim() || null,
+      enable_stock_take: warehouseForm.enable_stock_take ? 1 : 0,
     };
     try {
       if (warehouseForm.id) {
@@ -1003,6 +1008,21 @@ export default function WarehouseManager() {
                   placeholder="请输入仓库位置"
                   className="input-field"
                 />
+              </div>
+              {/* 参与月末盘点 */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={warehouseForm.enable_stock_take}
+                    onChange={(e) =>
+                      setWarehouseForm({ ...warehouseForm, enable_stock_take: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">参与月末盘点</span>
+                  <span className="text-xs text-gray-400">开启后该仓库参与月末盘点流程</span>
+                </label>
               </div>
 
               {warehouseFormError && (
