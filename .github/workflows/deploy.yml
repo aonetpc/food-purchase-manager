@@ -725,6 +725,86 @@ jobs:
               mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
             done
 
+            # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'warehouses';
+              SET @columnname = 'enable_stock_take';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) DEFAULT 1 COMMENT ''是否参与月末盘点'' AFTER status')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：确保 stock_takes 表有 period_month 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'stock_takes';
+              SET @columnname = 'period_month';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(7) NULL COMMENT ''成本归属月份'' AFTER warehouse_name')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：确保 stock_takes 表有 access_token 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'stock_takes';
+              SET @columnname = 'access_token';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(64) NULL COMMENT ''盘点H5访问token'' AFTER period_month')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：确保 stock_takes 表有 operator_id 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'stock_takes';
+              SET @columnname = 'operator_id';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT ''盘点执行人'' AFTER remark')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
+            # 数据库迁移：确保 stock_takes 表有 review_sample 字段
+            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
+              SET @dbname = DATABASE();
+              SET @tablename = 'stock_takes';
+              SET @columnname = 'review_sample';
+              SET @preparedStatement = (SELECT IF(
+                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+                'SELECT 1',
+                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON NULL COMMENT ''财务复核抽样'' AFTER review_result')
+              ));
+              PREPARE alterIfNotExists FROM @preparedStatement;
+              EXECUTE alterIfNotExists;
+              DEALLOCATE PREPARE alterIfNotExists;
+            " 2>/dev/null || true
+
             # 数据库迁移：确保 stock_movements 的 movement_type ENUM 包含 'expense'
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
               ALTER TABLE stock_movements MODIFY COLUMN movement_type
