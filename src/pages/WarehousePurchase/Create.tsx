@@ -495,8 +495,12 @@ export default function WarehousePurchaseCreate() {
 
   // ===== 校验 =====
   const validate = (): string | null => {
-    // 预付款/月结需要供应商（选择已有或临时输入）
-    if (purchaseType === 'prepay' || purchaseType === 'monthly') {
+    // 月结采购：必须选择已有供应商（不允许临时输入）
+    if (purchaseType === 'monthly' && !selectedSupplierId) {
+      return '月结采购必须选择供应商';
+    }
+    // 预付款采购：可以选择已有或临时输入
+    if (purchaseType === 'prepay') {
       if (supplierInputMode === 'select' && !selectedSupplierId) {
         return '请选择供应商或切换为临时输入';
       }
@@ -661,11 +665,19 @@ export default function WarehousePurchaseCreate() {
             <select
               value={purchaseType}
               onChange={(e) => {
-                setPurchaseType(e.target.value as 'normal' | 'prepay' | 'monthly');
-                // 切换类型时清空供应商和预付金额
-                if (e.target.value === 'normal') {
+                const nextType = e.target.value as 'normal' | 'prepay' | 'monthly';
+                setPurchaseType(nextType);
+                // 切换到现购：清空供应商、临时输入、预付金额
+                if (nextType === 'normal') {
                   setSelectedSupplierId('');
+                  setTempSupplierName('');
+                  setSupplierInputMode('select');
                   setPrepayAmount(0);
+                }
+                // 切换到月结：强制选择模式，清空临时输入
+                if (nextType === 'monthly') {
+                  setSupplierInputMode('select');
+                  setTempSupplierName('');
                 }
               }}
               className="input-field"
@@ -680,33 +692,39 @@ export default function WarehousePurchaseCreate() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 供应商 <span className="text-danger-500">*</span>
+                {purchaseType === 'monthly' && (
+                  <span className="ml-2 text-xs text-slate-500 font-normal">（月结必须选择已有供应商）</span>
+                )}
               </label>
-              {/* 模式切换按钮 */}
-              <div className="flex gap-1 mb-2">
-                <button
-                  type="button"
-                  onClick={() => setSupplierInputMode('select')}
-                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
-                    supplierInputMode === 'select'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  选择已有
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSupplierInputMode('temp')}
-                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
-                    supplierInputMode === 'temp'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  临时输入
-                </button>
-              </div>
-              {supplierInputMode === 'select' ? (
+              {/* 模式切换按钮：仅预付款时显示 */}
+              {purchaseType === 'prepay' && (
+                <div className="flex gap-1 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setSupplierInputMode('select')}
+                    className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                      supplierInputMode === 'select'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    选择已有
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSupplierInputMode('temp')}
+                    className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                      supplierInputMode === 'temp'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    临时输入
+                  </button>
+                </div>
+              )}
+              {/* 输入控件 */}
+              {(purchaseType === 'monthly' || supplierInputMode === 'select') ? (
                 <select
                   value={selectedSupplierId}
                   onChange={(e) => setSelectedSupplierId(e.target.value)}
