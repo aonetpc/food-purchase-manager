@@ -14,6 +14,8 @@ import {
   Send,
   Clipboard,
   Loader2,
+  Receipt,
+  Wallet,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDepartmentStore } from '@/store/departmentStore';
@@ -107,6 +109,12 @@ interface PurchaseDetailDTO {
   supplier_id?: string;
   supplier_name?: string;
   prepay_amount?: number;
+  actual_amount?: number;
+  writeoff_status?: 'auto' | 'manual' | null;
+  writeoff_amount?: number;
+  monthly_pending?: number;
+  monthly_payment_sp_no?: string;
+  monthly_paid_at?: string | null;
 }
 
 // ====== 工具函数 ======
@@ -177,6 +185,16 @@ export default function WarehousePurchaseCreate() {
   // 表单状态
   const [lines, setLines] = useState<LineItem[]>([emptyLine()]);
   const [remark, setRemark] = useState('');
+
+  // 采购详情扩展字段（只读，编辑模式回填，用于展示）
+  const [detailExtra, setDetailExtra] = useState<{
+    actual_amount: number;
+    writeoff_status: 'auto' | 'manual' | null;
+    writeoff_amount: number;
+    monthly_pending: number;
+    monthly_payment_sp_no: string | null;
+    monthly_paid_at: string | null;
+  } | null>(null);
 
   // 页面状态
   const [loading, setLoading] = useState(true);
@@ -286,6 +304,15 @@ export default function WarehousePurchaseCreate() {
           setTempSupplierName(detail.supplier_name);
         }
         setPrepayAmount(detail.prepay_amount ? safeNum(detail.prepay_amount) : 0);
+        // 回填扩展字段（用于只读展示）
+        setDetailExtra({
+          actual_amount: detail.actual_amount ? safeNum(detail.actual_amount) : 0,
+          writeoff_status: detail.writeoff_status ?? null,
+          writeoff_amount: detail.writeoff_amount ? safeNum(detail.writeoff_amount) : 0,
+          monthly_pending: detail.monthly_pending ?? 0,
+          monthly_payment_sp_no: detail.monthly_payment_sp_no ?? null,
+          monthly_paid_at: detail.monthly_paid_at ?? null,
+        });
         const restoredLines: LineItem[] = (detail.items || []).map((it: any) => ({
           key: genKey(),
           item_id: it.item_id || '',
@@ -787,6 +814,96 @@ export default function WarehousePurchaseCreate() {
           </div>
         </div>
       </div>
+
+      {/* 预付款核销状态 & 月结付款状态（编辑模式、已进入流程时显示） */}
+      {isEdit && detailExtra && (purchaseType === 'prepay' || purchaseType === 'monthly') && (
+        <div className="card border-slate-200 bg-slate-50/40">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            {purchaseType === 'prepay' ? <>
+              <Receipt size={18} className="text-indigo-600" /> 预付款核销状态
+            </> : <>
+              <Wallet size={18} className="text-indigo-600" /> 月结付款状态
+            </>}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 预付款核销展示 */}
+            {purchaseType === 'prepay' && (
+              <>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">核销状态</label>
+                  {(() => {
+                    const ws = detailExtra.writeoff_status;
+                    const hasActual = detailExtra.actual_amount > 0;
+                    if (!hasActual)
+                      return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-slate-100 text-slate-600">未收货，待确认后处理</span>;
+                    if (ws === 'auto')
+                      return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700">已核销完成</span>;
+                    if (ws === 'manual')
+                      return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-700">待核销（请到对账中心处理）</span>;
+                    return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-slate-100 text-slate-600">未核销</span>;
+                  })()}
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">预付 / 实际金额</label>
+                  <div className="text-sm text-slate-700 font-medium">
+                    ¥{safeNum(prepayAmount).toFixed(2)} / ¥{detailExtra.actual_amount.toFixed(2)}
+                    {detailExtra.actual_amount > 0 && (
+                      <span className={`ml-2 text-xs ${
+                        (detailExtra.actual_amount - safeNum(prepayAmount)) > 0
+                          ? 'text-blue-600'
+                          : (detailExtra.actual_amount - safeNum(prepayAmount)) < 0
+                          ? 'text-emerald-600'
+                          : 'text-slate-500'
+                      }`}>
+                        {detailExtra.actual_amount > safeNum(prepayAmount)
+                          ? `少付¥${(detailExtra.actual_amount - safeNum(prepayAmount)).toFixed(2)}（待尾款）`
+                          : detailExtra.actual_amount < safeNum(prepayAmount)
+                          ? `多付¥${(safeNum(prepayAmount) - detailExtra.actual_amount).toFixed(2)}（已入余额）`
+                          : '完全一致'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {detailExtra.writeoff_amount > 0 && (
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">已核销金额</label>
+                    <div className="text-sm text-slate-700 font-medium">¥{detailExtra.writeoff_amount.toFixed(2)}</div>
+                  </div>
+                )}
+              </>
+            )}
+            {/* 月结付款展示 */}
+            {purchaseType === 'monthly' && (
+              <>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">付款状态</label>
+                  {(() => {
+                    if (detailExtra.monthly_paid_at)
+                      return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700">已付款</span>;
+                    if (detailExtra.monthly_payment_sp_no)
+                      return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-700">付款审批中</span>;
+                    if (detailExtra.monthly_pending === 1)
+                      return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-700">待月结付款（对账中心）</span>;
+                    return <span className="inline-flex px-2 py-1 text-xs rounded-full bg-slate-100 text-slate-600">未提交付款</span>;
+                  })()}
+                </div>
+                {detailExtra.monthly_payment_sp_no && (
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">付款审批单号</label>
+                    <div className="text-sm font-mono text-slate-700">{detailExtra.monthly_payment_sp_no}</div>
+                  </div>
+                )}
+                {detailExtra.monthly_paid_at && (
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">付款完成时间</label>
+                    <div className="text-sm text-slate-700">{detailExtra.monthly_paid_at}</div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 物资明细卡片 */}
       <div className="card">

@@ -3,7 +3,7 @@ import {
   Scale, FileSpreadsheet, Receipt, Calendar, Plus, RefreshCw, Eye,
   Trash2, CheckCircle, Clock, CheckCircle2, XCircle, AlertTriangle,
   ChevronDown, ChevronUp, Send, DollarSign, Wallet, Calculator,
-  Paperclip, Upload
+  Paperclip, Upload, FileCheck2, Loader2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
@@ -123,11 +123,16 @@ export default function SupplierReconciliation() {
   const [paymentAttachments, setPaymentAttachments] = useState<Array<{ filename: string; base64: string; mimeType: string }>>([]);
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
+  // ====== 月结付款审批中 state ======
+  const [paymentPendingList, setPaymentPendingList] = useState<any[]>([]);
+  const [loadingPaymentPending, setLoadingPaymentPending] = useState(true);
+  const [refreshingPaymentSpNo, setRefreshingPaymentSpNo] = useState<string | null>(null);
+
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
-  useEffect(() => { fetchStats(); fetchPendingSuppliers(); }, []);
+  useEffect(() => { fetchStats(); fetchPendingSuppliers(); fetchPaymentPending(); }, []);
   useEffect(() => { fetchStatements(); }, [stmtStatusFilter, stmtMonthFilter]);
   useEffect(() => { fetchWriteoffs(); }, [writeoffStatusFilter]);
 
@@ -344,6 +349,28 @@ export default function SupplierReconciliation() {
     setPaymentAttachments(prev => prev.filter((_, i) => i !== idx));
   }
 
+  async function fetchPaymentPending() {
+    setLoadingPaymentPending(true); setError('');
+    try {
+      const data = await api.get<any[]>('/reconciliation/monthly/payment/pending-approval');
+      setPaymentPendingList(data);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingPaymentPending(false); }
+  }
+
+  async function handleRefreshPaymentStatus(spNo: string) {
+    setRefreshingPaymentSpNo(spNo);
+    try {
+      const r = await api.post<any>('/reconciliation/monthly/payment/refresh', { sp_no: spNo });
+      if (r?.sp_status === 2) showToast(`审批已通过，已标记付款完成`);
+      else if (r?.sp_status === 3) showToast(`审批已驳回`);
+      else showToast(`状态已更新`);
+      fetchPaymentPending();
+      fetchStats();
+    } catch (e: any) { setError(e.message); }
+    finally { setRefreshingPaymentSpNo(null); }
+  }
+
   async function handleMonthlyPaymentSubmit() {
     if (selectedPurchases.size === 0) return;
     setSubmittingPayment(true); setError('');
@@ -361,6 +388,7 @@ export default function SupplierReconciliation() {
       setPaymentRemark('');
       setPaymentAttachments([]);
       fetchPendingSuppliers();
+      fetchPaymentPending();
       fetchStats();
     } catch (e: any) { setError(e.message); }
     finally { setSubmittingPayment(false); }
@@ -572,6 +600,66 @@ export default function SupplierReconciliation() {
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* ====== 月结付款审批中 ====== */}
+            <div className="border-b border-slate-200">
+              <div className="px-4 py-3 flex items-center justify-between bg-purple-50/50 border-b border-purple-100">
+                <div className="flex items-center gap-2">
+                  <FileCheck2 className="w-5 h-5 text-purple-600" />
+                  <h3 className="text-sm font-semibold text-slate-800">月结付款审批中</h3>
+                  <span className="text-xs text-slate-500">（{paymentPendingList.length} 笔待审批）</span>
+                </div>
+                <button onClick={fetchPaymentPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-slate-300 rounded-lg hover:bg-slate-100">
+                  <RefreshCw className="w-4 h-4" /> 刷新
+                </button>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {loadingPaymentPending && (
+                  <div className="px-4 py-10 text-center text-slate-400">加载中...</div>
+                )}
+                {!loadingPaymentPending && paymentPendingList.length === 0 && (
+                  <div className="px-4 py-10 text-center text-slate-400">
+                    <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                    暂无付款审批中的采购单
+                  </div>
+                )}
+                {paymentPendingList.map(item => (
+                  <div key={item.sp_no}
+                    className="px-4 py-3 grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
+                    <div>
+                      <div className="text-xs text-slate-500">审批单号</div>
+                      <div className="text-sm font-mono text-slate-700">{item.sp_no}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">供应商</div>
+                      <div className="text-sm text-slate-700 font-medium">{item.supplier_name}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">关联采购单</div>
+                      <div className="text-sm text-slate-700">{item.purchase_count} 张</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">合计金额</div>
+                      <div className="text-sm text-slate-800 font-semibold">¥{formatCurrency(item.total_amount)}</div>
+                    </div>
+                    <div className="md:text-right">
+                      <button
+                        onClick={() => handleRefreshPaymentStatus(item.sp_no)}
+                        disabled={refreshingPaymentSpNo === item.sp_no}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 disabled:opacity-60 disabled:cursor-not-allowed">
+                        {refreshingPaymentSpNo === item.sp_no ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4" />
+                        )}
+                        刷新审批状态
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* 列表 */}

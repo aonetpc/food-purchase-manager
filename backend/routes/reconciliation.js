@@ -769,4 +769,35 @@ router.post('/monthly/payment/refresh', requireAuth, async (req, res) => {
   }
 });
 
+// 查询月结付款审批中的采购单（按 sp_no 分组）
+router.get('/monthly/payment/pending-approval', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT monthly_payment_sp_no as sp_no,
+             supplier_id,
+             supplier_name,
+             COUNT(*) as purchase_count,
+             IFNULL(SUM(total_amount), 0) as total_amount,
+             MAX(confirmed_at) as latest_confirmed_at
+      FROM warehouse_purchases
+      WHERE purchase_type = 'monthly'
+        AND monthly_payment_sp_no IS NOT NULL
+        AND monthly_paid_at IS NULL
+      GROUP BY monthly_payment_sp_no, supplier_id, supplier_name
+      ORDER BY latest_confirmed_at DESC
+    `);
+    res.json(rows.map(r => ({
+      sp_no: r.sp_no,
+      supplier_id: r.supplier_id,
+      supplier_name: r.supplier_name || '未命名',
+      purchase_count: r.purchase_count,
+      total_amount: toNum(r.total_amount),
+      latest_confirmed_at: r.latest_confirmed_at,
+    })));
+  } catch (err) {
+    console.error('[monthly payment pending approval]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

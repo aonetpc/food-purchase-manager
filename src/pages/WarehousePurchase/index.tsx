@@ -24,6 +24,7 @@ import {
   Paperclip,
   Upload,
   User,
+  Loader2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/utils/format';
@@ -221,6 +222,9 @@ export default function WarehousePurchaseList() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // 展开详情的加载状态
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // 月结付款审批状态刷新（记录正在刷新的采购单ID）
+  const [refreshingMonthlyPaymentIds, setRefreshingMonthlyPaymentIds] = useState<Set<string>>(new Set());
 
   // 收货弹窗
   const [showReceiveModal, setShowReceiveModal] = useState(false);
@@ -598,6 +602,38 @@ export default function WarehousePurchaseList() {
   // ===== 分页计算 =====
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // 刷新月结付款审批状态
+  const handleRefreshMonthlyPayment = async (p: WarehousePurchase) => {
+    if (!p.monthly_payment_sp_no) return;
+    setRefreshingMonthlyPaymentIds(prev => {
+      const next = new Set(prev);
+      next.add(p.id);
+      return next;
+    });
+    try {
+      setError('');
+      const r = await api.post<any>('/reconciliation/monthly/payment/refresh', { sp_no: p.monthly_payment_sp_no });
+      if (r?.sp_status === 2) {
+        setPurchases(prev => prev.map(x => x.id === p.id
+          ? { ...x, monthly_paid_at: new Date().toISOString().replace('T', ' ').slice(0, 19) }
+          : x));
+        window.alert('审批已通过，已标记付款完成');
+      } else if (r?.sp_status === 3) {
+        window.alert('审批已驳回');
+      } else {
+        window.alert('审批仍在进行中');
+      }
+    } catch (e: any) {
+      setError(e.message || '刷新失败');
+    } finally {
+      setRefreshingMonthlyPaymentIds(prev => {
+        const next = new Set(prev);
+        next.delete(p.id);
+        return next;
+      });
+    }
+  };
+
   // 是否有 PDF 可下载（确认单PDF或申请单PDF）
   const hasPdf = (p: WarehousePurchase) => !!(p.pdf_url || p.apply_pdf_url);
   // 是否有申请单 PDF
@@ -866,6 +902,35 @@ export default function WarehousePurchaseList() {
                           <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-2 text-xs text-indigo-700">
                             <span className="font-medium">报销单号：</span>
                             {p.reimbursement_sp_no || p.reimbursement_no}
+                          </div>
+                        )}
+
+                        {/* 月结付款审批信息 */}
+                        {p.purchase_type === 'monthly' && (p.monthly_payment_sp_no || p.monthly_pending === 1 || p.monthly_paid_at) && (
+                          <div className="bg-purple-50 border border-purple-100 rounded-lg p-2 text-xs">
+                            {p.monthly_paid_at ? (
+                              <span className="text-emerald-700">
+                                <span className="font-medium">已付款：</span>{formatDateTime(p.monthly_paid_at)}
+                              </span>
+                            ) : p.monthly_payment_sp_no ? (
+                              <>
+                                <span className="font-medium text-purple-700">付款审批中：</span>
+                                <span className="font-mono text-purple-800 mr-2">{p.monthly_payment_sp_no}</span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleRefreshMonthlyPayment(p); }}
+                                  disabled={refreshingMonthlyPaymentIds.has(p.id)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-purple-200 text-purple-700 hover:bg-purple-100 disabled:opacity-60 disabled:cursor-not-allowed">
+                                  {refreshingMonthlyPaymentIds.has(p.id)
+                                    ? <Loader2 size={12} className="animate-spin" />
+                                    : <RefreshCw size={12} />}
+                                  刷新状态
+                                </button>
+                              </>
+                            ) : p.monthly_pending === 1 ? (
+                              <span className="text-amber-700">
+                                <span className="font-medium">待月结付款：</span>请前往供应商对账中心发起付款申请
+                              </span>
+                            ) : null}
                           </div>
                         )}
 
