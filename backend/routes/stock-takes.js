@@ -323,7 +323,7 @@ router.post('/', requireAuth, async (req, res) => {
         accessToken, expiredAt,
         req.user.id, req.user.name || req.user.username]);
 
-    // 拉取该仓库库存>0的物资生成明细
+    // 拉取该仓库库存>0且非即买即用的物资生成明细
     const [invItems] = await conn.query(`
       SELECT i.item_id, i.quantity, i.unit,
              wi.name, wi.spec, wi.reference_price,
@@ -332,6 +332,7 @@ router.post('/', requireAuth, async (req, res) => {
       JOIN warehouse_items wi ON i.item_id = wi.id
       LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
       WHERE i.warehouse_id = ? AND i.quantity > 0 AND wi.status = 1
+        AND (wi.instant_use = 0 OR wi.instant_use IS NULL)
       ORDER BY wc.name ASC, wi.name ASC
     `, [warehouse_id]);
 
@@ -351,6 +352,53 @@ router.post('/', requireAuth, async (req, res) => {
 
     await conn.commit();
 
+    // 自动发送企微通知给仓库管理员/确认人
+    const recipientId = wh[0].manager_userid || wh[0].confirmer_userid;
+    let notifyResult = { sent: false, recipient: recipientId, reason: '' };
+    if (recipientId) {
+      try {
+        const { getWecomConfig, sendTemplateCardToUser } = require('./wecom');
+        const config = await getWecomConfig();
+        if (config) {
+          const baseUrl = config.app_domain || req.headers.origin || (req.protocol + '://' + req.get('host'));
+          const h5Url = `${baseUrl}/stock-take-operate?token=${accessToken}`;
+
+          const cardContent = {
+            card_type: 'button_interaction',
+            main_title: { title: `${wh[0].name} - ${period_month}月末盘点`, desc: '已创建盘点单，请尽快完成' },
+            sub_title_text: `盘点单号：${takeNo}\n共${invItems.length}项物资待盘点`,
+            emphasis_content: { title: period_month, desc: '归属月份' },
+            button_list: [{ text: '开始盘点', type: 1, url: h5Url }],
+          };
+          await sendTemplateCardToUser(config, recipientId, cardContent);
+
+          await pool.query(
+            'UPDATE stock_takes SET notification_sent_at = NOW() WHERE id = ?',
+            [id]
+          );
+          await pool.query(`
+            INSERT INTO stock_take_notifications (id, stock_take_id, warehouse_id,
+              recipient_wecom_userid, type, channel, send_status)
+            VALUES (?, ?, ?, ?, 'init', 'wecom_card', 'sent')
+          `, [uuidv4(), id, warehouse_id, recipientId]);
+
+          notifyResult = { sent: true, recipient: recipientId, reason: '' };
+        } else {
+          notifyResult.reason = '企微配置未初始化';
+        }
+      } catch (e) {
+        console.error('[stock-takes auto notify]', e);
+        notifyResult.reason = e.message || '通知发送失败';
+        await pool.query(`
+          INSERT INTO stock_take_notifications (id, stock_take_id, warehouse_id,
+            recipient_wecom_userid, type, channel, send_status, fail_reason)
+          VALUES (?, ?, ?, ?, 'init', 'wecom_card', 'failed', ?)
+        `, [uuidv4(), id, warehouse_id, recipientId, notifyResult.reason]);
+      }
+    } else {
+      notifyResult.reason = '仓库未设置管理员/确认人';
+    }
+
     // 返回详情
     const [takeRows] = await pool.query('SELECT * FROM stock_takes WHERE id = ?', [id]);
     const [items] = await pool.query('SELECT * FROM stock_take_items WHERE stock_take_id = ? ORDER BY category_name, item_name', [id]);
@@ -359,6 +407,7 @@ router.post('/', requireAuth, async (req, res) => {
       ...takeRows[0],
       items,
       message: `盘点单已创建，共${invItems.length}项物资`,
+      notification: notifyResult,
     });
   } catch (err) {
     await conn.rollback();

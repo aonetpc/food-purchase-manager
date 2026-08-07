@@ -109,6 +109,8 @@ interface StockTakeDetail {
   cost_summary?: string | CostSummary | null;
   review_sample?: ReviewSample[] | null;
   items: StockTakeItem[];
+  notification_sent_at?: string | null;
+  notification?: { sent: boolean; recipient: string; reason: string };
 }
 
 interface Warehouse {
@@ -312,7 +314,19 @@ export default function StockTakePanel() {
         remark: createRemark || undefined,
       });
       setShowCreateModal(false);
-      setSuccessMsg(data.message || '盘点单已创建');
+
+      // 组装成功消息，包含通知状态
+      let msg = data.message || '盘点单已创建';
+      if (data.notification) {
+        if (data.notification.sent) {
+          msg += `，企微通知已发送给 ${data.notification.recipient || '仓库管理员'}`;
+        } else if (data.notification.reason) {
+          msg += `，但企微通知发送失败（${data.notification.reason}），可稍后手动催办`;
+        } else {
+          msg += '，未发送通知（仓库未设置管理员/确认人）';
+        }
+      }
+      setSuccessMsg(msg);
       refreshAll();
       // 直接进入编辑
       if (data?.id) {
