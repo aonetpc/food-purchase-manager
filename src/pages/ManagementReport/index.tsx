@@ -16,7 +16,7 @@ interface CategoryNode {
   children?: CategoryNode[];
 }
 
-type TabKey = 'fixed-assets' | 'material-consumption' | 'inventory-check' | 'expense-detail';
+type TabKey = 'fixed-assets' | 'material-consumption' | 'expense-detail';
 
 type MatrixData = {
   departments: string[];
@@ -116,35 +116,52 @@ function DetailModal({ open, title, onClose, rows, columns }: {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
       <div
-        className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
+        className="bg-white w-full sm:max-w-xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-          <h3 className="font-semibold text-gray-800 text-base">{title}</h3>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg"><X size={18}/></button>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800 text-sm">{title}</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-md"><X size={16}/></button>
         </div>
         <div className="flex-1 overflow-auto">
           {!rows ? (
-            <div className="py-16 text-center text-gray-400"><p>加载中...</p></div>
+            <div className="py-12 text-center text-gray-400"><p className="text-xs">加载中...</p></div>
           ) : rows.length === 0 ? (
-            <div className="py-16 text-center text-gray-400"><AlertCircle size={36} className="mx-auto mb-2 opacity-50"/><p>暂无明细数据</p></div>
+            <div className="py-12 text-center text-gray-400">
+              <AlertCircle size={28} className="mx-auto mb-2 opacity-50"/>
+              <p className="text-xs">暂无明细数据</p>
+            </div>
           ) : (
-            <div className="overflow-x-auto -mx-5">
-              <table className="data-table min-w-full">
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
                 <thead>
-                  <tr>
+                  <tr className="bg-gray-50/60">
                     {columns.map(col => (
-                      <th key={col.key} style={{ textAlign: col.align || 'left' }}>{col.label}</th>
+                      <th
+                        key={col.key}
+                        className="px-3 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide"
+                        style={{ textAlign: col.align || 'left' }}
+                      >
+                        {col.label}
+                      </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-100">
                   {rows.map((row, i) => (
-                    <tr key={i}>
+                    <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}>
                       {columns.map(col => {
                         const val = row[col.key];
                         const text = col.format ? col.format(val) : (val === undefined || val === null || val === '' ? '-' : String(val));
-                        return <td key={col.key} style={{ textAlign: col.align || 'left' }}>{text}</td>;
+                        return (
+                          <td
+                            key={col.key}
+                            className="px-3 py-2 text-[11px] text-gray-700"
+                            style={{ textAlign: col.align || 'left' }}
+                          >
+                            {text}
+                          </td>
+                        );
                       })}
                     </tr>
                   ))}
@@ -408,13 +425,7 @@ export default function ManagementReport() {
     }
   };
 
-  const currentData: MatrixData | null =
-    tab === 'fixed-assets' ? fixedData :
-    tab === 'material-consumption' ? materialData : null;
-  const currentLoading =
-    tab === 'fixed-assets' ? fixedLoading :
-    tab === 'material-consumption' ? materialLoading :
-    tab === 'expense-detail' ? expLoading : false;
+  // 已移至各Tab分支内单独处理
 
   // 部门费用明细的筛选分类级联
   const flatCats = useMemo(() => flattenCategories(whCategories), [whCategories]);
@@ -434,7 +445,6 @@ export default function ManagementReport() {
           <p className="text-gray-500 mt-1 text-sm">
             {tab === 'fixed-assets' && '各部门固定资产库存价值，实时快照'}
             {tab === 'material-consumption' && '各部门当月原材料消耗（扫码领用）'}
-            {tab === 'inventory-check' && '开发中，敬请期待'}
             {tab === 'expense-detail' && '当月扫码领用消耗明细，支持筛选和导出'}
           </p>
         </div>
@@ -459,21 +469,11 @@ export default function ManagementReport() {
       <div className="no-print flex gap-2 overflow-x-auto pb-1">
         <TabButton label="固定资产库存" active={tab === 'fixed-assets'} onClick={() => setTab('fixed-assets')} />
         <TabButton label="原材料消耗" active={tab === 'material-consumption'} onClick={() => setTab('material-consumption')} />
-        <TabButton label="月末盘点" active={tab === 'inventory-check'} onClick={() => setTab('inventory-check')} disabled />
         <TabButton label="部门费用明细" active={tab === 'expense-detail'} onClick={() => setTab('expense-detail')} />
       </div>
 
-      {/* 盘点状态条 */}
-      <StockTakeStatusBar
-        month={format(currentMonth, 'M月')}
-        items={stockTakeProgress}
-        loading={stockTakeLoading}
-      />
-
       {/* Content */}
-      {tab === 'inventory-check' ? (
-        <PlaceholderCard type={tab} />
-      ) : tab === 'expense-detail' ? (
+      {tab === 'expense-detail' ? (
         <ExpenseDetailCard
           loading={expLoading}
           data={expData}
@@ -492,15 +492,31 @@ export default function ManagementReport() {
           page={expPage}
           setPage={(p) => { setExpPage(p); loadExpense(yearMonth, p); }}
         />
+      ) : tab === 'material-consumption' ? (
+        <>
+          {/* 盘点状态条：仅原材料消耗Tab显示 */}
+          <StockTakeStatusBar
+            month={format(currentMonth, 'M月')}
+            items={stockTakeProgress}
+            loading={stockTakeLoading}
+          />
+          <MatrixCard
+            title="原材料 · 当月消耗"
+            totalLabel="消耗总额"
+            data={materialData}
+            loading={materialLoading}
+            onCellClick={(cell) => openCellDetail({ type: 'material', ...cell })}
+            monthLabel={monthLabel}
+          />
+        </>
       ) : (
         <MatrixCard
-          title={tab === 'fixed-assets' ? '固定资产 · 库存价值' : '原材料 · 当月消耗'}
-          totalLabel={tab === 'fixed-assets' ? '库存总值' : '消耗总额'}
-          data={currentData}
-          loading={currentLoading}
-          onCellClick={(cell) => openCellDetail({ type: tab === 'fixed-assets' ? 'fixed' : 'material', ...cell })}
-          hideMonthLabel={tab === 'fixed-assets'}
-          monthLabel={monthLabel}
+          title="固定资产 · 库存价值"
+          totalLabel="库存总值"
+          data={fixedData}
+          loading={fixedLoading}
+          onCellClick={(cell) => openCellDetail({ type: 'fixed', ...cell })}
+          hideMonthLabel
         />
       )}
 
@@ -532,20 +548,7 @@ function TabButton({ label, active, onClick, disabled, badge }: { label: string;
   );
 }
 
-function PlaceholderCard({ type }: { type: TabKey }) {
-  const title = '月末盘点';
-  const desc = '预计支持：各仓库月末库存快照、与账面差异对比、盘点录入、差异报告。';
-  return (
-    <div className="card flex flex-col items-center justify-center py-20 text-center">
-      <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
-        <ClipboardCheck size={32} className="text-gray-400"/>
-      </div>
-      <h3 className="text-lg font-semibold text-gray-700 mb-1">{title}</h3>
-      <p className="text-sm text-gray-400 max-w-md">{desc}</p>
-      <p className="mt-3 text-xs text-gray-300">预计后续版本发布</p>
-    </div>
-  );
-}
+// PlaceholderCard 已移除：月末盘点Tab不再占位
 
 const STOCK_TAKE_STATUS_CONFIG: Record<StockTakeStatus, { icon: string; color: string }> = {
   completed: { icon: '✅', color: 'text-green-600' },
