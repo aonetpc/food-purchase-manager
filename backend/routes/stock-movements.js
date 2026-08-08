@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
+const { isManagerUser, getUserWarehouseFilter, getUserWarehouseIds } = require('../middleware/warehouseScope');
 
 // 清洗数字字符串：移除千分位逗号、全角逗号、空白、货币符号等
 function cleanNumber(val) {
@@ -13,46 +14,35 @@ function cleanNumber(val) {
   return isNaN(n) ? null : n;
 }
 
-/** 判断用户是否为管理角色（admin/finance/boss） */
-async function isManagerUser(userId) {
+/**
+ * 检查出入库操作权限（两层）：
+ *   1. 用户角色必须有「入库操作/出库操作」菜单权限（已由 rbac 中间件拦截）
+ *   2. 用户在该仓库必须是 manager（或属于 super role）
+ */
+async function requireWarehouseManager(req, res, next) {
+  const userId = req.user.id;
+  const warehouseId = req.body.warehouse_id;
+
+  // 超级角色直接过
+  if (await isManagerUser(userId)) return next();
+
+  // 其他用户：必须是此仓库的 warehouse_users.role='manager'
+  if (!warehouseId) return res.status(400).json({ error: '仓库不能为空' });
   try {
-    const [rows] = await pool.query(`
-      SELECT 1 FROM (
-        SELECT role_id FROM user_roles WHERE user_id = ?
-        UNION
-        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
-      ) t
-      JOIN roles r ON r.id = t.role_id
-      WHERE r.code IN ('admin', 'finance', 'boss')
-      LIMIT 1
-    `, [userId, userId]);
-    return rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/** 获取用户可访问的仓库权限条件 */
-async function getUserWarehouseFilter(user) {
-  if (await isManagerUser(user.id)) {
-    return { sql: '', params: [] };
-  }
-  const deptId = user.department_id;
-  if (!deptId) {
-    return { sql: ' AND 1=0', params: [] };
-  }
-  return {
-    sql: ' AND (w.department_id = ? OR w.type = ?)',
-    params: [deptId, 'main'],
-  };
-}
-
-/** 检查操作权限：只有管理角色才能入库/出库 */
-async function requireManagerForOperation(req, res, next) {
-  if (await isManagerUser(req.user.id)) {
+    const [rows] = await pool.query(
+      `SELECT 1 FROM warehouse_users
+       WHERE warehouse_id = ? AND user_id = ? AND role = 'manager'
+       LIMIT 1`,
+      [warehouseId, userId]
+    );
+    if (rows.length === 0) {
+      return res.status(403).json({ error: '无权限在此仓库执行操作，请先将该用户配置为此仓库的管理员' });
+    }
     return next();
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e.message });
   }
-  return res.status(403).json({ error: '无权限执行此操作，仅管理人员可操作出入库' });
 }
 
 // 出入库流水查询
@@ -103,8 +93,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 手动入库（仅管理人员）
-router.post('/inbound', requireManagerForOperation, async (req, res) => {
+// 手动入库（仅 super role 或此仓库的 manager）
+router.post('/inbound', requireWarehouseManager, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { warehouse_id, item_id, item_name, unit, reason, operator_id, operator_name, department_id, department_name } = req.body;
@@ -144,9 +134,9 @@ router.post('/inbound', requireManagerForOperation, async (req, res) => {
   }
 });
 
-// 批量入库（仅管理人员）
+// 批量入库（仅 super role 或此仓库的 manager）
 // body: { warehouse_id, operator_id, operator_name, department_id, department_name, items: [{ item_id, item_name, quantity, unit, unit_price, reason }] }
-router.post('/batch-inbound', requireManagerForOperation, async (req, res) => {
+router.post('/batch-inbound', requireWarehouseManager, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { warehouse_id, operator_id, operator_name, department_id, department_name, items } = req.body;
@@ -227,8 +217,8 @@ router.post('/batch-inbound', requireManagerForOperation, async (req, res) => {
   }
 });
 
-// 手动出库（仅管理人员）
-router.post('/outbound', requireManagerForOperation, async (req, res) => {
+// 手动出库（仅 super role 或此仓库的 manager）
+router.post('/outbound', requireWarehouseManager, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { warehouse_id, item_id, item_name, quantity, unit, unit_price, reason, operator_id, operator_name, department_id, department_name } = req.body;

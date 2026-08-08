@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
+const { isManagerUser } = require('../middleware/warehouseScope');
 
 // ================================================
 // 仓库 CRUD
@@ -17,10 +18,152 @@ router.get('/', async (req, res) => {
       WHERE w.status = 1
       ORDER BY w.sort_order ASC, w.created_at ASC
     `);
-    res.json(rows);
+
+    // 聚合每个仓库的管理员/查看人真实姓名（列表显示用，避免前端反复查询）
+    const warehouseIds = rows.map(r => r.id);
+    let userMap = {};
+    if (warehouseIds.length > 0) {
+      const placeholders = warehouseIds.map(() => '?').join(',');
+      const [wuRows] = await pool.query(
+        `SELECT wu.warehouse_id, wu.role, u.id as user_id, u.name as user_name, u.wecom_userid
+         FROM warehouse_users wu
+         JOIN users u ON u.id = wu.user_id
+         WHERE wu.warehouse_id IN (${placeholders})`,
+        warehouseIds
+      );
+      for (const r of wuRows) {
+        if (!userMap[r.warehouse_id]) userMap[r.warehouse_id] = [];
+        userMap[r.warehouse_id].push({ user_id: r.user_id, name: r.user_name, role: r.role, wecom_userid: r.wecom_userid });
+      }
+    }
+
+    // 加上 confirmer 的用户信息（它是单 userid 字符串，单独查）
+    const confirmerUserids = [...new Set(rows.map(r => r.confirmer_userid).filter(Boolean))];
+    let confirmerMap = {};
+    if (confirmerUserids.length > 0) {
+      const placeholders = confirmerUserids.map(() => '?').join(',');
+      const [cuRows] = await pool.query(
+        `SELECT id, name, wecom_userid FROM users WHERE wecom_userid IN (${placeholders})`,
+        confirmerUserids
+      );
+      cuRows.forEach(u => { confirmerMap[u.wecom_userid] = { user_id: u.id, name: u.name }; });
+    }
+
+    const result = rows.map(r => ({
+      ...r,
+      managers: (userMap[r.id] || []).filter(u => u.role === 'manager'),
+      viewers: (userMap[r.id] || []).filter(u => u.role === 'viewer'),
+      confirmer_name: r.confirmer_userid ? (confirmerMap[r.confirmer_userid]?.name || r.confirmer_userid) : null,
+    }));
+
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================
+// 仓库用户关联
+// ================================================
+
+// 获取某个仓库绑定的用户列表
+router.get('/:id/users', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query(
+      `SELECT wu.id, wu.role, u.id as user_id, u.name, u.username, u.wecom_userid, u.role as user_role_code
+       FROM warehouse_users wu
+       JOIN users u ON u.id = wu.user_id
+       WHERE wu.warehouse_id = ?
+       ORDER BY wu.role, u.name`,
+      [id]
+    );
+    // 再把 confirmer 也一起返回（单选，保持现有字段）
+    const [whRows] = await pool.query(`SELECT confirmer_userid FROM warehouses WHERE id = ?`, [id]);
+    const confirmer = whRows[0]?.confirmer_userid || null;
+    let confirmerUser = null;
+    if (confirmer) {
+      const [cuRows] = await pool.query(`SELECT id, name, wecom_userid FROM users WHERE wecom_userid = ? LIMIT 1`, [confirmer]);
+      confirmerUser = cuRows[0] ? { user_id: cuRows[0].id, name: cuRows[0].name, wecom_userid: cuRows[0].wecom_userid } : null;
+    }
+    res.json({
+      managers: rows.filter(r => r.role === 'manager').map(r => ({ user_id: r.user_id, name: r.name })),
+      viewers: rows.filter(r => r.role === 'viewer').map(r => ({ user_id: r.user_id, name: r.name })),
+      confirmer: confirmerUser,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 保存某个仓库的用户绑定（同时同步 confirmer_userid 到 warehouses 表）
+// body: { manager_ids: string[], viewer_ids: string[], confirmer_user_id?: string }
+router.put('/:id/users', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await isManagerUser(req.user.id))) {
+      return res.status(403).json({ error: '只有管理员可配置仓库用户' });
+    }
+    const { id } = req.params;
+    const { manager_ids = [], viewer_ids = [], confirmer_user_id } = req.body;
+
+    await conn.beginTransaction();
+
+    // 清理旧的仓库用户
+    await conn.query(`DELETE FROM warehouse_users WHERE warehouse_id = ?`, [id]);
+
+    // 插入管理员
+    for (const userId of [...new Set(manager_ids)].filter(Boolean)) {
+      await conn.query(
+        `INSERT INTO warehouse_users (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'manager')`,
+        [uuidv4(), id, userId]
+      );
+    }
+    // 插入查看人
+    for (const userId of [...new Set(viewer_ids)].filter(Boolean)) {
+      // 同一个人如果又是管理员就忽略 viewer
+      if (manager_ids.includes(userId)) continue;
+      await conn.query(
+        `INSERT INTO warehouse_users (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'viewer')`,
+        [uuidv4(), id, userId]
+      );
+    }
+
+    // 同步 warehouses.manager_userid（取第一个管理员的 wecom_userid，保持盘点模块兼容性）
+    const [firstManagerRow] = manager_ids[0]
+      ? await conn.query(`SELECT wecom_userid FROM users WHERE id = ?`, [manager_ids[0]])
+      : [[null]];
+    const firstWecomId = firstManagerRow[0]?.wecom_userid || null;
+
+    // 同步 confirmer（如果传了 confirmer_user_id，查 wecom_userid 写回去；不传则不改动）
+    let confirmerWecom = undefined;
+    if (confirmer_user_id !== undefined) {
+      if (!confirmer_user_id) {
+        confirmerWecom = null;
+      } else {
+        const [cuRows] = await conn.query(`SELECT wecom_userid FROM users WHERE id = ?`, [confirmer_user_id]);
+        confirmerWecom = cuRows[0]?.wecom_userid || null;
+      }
+    }
+
+    // 写回 warehouses 表
+    const fields = [];
+    const values = [];
+    fields.push('manager_userid = ?'); values.push(firstWecomId);
+    if (confirmerWecom !== undefined) { fields.push('confirmer_userid = ?'); values.push(confirmerWecom); }
+    values.push(id);
+    await conn.query(`UPDATE warehouses SET ${fields.join(', ')} WHERE id = ?`, values);
+
+    await conn.commit();
+    res.json({ success: true });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 

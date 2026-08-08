@@ -85,7 +85,18 @@ const MANAGER_ROLES = ['admin', 'finance', 'boss'];
 
 export default function StockMovement() {
   const { user } = useAuthStore();
-  const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
+
+  // 能不能显示操作按钮：
+  //   1. 超级角色（admin/finance/boss）默认可以
+  //   2. 其他角色：只要在权限里勾了"入库操作/出库操作"任意一项就都显示（操作最终接口会再二次校验 manager 绑定）
+  const actionCodes = user?.permissions?.codes || [];
+  const canOperate =
+    user
+      ? MANAGER_ROLES.includes(user.role) ||
+        (user.roles || []).some((r) => MANAGER_ROLES.includes(r as any)) ||
+        actionCodes.includes('action:inbound') ||
+        actionCodes.includes('action:outbound')
+      : false;
 
   const [warehouses, setWarehouses] = useState<WarehouseSummary[]>([]);
   const [movements, setMovements] = useState<StockMovementItem[]>([]);
@@ -298,7 +309,7 @@ export default function StockMovement() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">出入库记录</h1>
           <p className="text-gray-500 mt-1">查询物资出入库流水，支持手动入库 / 出库</p>
         </div>
-        {isManager && (
+        {canOperate && (
           <div className="flex gap-3">
             <button
               onClick={() => setBatchInboundOpen(true)}

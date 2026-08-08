@@ -1,41 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../db');
-
-/** 判断用户是否为管理角色（admin/finance/boss） */
-async function isManagerUser(userId) {
-  try {
-    const [rows] = await pool.query(`
-      SELECT 1 FROM (
-        SELECT role_id FROM user_roles WHERE user_id = ?
-        UNION
-        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
-      ) t
-      JOIN roles r ON r.id = t.role_id
-      WHERE r.code IN ('admin', 'finance', 'boss')
-      LIMIT 1
-    `, [userId, userId]);
-    return rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/** 获取用户可访问的仓库ID列表 */
-async function getUserWarehouseFilter(user) {
-  if (await isManagerUser(user.id)) {
-    return { sql: '', params: [] }; // 管理员看全部
-  }
-  // 普通用户：只能看本部门的仓库（含本部门绑定的 type='dept' 仓库）+ 总仓（type='main'）
-  const deptId = user.department_id;
-  if (!deptId) {
-    return { sql: ' AND 1=0', params: [] }; // 无部门权限则返回空
-  }
-  return {
-    sql: ' AND (w.department_id = ? OR w.type = ?)',
-    params: [deptId, 'main'],
-  };
-}
+const { getUserWarehouseFilter, getUserWarehouseIds, isManagerUser } = require('../middleware/warehouseScope');
 
 // 库存查询（按仓库筛选，含物资和分类信息）
 router.get('/', async (req, res) => {

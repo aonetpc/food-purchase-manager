@@ -21,6 +21,13 @@ import { useDepartmentStore } from '@/store/departmentStore';
 // 仓库类型：main 总仓 / dept 部门仓 / boss 老板仓
 type WarehouseType = 'main' | 'dept' | 'boss';
 
+interface WarehouseUser {
+  user_id: string;
+  name: string;
+  role: 'manager' | 'viewer';
+  wecom_userid?: string;
+}
+
 // 仓库
 interface Warehouse {
   id: string;
@@ -30,9 +37,22 @@ interface Warehouse {
   department_name?: string;
   manager_userid?: string;
   confirmer_userid?: string;
+  confirmer_name?: string;
+  managers?: WarehouseUser[];
+  viewers?: WarehouseUser[];
   location?: string;
   enable_stock_take?: number;
   created_at?: string;
+}
+
+// 系统用户
+interface SystemUser {
+  id: string;
+  name: string;
+  username: string;
+  phone?: string;
+  role?: string;
+  wecom_userid?: string;
 }
 
 // 分类树节点（最多 2 级）
@@ -69,10 +89,12 @@ interface WarehouseForm {
   name: string;
   type: WarehouseType;
   department_id: string;
-  manager_userid: string;
-  confirmer_userid: string;
   location: string;
   enable_stock_take: boolean;
+  // 用户选择（多选 user_id 数组）
+  manager_user_ids: string[];
+  viewer_user_ids: string[];
+  confirmer_user_id: string; // 单选，只一个确认人
 }
 
 // 分类表单
@@ -109,10 +131,11 @@ const emptyWarehouseForm = (): WarehouseForm => ({
   name: '',
   type: 'main',
   department_id: '',
-  manager_userid: '',
-  confirmer_userid: '',
   location: '',
   enable_stock_take: true,
+  manager_user_ids: [],
+  viewer_user_ids: [],
+  confirmer_user_id: '',
 });
 
 const emptyCategoryForm = (): CategoryForm => ({
@@ -159,6 +182,12 @@ export default function WarehouseManager() {
   const [warehouseForm, setWarehouseForm] = useState<WarehouseForm>(emptyWarehouseForm());
   const [warehouseFormError, setWarehouseFormError] = useState('');
   const [deleteWarehouseId, setDeleteWarehouseId] = useState<string | null>(null);
+  const [systemUsers, setSystemUsers] = useState<SystemUser[]>([]);
+  const [userFilter, setUserFilter] = useState<Record<'manager' | 'viewer' | 'confirmer', string>>({
+    manager: '',
+    viewer: '',
+    confirmer: '',
+  });
 
   // ===== 分类相关 state =====
   const [categoryTree, setCategoryTree] = useState<CategoryNode[]>([]);
@@ -184,13 +213,23 @@ export default function WarehouseManager() {
   // 部门列表（用于仓库关联部门选择）
   const { departments, fetchDepartments } = useDepartmentStore();
 
-  // ===== 初始化：加载仓库、分类树、部门 =====
+  // ===== 初始化：加载仓库、分类树、部门、用户列表 =====
   useEffect(() => {
     fetchWarehouses();
     fetchCategoryTree();
     fetchDepartments();
+    fetchSystemUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const fetchSystemUsers = async () => {
+    try {
+      const data = await api.get<SystemUser[]>('/users');
+      setSystemUsers(data.filter((u: any) => u.status !== 0));
+    } catch (e: any) {
+      console.warn('fetch users failed', e);
+    }
+  };
 
   // ===== 物资搜索/筛选变化时重新加载（带防抖） =====
   useEffect(() => {
@@ -218,6 +257,7 @@ export default function WarehouseManager() {
   const openAddWarehouse = () => {
     setWarehouseForm(emptyWarehouseForm());
     setWarehouseFormError('');
+    setUserFilter({ manager: '', viewer: '', confirmer: '' });
     setShowWarehouseModal(true);
   };
 
@@ -227,12 +267,18 @@ export default function WarehouseManager() {
       name: w.name,
       type: w.type,
       department_id: w.department_id || '',
-      manager_userid: w.manager_userid || '',
-      confirmer_userid: w.confirmer_userid || '',
       location: w.location || '',
       enable_stock_take: w.enable_stock_take == null ? true : Number(w.enable_stock_take) === 1,
+      manager_user_ids: (w.managers || []).map((u) => u.user_id),
+      viewer_user_ids: (w.viewers || []).map((u) => u.user_id),
+      confirmer_user_id: w.confirmer_name
+        ? systemUsers.find((u) => u.name === w.confirmer_name)?.id ||
+          systemUsers.find((u) => u.wecom_userid === w.confirmer_userid)?.id ||
+          ''
+        : systemUsers.find((u) => u.wecom_userid === w.confirmer_userid)?.id || '',
     });
     setWarehouseFormError('');
+    setUserFilter({ manager: '', viewer: '', confirmer: '' });
     setShowWarehouseModal(true);
   };
 
@@ -248,23 +294,35 @@ export default function WarehouseManager() {
       setWarehouseFormError('部门仓必须关联部门');
       return;
     }
+    // 基础 payload（仓库本身字段）
     const payload = {
       name: warehouseForm.name.trim(),
       type: warehouseForm.type,
       department_id: warehouseForm.department_id || null,
-      manager_userid: warehouseForm.manager_userid.trim() || null,
-      confirmer_userid: warehouseForm.confirmer_userid.trim() || null,
       location: warehouseForm.location.trim() || null,
       enable_stock_take: warehouseForm.enable_stock_take ? 1 : 0,
+      // 这两个原来的字段已经迁移到关联表保存了；为保持兼容仍传空，后端会用 PUT /:id/users 写入正确值
+      manager_userid: null,
+      confirmer_userid: null,
     };
     try {
+      let savedWarehouseId = warehouseForm.id;
       if (warehouseForm.id) {
         const updated = await api.put<Warehouse>(`/warehouses/${warehouseForm.id}`, payload);
         setWarehouses((prev) => prev.map((w) => (w.id === warehouseForm.id ? updated : w)));
       } else {
         const created = await api.post<Warehouse>('/warehouses', payload);
+        savedWarehouseId = created.id;
         setWarehouses((prev) => [...prev, created]);
       }
+      // 保存用户绑定（管理员/查看人/确认人）
+      await api.put(`/warehouses/${savedWarehouseId}/users`, {
+        manager_ids: warehouseForm.manager_user_ids,
+        viewer_ids: warehouseForm.viewer_user_ids,
+        confirmer_user_id: warehouseForm.confirmer_user_id || null,
+      });
+      // 重新拉一次仓库列表（带最新姓名）
+      await fetchWarehouses();
       setShowWarehouseModal(false);
     } catch (err: any) {
       setWarehouseFormError(err.message || '保存失败');
@@ -691,8 +749,27 @@ export default function WarehouseManager() {
                           <span className={`tag ${typeConf.color}`}>{typeConf.label}</span>
                         </td>
                         <td className="text-gray-700">{w.department_name || '-'}</td>
-                        <td className="text-gray-700">{w.manager_userid || '-'}</td>
-                        <td className="text-gray-700">{w.confirmer_userid || '-'}</td>
+                        <td className="text-gray-700">
+                          {w.managers && w.managers.length > 0
+                            ? (
+                              <div className="flex flex-wrap gap-1">
+                                {w.managers.map((m) => (
+                                  <span
+                                    key={m.user_id}
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-primary-50 text-primary-700"
+                                  >
+                                    {m.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )
+                            : w.manager_userid ? (
+                              <span className="text-gray-400 text-xs">{w.manager_userid} <AlertCircle size={10} className="inline -mt-0.5" /> 未绑定用户</span>
+                            ) : (
+                              '-'
+                            )}
+                        </td>
+                        <td className="text-gray-700">{w.confirmer_name || w.confirmer_userid || '-'}</td>
                         <td className="text-gray-700">{w.location || '-'}</td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -903,7 +980,7 @@ export default function WarehouseManager() {
           onClick={() => setShowWarehouseModal(false)}
         >
           <div
-            className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+            className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[92vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
@@ -975,28 +1052,246 @@ export default function WarehouseManager() {
                   <p className="text-xs text-gray-400 mt-1">绑定部门后，该仓库的入库确认将通知对应部门确认人</p>
                 )}
               </div>
-              {/* 管理员 */}
+              {/* 仓库管理员（多选） */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">管理员</label>
-                <input
-                  type="text"
-                  value={warehouseForm.manager_userid}
-                  onChange={(e) => setWarehouseForm({ ...warehouseForm, manager_userid: e.target.value })}
-                  placeholder="请输入管理员姓名"
-                  className="input-field"
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  仓库管理员<span className="text-xs text-gray-400 font-normal ml-1">可多选，可执行出入库</span>
+                </label>
+                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-50">
+                  <div className="relative px-3 py-2 border-b border-gray-100 bg-gray-50">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <input
+                      type="text"
+                      value={userFilter.manager}
+                      onChange={(e) => setUserFilter({ ...userFilter, manager: e.target.value })}
+                      placeholder="搜索姓名..."
+                      className="w-full pl-7 pr-2 py-1 text-sm bg-transparent outline-none"
+                    />
+                  </div>
+                  <div className="max-h-40 overflow-y-auto">
+                    {systemUsers
+                      .filter(
+                        (u) =>
+                          !userFilter.manager ||
+                          u.name.includes(userFilter.manager) ||
+                          u.username.includes(userFilter.manager),
+                      )
+                      .map((u) => {
+                        const selected = warehouseForm.manager_user_ids.includes(u.id);
+                        return (
+                          <label
+                            key={u.id}
+                            className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${
+                              selected ? 'bg-primary-50' : ''
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() =>
+                                setWarehouseForm((f) =>
+                                  selected
+                                    ? { ...f, manager_user_ids: f.manager_user_ids.filter((id) => id !== u.id) }
+                                    : { ...f, manager_user_ids: [...f.manager_user_ids, u.id] },
+                                )
+                              }
+                              className="w-3.5 h-3.5 rounded text-primary-600"
+                            />
+                            <span className="flex-1 text-sm text-gray-800">{u.name}</span>
+                            <span className="text-xs text-gray-400">{u.role}</span>
+                          </label>
+                        );
+                      })}
+                    {systemUsers.length === 0 && (
+                      <div className="px-3 py-3 text-xs text-gray-400 text-center">加载中...</div>
+                    )}
+                  </div>
+                </div>
+                {warehouseForm.manager_user_ids.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {warehouseForm.manager_user_ids.map((id) => {
+                      const u = systemUsers.find((x) => x.id === id);
+                      if (!u) return null;
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-primary-100 text-primary-700"
+                        >
+                          {u.name}
+                          <button
+                            onClick={() =>
+                              setWarehouseForm((f) => ({
+                                ...f,
+                                manager_user_ids: f.manager_user_ids.filter((x) => x !== id),
+                              }))
+                            }
+                            className="text-primary-500 hover:text-primary-800"
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              {/* 确认人 */}
+
+              {/* 仓库查看人（多选） */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">确认人（企微userid）</label>
-                <input
-                  type="text"
-                  value={warehouseForm.confirmer_userid}
-                  onChange={(e) => setWarehouseForm({ ...warehouseForm, confirmer_userid: e.target.value })}
-                  placeholder="企业微信userid，多个用逗号分隔"
-                  className="input-field"
-                />
-                <p className="text-xs text-gray-400 mt-1">采购入库后，系统将向此确认人发送应用消息通知</p>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  仓库查看人<span className="text-xs text-gray-400 font-normal ml-1">可多选，仅查看数据</span>
+                </label>
+                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-50">
+                  <div className="relative px-3 py-2 border-b border-gray-100 bg-gray-50">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <input
+                      type="text"
+                      value={userFilter.viewer}
+                      onChange={(e) => setUserFilter({ ...userFilter, viewer: e.target.value })}
+                      placeholder="搜索姓名..."
+                      className="w-full pl-7 pr-2 py-1 text-sm bg-transparent outline-none"
+                    />
+                  </div>
+                  <div className="max-h-40 overflow-y-auto">
+                    {systemUsers
+                      .filter(
+                        (u) =>
+                          !warehouseForm.manager_user_ids.includes(u.id) &&
+                          (!userFilter.viewer ||
+                            u.name.includes(userFilter.viewer) ||
+                            u.username.includes(userFilter.viewer)),
+                      )
+                      .map((u) => {
+                        const selected = warehouseForm.viewer_user_ids.includes(u.id);
+                        return (
+                          <label
+                            key={u.id}
+                            className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${
+                              selected ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() =>
+                                setWarehouseForm((f) =>
+                                  selected
+                                    ? { ...f, viewer_user_ids: f.viewer_user_ids.filter((id) => id !== u.id) }
+                                    : { ...f, viewer_user_ids: [...f.viewer_user_ids, u.id] },
+                                )
+                              }
+                              className="w-3.5 h-3.5 rounded text-primary-600"
+                            />
+                            <span className="flex-1 text-sm text-gray-800">{u.name}</span>
+                            <span className="text-xs text-gray-400">{u.role}</span>
+                          </label>
+                        );
+                      })}
+                    {warehouseForm.manager_user_ids.length > 0 &&
+                      systemUsers.filter(
+                        (u) => !warehouseForm.manager_user_ids.includes(u.id),
+                      ).length === 0 && (
+                        <div className="px-3 py-3 text-xs text-gray-400 text-center">已没有可分配的用户（管理员自动含查看权限）</div>
+                      )}
+                  </div>
+                </div>
+                {warehouseForm.viewer_user_ids.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {warehouseForm.viewer_user_ids.map((id) => {
+                      const u = systemUsers.find((x) => x.id === id);
+                      if (!u) return null;
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700"
+                        >
+                          {u.name}
+                          <button
+                            onClick={() =>
+                              setWarehouseForm((f) => ({
+                                ...f,
+                                viewer_user_ids: f.viewer_user_ids.filter((x) => x !== id),
+                              }))
+                            }
+                            className="text-blue-500 hover:text-blue-800"
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 确认人（单选，一个仓库一个确认人） */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  确认人<span className="text-xs text-gray-400 font-normal ml-1">采购入库/盘点将通知此人</span>
+                </label>
+                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-50">
+                  <div className="relative px-3 py-2 border-b border-gray-100 bg-gray-50">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <input
+                      type="text"
+                      value={userFilter.confirmer}
+                      onChange={(e) => setUserFilter({ ...userFilter, confirmer: e.target.value })}
+                      placeholder="搜索姓名..."
+                      className="w-full pl-7 pr-2 py-1 text-sm bg-transparent outline-none"
+                    />
+                  </div>
+                  <div className="max-h-40 overflow-y-auto">
+                    {systemUsers
+                      .filter(
+                        (u) =>
+                          !userFilter.confirmer ||
+                          u.name.includes(userFilter.confirmer) ||
+                          u.username.includes(userFilter.confirmer),
+                      )
+                      .map((u) => {
+                        const selected = warehouseForm.confirmer_user_id === u.id;
+                        return (
+                          <label
+                            key={u.id}
+                            className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${
+                              selected ? 'bg-amber-50' : ''
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              checked={selected}
+                              onChange={() =>
+                                setWarehouseForm((f) => ({
+                                  ...f,
+                                  confirmer_user_id: selected ? '' : u.id,
+                                }))
+                              }
+                              className="w-3.5 h-3.5 text-amber-600"
+                            />
+                            <span className="flex-1 text-sm text-gray-800">{u.name}</span>
+                            <span className="text-xs text-gray-400">{u.role}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+                {warehouseForm.confirmer_user_id && (() => {
+                  const u = systemUsers.find((x) => x.id === warehouseForm.confirmer_user_id);
+                  if (!u) return null;
+                  return (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700">
+                        {u.name}
+                        <button
+                          onClick={() => setWarehouseForm((f) => ({ ...f, confirmer_user_id: '' }))}
+                          className="text-amber-500 hover:text-amber-800"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
               {/* 仓库位置 */}
               <div>
