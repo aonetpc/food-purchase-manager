@@ -99,8 +99,9 @@ router.get('/:id/users', async (req, res) => {
 });
 
 // 保存某个仓库的用户绑定（同时同步 confirmer_userid 到 warehouses 表）
-// body: { manager_ids?: string[], viewer_ids?: string[], confirmer_user_id?: string }
+// body: { manager_ids?: string[], viewer_ids?: string[], confirmer_user_id?: string, confirmer_userid?: string }
 // 严格遵循"有传才更新"原则，未传的字段保持数据库原值不变
+// confirmer_userid (企微 userid 原文) 优先级高于 confirmer_user_id (系统用户 id)
 router.put('/:id/users', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -110,9 +111,11 @@ router.put('/:id/users', async (req, res) => {
     const { id } = req.params;
     const hasManagerIds = 'manager_ids' in req.body;
     const hasViewerIds = 'viewer_ids' in req.body;
-    const hasConfirmerId = 'confirmer_user_id' in req.body;
+    const hasConfirmerOld = 'confirmer_user_id' in req.body;
+    const hasConfirmerNew = 'confirmer_userid' in req.body;
+    const hasConfirmer = hasConfirmerOld || hasConfirmerNew;
 
-    if (!hasManagerIds && !hasViewerIds && !hasConfirmerId) {
+    if (!hasManagerIds && !hasViewerIds && !hasConfirmer) {
       return res.status(400).json({ error: '没有需要更新的字段' });
     }
 
@@ -166,8 +169,13 @@ router.put('/:id/users', async (req, res) => {
       values.push(firstWecomId);
     }
 
-    // 仅当明确传了 confirmer_user_id 时才更新 confirmer_userid
-    if (hasConfirmerId) {
+    // 新字段 confirmer_userid 优先级高：直接把前端字符串原文写入数据库
+    if (hasConfirmerNew) {
+      const raw = req.body.confirmer_userid;
+      fields.push('confirmer_userid = ?');
+      values.push(raw || null);
+    } else if (hasConfirmerOld) {
+      // 兼容旧字段 confirmer_user_id（系统用户 id），通过 users 表反查 wecom_userid
       const confirmerUserId = req.body.confirmer_user_id;
       if (!confirmerUserId) {
         fields.push('confirmer_userid = ?');
