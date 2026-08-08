@@ -3,10 +3,10 @@
  *
  * 判定顺序：
  *   1. 超级角色（admin / finance / boss）→ 全仓库
- *   2. 其他用户 → 以下 3 个集合的并集：
+ *   2. 其他用户 → 以下 2 个集合的并集：
  *        A. 在 warehouse_users 里被配为 manager 或 viewer 的仓库
  *        B. 本部门下属的仓库（warehouses.department_id = user.department_id）
- *        C. 所有 type = 'main' 的总仓
+ *      （总仓 main 默认不再对非超级角色可见，必须通过 A 明确配置）
  *
  * 对外提供 3 个工具函数：
  *   isManagerUser(userId)              -> bool   是不是超级角色
@@ -63,11 +63,7 @@ async function getUserWarehouseIds(user) {
       rowsB.forEach(r => r.id && ids.add(r.id));
     }
 
-    // C. 所有 type='main' 总仓
-    const [rowsC] = await pool.query(
-      `SELECT id FROM warehouses WHERE status = 1 AND type = 'main'`
-    );
-    rowsC.forEach(r => r.id && ids.add(r.id));
+    // C. 总仓 (type='main') 默认不再对非超级角色可见，必须在 A 明确配置
   } catch (e) {
     console.error('[warehouseScope.getUserWarehouseIds] error:', e);
   }

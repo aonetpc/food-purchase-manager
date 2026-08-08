@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const pool = require('../db');
 const { getUserWarehouseFilter, getUserWarehouseIds, isManagerUser } = require('../middleware/warehouseScope');
 
 // 库存查询（按仓库筛选，含物资和分类信息）

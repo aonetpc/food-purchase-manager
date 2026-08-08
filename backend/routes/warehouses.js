@@ -2,22 +2,26 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
-const { isManagerUser } = require('../middleware/warehouseScope');
+const { isManagerUser, getUserWarehouseFilter } = require('../middleware/warehouseScope');
 
 // ================================================
 // 仓库 CRUD
 // ================================================
 
-// 获取仓库列表
+// 获取仓库列表（按当前用户可见范围过滤）
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.query(`
+    const perm = await getUserWarehouseFilter(req.user, 'w');
+    let sql = `
       SELECT w.*, d.name as department_name
       FROM warehouses w
       LEFT JOIN departments d ON w.department_id = d.id
       WHERE w.status = 1
-      ORDER BY w.sort_order ASC, w.created_at ASC
-    `);
+    `;
+    const params = [...perm.params];
+    sql += perm.sql;
+    sql += ' ORDER BY w.sort_order ASC, w.created_at ASC';
+    const [rows] = await pool.query(sql, params);
 
     // 聚合每个仓库的管理员/查看人真实姓名（列表显示用，避免前端反复查询）
     const warehouseIds = rows.map(r => r.id);
