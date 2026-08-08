@@ -216,13 +216,14 @@ async function tryUpdateCardButton(stockTakeId, recipientWecomUserid, type, repl
 
 /**
  * 进度看板：某月各需盘点仓库的状态
- * GET /stock-takes/progress/:month  (month格式: 2025-07)
+ * GET /stock-takes/progress/:month  (month格式: 2025-07 或 2025 年度4位)
  * query: take_type = 'monthly' (default) | 'annual'
  */
 router.get('/progress/:month', requireAuth, async (req, res) => {
   try {
-    const { month } = req.params; // YYYY-MM
+    const { month } = req.params; // YYYY-MM 或 YYYY（年度）
     const take_type = req.query.take_type || 'monthly';
+    const isYear = /^\d{4}$/.test(month); // 4位纯数字=年度
 
     // 查所有需要盘点的仓库
     const [warehouses] = await pool.query(`
@@ -235,15 +236,28 @@ router.get('/progress/:month', requireAuth, async (req, res) => {
       ORDER BY w.sort_order ASC
     `);
 
-    // 查该月各仓库的盘点单
-    const [takes] = await pool.query(`
-      SELECT id, warehouse_id, take_no, status, review_result, take_type,
-             operator_name, reviewed_by_name, reviewed_at,
-             created_at, period_month
-      FROM stock_takes st
-      WHERE st.period_month = ? AND st.take_type = ?
-      ORDER BY created_at DESC
-    `, [month, take_type]);
+    // 查该月/年各仓库的盘点单
+    let takes;
+    if (isYear) {
+      // 年度筛选：LIKE 'YYYY%'
+      [takes] = await pool.query(`
+        SELECT id, warehouse_id, take_no, status, review_result, take_type,
+               operator_name, reviewed_by_name, reviewed_at,
+               created_at, period_month
+        FROM stock_takes st
+        WHERE st.period_month LIKE ? AND st.take_type = ?
+        ORDER BY created_at DESC
+      `, [`${month}%`, take_type]);
+    } else {
+      [takes] = await pool.query(`
+        SELECT id, warehouse_id, take_no, status, review_result, take_type,
+               operator_name, reviewed_by_name, reviewed_at,
+               created_at, period_month
+        FROM stock_takes st
+        WHERE st.period_month = ? AND st.take_type = ?
+        ORDER BY created_at DESC
+      `, [month, take_type]);
+    }
 
     // 组装结果
     const result = warehouses.map(wh => {
@@ -2007,28 +2021,29 @@ router.get('/trends', requireAuth, async (req, res) => {
   try {
     const { warehouse_id, periods = 6, take_type } = req.query;
     const limit = Math.min(Math.max(parseInt(periods, 10) || 6, 1), 36);
-    const { toNum } = require('../utils/pdf');
+    const toNum = (v) => Number(v) || 0;
 
     const [rows] = await pool.query(`
-      SELECT st.period_month, st.warehouse_id, w.name as warehouse_name, st.take_type,
-             IFNULL(SUM(sti.actual_value - sti.system_value), 0) as total_diff_value,
-             COUNT(*) as take_count
-      FROM stock_takes st
-      JOIN stock_take_items sti ON st.id = sti.stock_take_id
-      JOIN warehouses w ON st.warehouse_id = w.id
-      WHERE st.status = 'completed'
-        AND (? IS NULL OR st.warehouse_id = ?)
-        AND st.take_type = IFNULL(?, 'monthly')
-      GROUP BY st.period_month, st.warehouse_id, st.id
-      ORDER BY st.period_month DESC
-      LIMIT ?
+      SELECT * FROM (
+        SELECT st.period_month,
+               IFNULL(SUM(sti.actual_value - sti.system_value), 0) as total_diff_value,
+               COUNT(DISTINCT st.id) as take_count,
+               GROUP_CONCAT(DISTINCT w.name) as warehouse_names
+        FROM stock_takes st
+        JOIN stock_take_items sti ON st.id = sti.stock_take_id
+        JOIN warehouses w ON st.warehouse_id = w.id
+        WHERE st.status = 'completed'
+          AND (? IS NULL OR st.warehouse_id = ?)
+          AND st.take_type = IFNULL(?, 'monthly')
+        GROUP BY st.period_month
+        ORDER BY st.period_month DESC
+        LIMIT ?
+      ) t ORDER BY t.period_month ASC
     `, [warehouse_id || null, warehouse_id || null, take_type || null, limit]);
 
     const result = rows.map(r => ({
       period_month: r.period_month,
-      warehouse_id: r.warehouse_id,
-      warehouse_name: r.warehouse_name,
-      take_type: r.take_type,
+      warehouse_name: r.warehouse_names || '-',
       total_diff_value: toNum(r.total_diff_value),
       take_count: r.take_count,
     }));

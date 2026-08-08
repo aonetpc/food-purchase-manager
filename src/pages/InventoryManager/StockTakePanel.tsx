@@ -156,6 +156,15 @@ function getRecentMonths(count = 12): string[] {
   return arr;
 }
 
+function getRecentYears(count = 5): string[] {
+  const arr: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < count; i++) {
+    arr.push(String(now.getFullYear() - i));
+  }
+  return arr;
+}
+
 function formatDateTime(s?: string | null): string {
   if (!s) return '-';
   const d = new Date(s);
@@ -168,6 +177,14 @@ function diffColor(v: number): string {
   if (v > 0) return 'text-emerald-600';
   if (v < 0) return 'text-red-600';
   return 'text-gray-400';
+}
+
+// 格式化 period_month 显示：年度类型只显示年份
+function formatPeriod(periodMonth: string, takeType?: string): string {
+  if (takeType === 'annual' && periodMonth && periodMonth.length >= 4) {
+    return periodMonth.slice(0, 4);
+  }
+  return periodMonth;
 }
 
 function parseCostSummary(raw: string | CostSummary | null | undefined): CostSummary | null {
@@ -191,10 +208,15 @@ function StatusBadge({ status, size = 'sm' }: { status: StockTakeStatus; size?: 
 }
 
 // ===== 主组件 =====
-export default function StockTakePanel() {
+interface StockTakePanelProps {
+  currentTab: 'monthly' | 'annual' | 'trend';
+}
+
+export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
   const { user } = useAuthStore();
   const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
   const canReview = user ? CAN_REVIEW_ROLES.includes(user.role) : false;
+  const isAnnual = currentTab === 'annual';
 
   // 视图状态
   const [view, setView] = useState<ViewMode>('list');
@@ -202,6 +224,7 @@ export default function StockTakePanel() {
 
   // 列表 / 看板
   const [selectedMonth, setSelectedMonth] = useState<string>(getDefaultMonth());
+  const [selectedYear, setSelectedYear] = useState<string>(String(new Date().getFullYear()));
   const [progress, setProgress] = useState<ProgressItem[]>([]);
   const [list, setList] = useState<StockTakeListItem[]>([]);
   const [loadingProgress, setLoadingProgress] = useState(false);
@@ -217,12 +240,10 @@ export default function StockTakePanel() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createWarehouseId, setCreateWarehouseId] = useState('');
   const [createMonth, setCreateMonth] = useState(getDefaultMonth());
+  const [createYear, setCreateYear] = useState(String(new Date().getFullYear()));
   const [createRemark, setCreateRemark] = useState('');
-  const [createTakeType, setCreateTakeType] = useState<'monthly' | 'annual'>('monthly');
   const [creating, setCreating] = useState(false);
 
-  // P3：盘点类型 Tab
-  const [takeTypeTab, setTakeTypeTab] = useState<'monthly' | 'annual' | 'trend'>('monthly');
   // 重新生成链接
   const [refreshUrlData, setRefreshUrlData] = useState<{
     stock_take_id?: string;
@@ -258,10 +279,11 @@ export default function StockTakePanel() {
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
 
   // ---- 拉取进度看板 ----
-  const fetchProgress = useCallback(async (month: string, takeType: 'monthly' | 'annual' = takeTypeTab as 'monthly' | 'annual') => {
+  const fetchProgress = useCallback(async (period: string, takeType: 'monthly' | 'annual' = currentTab === 'annual' ? 'annual' : 'monthly') => {
+    if (currentTab === 'trend') return;
     setLoadingProgress(true);
     try {
-      const data = await api.get<ProgressItem[]>(`/stock-takes/progress/${month}?take_type=${takeType}`);
+      const data = await api.get<ProgressItem[]>(`/stock-takes/progress/${period}?take_type=${takeType}`);
       setProgress(data || []);
     } catch (err: any) {
       setError(err.message || '获取盘点进度失败');
@@ -269,13 +291,15 @@ export default function StockTakePanel() {
     } finally {
       setLoadingProgress(false);
     }
-  }, [takeTypeTab]);
+  }, [currentTab]);
 
   // ---- 拉取盘点单列表 ----
   const fetchList = useCallback(async () => {
+    if (currentTab === 'trend') return;
     setLoadingList(true);
     try {
-      const params: any = { period_month: selectedMonth, take_type: takeTypeTab };
+      const period = isAnnual ? selectedYear : selectedMonth;
+      const params: any = { period_month: period, take_type: isAnnual ? 'annual' : 'monthly' };
       const data = await api.get<StockTakeListItem[]>('/stock-takes', params);
       setList(data || []);
     } catch (err: any) {
@@ -284,30 +308,33 @@ export default function StockTakePanel() {
     } finally {
       setLoadingList(false);
     }
-  }, [selectedMonth, takeTypeTab]);
+  }, [selectedMonth, selectedYear, isAnnual, currentTab]);
 
   // ---- 拉取仓库列表 ----
   useEffect(() => {
     api.get<Warehouse[]>('/warehouses').then(setWarehouses).catch(() => {});
   }, []);
 
-  // 月份变化时重新加载看板+列表
+  // 月份/年份变化时重新加载看板+列表
   useEffect(() => {
+    if (currentTab === 'trend') return;
     setError('');
-    fetchProgress(selectedMonth);
+    const period = isAnnual ? selectedYear : selectedMonth;
+    fetchProgress(period);
     fetchList();
-  }, [selectedMonth, fetchProgress, fetchList]);
+  }, [selectedMonth, selectedYear, isAnnual, currentTab, fetchProgress, fetchList]);
 
-  // 切换盘点类型 Tab 时刷新数据
+  // 切换 Tab 时刷新数据
   useEffect(() => {
-    if (takeTypeTab === 'trend') {
+    if (currentTab === 'trend') {
       fetchTrend();
     } else {
-      fetchProgress(selectedMonth, takeTypeTab);
+      const period = isAnnual ? selectedYear : selectedMonth;
+      fetchProgress(period);
       fetchList();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [takeTypeTab]);
+  }, [currentTab]);
 
   // 成功提示3秒后清除
   useEffect(() => {
@@ -318,9 +345,11 @@ export default function StockTakePanel() {
   }, [successMsg]);
 
   const refreshAll = useCallback(() => {
-    fetchProgress(selectedMonth);
+    if (currentTab === 'trend') return;
+    const period = isAnnual ? selectedYear : selectedMonth;
+    fetchProgress(period);
     fetchList();
-  }, [selectedMonth, fetchProgress, fetchList]);
+  }, [selectedMonth, selectedYear, isAnnual, currentTab, fetchProgress, fetchList]);
 
   // 可盘点仓库（仅 enable_stock_take=1）
   const stockTakeWarehouses = useMemo(
@@ -331,24 +360,30 @@ export default function StockTakePanel() {
   // ---- 打开发起盘点弹窗 ----
   const openCreateModal = () => {
     setCreateWarehouseId('');
-    setCreateMonth(selectedMonth);
+    if (isAnnual) {
+      setCreateYear(selectedYear);
+    } else {
+      setCreateMonth(selectedMonth);
+    }
     setCreateRemark('');
-    setCreateTakeType(takeTypeTab === 'annual' ? 'annual' : 'monthly');
     setShowCreateModal(true);
   };
 
   // ---- 提交发起盘点 ----
   const handleCreate = async () => {
     if (!createWarehouseId) { setError('请选择仓库'); return; }
-    if (!createMonth) { setError('请选择归属月份'); return; }
+    const period = isAnnual ? createYear : createMonth;
+    if (!period) { setError(isAnnual ? '请选择归属年度' : '请选择归属月份'); return; }
     setCreating(true);
     setError('');
     try {
+      // 年度盘点：period_month 存为 YYYY-12（canonical 月份）
+      const periodMonth = isAnnual ? `${createYear}-12` : createMonth;
       const data: any = await api.post<StockTakeDetail>('/stock-takes', {
         warehouse_id: createWarehouseId,
-        period_month: createMonth,
+        period_month: periodMonth,
         remark: createRemark || undefined,
-        take_type: createTakeType,
+        take_type: isAnnual ? 'annual' : 'monthly',
       });
       setShowCreateModal(false);
 
@@ -365,7 +400,7 @@ export default function StockTakePanel() {
       setSuccessMsg(msg);
       refreshAll();
       if (data?.id) {
-        if (createTakeType === 'annual') {
+        if (isAnnual) {
           openDetail(data.id, 'detail');
         } else {
           openEdit(data.id);
@@ -635,14 +670,17 @@ export default function StockTakePanel() {
   const fetchTrend = useCallback(async () => {
     setLoadingTrend(true);
     try {
-      const params: any = { periods: trendPeriods, take_type: takeTypeTab === 'trend' ? 'monthly' : (takeTypeTab as 'monthly' | 'annual') };
+      const params: any = { periods: trendPeriods, take_type: 'monthly' };
       if (trendWarehouseId) params.warehouse_id = trendWarehouseId;
       const data = await api.get<any[]>('/stock-takes/trends', params);
-      setTrendData(data || []);
+      setTrendData(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      setError(err.message || '获取历史趋势失败');
+      setTrendData([]);
     } finally {
       setLoadingTrend(false);
     }
-  }, [takeTypeTab, trendPeriods, trendWarehouseId]);
+  }, [trendPeriods, trendWarehouseId]);
 
   // ---- 复核：更新抽样核验数量 ----
   const updateSample = (itemDetailId: string, verifyQty: number | null) => {
@@ -717,9 +755,11 @@ export default function StockTakePanel() {
         <div>
           <h1 className="text-xl font-bold text-gray-800 mb-2 flex items-center gap-2">
             <ClipboardList size={22} className="text-primary-600" />
-            库存盘点
+            {currentTab === 'trend' ? '历史趋势' : isAnnual ? '年度固定资产盘点' : '月结原材料盘点'}
           </h1>
-          <p className="text-sm text-gray-500">查看各仓库盘点进度、结果及历史趋势</p>
+          <p className="text-sm text-gray-500">
+            {currentTab === 'trend' ? '查看各仓库盘点盈亏趋势分析' : isAnnual ? '年度固定资产盘点管理' : '查看各仓库盘点进度、结果'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {view !== 'list' && (
@@ -728,9 +768,9 @@ export default function StockTakePanel() {
               <span>返回列表</span>
             </button>
           )}
-          {takeTypeTab !== 'trend' && view === 'list' && isManager && (
+          {currentTab !== 'trend' && view === 'list' && isManager && (
             <button onClick={openCreateModal} className="btn-primary flex items-center gap-2">
-              <Plus size={18} /> <span>发起{takeTypeTab === 'annual' ? '年度固定资产' : '月末原材料'}盘点</span>
+              <Plus size={18} /> <span>发起{isAnnual ? '年度固定资产' : '月末原材料'}盘点</span>
             </button>
           )}
           {view === 'list' && (
@@ -741,23 +781,6 @@ export default function StockTakePanel() {
           )}
         </div>
       </div>
-
-      {/* Tab 切换 */}
-      {view === 'list' && (
-        <div className="mb-5 border-b border-gray-200 -mx-4 px-4 sm:mx-0 sm:px-0">
-          <div className="flex gap-2 flex-wrap">
-            <TabButton active={takeTypeTab === 'monthly'} onClick={() => setTakeTypeTab('monthly')}>
-              月末原材料盘点
-            </TabButton>
-            <TabButton active={takeTypeTab === 'annual'} onClick={() => setTakeTypeTab('annual')}>
-              年度固定资产盘点
-            </TabButton>
-            <TabButton active={takeTypeTab === 'trend'} onClick={() => setTakeTypeTab('trend')}>
-              历史趋势
-            </TabButton>
-          </div>
-        </div>
-      )}
 
       {/* 全局提示 */}
       {error && (
@@ -778,21 +801,33 @@ export default function StockTakePanel() {
       {/* ============ 视图：列表 / 看板 ============ */}
       {view === 'list' && (
         <>
-          {takeTypeTab !== 'trend' && (
+          {currentTab !== 'trend' && (
             <>
-          {/* 月份选择 */}
+          {/* 月份/年度选择 */}
           <div className="card flex flex-wrap items-center gap-3 py-4">
             <div className="flex items-center gap-2 text-gray-600">
               <Clock size={18} />
-              <span className="text-sm font-medium">归属月份</span>
+              <span className="text-sm font-medium">{isAnnual ? '归属年度' : '归属月份'}</span>
             </div>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="input-field w-44"
-            />
-            {selectedMonth === getDefaultMonth() && (
+            {isAnnual ? (
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="input-field w-32"
+              >
+                {getRecentYears(5).map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="input-field w-44"
+              />
+            )}
+            {!isAnnual && selectedMonth === getDefaultMonth() && (
               <span className="tag tag-warning">默认上月</span>
             )}
             <div className="ml-auto text-sm text-gray-500">
@@ -847,7 +882,7 @@ export default function StockTakePanel() {
                           <div>盘点人：<span className="text-gray-700">{p.operator_name}</span></div>
                         )}
                         {p.take_count > 0 && (
-                          <div>本月盘点次数：<span className="text-gray-700">{p.take_count}</span></div>
+                          <div>{isAnnual ? '本年' : '本月'}盘点次数：<span className="text-gray-700">{p.take_count}</span></div>
                         )}
                         {p.reviewed_at && (
                           <div>复核完成：{formatDateTime(p.reviewed_at)}</div>
@@ -861,9 +896,12 @@ export default function StockTakePanel() {
                             <button
                               onClick={() => {
                                 setCreateWarehouseId(p.warehouse_id);
-                                setCreateMonth(selectedMonth);
+                                if (isAnnual) {
+                                  setCreateYear(selectedYear);
+                                } else {
+                                  setCreateMonth(selectedMonth);
+                                }
                                 setCreateRemark('');
-                                setCreateTakeType(takeTypeTab === 'annual' ? 'annual' : 'monthly');
                                 setShowCreateModal(true);
                               }}
                               className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1"
@@ -954,7 +992,7 @@ export default function StockTakePanel() {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <ClipboardList size={18} className="text-primary-600" />
-              <h2 className="text-lg font-semibold text-gray-800">盘点单列表（{selectedMonth}）</h2>
+              <h2 className="text-lg font-semibold text-gray-800">盘点单列表（{isAnnual ? selectedYear : selectedMonth}）</h2>
             </div>
             <div className="card overflow-hidden p-0">
               {loadingList ? (
@@ -964,7 +1002,7 @@ export default function StockTakePanel() {
               ) : list.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16">
                   <ClipboardList size={42} className="text-gray-300 mb-2" />
-                  <p className="text-gray-400">本月暂无盘点单</p>
+                  <p className="text-gray-400">{isAnnual ? '本年' : '本月'}暂无盘点单</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1059,7 +1097,7 @@ export default function StockTakePanel() {
           )}
 
           {/* 历史趋势 Tab */}
-          {takeTypeTab === 'trend' && (
+          {currentTab === 'trend' && (
             <div>
               <div className="flex items-end gap-3 mb-5 flex-wrap">
                 <div>
@@ -1194,7 +1232,7 @@ export default function StockTakePanel() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-                <Plus size={18} className="text-primary-600" /> 发起盘点
+                <Plus size={18} className="text-primary-600" /> 发起{isAnnual ? '年度固定资产' : '月末原材料'}盘点
               </h3>
               <button onClick={() => !creating && setShowCreateModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X size={20} />
@@ -1215,33 +1253,39 @@ export default function StockTakePanel() {
                   ))}
                 </select>
                 {stockTakeWarehouses.length === 0 && (
-                  <p className="text-xs text-gray-400 mt-1">暂无开启月末盘点的仓库</p>
+                  <p className="text-xs text-gray-400 mt-1">暂无开启盘点的仓库</p>
                 )}
               </div>
-              {/* 盘点类型 */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">盘点类型 <span className="text-danger-500">*</span></label>
-                <select value={createTakeType} onChange={e => setCreateTakeType(e.target.value as any)}
-                  className="input-field" disabled={creating}>
-                  <option value="monthly">月末盘点（原材料分类）</option>
-                  <option value="annual">年度盘点（固定资产分类）</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">归属月份 <span className="text-danger-500">*</span></label>
-                <input
-                  type="month"
-                  value={createMonth}
-                  onChange={(e) => setCreateMonth(e.target.value)}
-                  className="input-field"
-                  disabled={creating}
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {isAnnual ? '归属年度' : '归属月份'} <span className="text-danger-500">*</span>
+                </label>
+                {isAnnual ? (
+                  <select
+                    value={createYear}
+                    onChange={(e) => setCreateYear(e.target.value)}
+                    className="input-field"
+                    disabled={creating}
+                  >
+                    {getRecentYears(5).map((y) => (
+                      <option key={y} value={y}>{y} 年</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="month"
+                    value={createMonth}
+                    onChange={(e) => setCreateMonth(e.target.value)}
+                    className="input-field"
+                    disabled={creating}
+                  />
+                )}
               </div>
               <div className={`mb-4 p-3 rounded-lg text-xs ${
-                createTakeType === 'annual' ? 'bg-purple-50 border border-purple-200 text-purple-700'
+                isAnnual ? 'bg-purple-50 border border-purple-200 text-purple-700'
                   : 'bg-blue-50 border border-blue-200 text-blue-700'
               }`}>
-                {createTakeType === 'annual' ? (
+                {isAnnual ? (
                   <>本次将只拉取【固定资产】一级分类下的库存物资生成盘点明细。<br />建议每年盘点一次，通常在年底进行。</>
                 ) : (
                   <>本次将只拉取【原材料】一级分类下的库存物资生成盘点明细（排除固定资产）。<br />建议每月月初进行上月盘点。</>
@@ -1266,7 +1310,7 @@ export default function StockTakePanel() {
             </div>
             <div className="flex justify-end gap-2 mt-6">
               <button onClick={() => setShowCreateModal(false)} className="btn-secondary" disabled={creating}>取消</button>
-              <button onClick={handleCreate} className="btn-primary flex items-center gap-2" disabled={creating || !createWarehouseId || !createMonth}>
+              <button onClick={handleCreate} className="btn-primary flex items-center gap-2" disabled={creating || !createWarehouseId || (!isAnnual && !createMonth) || (isAnnual && !createYear)}>
                 {creating ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                 {creating ? '创建中...' : '确认发起'}
               </button>
@@ -1433,7 +1477,7 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
             </div>
             <div className="text-sm text-gray-500 flex flex-wrap items-center gap-x-4 gap-y-1">
               <span className="font-mono">{detail.take_no}</span>
-              <span>归属月份：<span className="text-gray-700 font-medium">{detail.period_month}</span></span>
+              <span>{detail.take_type === 'annual' ? '归属年度' : '归属月份'}：<span className="text-gray-700 font-medium">{formatPeriod(detail.period_month, detail.take_type)}</span></span>
               {detail.department_name && <span>部门：{detail.department_name}</span>}
             </div>
             <div className="text-xs text-gray-400 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -1842,7 +1886,7 @@ function ReviewView({ loading, detail, samples, error, canEdit, updateSample, on
               <div className="text-sm text-gray-500 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span className="font-medium text-gray-700">{detail.warehouse_name}</span>
                 <span className="font-mono">{detail.take_no}</span>
-                <span>归属月份：<span className="text-gray-700">{detail.period_month}</span></span>
+                <span>{detail.take_type === 'annual' ? '归属年度' : '归属月份'}：<span className="text-gray-700">{formatPeriod(detail.period_month, detail.take_type)}</span></span>
               </div>
             )}
           </div>

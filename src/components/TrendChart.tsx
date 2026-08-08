@@ -6,8 +6,10 @@ import { formatCurrency } from '@/utils/format';
 
 export default function TrendChart({ data }: { data: any[] }) {
   const chartData = useMemo(() => {
+    if (!Array.isArray(data)) return [];
     const map = new Map<string, { month: string; 盈亏: number }>();
     data.forEach(d => {
+      if (!d || !d.period_month) return;
       const m = d.period_month;
       const cur = map.get(m) || { month: m, 盈亏: 0 };
       cur.盈亏 += Number(d.total_diff_value) || 0;
@@ -16,7 +18,13 @@ export default function TrendChart({ data }: { data: any[] }) {
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
   }, [data]);
 
-  if (chartData.length === 0) return null;
+  if (chartData.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-5 text-center text-gray-400">
+        <p className="text-sm">暂无数据或数据加载失败</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">

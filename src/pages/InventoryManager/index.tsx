@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, RefreshCw, AlertTriangle, Package, Warehouse as WarehouseIcon, Boxes, ClipboardCheck } from 'lucide-react';
+import { Search, RefreshCw, AlertTriangle, Package, Warehouse as WarehouseIcon, Boxes, ClipboardCheck, Calendar, TrendingUp } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/format';
@@ -33,7 +33,7 @@ interface InventoryItem {
 export default function InventoryManager() {
   const { user } = useAuthStore();
   const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
-  const [activeTab, setActiveTab] = useState<'inventory' | 'stock-take'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'stock-take' | 'annual-take' | 'trend'>('inventory');
   const [summary, setSummary] = useState<WarehouseSummary[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -147,23 +147,47 @@ export default function InventoryManager() {
           库存明细
         </button>
         {isManager && (
-          <button
-            onClick={() => setActiveTab('stock-take')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'stock-take'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <ClipboardCheck size={16} />
-            月结盘点
-          </button>
+          <>
+            <button
+              onClick={() => setActiveTab('stock-take')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'stock-take'
+                  ? 'border-primary-600 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <ClipboardCheck size={16} />
+              月结盘点
+            </button>
+            <button
+              onClick={() => setActiveTab('annual-take')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'annual-take'
+                  ? 'border-primary-600 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Calendar size={16} />
+              年度盘点
+            </button>
+            <button
+              onClick={() => setActiveTab('trend')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'trend'
+                  ? 'border-primary-600 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <TrendingUp size={16} />
+              历史趋势
+            </button>
+          </>
         )}
       </div>
 
-      {/* 盘点 Tab */}
-      {activeTab === 'stock-take' && isManager ? (
-        <StockTakePanel />
+      {/* 盘点相关 Tab */}
+      {isManager && (activeTab === 'stock-take' || activeTab === 'annual-take' || activeTab === 'trend') ? (
+        <StockTakePanel currentTab={activeTab === 'stock-take' ? 'monthly' : activeTab === 'annual-take' ? 'annual' : 'trend'} />
       ) : (
       <>
       {/* 顶部汇总卡片：全部 + 各仓库 */}
