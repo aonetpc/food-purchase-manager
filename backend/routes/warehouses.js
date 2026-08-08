@@ -99,7 +99,8 @@ router.get('/:id/users', async (req, res) => {
 });
 
 // 保存某个仓库的用户绑定（同时同步 confirmer_userid 到 warehouses 表）
-// body: { manager_ids: string[], viewer_ids: string[], confirmer_user_id?: string }
+// body: { manager_ids?: string[], viewer_ids?: string[], confirmer_user_id?: string }
+// 严格遵循"有传才更新"原则，未传的字段保持数据库原值不变
 router.put('/:id/users', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -107,54 +108,82 @@ router.put('/:id/users', async (req, res) => {
       return res.status(403).json({ error: '只有管理员可配置仓库用户' });
     }
     const { id } = req.params;
-    const { manager_ids = [], viewer_ids = [], confirmer_user_id } = req.body;
+    const hasManagerIds = 'manager_ids' in req.body;
+    const hasViewerIds = 'viewer_ids' in req.body;
+    const hasConfirmerId = 'confirmer_user_id' in req.body;
+
+    if (!hasManagerIds && !hasViewerIds && !hasConfirmerId) {
+      return res.status(400).json({ error: '没有需要更新的字段' });
+    }
 
     await conn.beginTransaction();
 
-    // 清理旧的仓库用户
-    await conn.query(`DELETE FROM warehouse_users WHERE warehouse_id = ?`, [id]);
-
-    // 插入管理员
-    for (const userId of [...new Set(manager_ids)].filter(Boolean)) {
-      await conn.query(
-        `INSERT INTO warehouse_users (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'manager')`,
-        [uuidv4(), id, userId]
+    // 处理 warehouse_users 表（manager/viewer 绑定）
+    if (hasManagerIds || hasViewerIds) {
+      // 获取当前仓库已有的管理员和查看人
+      const [existingRows] = await conn.query(
+        `SELECT user_id, role FROM warehouse_users WHERE warehouse_id = ?`,
+        [id]
       );
-    }
-    // 插入查看人
-    for (const userId of [...new Set(viewer_ids)].filter(Boolean)) {
-      // 同一个人如果又是管理员就忽略 viewer
-      if (manager_ids.includes(userId)) continue;
-      await conn.query(
-        `INSERT INTO warehouse_users (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'viewer')`,
-        [uuidv4(), id, userId]
-      );
-    }
+      const currentManagers = existingRows.filter(r => r.role === 'manager').map(r => r.user_id);
+      const currentViewers = existingRows.filter(r => r.role === 'viewer').map(r => r.user_id);
 
-    // 同步 warehouses.manager_userid（取第一个管理员的 wecom_userid，保持盘点模块兼容性）
-    const [firstManagerRow] = manager_ids[0]
-      ? await conn.query(`SELECT wecom_userid FROM users WHERE id = ?`, [manager_ids[0]])
-      : [[null]];
-    const firstWecomId = firstManagerRow[0]?.wecom_userid || null;
+      const finalManagerIds = hasManagerIds ? req.body.manager_ids : currentManagers;
+      const finalViewerIds = hasViewerIds ? req.body.viewer_ids : currentViewers;
 
-    // 同步 confirmer（如果传了 confirmer_user_id，查 wecom_userid 写回去；不传则不改动）
-    let confirmerWecom = undefined;
-    if (confirmer_user_id !== undefined) {
-      if (!confirmer_user_id) {
-        confirmerWecom = null;
-      } else {
-        const [cuRows] = await conn.query(`SELECT wecom_userid FROM users WHERE id = ?`, [confirmer_user_id]);
-        confirmerWecom = cuRows[0]?.wecom_userid || null;
+      // 清理旧的仓库用户
+      await conn.query(`DELETE FROM warehouse_users WHERE warehouse_id = ?`, [id]);
+
+      // 插入管理员
+      for (const userId of [...new Set(finalManagerIds)].filter(Boolean)) {
+        await conn.query(
+          `INSERT INTO warehouse_users (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'manager')`,
+          [uuidv4(), id, userId]
+        );
+      }
+      // 插入查看人
+      for (const userId of [...new Set(finalViewerIds)].filter(Boolean)) {
+        if (finalManagerIds.includes(userId)) continue;
+        await conn.query(
+          `INSERT INTO warehouse_users (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'viewer')`,
+          [uuidv4(), id, userId]
+        );
       }
     }
 
     // 写回 warehouses 表
     const fields = [];
     const values = [];
-    fields.push('manager_userid = ?'); values.push(firstWecomId);
-    if (confirmerWecom !== undefined) { fields.push('confirmer_userid = ?'); values.push(confirmerWecom); }
-    values.push(id);
-    await conn.query(`UPDATE warehouses SET ${fields.join(', ')} WHERE id = ?`, values);
+
+    // 仅当明确传了 manager_ids 时才更新 manager_userid
+    if (hasManagerIds) {
+      const managerIds = req.body.manager_ids || [];
+      const [firstManagerRow] = managerIds[0]
+        ? await conn.query(`SELECT wecom_userid FROM users WHERE id = ?`, [managerIds[0]])
+        : [[null]];
+      const firstWecomId = firstManagerRow[0]?.wecom_userid || null;
+      fields.push('manager_userid = ?');
+      values.push(firstWecomId);
+    }
+
+    // 仅当明确传了 confirmer_user_id 时才更新 confirmer_userid
+    if (hasConfirmerId) {
+      const confirmerUserId = req.body.confirmer_user_id;
+      if (!confirmerUserId) {
+        fields.push('confirmer_userid = ?');
+        values.push(null);
+      } else {
+        const [cuRows] = await conn.query(`SELECT wecom_userid FROM users WHERE id = ?`, [confirmerUserId]);
+        const confirmerWecom = cuRows[0]?.wecom_userid || null;
+        fields.push('confirmer_userid = ?');
+        values.push(confirmerWecom);
+      }
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await conn.query(`UPDATE warehouses SET ${fields.join(', ')} WHERE id = ?`, values);
+    }
 
     await conn.commit();
     res.json({ success: true });

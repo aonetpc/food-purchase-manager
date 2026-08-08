@@ -188,6 +188,11 @@ export default function WarehouseManager() {
     viewer: '',
     confirmer: '',
   });
+  const [initialUserIds, setInitialUserIds] = useState<{
+    manager_ids: string[];
+    viewer_ids: string[];
+    confirmer_user_id: string;
+  } | null>(null);
 
   // ===== 分类相关 state =====
   const [categoryTree, setCategoryTree] = useState<CategoryNode[]>([]);
@@ -224,7 +229,7 @@ export default function WarehouseManager() {
 
   const fetchSystemUsers = async () => {
     try {
-      const data = await api.get<SystemUser[]>('/users');
+      const data = await api.get<SystemUser[]>('/auth/users');
       setSystemUsers(data.filter((u: any) => u.status !== 0));
     } catch (e: any) {
       console.warn('fetch users failed', e);
@@ -258,10 +263,18 @@ export default function WarehouseManager() {
     setWarehouseForm(emptyWarehouseForm());
     setWarehouseFormError('');
     setUserFilter({ manager: '', viewer: '', confirmer: '' });
+    setInitialUserIds(null);
     setShowWarehouseModal(true);
   };
 
   const openEditWarehouse = (w: Warehouse) => {
+    const managerIds = (w.managers || []).map((u) => u.user_id);
+    const viewerIds = (w.viewers || []).map((u) => u.user_id);
+    const confirmerId = w.confirmer_name
+      ? systemUsers.find((u) => u.name === w.confirmer_name)?.id ||
+        systemUsers.find((u) => u.wecom_userid === w.confirmer_userid)?.id ||
+        ''
+      : systemUsers.find((u) => u.wecom_userid === w.confirmer_userid)?.id || '';
     setWarehouseForm({
       id: w.id,
       name: w.name,
@@ -269,13 +282,14 @@ export default function WarehouseManager() {
       department_id: w.department_id || '',
       location: w.location || '',
       enable_stock_take: w.enable_stock_take == null ? true : Number(w.enable_stock_take) === 1,
-      manager_user_ids: (w.managers || []).map((u) => u.user_id),
-      viewer_user_ids: (w.viewers || []).map((u) => u.user_id),
-      confirmer_user_id: w.confirmer_name
-        ? systemUsers.find((u) => u.name === w.confirmer_name)?.id ||
-          systemUsers.find((u) => u.wecom_userid === w.confirmer_userid)?.id ||
-          ''
-        : systemUsers.find((u) => u.wecom_userid === w.confirmer_userid)?.id || '',
+      manager_user_ids: managerIds,
+      viewer_user_ids: viewerIds,
+      confirmer_user_id: confirmerId,
+    });
+    setInitialUserIds({
+      manager_ids: [...managerIds],
+      viewer_ids: [...viewerIds],
+      confirmer_user_id: confirmerId,
     });
     setWarehouseFormError('');
     setUserFilter({ manager: '', viewer: '', confirmer: '' });
@@ -315,12 +329,38 @@ export default function WarehouseManager() {
         savedWarehouseId = created.id;
         setWarehouses((prev) => [...prev, created]);
       }
-      // 保存用户绑定（管理员/查看人/确认人）
-      await api.put(`/warehouses/${savedWarehouseId}/users`, {
-        manager_ids: warehouseForm.manager_user_ids,
-        viewer_ids: warehouseForm.viewer_user_ids,
-        confirmer_user_id: warehouseForm.confirmer_user_id || null,
-      });
+
+      // 保存用户绑定：对比初始值，只提交变化的字段
+      const userPayload: { manager_ids?: string[]; viewer_ids?: string[]; confirmer_user_id?: string | null } = {};
+      const sortedEqual = (a: string[], b: string[]) =>
+        a.length === b.length && a.every((v, i) => v === b[i]);
+
+      if (!initialUserIds) {
+        // 新增仓库：始终提交全部
+        userPayload.manager_ids = warehouseForm.manager_user_ids;
+        userPayload.viewer_ids = warehouseForm.viewer_user_ids;
+        userPayload.confirmer_user_id = warehouseForm.confirmer_user_id || null;
+      } else {
+        const mgrChanged = !sortedEqual(
+          [...warehouseForm.manager_user_ids].sort(),
+          [...initialUserIds.manager_ids].sort(),
+        );
+        const viewerChanged = !sortedEqual(
+          [...warehouseForm.viewer_user_ids].sort(),
+          [...initialUserIds.viewer_ids].sort(),
+        );
+        const confirmerChanged = warehouseForm.confirmer_user_id !== initialUserIds.confirmer_user_id;
+
+        if (mgrChanged) userPayload.manager_ids = warehouseForm.manager_user_ids;
+        if (viewerChanged) userPayload.viewer_ids = warehouseForm.viewer_user_ids;
+        if (confirmerChanged) userPayload.confirmer_user_id = warehouseForm.confirmer_user_id || null;
+      }
+
+      // 只有当有变化字段时才调用用户绑定接口
+      if (Object.keys(userPayload).length > 0) {
+        await api.put(`/warehouses/${savedWarehouseId}/users`, userPayload);
+      }
+
       // 重新拉一次仓库列表（带最新姓名）
       await fetchWarehouses();
       setShowWarehouseModal(false);
