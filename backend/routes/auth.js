@@ -262,7 +262,7 @@ router.get('/debug-permissions', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/users', requireAuth, requireRole('admin'), async (req, res) => {
+router.get('/users', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid, created_at, last_login_at FROM users ORDER BY created_at ASC'
