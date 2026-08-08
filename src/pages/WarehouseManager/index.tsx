@@ -339,9 +339,6 @@ export default function WarehouseManager() {
       department_id: warehouseForm.department_id || null,
       location: warehouseForm.location.trim() || null,
       enable_stock_take: warehouseForm.enable_stock_take ? 1 : 0,
-      // 这两个原来的字段已经迁移到关联表保存了；为保持兼容仍传空，后端会用 PUT /:id/users 写入正确值
-      manager_userid: null,
-      confirmer_userid: null,
     };
     try {
       let savedWarehouseId = warehouseForm.id;
