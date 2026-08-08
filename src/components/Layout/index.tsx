@@ -151,7 +151,7 @@ export default function Layout() {
     { code: 'menu:temp-workers', name: '外请人员', path: '/temp-workers', icon: 'Users' },
     { code: 'menu:temp-audit', name: '打卡审核', path: '/temp-audit', icon: 'Check' },
     { code: 'menu:temp-assessment', name: '月底考核', path: '/temp-assessment', icon: 'Calendar' },
-    { code: 'menu:temp-stats', name: '统计看板', path: '/temp-stats', icon: 'BarChart3' },
+    { code: 'menu:temp-stats', name: '外请人工看板', path: '/temp-stats', icon: 'BarChart3' },
     { code: 'menu:wecom', name: '企业微信管理', path: '/wecom', icon: 'Smartphone' },
   ];
 

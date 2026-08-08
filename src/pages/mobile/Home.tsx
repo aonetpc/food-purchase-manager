@@ -257,8 +257,8 @@ export default function MobileHome() {
     },
     hasPermission('menu:m-temp-stats') && {
       key: 'temp-stats',
-      title: '统计看板',
-      desc: '打卡数据统计',
+      title: '外请人工看板',
+      desc: '打卡、考核及工资结算',
       icon: '📈',
       color: 'from-indigo-500 to-purple-500',
       path: '/m/temp-stats',

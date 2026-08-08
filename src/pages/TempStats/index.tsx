@@ -128,10 +128,10 @@ export default function TempStats() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-serif font-bold text-gray-800">统计看板</h1>
-          <p className="text-gray-500 mt-1">查看外请人员打卡统计数据</p>
+          <h1 className="text-xl sm:text-2xl font-serif font-bold text-gray-800">外请人工看板</h1>
+          <p className="text-gray-500 mt-1">查看外请人员打卡、考核及工资结算数据</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={handleExportSalary}
             className="btn-primary flex items-center gap-2"
@@ -166,7 +166,7 @@ export default function TempStats() {
       ) : (
         <>
           {overview && (
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="card p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -218,7 +218,7 @@ export default function TempStats() {
           )}
 
           {overview && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="card p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-gray-800">本月通过金额</h2>
