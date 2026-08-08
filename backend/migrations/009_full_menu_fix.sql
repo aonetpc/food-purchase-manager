@@ -41,61 +41,68 @@ WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'action:user:manage')
 LIMIT 1;
 
 -- ================================================
--- 5. 为管理员角色分配所有权限
+-- 5. 增量补充各角色的基础菜单权限（NOT EXISTS 保证不覆盖用户手动配置）
+--    注意：绝不再 DELETE role_permissions，以免每次部署覆盖管理员在页面上的手动配置
 -- ================================================
-DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE code = 'admin');
 
-INSERT INTO role_permissions (id, role_id, permission_id)
-SELECT UUID(), r.id, p.id
+-- 5.1 admin：补充缺失的菜单权限（只增不改不删）
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
-WHERE r.code = 'admin' AND p.status = 1;
+WHERE r.code = 'admin'
+  AND p.type = 'menu'
+  AND p.status = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM role_permissions rp
+    WHERE rp.role_id = r.id AND rp.permission_id = p.id
+  );
 
--- ================================================
--- 6. 为财务角色分配权限
--- ================================================
-DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE code = 'finance');
-
-INSERT INTO role_permissions (id, role_id, permission_id)
-SELECT UUID(), r.id, p.id
+-- 5.2 finance：增量补充基础查看/导出权限（白名单里如果已配置则跳过）
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
 FROM roles r
-CROSS JOIN permissions p
+JOIN permissions p ON p.code IN (
+  'menu:daily', 'menu:monthly', 'menu:yearly', 'menu:query',
+  'menu:m-daily', 'menu:m-yearly', 'menu:m-query', 'menu:m-monthly',
+  'action:entry:export', 'action:reimbursement:export'
+)
 WHERE r.code = 'finance'
-  AND p.code IN (
-    'menu:daily', 'menu:monthly', 'menu:yearly', 'menu:query',
-    'menu:m-daily', 'menu:m-yearly', 'menu:m-query', 'menu:m-monthly',
-    'action:entry:export', 'action:reimbursement:export'
+  AND p.status = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM role_permissions rp
+    WHERE rp.role_id = r.id AND rp.permission_id = p.id
   );
 
--- ================================================
--- 7. 为董事长角色分配权限
--- ================================================
-DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE code = 'boss');
-
-INSERT INTO role_permissions (id, role_id, permission_id)
-SELECT UUID(), r.id, p.id
+-- 5.3 boss：增量补充基础查看/导出权限（白名单里如果已配置则跳过）
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
 FROM roles r
-CROSS JOIN permissions p
+JOIN permissions p ON p.code IN (
+  'menu:daily', 'menu:monthly', 'menu:yearly', 'menu:query',
+  'menu:m-daily', 'menu:m-yearly', 'menu:m-query', 'menu:m-monthly',
+  'action:entry:export'
+)
 WHERE r.code = 'boss'
-  AND p.code IN (
-    'menu:daily', 'menu:monthly', 'menu:yearly', 'menu:query',
-    'menu:m-daily', 'menu:m-yearly', 'menu:m-query', 'menu:m-monthly',
-    'action:entry:export'
+  AND p.status = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM role_permissions rp
+    WHERE rp.role_id = r.id AND rp.permission_id = p.id
   );
 
--- ================================================
--- 8. 为普通员工角色分配权限
--- ================================================
-DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE code = 'viewer');
-
-INSERT INTO role_permissions (id, role_id, permission_id)
-SELECT UUID(), r.id, p.id
+-- 5.4 viewer：增量补充基础查看权限（只增不改不删）
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
 FROM roles r
-CROSS JOIN permissions p
+JOIN permissions p ON p.code IN (
+  'menu:daily', 'menu:yearly', 'menu:query',
+  'menu:m-daily', 'menu:m-yearly', 'menu:m-query'
+)
 WHERE r.code = 'viewer'
-  AND p.code IN (
-    'menu:daily', 'menu:yearly', 'menu:query',
-    'menu:m-daily', 'menu:m-yearly', 'menu:m-query'
+  AND p.status = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM role_permissions rp
+    WHERE rp.role_id = r.id AND rp.permission_id = p.id
   );
 
 -- ================================================
