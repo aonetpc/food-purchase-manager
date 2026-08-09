@@ -226,15 +226,18 @@ router.get('/progress/:month', requireAuth, async (req, res) => {
     const isYear = /^\d{4}$/.test(month); // 4位纯数字=年度
 
     // 查所有需要盘点的仓库
+    // 参与月末盘点开关（enable_stock_take）只控制月末原材料盘点，不影响年度固定资产盘点
     const [warehouses] = await pool.query(`
       SELECT w.id, w.name, w.type, w.manager_userid, w.confirmer_userid,
              d.name as department_name,
              w.department_id
       FROM warehouses w
       LEFT JOIN departments d ON w.department_id = d.id
-      WHERE w.status = 1 AND w.enable_stock_take = 1
+      WHERE w.status = 1
+        AND (? = 'monthly' AND w.enable_stock_take = 1
+             OR ? = 'annual')
       ORDER BY w.sort_order ASC
-    `);
+    `, [take_type, take_type]);
 
     // 查该月/年各仓库的盘点单
     let takes;
@@ -414,10 +417,12 @@ router.post('/', requireAuth, async (req, res) => {
     if (!warehouse_id) return res.status(400).json({ error: '请选择仓库' });
     if (!period_month) return res.status(400).json({ error: '请选择归属月份' });
 
-    // 检查仓库是否参与盘点
+    // 检查仓库是否参与盘点（参与月末盘点开关 only 控制月末原材料盘点）
     const [wh] = await conn.query('SELECT * FROM warehouses WHERE id = ? AND status = 1', [warehouse_id]);
     if (wh.length === 0) return res.status(400).json({ error: '仓库不存在' });
-    if (!wh[0].enable_stock_take) return res.status(400).json({ error: '该仓库未开启月末盘点' });
+    if (take_type === 'monthly' && !wh[0].enable_stock_take) {
+      return res.status(400).json({ error: '该仓库未开启月末盘点' });
+    }
 
     // 检查该仓库该月是否已有未完成的盘点
     const [existing] = await conn.query(
