@@ -38,7 +38,8 @@ const ROLE_OPTIONS = [
   { value: 'purchaser', label: '采购员' },
 ];
 
-export default function UserManager() {
+export default function UserManager(props: { embedded?: boolean }) {
+  const { embedded = false } = props || {};
   const { user } = useAuthStore();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -278,11 +279,18 @@ export default function UserManager() {
   };
 
   return (
-    <div className="p-6">
-      <div className="max-w-5xl mx-auto">
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-gray-800">用户管理</h2>
+    <div className={embedded ? '' : 'p-6'}>
+      <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
+        <div className={embedded ? 'bg-white rounded-xl shadow-lg p-6' : 'bg-white rounded-xl shadow-lg p-6'}>
+          {!embedded && (
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-gray-800">用户管理</h2>
+            </div>
+          )}
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              {!embedded && <span className="text-gray-400"></span>}
+            </div>
             <button
               onClick={() => {
                 setFormData({

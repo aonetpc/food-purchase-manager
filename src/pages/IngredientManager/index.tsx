@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, X, Search, AlertCircle, Settings, Package, RefreshCw, ImageIcon, Wand2, Loader2, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Plus, Pencil, Trash2, X, Search, AlertCircle, Settings, Package, RefreshCw, ImageIcon, Wand2, Loader2, ChevronDown, ChevronUp, Sparkles, Tags } from 'lucide-react';
 import { useCategoryStore } from '@/store/categoryStore';
 import { useIngredientStore } from '@/store/ingredientStore';
 import type { Ingredient, UnitConversion } from '@/types';
 import { formatCurrency } from '@/utils/format';
+import CategoryManager from '@/pages/CategoryManager';
 
 interface UnitForm {
   unit: string;
@@ -80,6 +82,8 @@ const waitForImageLoad = (url: string, timeout = 45000): Promise<boolean> => {
 };
 
 export default function IngredientManager() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { categories } = useCategoryStore();
   const { ingredients, addIngredient, updateIngredient, deleteIngredient, syncCategory } = useIngredientStore();
 
@@ -100,6 +104,19 @@ export default function IngredientManager() {
   const [batchMatching, setBatchMatching] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentName: string; message?: string } | null>(null);
   const candidateVariants = ['top view', 'close-up shot', 'natural lighting', 'professional studio'];
+
+  type TabKey = 'ingredients' | 'categories';
+  const ING_TABS: { key: TabKey; label: string; hash: string }[] = [
+    { key: 'ingredients', label: '食材管理', hash: '#ingredients' },
+    { key: 'categories', label: '分类管理', hash: '#categories' },
+  ];
+  const getActiveTab = (hash: string): TabKey => (hash === '#categories' ? 'categories' : 'ingredients');
+  const [activeTab, setActiveTab] = useState<TabKey>(() => getActiveTab(location.hash));
+  const switchIngTab = (key: TabKey) => {
+    setActiveTab(key);
+    const target = ING_TABS.find(t => t.key === key)?.hash || '';
+    if (location.hash !== target) navigate(location.pathname + target, { replace: true });
+  };
 
   const [form, setForm] = useState<IngredientForm>({
     name: '',
@@ -326,28 +343,69 @@ export default function IngredientManager() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-serif font-bold text-gray-800">食材管理</h1>
-          <p className="text-gray-500 mt-1">管理食材信息，包括分类、单位换算和价格</p>
-        </div>
+      {/* 标题区 */}
+      <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleBatchMatch}
-            disabled={batchMatching}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {batchMatching ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-            <span>批量匹配图片</span>
-          </button>
-          <button onClick={openAdd} className="btn-primary flex items-center gap-2">
-            <Plus size={18} />
-            <span>新增食材</span>
-          </button>
+          <Package className="text-primary-600" size={26} />
+          <div>
+            <h1 className="text-2xl font-serif font-bold text-gray-800">食材管理</h1>
+            <p className="text-sm text-gray-500 mt-1">管理食材信息及其分类</p>
+          </div>
         </div>
       </div>
 
-      <div className="card">
+      {/* Tab 切换 */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button
+          onClick={() => switchIngTab('ingredients')}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'ingredients'
+              ? 'border-primary-600 text-primary-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Package size={16} />
+          食材管理
+        </button>
+        <button
+          onClick={() => switchIngTab('categories')}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'categories'
+              ? 'border-primary-600 text-primary-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Tags size={16} />
+          分类管理
+        </button>
+      </div>
+
+      {activeTab === 'categories' ? (
+        <CategoryManager embedded />
+      ) : (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">食材列表</h2>
+              <p className="text-gray-500 text-sm">管理食材信息，包括分类、单位换算和价格</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleBatchMatch}
+                disabled={batchMatching}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {batchMatching ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                <span>批量匹配图片</span>
+              </button>
+              <button onClick={openAdd} className="btn-primary flex items-center gap-2">
+                <Plus size={18} />
+                <span>新增食材</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="card">
         <div className="space-y-3 mb-5">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -871,6 +929,8 @@ export default function IngredientManager() {
             <p className="text-xs text-green-600 mt-1">{batchProgress.message}</p>
           )}
         </div>
+      )}
+    </div>
       )}
     </div>
   );

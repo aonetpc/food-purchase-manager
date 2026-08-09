@@ -50,6 +50,7 @@ const ScanRequisition = lazy(() => import('@/pages/ScanRequisition'));
 const ScanAudit = lazy(() => import('@/pages/ScanAudit'));
 const ManagementReport = lazy(() => import('@/pages/ManagementReport'));
 const StockTakeOperate = lazy(() => import('@/pages/StockTakeOperate'));
+const PermissionManager = lazy(() => import('@/pages/PermissionManager'));
 
 const pageLoad = <PageLoading />;
 
@@ -106,7 +107,7 @@ export default function App() {
             <Route path="ingredients" element={<IngredientQuery />} />
             <Route path="categories" element={
               <ProtectedRoute requiredPermission="action:category:manage">
-                <CategoryManager />
+                <Navigate to="/ingredient-manager#categories" replace />
               </ProtectedRoute>
             } />
             <Route path="ingredient-manager" element={
@@ -126,12 +127,17 @@ export default function App() {
             } />
             <Route path="users" element={
               <ProtectedRoute requiredPermission="action:user:manage">
-                <UserManager />
+                <Navigate to="/permission#users" replace />
               </ProtectedRoute>
             } />
             <Route path="roles" element={
               <ProtectedRoute requiredRole="admin">
-                <RoleManager />
+                <Navigate to="/permission#roles" replace />
+              </ProtectedRoute>
+            } />
+            <Route path="permission" element={
+              <ProtectedRoute requiredPermission="action:user:manage">
+                <PermissionManager />
               </ProtectedRoute>
             } />
             <Route path="reimbursement" element={

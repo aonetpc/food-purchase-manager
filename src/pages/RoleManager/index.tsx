@@ -25,7 +25,8 @@ interface PermissionModule {
   }[];
 }
 
-export default function RoleManager() {
+export default function RoleManager(props: { embedded?: boolean }) {
+  const { embedded = false } = props || {};
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -149,11 +150,16 @@ export default function RoleManager() {
   };
 
   return (
-    <div className="p-6">
-      <div className="max-w-5xl mx-auto">
+    <div className={embedded ? '' : 'p-6'}>
+      <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
         <div className="bg-white rounded-xl shadow-lg p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-gray-800">角色管理</h2>
+          {!embedded && (
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-gray-800">角色管理</h2>
+            </div>
+          )}
+          <div className="flex items-center justify-between mb-4">
+            <div></div>
             <button
               onClick={() => {
                 setFormData({ code: '', name: '', description: '' });

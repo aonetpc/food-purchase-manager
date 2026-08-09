@@ -17,7 +17,8 @@ const DEFAULT_COLORS = [
   '#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4',
 ];
 
-export default function CategoryManager() {
+export default function CategoryManager(props: { embedded?: boolean }) {
+  const { embedded = false } = props || {};
   const { categories, addCategory, updateCategory, deleteCategory, moveCategoryUp, moveCategoryDown } = useCategoryStore();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
@@ -72,11 +73,16 @@ export default function CategoryManager() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-serif font-bold text-gray-800">食材分类管理</h1>
-          <p className="text-gray-500 mt-1">管理食材分类，支持新增、编辑、删除和排序</p>
+      {!embedded && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-serif font-bold text-gray-800">食材分类管理</h1>
+            <p className="text-gray-500 mt-1">管理食材分类，支持新增、编辑、删除和排序</p>
+          </div>
         </div>
+      )}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div></div>
         <button onClick={openAdd} className="btn-primary flex items-center gap-2">
           <Plus size={18} />
           <span>新增分类</span>

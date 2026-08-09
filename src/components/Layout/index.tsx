@@ -75,7 +75,7 @@ const menuGroups = [
   { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit'] },
   { name: '统计', paths: ['/monthly', '/management-report', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
-  { name: '系统', paths: ['/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
+  { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
 ];
 
 export default function Layout() {
@@ -142,9 +142,7 @@ export default function Layout() {
     { code: 'menu:purchase-entry', name: '采购录入', path: '/purchase-entry', icon: 'ClipboardList' },
     { code: 'menu:reimbursement', name: '报销管理', path: '/reimbursement', icon: 'Receipt' },
     { code: 'menu:supplier-reconciliation', name: '供应商对账中心', path: '/supplier-reconciliation', icon: 'Scale' },
-    { code: 'menu:users', name: '用户管理', path: '/users', icon: 'Users' },
-    { code: 'menu:roles', name: '角色管理', path: '/roles', icon: 'Shield' },
-    { code: 'menu:categories', name: '分类管理', path: '/categories', icon: 'Tags' },
+    { code: 'menu:permission', name: '权限管理', path: '/permission', icon: 'Shield' },
     { code: 'menu:ingredient-manager', name: '食材管理', path: '/ingredient-manager', icon: 'Package' },
     { code: 'menu:departments', name: '部门管理', path: '/departments', icon: 'Building2' },
     { code: 'menu:temp-positions', name: '岗位管理', path: '/temp-positions', icon: 'Target' },
@@ -163,7 +161,7 @@ export default function Layout() {
   const adminNavItems = useMemo(() => {
     const menus = getUserMenus();
     return menus.filter(m => 
-      ['/purchase-entry', '/departments', '/categories', '/ingredient-manager', '/reimbursement', '/supplier-reconciliation', '/wecom', '/users', '/roles', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
+      ['/purchase-entry', '/departments', '/ingredient-manager', '/reimbursement', '/supplier-reconciliation', '/wecom', '/permission', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats'].includes(m.path)
     );
   }, [getUserMenus]);
 
@@ -179,7 +177,7 @@ export default function Layout() {
       }
     }
 
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
 
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
@@ -336,11 +334,11 @@ export default function Layout() {
                     </button>
                     {isAdmin() && (
                       <button
-                        onClick={() => { setUserMenuOpen(false); navigate('/users'); }}
+                        onClick={() => { setUserMenuOpen(false); navigate('/permission'); }}
                         className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                       >
-                        <Users size={16} />
-                        用户管理
+                        <Shield size={16} />
+                        权限管理
                       </button>
                     )}
                     <div className="border-t border-gray-100 my-1" />
