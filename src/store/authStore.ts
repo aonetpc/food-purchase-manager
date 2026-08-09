@@ -180,19 +180,68 @@ export const useAuthStore = create<AuthStore>()(
         const user = get().user;
         if (!user || !user.permissions) return [];
 
-        const menus: MenuItem[] = [];
+        const rawMenus: MenuItem[] = [];
         user.permissions.modules.forEach(mod => {
           mod.menus.forEach(menu => {
-            menus.push(menu);
+            rawMenus.push(menu);
           });
         });
 
-        return menus.sort((a, b) => {
-      const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/inventory', '/stock-movement', '/scan-audit', '/users', '/roles', '/categories', '/ingredient-manager', '/departments', '/temp-positions', '/temp-auditors', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom'];
-      const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
-      const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
-      return aIdx - bIdx;
-    });
+        // 兼容合并：将旧的 /users + /roles 菜单项合并为 /permission（权限管理）
+        const hasUsers = rawMenus.some(m => m.path === '/users');
+        const hasRoles = rawMenus.some(m => m.path === '/roles');
+        const hasPermission = rawMenus.some(m => m.path === '/permission');
+        const mergedMenus: MenuItem[] = [];
+        let permissionInjected = false;
+
+        rawMenus.forEach(menu => {
+          if (menu.path === '/users' || menu.path === '/roles') {
+            if (!permissionInjected && !hasPermission && (hasUsers || hasRoles)) {
+              mergedMenus.push({
+                code: 'menu:permission',
+                name: '权限管理',
+                path: '/permission',
+                icon: 'Shield',
+              });
+              permissionInjected = true;
+            }
+            // 丢弃旧的 /users 和 /roles 独立菜单
+          } else {
+            mergedMenus.push(menu);
+          }
+        });
+
+        // 如果后端已经直接返回了 /permission，也保留它（确保不会被上面漏掉）
+        if (hasPermission && !mergedMenus.some(m => m.path === '/permission')) {
+          const perm = rawMenus.find(m => m.path === '/permission');
+          if (perm) mergedMenus.push(perm);
+        }
+
+        // 同样兼容：旧的 /categories 已经被重定向到 /ingredient-manager#categories
+        // 如果有 /categories 但没有 /ingredient-manager，合并成 menu:ingredient-manager
+        const hasCategories = mergedMenus.some(m => m.path === '/categories');
+        const hasIngredientManager = mergedMenus.some(m => m.path === '/ingredient-manager');
+        if (hasCategories && !hasIngredientManager) {
+          const idxToRemove = mergedMenus.findIndex(m => m.path === '/categories');
+          if (idxToRemove >= 0) mergedMenus.splice(idxToRemove, 1);
+          mergedMenus.push({
+            code: 'menu:ingredient-manager',
+            name: '食材管理',
+            path: '/ingredient-manager',
+            icon: 'Package',
+          });
+        } else if (hasCategories && hasIngredientManager) {
+          // 两者都有时，丢弃旧的 /categories 独立菜单
+          const idxToRemove = mergedMenus.findIndex(m => m.path === '/categories');
+          if (idxToRemove >= 0) mergedMenus.splice(idxToRemove, 1);
+        }
+
+        const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
+        return mergedMenus.sort((a, b) => {
+          const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
+          const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
+          return aIdx - bIdx;
+        });
       },
     }),
     {
