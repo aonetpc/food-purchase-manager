@@ -5,11 +5,46 @@ const { requireAuth, requireRole } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
 
 /**
+ * 系统内置角色定义（缺失时自动补齐）
+ * 每个角色: { code, name, description, sortOrder }
+ */
+const SYSTEM_ROLES = [
+  { code: 'admin',          name: '管理员',     description: '系统管理员，拥有所有权限',                     sortOrder: 1 },
+  { code: 'boss',           name: '董事长',     description: '高层管理人员，可查看全部报表',                 sortOrder: 2 },
+  { code: 'finance',        name: '财务',       description: '财务人员，可查看月度分析报表',                 sortOrder: 3 },
+  { code: 'viewer',         name: '食材查询',   description: '普通查看权限',                               sortOrder: 4 },
+  { code: 'booker',         name: '预订员',     description: '预订调度模块操作员，可创建/编辑/提交订单',     sortOrder: 5 },
+  { code: 'sales',          name: '销售员',     description: '销售业务员，仅可查看预订订单',                 sortOrder: 6 },
+  { code: 'purchaser',      name: '采购员',     description: '仓库采购：创建采购单、录入收货',               sortOrder: 7 },
+  { code: 'temp_auditor',   name: '审核员',     description: '审核外请人员打卡记录，可分配岗位、补录、考核', sortOrder: 8 },
+  { code: 'temp_chairman',  name: '外请董事长', description: '外请模块外请人工看板（只读）',                 sortOrder: 9 },
+  { code: 'warehouse',      name: '仓库管理员', description: '负责部门仓库的查询、管理',                     sortOrder: 10 },
+];
+
+/**
+ * 确保系统内置角色存在（幂等）
+ * 在获取角色列表前自动补齐缺失的内置角色
+ */
+async function ensureSystemRoles() {
+  for (const role of SYSTEM_ROLES) {
+    await pool.query(
+      `INSERT INTO roles (id, code, name, description, is_system, sort_order)
+       SELECT UUID(), ?, ?, ?, 1, ?
+       FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM roles WHERE code = ?)`,
+      [role.code, role.name, role.description, role.sortOrder, role.code]
+    );
+  }
+}
+
+/**
  * 获取所有角色列表
  * GET /api/roles
  */
 router.get('/', requireAuth, requireRole('admin'), async (req, res) => {
   try {
+    // 自动补齐缺失的系统内置角色
+    await ensureSystemRoles();
+
     const [rows] = await pool.query(
       'SELECT id, code, name, description, is_system, sort_order FROM roles ORDER BY sort_order ASC'
     );
