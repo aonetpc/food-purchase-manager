@@ -80,7 +80,7 @@ function formatWeekRange(start: Date): string {
 
 function rowMinHeight(cards: BoardCard[]): number {
   const maxTrack = cards.length ? Math.max(...cards.map(c => c.track)) : -1;
-  return Math.max(130, (maxTrack + 1) * 104 + 20);
+  return Math.max(120, (maxTrack + 1) * 96 + 16);
 }
 
 // 卡片摘要文本（用于跨天合并卡）
@@ -174,7 +174,7 @@ function GanttCard({
   const { item, group, startCol, endCol, track, isMerged } = card;
   const left = `calc(${(startCol / 7) * 100}% + 4px)`;
   const width = `calc(${((endCol - startCol + 1) / 7) * 100}% - 8px)`;
-  const top = `${track * 104}px`;
+  const top = `${track * 96}px`;
   const status = STATUS_MAP[group.status];
   const days = endCol - startCol + 1;
   const cardBg = hexAlpha(bizColor, 0.06);
@@ -190,29 +190,29 @@ function GanttCard({
           left,
           width,
           top,
-          height: '96px',
+          height: '88px',
           background: cardBg,
           border: `1.5px solid ${borderCol}`,
           borderLeft: `4px solid ${bizColor}`,
         }}
       >
         <div
-          className="flex items-center justify-between px-3 py-1"
+          className="flex items-center justify-between px-2.5 py-0.5"
           style={{ borderBottom: `1px solid ${hexAlpha(bizColor, 0.25)}`, background: hexAlpha(bizColor, 0.08) }}
         >
-          <span className="text-[11px] font-medium text-gray-700">
+          <span className="text-[10px] font-medium text-gray-700">
             {BIZ_MAP[item.itemType].label}
           </span>
-          <span className="text-[11px] flex items-center gap-0.5 font-medium" style={{ color: bizColor }}>
-            <ArrowLeftRight size={11} /> {days}天
+          <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: bizColor }}>
+            <ArrowLeftRight size={10} /> {days}天
           </span>
         </div>
-        <div className="px-3 py-1.5">
-          <div className="text-sm font-bold text-gray-900 truncate">{group.customerName}</div>
-          <div className="text-xs text-gray-700 truncate">{cardSummary(item, days)}</div>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="w-2 h-2 rounded-full" style={{ background: status.color }} />
-            <span className="text-[11px] text-gray-600 truncate">{group.salesPerson}</span>
+        <div className="px-2.5 py-1">
+          <div className="text-xs font-bold text-gray-900 truncate">{group.customerName}</div>
+          <div className="text-[11px] text-gray-700 truncate">{cardSummary(item, days)}</div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
+            <span className="text-[10px] text-gray-600 truncate">{group.salesPerson}</span>
           </div>
         </div>
       </button>
@@ -228,27 +228,27 @@ function GanttCard({
         left,
         width,
         top,
-        height: '96px',
+        height: '88px',
         background: cardBg,
         border: `1.5px solid ${borderCol}`,
         borderLeft: `4px solid ${bizColor}`,
       }}
     >
-      <div className="px-3 py-1.5">
+      <div className="px-2.5 py-1">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-mono text-gray-600">
+          <span className="text-[10px] font-mono text-gray-600">
             {item.startTime}
             {item.endTime ? `-${item.endTime}` : ''}
           </span>
-          <span className="w-2 h-2 rounded-full" style={{ background: status.color }} />
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
         </div>
-        <div className="text-sm font-bold text-gray-900 truncate mt-0.5">{group.customerName}</div>
-        <div className="text-xs text-gray-700 truncate">
+        <div className="text-xs font-bold text-gray-900 truncate mt-0.5">{group.customerName}</div>
+        <div className="text-[11px] text-gray-700 truncate">
           {item.pax}
           {BIZ_MAP[item.itemType].unit}
           {item.amount ? ` · ¥${item.amount}` : ''}
         </div>
-        <div className="text-[11px] text-gray-500 truncate">{group.salesPerson}</div>
+        <div className="text-[10px] text-gray-500 truncate">{group.salesPerson}</div>
       </div>
     </button>
   );
@@ -760,13 +760,10 @@ export default function BookingBoard() {
 
         {/* ============ 甘特画板（桌面端 ≥980px） ============ */}
         <div className="hidden min-[980px]:block">
-          <div
-            className="bg-white rounded-lg border border-gray-200 overflow-auto"
-            style={{ maxHeight: 'calc(100vh - 320px)' }}
-          >
+          <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
             <div className="min-w-[1110px]">
               {/* 表头 */}
-              <div className="flex sticky top-0 z-20 bg-white border-b-2 border-gray-200">
+              <div className="flex bg-white border-b-2 border-gray-200">
                 <div className="w-[200px] flex-shrink-0 sticky left-0 z-30 bg-white px-4 py-3 border-r border-gray-200">
                   <div className="text-xs font-medium text-gray-600">业务 / 日期</div>
                 </div>
