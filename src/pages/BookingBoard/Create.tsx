@@ -1,7 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  ArrowLeft,
   Plus,
   Trash2,
   X,
@@ -61,14 +59,14 @@ import {
 // 样式常量
 // ================================================
 const inputCls =
-  'w-full bg-[#1C232C] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-[#C8A24B] transition-colors';
-const labelCls = 'block text-xs text-gray-400 mb-1.5';
+  'w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-green-500 transition-colors';
+const labelCls = 'block text-xs text-gray-500 mb-1.5';
 const cellInput =
-  'bg-[#1C232C] border border-white/10 rounded px-1.5 py-1 text-gray-100 text-xs focus:outline-none focus:border-[#C8A24B] w-full';
+  'bg-white border border-gray-300 rounded px-1.5 py-1 text-gray-900 text-xs focus:outline-none focus:border-green-500 w-full';
 const btnGhost =
-  'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 transition-colors';
+  'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 transition-colors';
 const btnGold =
-  'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-[#C8A24B] hover:bg-[#d4af5e] text-black font-medium transition-colors';
+  'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white font-medium transition-colors';
 
 // ================================================
 // 本地工具函数
@@ -232,14 +230,17 @@ interface ImportResult {
 // ================================================
 // 主组件
 // ================================================
-export default function BookingBoardCreate() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const state = (location.state || {}) as { editOrder?: BookingOrder; copySource?: BookingOrder };
-  const editOrder = state.editOrder;
-  const copySource = state.copySource;
-  const isEdit = !!editOrder;
-  const isCopy = !!copySource;
+export default function BookingBoardCreate(props: {
+  mode: 'create' | 'edit' | 'copy';
+  order?: BookingOrder;
+  onClose: () => void;
+  onSaved: (order: BookingOrder) => void;
+}) {
+  const { mode, order, onClose, onSaved } = props;
+  const editOrder = mode === 'edit' ? order : undefined;
+  const copySource = mode === 'copy' ? order : undefined;
+  const isEdit = mode === 'edit';
+  const isCopy = mode === 'copy';
 
   // 订单草稿（客户信息 + 业务项目）
   const [draftGroup, setDraftGroup] = useState<BookingOrder>(() => {
@@ -851,16 +852,14 @@ export default function BookingBoardCreate() {
       return;
     }
     const order = buildOrder();
-    navigate('/booking-board', { state: { savedOrder: order, mode: isEdit ? 'edit' : 'create' } });
+    onSaved(order);
+    onClose();
   }
 
   function handleSaveDraft() {
     const order = buildOrder();
-    navigate('/booking-board', { state: { savedOrder: order, mode: 'draft' } });
-  }
-
-  function backToBoard() {
-    navigate('/booking-board');
+    onSaved(order);
+    onClose();
   }
 
   // ================================================
@@ -870,7 +869,7 @@ export default function BookingBoardCreate() {
   const lgNights = Math.max(0, daysBetween(lgIn, lgOut));
 
   return (
-    <div className="min-h-screen bg-[#0E1217] text-gray-200">
+    <div className="flex flex-col h-full text-gray-800">
       {/* 隐藏文件输入 */}
       <input
         ref={fileInputRef}
@@ -881,44 +880,36 @@ export default function BookingBoardCreate() {
       />
 
       {/* 页头 */}
-      <header className="sticky top-0 z-20 bg-[#0E1217]/95 backdrop-blur border-b border-white/5">
-        <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-3">
-          <button
-            onClick={backToBoard}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 transition-colors"
-          >
-            <ArrowLeft size={16} /> 返回画板
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+        <h1 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <ClipboardList size={18} className="text-green-600" />
+          {title}
+          {isCopy && (
+            <span className="text-xs px-2 py-0.5 rounded bg-green-500/15 text-green-600 font-normal">
+              复制为新单
+            </span>
+          )}
+        </h1>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => fileInputRef.current?.click()} className={btnGhost}>
+            <Upload size={14} /> Excel导入
           </button>
-          <h1 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
-            <ClipboardList size={18} className="text-[#C8A24B]" />
-            {title}
-            {isCopy && (
-              <span className="text-xs px-2 py-0.5 rounded bg-[#C8A24B]/15 text-[#C8A24B] font-normal">
-                复制为新单
-              </span>
-            )}
-          </h1>
-          <div className="ml-auto flex items-center gap-2">
-            <button onClick={() => fileInputRef.current?.click()} className={btnGhost}>
-              <Upload size={14} /> Excel导入
-            </button>
-            <button onClick={downloadTemplate} className={btnGhost}>
-              <Download size={14} /> 下载模板
-            </button>
-            <button onClick={handleClear} className={btnGhost}>
-              <Eraser size={14} /> 清空
-            </button>
-          </div>
+          <button onClick={downloadTemplate} className={btnGhost}>
+            <Download size={14} /> 下载模板
+          </button>
+          <button onClick={handleClear} className={btnGhost}>
+            <Eraser size={14} /> 清空
+          </button>
         </div>
-      </header>
+      </div>
 
-      <main className="max-w-[1100px] mx-auto px-4 py-5 space-y-4 pb-32">
+      <main className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
         {/* 错误提示 */}
         {err && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
             <AlertCircle size={16} className="mt-0.5 shrink-0" />
             <span className="flex-1">{err}</span>
-            <button onClick={() => setErr('')} className="text-red-300 hover:text-red-200">
+            <button onClick={() => setErr('')} className="text-red-600 hover:text-red-700">
               <X size={14} />
             </button>
           </div>
@@ -926,28 +917,28 @@ export default function BookingBoardCreate() {
 
         {/* 导入结果 */}
         {importResult && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-sm">
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 text-sm">
             <CheckCircle size={16} className="mt-0.5 shrink-0" />
             <div className="flex-1">
               <div>{importResult.msg}</div>
               {importResult.warnings.length > 0 && (
-                <ul className="mt-1 text-xs text-amber-300 list-disc list-inside">
+                <ul className="mt-1 text-xs text-amber-600 list-disc list-inside">
                   {importResult.warnings.map((w, i) => (
                     <li key={i}>{w}</li>
                   ))}
                 </ul>
               )}
             </div>
-            <button onClick={() => setImportResult(null)} className="text-emerald-300 hover:text-emerald-200">
+            <button onClick={() => setImportResult(null)} className="text-emerald-600 hover:text-emerald-700">
               <X size={14} />
             </button>
           </div>
         )}
 
         {/* 客户信息 */}
-        <section className="bg-[#161B22] rounded-xl border border-white/5 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
-            <span className="w-1 h-4 bg-[#C8A24B] rounded-full" />
+        <section className="bg-white rounded-xl border border-gray-100 p-4">
+          <h2 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+            <span className="w-1 h-4 bg-green-500 rounded-full" />
             客户信息
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1014,12 +1005,12 @@ export default function BookingBoardCreate() {
         </section>
 
         {/* 业务项目 */}
-        <section className="bg-[#161B22] rounded-xl border border-white/5 p-4">
+        <section className="bg-white rounded-xl border border-gray-100 p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-gray-300 flex items-center gap-2">
-              <span className="w-1 h-4 bg-[#C8A24B] rounded-full" />
+            <h2 className="text-sm font-medium text-gray-700 flex items-center gap-2">
+              <span className="w-1 h-4 bg-green-500 rounded-full" />
               业务项目
-              <span className="text-xs text-gray-500 font-normal">
+              <span className="text-xs text-gray-400 font-normal">
                 （{draftGroup.items.length} 项）
               </span>
             </h2>
@@ -1029,7 +1020,7 @@ export default function BookingBoardCreate() {
           </div>
 
           {draftGroup.items.length === 0 ? (
-            <div className="text-center py-10 text-gray-500 text-sm">
+            <div className="text-center py-10 text-gray-400 text-sm">
               <FileSpreadsheet size={32} className="mx-auto mb-2 opacity-40" />
               暂无业务项目，点击「添加业务项目」开始
             </div>
@@ -1041,7 +1032,7 @@ export default function BookingBoardCreate() {
                 return (
                   <div
                     key={item.id}
-                    className="flex items-center gap-3 bg-[#FAFAF7] rounded-lg px-3 py-2.5 text-gray-800"
+                    className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2.5 text-gray-800"
                   >
                     <div
                       className="w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0"
@@ -1061,27 +1052,27 @@ export default function BookingBoardCreate() {
                           {sum.main}
                         </span>
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5 truncate">{sum.sub}</div>
+                      <div className="text-xs text-gray-400 mt-0.5 truncate">{sum.sub}</div>
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-sm font-mono font-semibold text-[#B8860B]">
+                      <div className="text-sm font-mono font-semibold text-green-700">
                         ¥{(item.amount || 0).toLocaleString()}
                       </div>
-                      <div className="text-[10px] text-gray-400">
+                      <div className="text-[10px] text-gray-500">
                         {biz.unit}×{item.pax}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => openEdit(item, idx)}
-                        className="p-1.5 rounded hover:bg-black/10 text-gray-500 hover:text-gray-700"
+                        className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
                         title="编辑"
                       >
                         <Pencil size={14} />
                       </button>
                       <button
                         onClick={() => deleteItem(idx)}
-                        className="p-1.5 rounded hover:bg-red-500/10 text-gray-400 hover:text-red-500"
+                        className="p-1.5 rounded hover:bg-red-50 text-gray-500 hover:text-red-500"
                         title="删除"
                       >
                         <Trash2 size={14} />
@@ -1096,11 +1087,11 @@ export default function BookingBoardCreate() {
       </main>
 
       {/* 底部汇总 */}
-      <footer className="fixed bottom-0 left-0 right-0 z-20 bg-[#161B22] border-t border-white/10">
-        <div className="max-w-[1100px] mx-auto px-4 py-3 flex items-center gap-4">
+      <div className="sticky bottom-0 bg-white border-t border-gray-200">
+        <div className="px-4 py-3 flex items-center gap-4">
           <div className="flex-1">
-            <div className="text-xs text-gray-400">订单总额</div>
-            <div className="text-2xl font-bold font-mono text-[#C8A24B]">
+            <div className="text-xs text-gray-500">订单总额</div>
+            <div className="text-2xl font-bold font-mono text-green-600">
               ¥{totalAmount.toLocaleString()}
             </div>
           </div>
@@ -1109,12 +1100,12 @@ export default function BookingBoardCreate() {
           </button>
           <button
             onClick={handleSubmit}
-            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-[#C8A24B] hover:bg-[#d4af5e] text-black font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-green-500 hover:bg-green-600 text-white font-semibold transition-colors"
           >
             <Send size={14} /> 提交订单
           </button>
         </div>
-      </footer>
+      </div>
 
       {/* ================================================ */}
       {/* 抽屉 */}
@@ -1122,25 +1113,25 @@ export default function BookingBoardCreate() {
       {drawer.open && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/60" onClick={closeDrawer} />
-          <div className="relative w-full sm:w-[620px] h-full bg-[#161B22] border-l border-white/10 shadow-2xl flex flex-col">
+          <div className="relative w-full sm:w-[620px] h-full bg-white border-l border-gray-200 shadow-2xl flex flex-col">
             {/* 抽屉头 */}
-            <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200">
               {drawer.mode === 'form' && (
                 <button
                   onClick={() => setDrawer((d) => ({ ...d, mode: 'select', itemType: null, editIdx: -1 }))}
-                  className="text-gray-400 hover:text-gray-200 text-sm"
+                  className="text-gray-500 hover:text-gray-800 text-sm"
                 >
                   ←
                 </button>
               )}
-              <h3 className="text-base font-medium text-gray-100 flex-1">
+              <h3 className="text-base font-medium text-gray-900 flex-1">
                 {drawer.mode === 'select'
                   ? '选择业务类型'
                   : drawer.editIdx >= 0
                     ? `编辑${BIZ_MAP[drawer.itemType!].label}`
                     : `添加${BIZ_MAP[drawer.itemType!].label}`}
               </h3>
-              <button onClick={closeDrawer} className="text-gray-400 hover:text-gray-200">
+              <button onClick={closeDrawer} className="text-gray-500 hover:text-gray-800">
                 <X size={18} />
               </button>
             </div>
@@ -1153,7 +1144,7 @@ export default function BookingBoardCreate() {
                     <button
                       key={biz.type}
                       onClick={() => selectBizType(biz.type)}
-                      className="flex flex-col items-center gap-2 p-5 rounded-xl bg-[#1C232C] border border-white/10 hover:border-[#C8A24B] transition-colors"
+                      className="flex flex-col items-center gap-2 p-5 rounded-xl bg-gray-50 border border-gray-200 hover:border-green-500 transition-colors"
                     >
                       <div
                         className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
@@ -1161,8 +1152,8 @@ export default function BookingBoardCreate() {
                       >
                         {biz.icon}
                       </div>
-                      <div className="text-sm font-medium text-gray-100">{biz.label}</div>
-                      <div className="text-[10px] text-gray-500">单位：{biz.unit}</div>
+                      <div className="text-sm font-medium text-gray-900">{biz.label}</div>
+                      <div className="text-[10px] text-gray-400">单位：{biz.unit}</div>
                     </button>
                   ))}
                 </div>
@@ -1189,7 +1180,7 @@ export default function BookingBoardCreate() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-300">
+                    <span className="text-sm text-gray-700">
                       体检名单（{chkPax.filter((p) => p.name.trim()).length} 人）
                     </span>
                     <div className="flex gap-2">
@@ -1204,9 +1195,9 @@ export default function BookingBoardCreate() {
                       </button>
                     </div>
                   </div>
-                  <div className="overflow-x-auto rounded-lg border border-white/10">
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
                     <table className="w-full text-xs">
-                      <thead className="bg-[#1C232C] text-gray-400">
+                      <thead className="bg-gray-50 text-gray-500">
                         <tr>
                           <th className="px-2 py-2 text-left font-medium">姓名</th>
                           <th className="px-2 py-2 text-left font-medium">身份证号</th>
@@ -1219,7 +1210,7 @@ export default function BookingBoardCreate() {
                       </thead>
                       <tbody>
                         {chkPax.map((p, idx) => (
-                          <tr key={idx} className="border-t border-white/5">
+                          <tr key={idx} className="border-t border-gray-100">
                             <td className="px-1.5 py-1">
                               <input
                                 value={p.name}
@@ -1258,7 +1249,7 @@ export default function BookingBoardCreate() {
                                 type="checkbox"
                                 checked={p.married}
                                 onChange={(e) => updChkPax(idx, { married: e.target.checked })}
-                                className="accent-[#C8A24B]"
+                                className="accent-green-500"
                               />
                             </td>
                             <td className="px-1.5 py-1">
@@ -1279,7 +1270,7 @@ export default function BookingBoardCreate() {
                             <td className="px-1.5 py-1">
                               <button
                                 onClick={() => setChkPax((prev) => prev.filter((_, i) => i !== idx))}
-                                className="text-red-400 hover:text-red-300"
+                                className="text-red-400 hover:text-red-600"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -1289,7 +1280,7 @@ export default function BookingBoardCreate() {
                       </tbody>
                     </table>
                   </div>
-                  <div className="text-right text-sm text-[#C8A24B] font-mono">
+                  <div className="text-right text-sm text-green-600 font-mono">
                     合计：¥{calcCheckupAmount(chkPax.filter((p) => p.name.trim())).toLocaleString()}
                   </div>
                 </div>
@@ -1342,8 +1333,8 @@ export default function BookingBoardCreate() {
                             onClick={() => setLgType(k)}
                             className={`px-2 py-2 rounded-lg text-xs border transition-colors ${
                               lgType === k
-                                ? 'bg-[#C8A24B]/15 border-[#C8A24B] text-[#C8A24B]'
-                                : 'bg-[#1C232C] border-white/10 text-gray-300 hover:border-white/30'
+                                ? 'bg-green-500/15 border-green-500 text-green-600'
+                                : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                             }`}
                           >
                             <div className="font-medium">{LODGING_TYPES[k].name}</div>
@@ -1356,12 +1347,12 @@ export default function BookingBoardCreate() {
                     </div>
                   </div>
 
-                  <div className="rounded-lg bg-[#1C232C] border border-white/10 p-3">
+                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
                     <div className="flex items-center justify-between text-sm mb-2">
-                      <span className="text-gray-400">
-                        共 <span className="text-[#C8A24B] font-mono">{lgNights}</span> 晚
+                      <span className="text-gray-500">
+                        共 <span className="text-green-600 font-mono">{lgNights}</span> 晚
                       </span>
-                      <span className="text-[#C8A24B] font-mono">
+                      <span className="text-green-600 font-mono">
                         ¥{LODGING_TYPES[lgType].price} × {lgRooms} × {lgNights} = ¥
                         {calcLodgingAmount(lgType, lgRooms, lgNights).toLocaleString()}
                       </span>
@@ -1372,7 +1363,7 @@ export default function BookingBoardCreate() {
                           const isCheckIn = i === 0;
                           const isCheckOut = i === lgNights;
                           const cls = isCheckIn
-                            ? 'bg-[#C8A24B]'
+                            ? 'bg-green-500'
                             : isCheckOut
                               ? 'bg-emerald-500'
                               : 'bg-purple-500';
@@ -1388,9 +1379,9 @@ export default function BookingBoardCreate() {
                         })}
                       </div>
                     )}
-                    <div className="flex gap-3 mt-2 text-[10px] text-gray-500">
+                    <div className="flex gap-3 mt-2 text-[10px] text-gray-400">
                       <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded bg-[#C8A24B]" /> 入住
+                        <span className="w-2 h-2 rounded bg-green-500" /> 入住
                       </span>
                       <span className="flex items-center gap-1">
                         <span className="w-2 h-2 rounded bg-purple-500" /> 在住
@@ -1462,7 +1453,7 @@ export default function BookingBoardCreate() {
                         const isFirst = i === 0;
                         const isLast = i === mlSessions.length - 1;
                         const cls = isFirst
-                          ? 'bg-[#C8A24B]'
+                          ? 'bg-green-500'
                           : isLast
                             ? 'bg-emerald-500'
                             : 'bg-purple-500';
@@ -1480,12 +1471,12 @@ export default function BookingBoardCreate() {
                   )}
 
                   <div>
-                    <div className="text-sm text-gray-300 mb-2">
+                    <div className="text-sm text-gray-700 mb-2">
                       场次明细（{mlSessions.length} 场）
                     </div>
-                    <div className="overflow-x-auto rounded-lg border border-white/10">
+                    <div className="overflow-x-auto rounded-lg border border-gray-200">
                       <table className="w-full text-xs">
-                        <thead className="bg-[#1C232C] text-gray-400">
+                        <thead className="bg-gray-50 text-gray-500">
                           <tr>
                             <th className="px-2 py-2 text-left font-medium">日期</th>
                             <th className="px-2 py-2 text-left font-medium">时间</th>
@@ -1495,8 +1486,8 @@ export default function BookingBoardCreate() {
                         </thead>
                         <tbody>
                           {mlSessions.map((s, idx) => (
-                            <tr key={s.date + idx} className="border-t border-white/5">
-                              <td className="px-1.5 py-1 font-mono text-gray-300">{s.date}</td>
+                            <tr key={s.date + idx} className="border-t border-gray-100">
+                              <td className="px-1.5 py-1 font-mono text-gray-700">{s.date}</td>
                               <td className="px-1.5 py-1">
                                 <input
                                   type="time"
@@ -1554,14 +1545,14 @@ export default function BookingBoardCreate() {
                       </table>
                     </div>
                   </div>
-                  <div className="text-right text-xs text-gray-500">
+                  <div className="text-right text-xs text-gray-400">
                     用餐金额现场结算，不计入订单总额
                   </div>
                 </div>
               ) : drawer.itemType === 'meeting' ? (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-300">会务场次（{mtSessions.length} 场）</span>
+                    <span className="text-sm text-gray-700">会务场次（{mtSessions.length} 场）</span>
                     <button
                       onClick={() =>
                         setMtSessions((prev) => [
@@ -1580,9 +1571,9 @@ export default function BookingBoardCreate() {
                       <Plus size={12} /> 添加场次
                     </button>
                   </div>
-                  <div className="overflow-x-auto rounded-lg border border-white/10">
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
                     <table className="w-full text-xs">
-                      <thead className="bg-[#1C232C] text-gray-400">
+                      <thead className="bg-gray-50 text-gray-500">
                         <tr>
                           <th className="px-2 py-2 text-left font-medium">日期</th>
                           <th className="px-2 py-2 text-left font-medium">开始</th>
@@ -1595,7 +1586,7 @@ export default function BookingBoardCreate() {
                       </thead>
                       <tbody>
                         {mtSessions.map((s, idx) => (
-                          <tr key={idx} className="border-t border-white/5">
+                          <tr key={idx} className="border-t border-gray-100">
                             <td className="px-1.5 py-1">
                               <input
                                 type="date"
@@ -1680,7 +1671,7 @@ export default function BookingBoardCreate() {
                                 className={`${cellInput} w-16 font-mono`}
                               />
                             </td>
-                            <td className="px-1.5 py-1 font-mono text-[#C8A24B]">
+                            <td className="px-1.5 py-1 font-mono text-green-600">
                               ¥{calcMeetingAmount(s.hall, s.slotType).toLocaleString()}
                             </td>
                             <td className="px-1.5 py-1">
@@ -1688,7 +1679,7 @@ export default function BookingBoardCreate() {
                                 onClick={() =>
                                   setMtSessions((prev) => prev.filter((_, i) => i !== idx))
                                 }
-                                className="text-red-400 hover:text-red-300"
+                                className="text-red-400 hover:text-red-600"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -1702,7 +1693,7 @@ export default function BookingBoardCreate() {
               ) : drawer.itemType === 'wellness' ? (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-300">康乐场次（{wlSessions.length} 场）</span>
+                    <span className="text-sm text-gray-700">康乐场次（{wlSessions.length} 场）</span>
                     <button
                       onClick={() =>
                         setWlSessions((prev) => [
@@ -1721,9 +1712,9 @@ export default function BookingBoardCreate() {
                       <Plus size={12} /> 添加场次
                     </button>
                   </div>
-                  <div className="overflow-x-auto rounded-lg border border-white/10">
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
                     <table className="w-full text-xs">
-                      <thead className="bg-[#1C232C] text-gray-400">
+                      <thead className="bg-gray-50 text-gray-500">
                         <tr>
                           <th className="px-2 py-2 text-left font-medium">日期</th>
                           <th className="px-2 py-2 text-left font-medium">开始</th>
@@ -1738,7 +1729,7 @@ export default function BookingBoardCreate() {
                         {wlSessions.map((s, idx) => {
                           const w = WELLNESS_TYPES[s.wellnessType];
                           return (
-                            <tr key={idx} className="border-t border-white/5">
+                            <tr key={idx} className="border-t border-gray-100">
                               <td className="px-1.5 py-1">
                                 <input
                                   type="date"
@@ -1826,7 +1817,7 @@ export default function BookingBoardCreate() {
                                   className={`${cellInput} w-14 font-mono`}
                                 />
                               </td>
-                              <td className="px-1.5 py-1 font-mono text-[#C8A24B]">
+                              <td className="px-1.5 py-1 font-mono text-green-600">
                                 {w.free ? (
                                   <span className="text-emerald-400">免费</span>
                                 ) : (
@@ -1838,7 +1829,7 @@ export default function BookingBoardCreate() {
                                   onClick={() =>
                                     setWlSessions((prev) => prev.filter((_, i) => i !== idx))
                                   }
-                                  className="text-red-400 hover:text-red-300"
+                                  className="text-red-400 hover:text-red-600"
                                 >
                                   <Trash2 size={14} />
                                 </button>
@@ -1855,10 +1846,10 @@ export default function BookingBoardCreate() {
 
             {/* 抽屉底部 */}
             {drawer.mode === 'form' && (
-              <div className="px-5 py-3 border-t border-white/10 flex items-center gap-3">
+              <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-3">
                 <div className="flex-1 text-sm">
-                  <span className="text-gray-400">合计：</span>
-                  <span className="text-[#C8A24B] font-mono font-semibold">
+                  <span className="text-gray-500">合计：</span>
+                  <span className="text-green-600 font-mono font-semibold">
                     ¥{drawerAmount.toLocaleString()}
                   </span>
                 </div>
@@ -1867,7 +1858,7 @@ export default function BookingBoardCreate() {
                 </button>
                 <button
                   onClick={saveDrawer}
-                  className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-[#C8A24B] hover:bg-[#d4af5e] text-black font-semibold transition-colors"
+                  className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-green-500 hover:bg-green-600 text-white font-semibold transition-colors"
                 >
                   <Save size={14} /> 保存
                 </button>
@@ -1881,14 +1872,14 @@ export default function BookingBoardCreate() {
       {showChkPaste && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowChkPaste(false)} />
-          <div className="relative w-full max-w-lg bg-[#161B22] rounded-xl border border-white/10 shadow-2xl p-5">
+          <div className="relative w-full max-w-lg bg-white rounded-xl border border-gray-200 shadow-2xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-base font-medium text-gray-100">粘贴导入体检名单</h3>
-              <button onClick={() => setShowChkPaste(false)} className="text-gray-400 hover:text-gray-200">
+              <h3 className="text-base font-medium text-gray-900">粘贴导入体检名单</h3>
+              <button onClick={() => setShowChkPaste(false)} className="text-gray-500 hover:text-gray-800">
                 <X size={18} />
               </button>
             </div>
-            <p className="text-xs text-gray-500 mb-2">
+            <p className="text-xs text-gray-400 mb-2">
               支持 Tab 或逗号分隔，列顺序：姓名、身份证号、手机号、性别、婚否、套餐（A/B/C/D 或套餐名）
             </p>
             <textarea
@@ -1896,7 +1887,7 @@ export default function BookingBoardCreate() {
               onChange={(e) => setChkPasteText(e.target.value)}
               rows={8}
               placeholder={'张伟\t3301198501011234\t13800138000\t男\t是\tB\n李芳\t...'}
-              className="w-full bg-[#1C232C] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 font-mono focus:outline-none focus:border-[#C8A24B]"
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 font-mono focus:outline-none focus:border-green-500"
             />
             <div className="flex justify-end gap-2 mt-3">
               <button onClick={() => setShowChkPaste(false)} className={btnGhost}>

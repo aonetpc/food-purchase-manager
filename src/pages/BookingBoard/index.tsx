@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, OrderStatus } from './types';
 import {
@@ -25,6 +24,14 @@ import {
   type FlatItem,
 } from './utils';
 import { generateMockData } from './mockData';
+import CreateFormRaw from './Create';
+
+const CreateForm = CreateFormRaw as unknown as React.FC<{
+  mode: 'create' | 'edit' | 'copy';
+  order?: BookingOrder;
+  onClose: () => void;
+  onSaved: (order: BookingOrder) => void;
+}>;
 
 // ================================================
 // 本地类型 & 常量
@@ -175,13 +182,13 @@ function GanttCard({
       <button
         type="button"
         onClick={onClick}
-        className="absolute text-left bg-[#FAFAF7] rounded-md shadow-sm hover:shadow-md transition-shadow overflow-hidden"
+        className="absolute text-left bg-white rounded-md shadow-sm hover:shadow-md transition-shadow overflow-hidden"
         style={{
           left,
           width,
           top,
           height: '84px',
-          border: `1px solid ${bizColor}66`,
+          border: '1px solid #e5e7eb',
           borderLeft: `3px solid ${bizColor}`,
         }}
       >
@@ -212,8 +219,8 @@ function GanttCard({
     <button
       type="button"
       onClick={onClick}
-      className="absolute text-left bg-[#FAFAF7] rounded-md shadow-sm hover:shadow-md transition-shadow overflow-hidden"
-      style={{ left, width, top, height: '84px', borderLeft: `3px solid ${bizColor}` }}
+      className="absolute text-left bg-white rounded-md shadow-sm hover:shadow-md transition-shadow overflow-hidden"
+      style={{ left, width, top, height: '84px', border: '1px solid #e5e7eb', borderLeft: `3px solid ${bizColor}` }}
     >
       <div className="px-2 py-1">
         <div className="flex items-center justify-between">
@@ -253,15 +260,15 @@ function BizRow({
 }) {
   const height = rowMinHeight(cards);
   return (
-    <div className="flex border-b border-white/5 min-w-[1110px]" style={{ minHeight: `${height}px` }}>
+    <div className="flex border-b border-gray-200 min-w-[1110px]" style={{ minHeight: `${height}px` }}>
       {/* 左侧固定栏 */}
       <div
-        className="w-[200px] flex-shrink-0 sticky left-0 z-10 bg-[#161B22] flex items-center gap-2 px-3 border-r border-white/10"
+        className="w-[200px] flex-shrink-0 sticky left-0 z-10 bg-gray-50 flex items-center gap-2 px-3 border-r border-gray-200"
         style={{ borderLeft: `3px solid ${biz.color}` }}
       >
         <span className="text-lg leading-none">{biz.icon}</span>
         <div className="min-w-0">
-          <div className="text-sm font-medium text-gray-200 truncate">{biz.label}</div>
+          <div className="text-sm font-medium text-gray-700 truncate">{biz.label}</div>
           <div className="text-[10px] text-gray-500">{cards.length} 项</div>
         </div>
       </div>
@@ -279,12 +286,12 @@ function BizRow({
             return (
               <div
                 key={i}
-                className="border-r border-white/5"
+                className="border-r border-gray-200"
                 style={{
                   background: isToday
-                    ? 'rgba(200,162,75,.07)'
+                    ? '#ecfdf5'
                     : isWeekend
-                      ? 'rgba(255,255,255,.02)'
+                      ? '#f9fafb'
                       : 'transparent',
                 }}
               />
@@ -322,13 +329,13 @@ function TimelineItem({
   note?: string;
 }) {
   const dot =
-    state === 'danger' ? 'bg-red-500' : state === 'active' ? 'bg-emerald-500' : 'bg-gray-600';
+    state === 'danger' ? 'bg-red-500' : state === 'active' ? 'bg-blue-500' : 'bg-green-500';
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className={`w-2 h-2 rounded-full ${dot}`} />
-      <span className="text-gray-300">{label}</span>
-      <span className="text-gray-500 font-mono ml-auto">{time}</span>
-      {note && <span className="text-red-400 text-[11px]">（{note}）</span>}
+      <span className="text-gray-700">{label}</span>
+      <span className="text-gray-400 font-mono ml-auto">{time}</span>
+      {note && <span className="text-red-500 text-[11px]">（{note}）</span>}
     </div>
   );
 }
@@ -351,18 +358,18 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
       onClick={onClose}
     >
       <div
-        className="bg-[#161B22] rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl"
+        className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex items-start justify-between px-5 py-3 border-b border-white/10 sticky top-0 bg-[#161B22] z-10">
+        <div className="flex items-start justify-between px-5 py-3 border-b border-gray-200 sticky top-0 bg-white z-10">
           <div>
             <div className="text-[11px] text-gray-500">订单号</div>
-            <div className="text-lg font-bold font-mono text-[#C8A24B]">{order.id}</div>
+            <div className="text-lg font-bold font-mono text-gray-900">{order.id}</div>
           </div>
           <div className="flex items-center gap-2">
             <span
@@ -374,7 +381,7 @@ function DetailModal({
             <button
               type="button"
               onClick={onClose}
-              className="text-gray-400 hover:text-white p-1"
+              className="text-gray-400 hover:text-gray-600 p-1"
               aria-label="关闭"
             >
               <X size={16} />
@@ -387,21 +394,21 @@ function DetailModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="text-[11px] text-gray-500">客户名称</div>
-              <div className="text-sm text-gray-100 font-medium">{order.customerName}</div>
+              <div className="text-sm text-gray-800 font-medium">{order.customerName}</div>
             </div>
             <div>
               <div className="text-[11px] text-gray-500">联系人 / 电话</div>
-              <div className="text-sm text-gray-100 font-mono">
+              <div className="text-sm text-gray-800 font-mono">
                 {order.contactName} {order.contactPhone}
               </div>
             </div>
             <div>
               <div className="text-[11px] text-gray-500">销售人员</div>
-              <div className="text-sm text-gray-100">{order.salesPerson}</div>
+              <div className="text-sm text-gray-800">{order.salesPerson}</div>
             </div>
             <div>
               <div className="text-[11px] text-gray-500">付款方式</div>
-              <div className="text-sm text-gray-100">{order.payment}</div>
+              <div className="text-sm text-gray-800">{order.payment}</div>
             </div>
           </div>
 
@@ -444,40 +451,40 @@ function DetailModal({
             <div className="text-[11px] text-gray-500 mb-2">
               业务项目（{order.items.length}）
             </div>
-            <div className="border border-white/10 rounded overflow-hidden">
+            <div className="border border-gray-200 rounded overflow-hidden">
               <table className="w-full text-xs">
-                <thead className="bg-white/5 text-gray-400">
+                <thead className="bg-gray-50 text-gray-600">
                   <tr>
-                    <th className="px-2 py-1.5 text-left font-normal">业务</th>
-                    <th className="px-2 py-1.5 text-left font-normal">日期</th>
-                    <th className="px-2 py-1.5 text-left font-normal">时间</th>
-                    <th className="px-2 py-1.5 text-right font-normal">数量</th>
-                    <th className="px-2 py-1.5 text-right font-normal">金额</th>
-                    <th className="px-2 py-1.5 text-left font-normal">详情</th>
+                    <th className="px-2 py-1.5 text-left font-medium">业务</th>
+                    <th className="px-2 py-1.5 text-left font-medium">日期</th>
+                    <th className="px-2 py-1.5 text-left font-medium">时间</th>
+                    <th className="px-2 py-1.5 text-right font-medium">数量</th>
+                    <th className="px-2 py-1.5 text-right font-medium">金额</th>
+                    <th className="px-2 py-1.5 text-left font-medium">详情</th>
                   </tr>
                 </thead>
                 <tbody>
                   {order.items.map(it => {
                     const biz = BIZ_MAP[it.itemType];
                     return (
-                      <tr key={it.id} className="border-t border-white/5">
+                      <tr key={it.id} className="border-t border-gray-200">
                         <td className="px-2 py-1.5 whitespace-nowrap">
                           <span style={{ color: biz.color }}>{biz.icon}</span>{' '}
-                          <span className="text-gray-200">{biz.label}</span>
+                          <span className="text-gray-700">{biz.label}</span>
                         </td>
-                        <td className="px-2 py-1.5 font-mono text-gray-300">{itemDateRange(it)}</td>
-                        <td className="px-2 py-1.5 font-mono text-gray-300">
+                        <td className="px-2 py-1.5 font-mono text-gray-600">{itemDateRange(it)}</td>
+                        <td className="px-2 py-1.5 font-mono text-gray-600">
                           {it.startTime}
                           {it.endTime ? `-${it.endTime}` : ''}
                         </td>
-                        <td className="px-2 py-1.5 text-right text-gray-200">
+                        <td className="px-2 py-1.5 text-right text-gray-700">
                           {it.pax}
                           {biz.unit}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono text-gray-200">
+                        <td className="px-2 py-1.5 text-right font-mono text-gray-700">
                           {it.amount ? `¥${it.amount.toLocaleString()}` : '-'}
                         </td>
-                        <td className="px-2 py-1.5 text-gray-400">{itemDetail(it) || '-'}</td>
+                        <td className="px-2 py-1.5 text-gray-500">{itemDetail(it) || '-'}</td>
                       </tr>
                     );
                   })}
@@ -487,9 +494,9 @@ function DetailModal({
           </div>
 
           {/* 金额 */}
-          <div className="flex items-center justify-between pt-2 border-t border-white/10">
-            <div className="text-xs text-gray-400">订单总额</div>
-            <div className="text-lg font-bold font-mono text-[#C8A24B]">
+          <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+            <div className="text-xs text-gray-500">订单总额</div>
+            <div className="text-lg font-bold font-mono text-gray-900">
               ¥{total.toLocaleString()}
             </div>
           </div>
@@ -498,17 +505,17 @@ function DetailModal({
           {order.remark && (
             <div>
               <div className="text-[11px] text-gray-500">备注</div>
-              <div className="text-xs text-gray-300 bg-white/5 rounded p-2">{order.remark}</div>
+              <div className="text-xs text-gray-700 bg-gray-50 rounded p-2">{order.remark}</div>
             </div>
           )}
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex gap-2 px-5 py-3 border-t border-white/10 sticky bottom-0 bg-[#161B22]">
+        <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white">
           <button
             type="button"
             onClick={onCopy}
-            className="px-3 py-1.5 text-xs rounded bg-white/10 hover:bg-white/20 text-gray-200"
+            className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
           >
             复制为新单
           </button>
@@ -516,8 +523,7 @@ function DetailModal({
             <button
               type="button"
               onClick={onEdit}
-              className="px-3 py-1.5 text-xs rounded text-black font-medium"
-              style={{ background: '#C8A24B' }}
+              className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
             >
               修改此单
             </button>
@@ -525,7 +531,7 @@ function DetailModal({
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto px-3 py-1.5 text-xs rounded border border-white/10 text-gray-300 hover:bg-white/5"
+            className="ml-auto px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
           >
             关闭
           </button>
@@ -539,14 +545,13 @@ function DetailModal({
 // 主页面
 // ================================================
 export default function BookingBoard() {
-  const navigate = useNavigate();
-
   const [orders, setOrders] = useState<BookingOrder[]>([]);
   const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
   const [bizFilter, setBizFilter] = useState<Set<BizType>>(() => new Set(ALL_BIZ));
   const [statusFilter, setStatusFilter] = useState<Set<string>>(() => new Set(ALL_STATUS));
   const [selectedOrder, setSelectedOrder] = useState<BookingOrder | null>(null);
   const [mobileDate, setMobileDate] = useState<string>(() => todayStr());
+  const [createDrawer, setCreateDrawer] = useState<null | { mode: 'create' | 'edit' | 'copy'; order?: BookingOrder }>(null);
 
   // 切换周时重新生成 mock 数据并重置移动端选中日期
   useEffect(() => {
@@ -604,11 +609,11 @@ export default function BookingBoard() {
 
   const statCards = useMemo(
     () => [
-      { label: '总订单数', value: String(stats.total), color: '#C8A24B' },
+      { label: '总订单数', value: String(stats.total), color: '#1a5c3a' },
       { label: '待确认', value: String(stats.pending), color: STATUS_MAP.pending.color },
       { label: '待审核', value: String(stats.reviewing), color: STATUS_MAP.reviewing.color },
       { label: '已确认', value: String(stats.confirmed), color: STATUS_MAP.confirmed.color },
-      { label: '总金额', value: `¥${stats.amount.toLocaleString()}`, color: '#C8A24B' },
+      { label: '总金额', value: `¥${stats.amount.toLocaleString()}`, color: '#1a5c3a' },
     ],
     [stats],
   );
@@ -621,45 +626,36 @@ export default function BookingBoard() {
     }).filter(g => g.cards.length > 0);
   }, [boardData, mobileDate]);
 
-  // 导航
+  // 操作
   const goPrevWeek = useCallback(() => setWeekStart(s => addDays(s, -7)), []);
   const goNextWeek = useCallback(() => setWeekStart(s => addDays(s, 7)), []);
   const goToday = useCallback(() => setWeekStart(getWeekStart(new Date())), []);
-  const goCreate = useCallback(() => navigate('/booking-board/create'), [navigate]);
-  const handleCopy = useCallback(
-    (o: BookingOrder) => navigate('/booking-board/create', { state: { mode: 'copy', order: o } }),
-    [navigate],
-  );
-  const handleEdit = useCallback(
-    (o: BookingOrder) => navigate(`/booking-board/edit/${o.id}`, { state: { mode: 'edit', order: o } }),
-    [navigate],
-  );
 
   return (
-    <div className="min-h-screen bg-[#0E1217] text-gray-200">
+    <div className="min-h-screen bg-gray-50 text-gray-900">
       <div className="p-4 md:p-6 max-w-[1600px] mx-auto">
         {/* ============ 顶部栏 ============ */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-[#C8A24B]">预订调度画板</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-gray-900">预订调度画板</h1>
             <div className="text-xs text-gray-500 mt-0.5">康养中心 · 7天预订调度</div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={goPrevWeek}
-              className="p-1.5 rounded border border-white/10 text-gray-300 hover:bg-white/5"
+              className="p-1.5 rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
               aria-label="上一周"
             >
               <ChevronLeft size={16} />
             </button>
-            <div className="px-3 py-1.5 text-sm bg-[#161B22] rounded border border-white/10 text-gray-200 font-mono min-w-[180px] text-center">
+            <div className="px-3 py-1.5 text-sm bg-white rounded border border-gray-200 text-gray-800 font-mono min-w-[180px] text-center">
               {formatWeekRange(weekStart)}
             </div>
             <button
               type="button"
               onClick={goNextWeek}
-              className="p-1.5 rounded border border-white/10 text-gray-300 hover:bg-white/5"
+              className="p-1.5 rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
               aria-label="下一周"
             >
               <ChevronRight size={16} />
@@ -667,15 +663,14 @@ export default function BookingBoard() {
             <button
               type="button"
               onClick={goToday}
-              className="px-3 py-1.5 text-xs rounded border border-white/10 text-gray-300 hover:bg-white/5 flex items-center gap-1"
+              className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center gap-1"
             >
               <Calendar size={12} /> 今天
             </button>
             <button
               type="button"
-              onClick={goCreate}
-              className="px-3 py-1.5 text-xs rounded text-black font-medium flex items-center gap-1"
-              style={{ background: '#C8A24B' }}
+              onClick={() => setCreateDrawer({ mode: 'create' })}
+              className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium flex items-center gap-1"
             >
               <Plus size={12} /> 新建订单
             </button>
@@ -687,11 +682,11 @@ export default function BookingBoard() {
           {statCards.map((c, i) => (
             <div
               key={i}
-              className="bg-[#161B22] rounded-lg p-3 border border-white/5"
+              className="bg-white rounded-lg p-3 border border-gray-200"
               style={{ borderLeft: `3px solid ${c.color}` }}
             >
               <div className="text-xs text-gray-500">{c.label}</div>
-              <div className="text-lg font-bold font-mono text-gray-100 mt-1 truncate">
+              <div className="text-lg font-bold font-mono text-gray-900 mt-1 truncate">
                 {c.value}
               </div>
             </div>
@@ -699,7 +694,7 @@ export default function BookingBoard() {
         </div>
 
         {/* ============ 筛选栏 ============ */}
-        <div className="bg-[#161B22] rounded-lg p-3 border border-white/5 mb-5 space-y-3">
+        <div className="bg-white rounded-lg p-3 border border-gray-200 mb-5 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] text-gray-500 w-12">业务</span>
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -713,7 +708,7 @@ export default function BookingBoard() {
                     className={`px-2.5 py-1 rounded text-xs flex items-center gap-1 border transition-colors ${
                       active
                         ? 'text-white border-transparent'
-                        : 'text-gray-400 border-white/10 hover:border-white/30'
+                        : 'text-gray-600 border-gray-200 hover:border-gray-400'
                     }`}
                     style={active ? { background: biz.color, borderColor: biz.color } : undefined}
                   >
@@ -738,7 +733,7 @@ export default function BookingBoard() {
                     className={`px-2.5 py-1 rounded text-xs border transition-colors ${
                       active
                         ? 'text-white border-transparent'
-                        : 'text-gray-400 border-white/10 hover:border-white/30'
+                        : 'text-gray-600 border-gray-200 hover:border-gray-400'
                     }`}
                     style={active ? { background: cfg.color, borderColor: cfg.color } : undefined}
                   >
@@ -753,13 +748,13 @@ export default function BookingBoard() {
         {/* ============ 甘特画板（桌面端 ≥980px） ============ */}
         <div className="hidden min-[980px]:block">
           <div
-            className="bg-[#0E1217] rounded-lg border border-white/5 overflow-auto"
+            className="bg-white rounded-lg border border-gray-200 overflow-auto"
             style={{ maxHeight: 'calc(100vh - 320px)' }}
           >
             <div className="min-w-[1110px]">
               {/* 表头 */}
-              <div className="flex sticky top-0 z-20 bg-[#161B22] border-b border-white/10">
-                <div className="w-[200px] flex-shrink-0 sticky left-0 z-30 bg-[#161B22] px-3 py-2 border-r border-white/10">
+              <div className="flex sticky top-0 z-20 bg-white border-b border-gray-200">
+                <div className="w-[200px] flex-shrink-0 sticky left-0 z-30 bg-white px-3 py-2 border-r border-gray-200">
                   <div className="text-[11px] text-gray-500">业务 / 日期</div>
                 </div>
                 <div
@@ -773,8 +768,8 @@ export default function BookingBoard() {
                     return (
                       <div
                         key={i}
-                        className="px-2 py-2 text-center border-r border-white/10"
-                        style={{ background: isToday ? 'rgba(200,162,75,.08)' : 'transparent' }}
+                        className="px-2 py-2 text-center border-r border-gray-200"
+                        style={{ background: isToday ? '#ecfdf5' : 'transparent' }}
                       >
                         <div className="text-[10px] text-gray-500">
                           {WEEKDAY_LABELS[d.getDay()]}
@@ -782,10 +777,10 @@ export default function BookingBoard() {
                         <div
                           className={`text-sm font-mono ${
                             isToday
-                              ? 'text-[#C8A24B] font-bold'
+                              ? 'text-green-600 font-bold'
                               : isWeekend
-                                ? 'text-gray-300'
-                                : 'text-gray-200'
+                                ? 'text-gray-500'
+                                : 'text-gray-700'
                           }`}
                         >
                           {d.getMonth() + 1}/{d.getDate()}
@@ -826,14 +821,14 @@ export default function BookingBoard() {
                   onClick={() => setMobileDate(ds)}
                   className={`flex-shrink-0 px-3 py-2 rounded-lg border text-center min-w-[64px] ${
                     selected
-                      ? 'border-[#C8A24B] bg-[#C8A24B]/10'
-                      : 'border-white/10 bg-[#161B22]'
+                      ? 'border-green-500 bg-green-50'
+                      : 'border-gray-200 bg-white'
                   }`}
                 >
                   <div className="text-[10px] text-gray-500">{WEEKDAY_LABELS[d.getDay()]}</div>
                   <div
                     className={`text-sm font-mono ${
-                      isToday ? 'text-[#C8A24B] font-bold' : 'text-gray-200'
+                      isToday ? 'text-green-600 font-bold' : 'text-gray-700'
                     }`}
                   >
                     {d.getMonth() + 1}/{d.getDate()}
@@ -846,7 +841,7 @@ export default function BookingBoard() {
 
           {/* 按业务分组的列表 */}
           {mobileDayGroups.length === 0 ? (
-            <div className="text-center text-gray-500 text-sm py-10 bg-[#161B22] rounded-lg border border-white/5">
+            <div className="text-center text-gray-500 text-sm py-10 bg-white rounded-lg border border-gray-200">
               当日暂无预订
             </div>
           ) : (
@@ -854,17 +849,17 @@ export default function BookingBoard() {
               {mobileDayGroups.map(({ biz, cards }) => (
                 <div
                   key={biz.type}
-                  className="bg-[#161B22] rounded-lg border border-white/5 overflow-hidden"
+                  className="bg-white rounded-lg border border-gray-200 overflow-hidden"
                 >
                   <div
-                    className="px-3 py-2 flex items-center gap-2 border-b border-white/5"
+                    className="px-3 py-2 flex items-center gap-2 border-b border-gray-200"
                     style={{ borderLeft: `3px solid ${biz.color}` }}
                   >
                     <span>{biz.icon}</span>
-                    <span className="text-sm text-gray-200">{biz.label}</span>
+                    <span className="text-sm text-gray-700">{biz.label}</span>
                     <span className="text-[10px] text-gray-500 ml-auto">{cards.length} 项</span>
                   </div>
-                  <div className="divide-y divide-white/5">
+                  <div className="divide-y divide-gray-200">
                     {cards.map(card => {
                       const { item, group, isMerged } = card;
                       const status = STATUS_MAP[group.status];
@@ -873,7 +868,7 @@ export default function BookingBoard() {
                           key={item.id + card.startCol}
                           type="button"
                           onClick={() => setSelectedOrder(group)}
-                          className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-3"
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3"
                         >
                           <span
                             className="w-1 self-stretch rounded-full flex-shrink-0"
@@ -881,7 +876,7 @@ export default function BookingBoard() {
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-100 truncate">
+                              <span className="text-sm font-medium text-gray-800 truncate">
                                 {group.customerName}
                               </span>
                               <span
@@ -891,7 +886,7 @@ export default function BookingBoard() {
                                 {status.label}
                               </span>
                             </div>
-                            <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                            <div className="text-[11px] text-gray-500 mt-0.5 truncate">
                               {item.startTime}
                               {item.endTime ? `-${item.endTime}` : ''} · {item.pax}
                               {biz.unit} · {group.salesPerson}
@@ -921,9 +916,34 @@ export default function BookingBoard() {
         <DetailModal
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
-          onCopy={() => handleCopy(selectedOrder)}
-          onEdit={() => handleEdit(selectedOrder)}
+          onCopy={() => { setCreateDrawer({ mode: 'copy', order: selectedOrder }); setSelectedOrder(null); }}
+          onEdit={() => { setCreateDrawer({ mode: 'edit', order: selectedOrder }); setSelectedOrder(null); }}
         />
+      )}
+
+      {/* ============ Create 抽屉 ============ */}
+      {createDrawer && (
+        <div className="fixed inset-0 z-50" onClick={() => setCreateDrawer(null)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div className="absolute right-0 top-0 h-full w-full sm:w-[720px] bg-white shadow-xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {createDrawer.mode === 'create' ? '新建订单' : createDrawer.mode === 'edit' ? '编辑订单' : '复制为新单'}
+              </h2>
+              <button onClick={() => setCreateDrawer(null)} className="p-1 rounded hover:bg-gray-100">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <CreateForm
+                mode={createDrawer.mode}
+                order={createDrawer.order}
+                onClose={() => setCreateDrawer(null)}
+                onSaved={(newOrder) => { setOrders(prev => [...prev, newOrder]); setCreateDrawer(null); }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
