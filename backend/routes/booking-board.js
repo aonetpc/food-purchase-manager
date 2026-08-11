@@ -196,10 +196,24 @@ const EDITABLE_STATUS = ['pending', 'reviewing', 'confirmed'];
 // ============================================================
 router.get('/config', requireAuth, async (_req, res) => {
   try {
-    const [packages] = await pool.query('SELECT * FROM booking_packages WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    // 套餐（包含 items）
+    const [packagesRaw] = await pool.query('SELECT * FROM booking_packages WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    // 批量加载每个套餐的项目
+    const packages = [];
+    for (const p of packagesRaw) {
+      const [items] = await pool.query(
+        `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+        [p.id]
+      );
+      const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      packages.push({ ...p, items, item_count: items.length, auto_total: autoTotal });
+    }
+
     const [roomTypes] = await pool.query('SELECT * FROM booking_room_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [meetingHalls] = await pool.query('SELECT * FROM booking_meeting_halls WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [wellnessTypes] = await pool.query('SELECT * FROM booking_wellness_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    // 体检项目主表（全部，含禁用，供前端管理面板使用）
+    const [checkupItems] = await pool.query('SELECT * FROM booking_checkup_items ORDER BY category ASC, sort_order ASC, id ASC');
 
     // 销售员列表：所有拥有 sales 角色的启用用户（用于销售员人员选择面板）
     let salesUsers = [];
@@ -234,7 +248,7 @@ router.get('/config', requireAuth, async (_req, res) => {
 
     res.json({
       ok: true,
-      data: { packages, roomTypes, meetingHalls, wellnessTypes, salesUsers },
+      data: { packages, roomTypes, meetingHalls, wellnessTypes, checkupItems, salesUsers },
     });
   } catch (e) {
     console.error('[booking config] error:', e);
@@ -330,13 +344,383 @@ function makeBizConfigCrud({ basePath, table, requiredFields, editableFields, so
   });
 }
 
-makeBizConfigCrud({
-  basePath: '/config/packages',
-  table: 'booking_packages',
-  requiredFields: ['code', 'name', 'price'],
-  editableFields: ['status', 'sort_order'],
-  sortDefault: 1,
-});
+// ============================================================
+// 体检套餐增强：list 返回附带 items + 自动计算 item_count/price
+// ============================================================
+function enhancePackageList(routerRef) {
+  // 覆盖 packages list：附带 items
+  routerRef.get('/config/packages', requireAuth, async (req, res) => {
+    try {
+      const [packages] = await pool.query(
+        `SELECT * FROM booking_packages ORDER BY sort_order ASC, id ASC`
+      );
+      // 批量加载每个套餐的项目
+      const result = [];
+      for (const p of packages) {
+        const [items] = await pool.query(
+          `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+          [p.id]
+        );
+        const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+        result.push({
+          ...p,
+          items,
+          item_count: items.length,
+          auto_total: autoTotal,
+        });
+      }
+      res.json({ ok: true, data: result });
+    } catch (e) {
+      console.error('[packages list enhanced] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // 覆盖 package create：同时初始化 item_count
+  routerRef.post('/config/packages', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { code, name, price, status, sort_order, remark } = req.body;
+      if (!code || !name) return res.status(400).json({ ok: false, error: '缺少必要字段：code / name' });
+      const id = uuidv4();
+      await conn.query(
+        `INSERT INTO booking_packages (id, code, name, price, status, sort_order, item_count, remark) VALUES (?,?,?,?,?,?,0,?)`,
+        [id, code, name, price || 0, status != null ? status : 1, sort_order != null ? sort_order : 1, remark || null]
+      );
+      const [rows] = await conn.query(`SELECT * FROM booking_packages WHERE id = ?`, [id]);
+      const [items] = await conn.query(`SELECT * FROM booking_package_items WHERE package_id = ?`, [id]);
+      await logOperation(req.user.id, id, 'booking_packages', 'create', req.body, req);
+      res.json({ ok: true, data: { ...rows[0], items, item_count: 0, auto_total: 0 } });
+    } catch (e) {
+      console.error('[packages create] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // 覆盖 package update：支持 remark 字段 + 自动重算
+  routerRef.put('/config/packages/:id', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { id } = req.params;
+      const [exist] = await conn.query(`SELECT * FROM booking_packages WHERE id = ?`, [id]);
+      if (exist.length === 0) return res.status(404).json({ ok: false, error: '记录不存在' });
+      const sets = [];
+      const values = [];
+      ['code','name','price','status','sort_order','remark'].forEach(f => {
+        if (req.body[f] !== undefined) { sets.push(`${f} = ?`); values.push(req.body[f]); }
+      });
+      if (sets.length > 0) {
+        values.push(id);
+        await conn.query(`UPDATE booking_packages SET ${sets.join(',')} WHERE id = ?`, values);
+      }
+      // 自动重算 item_count
+      await conn.query(
+        `UPDATE booking_packages p SET item_count = (SELECT COUNT(*) FROM booking_package_items pi WHERE pi.package_id = p.id) WHERE p.id = ?`,
+        [id]
+      );
+      const [rows] = await conn.query(`SELECT * FROM booking_packages WHERE id = ?`, [id]);
+      const [items] = await conn.query(`SELECT * FROM booking_package_items WHERE package_id = ?`, [id]);
+      const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      await logOperation(req.user.id, id, 'booking_packages', 'update', req.body, req);
+      res.json({ ok: true, data: { ...rows[0], items, item_count: items.length, auto_total: autoTotal } });
+    } catch (e) {
+      console.error('[packages update] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // get single package with items
+  routerRef.get('/config/packages/:id', requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [rows] = await pool.query(`SELECT * FROM booking_packages WHERE id = ?`, [id]);
+      if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
+      const [items] = await pool.query(
+        `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+        [id]
+      );
+      const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      res.json({ ok: true, data: { ...rows[0], items, item_count: items.length, auto_total: autoTotal } });
+    } catch (e) {
+      console.error('[package detail] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // delete package（级联删除关联的项目）
+  routerRef.delete('/config/packages/:id', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { id } = req.params;
+      // 软删除套餐（status=0）+ 删除关联的项目（跟随禁用逻辑，方便恢复）
+      await conn.query(`UPDATE booking_packages SET status = 0 WHERE id = ?`, [id]);
+      await conn.query(`DELETE FROM booking_package_items WHERE package_id = ?`, [id]);
+      await logOperation(req.user.id, id, 'booking_packages', 'delete', {}, req);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('[packages delete] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+}
+
+// 先移除 makeBizConfigCrud 生成的默认 packages 路由（通过在后面注册增强版本实现覆盖）
+// 注意：Express 按注册顺序匹配，所以我们通过增强版本实现完整逻辑
+// makeBizConfigCrud 调用在下方，但实际生效的是增强版本
+
+// 体检项目主表 CRUD（检查项目字典）
+function makeCheckupItemCrud(routerRef) {
+  const basePath = '/config/checkup-items';
+  const table = 'booking_checkup_items';
+  const requiredFields = ['code', 'name'];
+  const editableFields = ['category', 'description', 'default_price', 'unit', 'status', 'sort_order'];
+
+  routerRef.get(`${basePath}`, requireAuth, async (req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `SELECT * FROM ${table} ORDER BY category ASC, sort_order ASC, id ASC`
+      );
+      res.json({ ok: true, data: rows });
+    } catch (e) {
+      console.error(`[${basePath} list] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  routerRef.post(`${basePath}`, requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      for (const f of requiredFields) {
+        if (req.body[f] === undefined || req.body[f] === null || req.body[f] === '') {
+          return res.status(400).json({ ok: false, error: `缺少必要字段：${f}` });
+        }
+      }
+      const id = uuidv4();
+      const fields = ['id', ...requiredFields, ...editableFields.filter(f => req.body[f] !== undefined)];
+      const values = [id, ...requiredFields.map(f => req.body[f])];
+      editableFields.filter(f => req.body[f] !== undefined).forEach(f => values.push(req.body[f]));
+      if (!fields.includes('default_price')) { fields.push('default_price'); values.push(0); }
+      if (!fields.includes('unit')) { fields.push('unit'); values.push('次'); }
+      if (!fields.includes('category')) { fields.push('category'); values.push('其他'); }
+      if (!fields.includes('sort_order')) { fields.push('sort_order'); values.push(100); }
+      if (!fields.includes('status')) { fields.push('status'); values.push(1); }
+      const placeholders = fields.map(() => '?').join(',');
+      await conn.query(`INSERT INTO ${table} (${fields.join(',')}) VALUES (${placeholders})`, values);
+      const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, table, 'create', req.body, req);
+      res.json({ ok: true, data: rows[0] });
+    } catch (e) {
+      console.error(`[${basePath} create] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  routerRef.put(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { id } = req.params;
+      const [exist] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      if (exist.length === 0) return res.status(404).json({ ok: false, error: '记录不存在' });
+      const sets = [];
+      const values = [];
+      [...requiredFields, ...editableFields].forEach(f => {
+        if (req.body[f] !== undefined) { sets.push(`${f} = ?`); values.push(req.body[f]); }
+      });
+      if (sets.length > 0) {
+        values.push(id);
+        await conn.query(`UPDATE ${table} SET ${sets.join(',')} WHERE id = ?`, values);
+      }
+      // 同步更新套餐-项目关联表中的名称快照
+      if (req.body.name !== undefined) {
+        await conn.query(
+          `UPDATE booking_package_items SET item_name_snapshot = ? WHERE item_id = ?`,
+          [req.body.name, id]
+        );
+      }
+      const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, table, 'update', req.body, req);
+      res.json({ ok: true, data: rows[0] });
+    } catch (e) {
+      console.error(`[${basePath} update] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  routerRef.delete(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await pool.query(`UPDATE ${table} SET status = 0 WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, table, 'delete', {}, req);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(`[${basePath} delete] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+}
+
+// 套餐内项目 CRUD（子资源）
+function makePackageItemCrud(routerRef) {
+  // list package items
+  routerRef.get('/config/packages/:pkgId/items', requireAuth, async (req, res) => {
+    try {
+      const { pkgId } = req.params;
+      const [rows] = await pool.query(
+        `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+        [pkgId]
+      );
+      res.json({ ok: true, data: rows });
+    } catch (e) {
+      console.error('[package-items list] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // add item to package
+  routerRef.post('/config/packages/:pkgId/items', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { pkgId } = req.params;
+      const { item_id, item_price, quantity, sort_order } = req.body;
+      if (!item_id) return res.status(400).json({ ok: false, error: '缺少 item_id' });
+
+      const [items] = await conn.query(`SELECT * FROM booking_checkup_items WHERE id = ?`, [item_id]);
+      if (items.length === 0) return res.status(404).json({ ok: false, error: '体检项目不存在' });
+      const item = items[0];
+
+      // 获取最大 sort_order
+      const [maxSort] = await conn.query(
+        `SELECT MAX(sort_order) AS ms FROM booking_package_items WHERE package_id = ?`,
+        [pkgId]
+      );
+      const newSort = (maxSort[0].ms || 0) + 10;
+
+      const id = uuidv4();
+      await conn.query(
+        `INSERT INTO booking_package_items (id, package_id, item_id, item_name_snapshot, item_price, quantity, sort_order) VALUES (?,?,?,?,?,?,?)`,
+        [id, pkgId, item_id, item.name, item_price != null ? item_price : item.default_price || 0, quantity || 1, sort_order || newSort]
+      );
+
+      // 更新套餐 item_count
+      await conn.query(
+        `UPDATE booking_packages SET item_count = (SELECT COUNT(*) FROM booking_package_items WHERE package_id = ?) WHERE id = ?`,
+        [pkgId, pkgId]
+      );
+
+      const [rows] = await conn.query(`SELECT * FROM booking_package_items WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, 'booking_package_items', 'create', req.body, req);
+      res.json({ ok: true, data: rows[0] });
+    } catch (e) {
+      console.error('[package-items create] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // update package item
+  routerRef.put('/config/packages/:pkgId/items/:id', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { id } = req.params;
+      const [exist] = await conn.query(`SELECT * FROM booking_package_items WHERE id = ?`, [id]);
+      if (exist.length === 0) return res.status(404).json({ ok: false, error: '记录不存在' });
+      const sets = [];
+      const values = [];
+      ['item_price', 'quantity', 'sort_order'].forEach(f => {
+        if (req.body[f] !== undefined) { sets.push(`${f} = ?`); values.push(req.body[f]); }
+      });
+      if (sets.length > 0) {
+        values.push(id);
+        await conn.query(`UPDATE booking_package_items SET ${sets.join(',')} WHERE id = ?`, values);
+      }
+      const [rows] = await conn.query(`SELECT * FROM booking_package_items WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, 'booking_package_items', 'update', req.body, req);
+      res.json({ ok: true, data: rows[0] });
+    } catch (e) {
+      console.error('[package-items update] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // delete package item
+  routerRef.delete('/config/packages/:pkgId/items/:id', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { pkgId, id } = req.params;
+      await conn.query(`DELETE FROM booking_package_items WHERE id = ?`, [id]);
+      // 更新套餐 item_count
+      await conn.query(
+        `UPDATE booking_packages SET item_count = (SELECT COUNT(*) FROM booking_package_items WHERE package_id = ?) WHERE id = ?`,
+        [pkgId, pkgId]
+      );
+      await logOperation(req.user.id, id, 'booking_package_items', 'delete', {}, req);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('[package-items delete] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // 批量更新套餐 items（一次保存全部）
+  routerRef.put('/config/packages/:pkgId/items-batch', requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { pkgId } = req.params;
+      const items = req.body.items; // [{ id, item_id, item_price, quantity, sort_order }]
+      if (!Array.isArray(items)) return res.status(400).json({ ok: false, error: 'items 必须为数组' });
+
+      // 删除现有关联
+      await conn.query(`DELETE FROM booking_package_items WHERE package_id = ?`, [pkgId]);
+
+      // 重新插入
+      for (const it of items) {
+        if (!it.item_id) continue;
+        const [checkItems] = await conn.query(`SELECT * FROM booking_checkup_items WHERE id = ?`, [it.item_id]);
+        if (checkItems.length === 0) continue;
+        const checkItem = checkItems[0];
+        const id = it.id || uuidv4();
+        await conn.query(
+          `INSERT INTO booking_package_items (id, package_id, item_id, item_name_snapshot, item_price, quantity, sort_order) VALUES (?,?,?,?,?,?,?)`,
+          [id, pkgId, it.item_id, it.item_name_snapshot || checkItem.name, it.item_price ?? checkItem.default_price ?? 0, it.quantity ?? 1, it.sort_order ?? 0]
+        );
+      }
+
+      // 更新 item_count
+      await conn.query(
+        `UPDATE booking_packages SET item_count = (SELECT COUNT(*) FROM booking_package_items WHERE package_id = ?) WHERE id = ?`,
+        [pkgId, pkgId]
+      );
+
+      const [rows] = await conn.query(`SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order`, [pkgId]);
+      res.json({ ok: true, data: rows });
+    } catch (e) {
+      console.error('[package-items batch] error:', e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+}
+
+// 注册以上路由增强
+enhancePackageList(router);
+makeCheckupItemCrud(router);
+makePackageItemCrud(router);
 
 makeBizConfigCrud({
   basePath: '/config/room-types',

@@ -434,11 +434,14 @@ export default function BookingBoardCreate(props: {
   ] as WellnessTypeRow[]);
 
   // 查找 code→显示信息（优先用动态配置，其次用 constants 的兜底常量）
-  function getPackageInfo(code: string): { name: string; price: number; label: string } {
+  function getPackageInfo(code: string): { name: string; price: number; label: string; items?: any[]; autoTotal?: number } {
     const row = pkgMap[code] ?? finalPkgOptions.find(p => p.code === code);
     if (row) {
-      const price = Number(row.price || 0);
-      return { name: row.name, price, label: `${row.code} · ¥${price.toLocaleString()}` };
+      const explicitPrice = Number(row.price || 0);
+      const items = row.items || [];
+      const autoTotal = items.reduce((s: number, i: any) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      const price = explicitPrice > 0 ? explicitPrice : autoTotal;
+      return { name: row.name, price, label: `${row.code} · ¥${price.toLocaleString()}`, items, autoTotal };
     }
     const fb = (CHECKUP_PACKAGES as any)[code];
     if (fb) return { name: fb.name, price: fb.price, label: `${code} · ¥${fb.price.toLocaleString()}` };
@@ -1547,6 +1550,50 @@ export default function BookingBoardCreate(props: {
                   <div className="text-right text-sm text-green-600 font-mono">
                     合计：¥{calcCheckupAmount(chkPax.filter((p) => p.name.trim()), finalBizConfigForCalc).toLocaleString()}
                   </div>
+                  {/* 套餐项目明细展示 */}
+                  {(() => {
+                    const selectedCodes = [...new Set(chkPax.filter(p => p.name.trim()).map(p => p.package))];
+                    const rows = selectedCodes.map(code => {
+                      const info = getPackageInfo(code);
+                      if (!info.items || info.items.length === 0) return null;
+                      return (
+                        <div key={code} className="border border-gray-200 rounded-lg overflow-hidden">
+                          <div className="bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 flex items-center justify-between">
+                            <span>{info.name} ({code})</span>
+                            <span className="text-green-600 font-mono">
+                              ¥{(info.autoTotal ?? info.price).toLocaleString()}
+                            </span>
+                          </div>
+                          <table className="w-full text-xs">
+                            <thead className="text-gray-500 border-b border-gray-100">
+                              <tr>
+                                <th className="px-3 py-1 text-left">项目</th>
+                                <th className="px-3 py-1 text-right w-20">单价</th>
+                                <th className="px-3 py-1 text-center w-12">数量</th>
+                                <th className="px-3 py-1 text-right w-20">小计</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {info.items.map((item: any, i: number) => (
+                                <tr key={i} className="border-t border-gray-50">
+                                  <td className="px-3 py-1 text-gray-700">{item.item_name_snapshot}</td>
+                                  <td className="px-3 py-1 text-right font-mono">¥{Number(item.item_price || 0).toLocaleString()}</td>
+                                  <td className="px-3 py-1 text-center">{item.quantity || 1}</td>
+                                  <td className="px-3 py-1 text-right font-mono">¥{(Number(item.item_price || 0) * Number(item.quantity || 1)).toLocaleString()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    }).filter(Boolean);
+                    return rows.length > 0 ? (
+                      <div className="space-y-2">
+                        <div className="text-xs text-gray-500 font-medium">套餐项目明细</div>
+                        {rows}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               ) : drawer.itemType === 'lodging' ? (
                 <div className="space-y-3">

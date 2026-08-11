@@ -16,12 +16,39 @@ export type MeetingHall = string;
 // 康乐项目（改为动态 string）
 export type WellnessType = string;
 
-// 4 类业务常量记录
+// 体检套餐记录（增强版，包含 items）
+export interface PackageItemRow {
+  id: string;
+  package_id: string;
+  item_id: string;
+  item_name_snapshot: string;
+  item_price: number;
+  quantity: number;
+  sort_order: number;
+}
+
 export interface PackageRow {
   id: string;
   code: string;
   name: string;
   price: number;
+  status: number;
+  sort_order: number;
+  item_count?: number;
+  auto_total?: number;
+  remark?: string;
+  items?: PackageItemRow[];
+}
+
+// 体检项目主表记录
+export interface CheckupItemRow {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  description: string;
+  default_price: number;
+  unit: string;
   status: number;
   sort_order: number;
 }

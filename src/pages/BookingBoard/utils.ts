@@ -90,8 +90,16 @@ export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput):
   const pkgMap = buildMap(config?.packages);
   return paxList.reduce((sum, p) => {
     const row = pkgMap[p.package];
-    const price = row ? Number(row.price) : (FALLBACK_PACKAGES[p.package]?.price || 0);
-    return sum + (price || 0);
+    if (row) {
+      // 如果显式设置了 price，使用 price；否则用 items 的 auto_total
+      const explicitPrice = Number(row.price);
+      if (explicitPrice > 0) return sum + explicitPrice;
+      const autoTotal = (row.items || []).reduce((s: number, i: any) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      if (autoTotal > 0) return sum + autoTotal;
+      return sum;
+    }
+    const fb = FALLBACK_PACKAGES[p.package];
+    return sum + (fb?.price || 0);
   }, 0);
 }
 

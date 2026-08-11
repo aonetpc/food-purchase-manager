@@ -170,11 +170,37 @@ export interface BookingSalesUser {
   username?: string;
 }
 
+export interface PackageItemRow {
+  id: string;
+  package_id: string;
+  item_id: string;
+  item_name_snapshot: string;
+  item_price: number;
+  quantity: number;
+  sort_order: number;
+}
+
 export interface PackageRow {
   id: string;
   code: string;
   name: string;
   price: number;
+  status: number;
+  sort_order: number;
+  item_count?: number;
+  auto_total?: number;
+  remark?: string;
+  items?: PackageItemRow[];
+}
+
+export interface CheckupItemRow {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  description: string;
+  default_price: number;
+  unit: string;
   status: number;
   sort_order: number;
 }
@@ -215,6 +241,7 @@ export interface BookingConfig {
   roomTypes: RoomTypeRow[];
   meetingHalls: MeetingHallRow[];
   wellnessTypes: WellnessTypeRow[];
+  checkupItems?: CheckupItemRow[];
   salesUsers?: BookingSalesUser[];
 }
 
@@ -373,6 +400,44 @@ export const bookingApi = {
   },
   async deletePackage(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/packages/${id}`);
+  },
+
+  // ===== 体检项目主表 CRUD =====
+  async listCheckupItems(): Promise<CheckupItemRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/checkup-items');
+    return (res.data || []).map(fromBackend) as CheckupItemRow[];
+  },
+  async createCheckupItem(payload: Partial<CheckupItemRow>): Promise<CheckupItemRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/checkup-items', payload);
+    return fromBackend(res.data) as CheckupItemRow;
+  },
+  async updateCheckupItem(id: string, payload: Partial<CheckupItemRow>): Promise<CheckupItemRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/checkup-items/${id}`, payload);
+    return fromBackend(res.data) as CheckupItemRow;
+  },
+  async deleteCheckupItem(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/checkup-items/${id}`);
+  },
+
+  // ===== 套餐项目（子资源）CRUD =====
+  async listPackageItems(pkgId: string): Promise<PackageItemRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>(`/booking/config/packages/${pkgId}/items`);
+    return (res.data || []).map(fromBackend) as PackageItemRow[];
+  },
+  async addPackageItem(pkgId: string, payload: { item_id: string; item_price?: number; quantity?: number; sort_order?: number }): Promise<PackageItemRow> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/config/packages/${pkgId}/items`, payload);
+    return fromBackend(res.data) as PackageItemRow;
+  },
+  async updatePackageItem(pkgId: string, id: string, payload: { item_price?: number; quantity?: number; sort_order?: number }): Promise<PackageItemRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/packages/${pkgId}/items/${id}`, payload);
+    return fromBackend(res.data) as PackageItemRow;
+  },
+  async deletePackageItem(pkgId: string, id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/packages/${pkgId}/items/${id}`);
+  },
+  async batchUpdatePackageItems(pkgId: string, items: any[]): Promise<PackageItemRow[]> {
+    const res = await api.put<{ ok: boolean; data: any[] }>(`/booking/config/packages/${pkgId}/items-batch`, { items });
+    return (res.data || []).map(fromBackend) as PackageItemRow[];
   },
 
   async listRoomTypes(): Promise<RoomTypeRow[]> {
