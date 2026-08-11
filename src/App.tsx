@@ -51,6 +51,8 @@ const ScanAudit = lazy(() => import('@/pages/ScanAudit'));
 const ManagementReport = lazy(() => import('@/pages/ManagementReport'));
 const StockTakeOperate = lazy(() => import('@/pages/StockTakeOperate'));
 const PermissionManager = lazy(() => import('@/pages/PermissionManager'));
+const BookingBoard = lazy(() => import('@/pages/BookingBoard'));
+const BookingBoardCreate = lazy(() => import('@/pages/BookingBoard/Create'));
 
 const pageLoad = <PageLoading />;
 
@@ -226,6 +228,9 @@ export default function App() {
                 <TempStats />
               </ProtectedRoute>
             } />
+            <Route path="booking-board" element={<BookingBoard />} />
+            <Route path="booking-board/create" element={<BookingBoardCreate />} />
+            <Route path="booking-board/edit/:id" element={<BookingBoardCreate />} />
           </Route>
         </Routes>
       </Suspense>

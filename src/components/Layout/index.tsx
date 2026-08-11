@@ -75,7 +75,7 @@ const menuGroups = [
   { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit'] },
   { name: '统计', paths: ['/monthly', '/management-report', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
-  { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/wecom', '/wecom-test'] },
+  { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/booking-board', '/wecom', '/wecom-test'] },
 ];
 
 export default function Layout() {
@@ -150,6 +150,7 @@ export default function Layout() {
     { code: 'menu:temp-audit', name: '打卡审核', path: '/temp-audit', icon: 'Check' },
     { code: 'menu:temp-assessment', name: '月底考核', path: '/temp-assessment', icon: 'Calendar' },
     { code: 'menu:temp-stats', name: '外请人工看板', path: '/temp-stats', icon: 'BarChart3' },
+    { code: 'menu:booking-board', name: '预订调度', path: '/booking-board', icon: 'Calendar' },
     { code: 'menu:wecom', name: '企业微信管理', path: '/wecom', icon: 'Smartphone' },
   ];
 
@@ -177,7 +178,7 @@ export default function Layout() {
       }
     }
 
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/wecom', '/wecom-test'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/wecom', '/wecom-test'];
 
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
