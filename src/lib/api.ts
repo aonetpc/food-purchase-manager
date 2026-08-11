@@ -94,3 +94,192 @@ export const api = {
   getBaseUrl: () => BASE_URL,
   getToken,
 };
+
+// ============================================================
+// 预订调度模块 API
+// snake_case ↔ camelCase 转换
+// ============================================================
+
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+function camelToSnake(s: string): string {
+  return s.replace(/([A-Z])/g, '_', c => c.toLowerCase());
+}
+
+function transformKeys(obj: any, fn: (k: string) => string): any {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map(v => transformKeys(v, fn));
+  if (typeof obj === 'object') {
+    const result: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      result[fn(k)] = transformKeys(v, fn);
+    }
+    return result;
+  }
+  return obj;
+}
+
+/** 后端 snake_case → 前端 camelCase（递归转换所有 key） */
+function fromBackend<T = any>(data: any): T {
+  return transformKeys(data, snakeToCamel) as T;
+}
+
+/** 前端 items → 后端 items（只转 item 层字段，extra 保持原样） */
+function itemsToBackend(items: any[]): any[] {
+  return (items || []).map(it => ({
+    item_type: it.itemType,
+    date: it.date,
+    start_time: it.startTime || null,
+    end_time: it.endTime || null,
+    pax: it.pax,
+    extra: it.extra,  // extra 保持 camelCase，后端 JSON 原样存储
+    amount: it.amount,
+  }));
+}
+
+export interface BookingApiOrder {
+  id: string;
+  orderNo: string;
+  customerName: string;
+  contactName?: string;
+  contactPhone?: string;
+  salesPerson?: string;
+  paymentMethod?: string;
+  remark?: string;
+  status: string;
+  totalAmount: number;
+  bookerId?: string;
+  bookerName?: string;
+  rejectedBy?: string;
+  rejectedByName?: string;
+  rejectionReason?: string;
+  confirmedAt?: string;
+  completedAt?: string;
+  rejectedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  items: any[];
+  derivedBreakfasts?: any[];
+}
+
+export interface BookingConfig {
+  packages: any[];
+  roomTypes: any[];
+  meetingHalls: any[];
+  wellnessTypes: any[];
+}
+
+export const bookingApi = {
+  // 按周查询订单列表
+  async getOrders(params: {
+    weekStart?: string;
+    weekEnd?: string;
+    status?: string;
+    bizType?: string;
+    salesPerson?: string;
+    customerName?: string;
+  }): Promise<{ data: BookingApiOrder[]; filters: { weekStart: string; weekEnd: string } }> {
+    const res = await api.get<{ ok: boolean; data: any[]; filters: any }>('/booking/orders', { params });
+    return {
+      data: (res.data || []).map(fromBackend) as BookingApiOrder[],
+      filters: { weekStart: res.filters?.weekStart || '', weekEnd: res.filters?.weekEnd || '' },
+    };
+  },
+
+  // 查询单个订单详情
+  async getOrder(id: string): Promise<BookingApiOrder> {
+    const res = await api.get<{ ok: boolean; data: any }>(`/booking/orders/${id}`);
+    return fromBackend(res.data);
+  },
+
+  // 新建订单
+  async createOrder(payload: {
+    customerName: string;
+    contactName?: string;
+    contactPhone?: string;
+    salesPerson?: string;
+    paymentMethod?: string;
+    remark?: string;
+    items: any[];
+  }): Promise<BookingApiOrder> {
+    const backendPayload = {
+      customerName: payload.customerName,
+      contactName: payload.contactName,
+      contactPhone: payload.contactPhone,
+      salesPerson: payload.salesPerson,
+      paymentMethod: payload.paymentMethod,
+      remark: payload.remark,
+      items: itemsToBackend(payload.items),
+    };
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/orders', backendPayload);
+    return fromBackend(res.data);
+  },
+
+  // 编辑订单
+  async updateOrder(id: string, payload: {
+    customerName: string;
+    contactName?: string;
+    contactPhone?: string;
+    salesPerson?: string;
+    paymentMethod?: string;
+    remark?: string;
+    items: any[];
+  }): Promise<BookingApiOrder> {
+    const backendPayload = {
+      customerName: payload.customerName,
+      contactName: payload.contactName,
+      contactPhone: payload.contactPhone,
+      salesPerson: payload.salesPerson,
+      paymentMethod: payload.paymentMethod,
+      remark: payload.remark,
+      items: itemsToBackend(payload.items),
+    };
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/orders/${id}`, backendPayload);
+    return fromBackend(res.data);
+  },
+
+  // 复制为新单
+  async duplicateOrder(id: string, payload?: {
+    clearRemark?: boolean;
+    itemDateShiftDays?: number;
+  }): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/duplicate`, payload || {});
+    return fromBackend(res.data);
+  },
+
+  // 提交审核
+  async submitOrder(id: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/submit`, {});
+    return fromBackend(res.data);
+  },
+
+  // 审核通过
+  async approveOrder(id: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/approve`, {});
+    return fromBackend(res.data);
+  },
+
+  // 驳回
+  async rejectOrder(id: string, rejectionReason: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/reject`, { rejectionReason });
+    return fromBackend(res.data);
+  },
+
+  // 标记完成
+  async completeOrder(id: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/complete`, {});
+    return fromBackend(res.data);
+  },
+
+  // 获取业务常量
+  async getConfig(): Promise<BookingConfig> {
+    const res = await api.get<{ ok: boolean; data: any }>('/booking/config');
+    return {
+      packages: (res.data?.packages || []).map(fromBackend),
+      roomTypes: (res.data?.roomTypes || []).map(fromBackend),
+      meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
+      wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
+    };
+  },
+};

@@ -234,7 +234,7 @@ export default function BookingBoardCreate(props: {
   mode: 'create' | 'edit' | 'copy';
   order?: BookingOrder;
   onClose: () => void;
-  onSaved: (order: BookingOrder) => void;
+  onSaved: (order: BookingOrder) => Promise<void> | void;
 }) {
   const { mode, order, onClose, onSaved } = props;
   const editOrder = mode === 'edit' ? order : undefined;
@@ -833,6 +833,8 @@ export default function BookingBoardCreate(props: {
   // ================================================
   // 提交 / 草稿
   // ================================================
+  const [saving, setSaving] = useState(false);
+
   function buildOrder(): BookingOrder {
     return {
       ...draftGroup,
@@ -842,7 +844,7 @@ export default function BookingBoardCreate(props: {
     };
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!draftGroup.customerName.trim()) {
       setErr('请填写客户/单位名称');
       return;
@@ -852,14 +854,28 @@ export default function BookingBoardCreate(props: {
       return;
     }
     const order = buildOrder();
-    onSaved(order);
-    onClose();
+    setSaving(true);
+    try {
+      await onSaved(order);
+      onClose();
+    } catch {
+      // 错误已由上层处理
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleSaveDraft() {
+  async function handleSaveDraft() {
     const order = buildOrder();
-    onSaved(order);
-    onClose();
+    setSaving(true);
+    try {
+      await onSaved(order);
+      onClose();
+    } catch {
+      // 错误已由上层处理
+    } finally {
+      setSaving(false);
+    }
   }
 
   // ================================================
@@ -1095,14 +1111,15 @@ export default function BookingBoardCreate(props: {
               ¥{totalAmount.toLocaleString()}
             </div>
           </div>
-          <button onClick={handleSaveDraft} className={btnGhost}>
-            <Save size={14} /> 保存草稿
+          <button onClick={handleSaveDraft} disabled={saving} className={btnGhost + (saving ? ' opacity-50 cursor-not-allowed' : '')}>
+            <Save size={14} /> {saving ? '保存中...' : '保存草稿'}
           </button>
           <button
             onClick={handleSubmit}
-            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-green-500 hover:bg-green-600 text-white font-semibold transition-colors"
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-green-500 hover:bg-green-600 text-white font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Send size={14} /> 提交订单
+            <Send size={14} /> {saving ? '提交中...' : '提交订单'}
           </button>
         </div>
       </div>

@@ -33,6 +33,7 @@ const tempCheckinsRouter = require('./routes/temp-checkins');
 const tempAssessmentsRouter = require('./routes/temp-assessments');
 const tempStatsRouter = require('./routes/temp-stats');
 const tempWorkersRouter = require('./routes/temp-workers');
+const bookingBoardRouter = require('./routes/booking-board');
 
 const { requireAuth, getUserPermissions, getRoles, getPermissions, getModules, requireRole } = require('./middleware/rbac');
 const rolesRouter = require('./routes/roles');
@@ -99,6 +100,9 @@ app.use('/api/scan-requisition', scanRequisitionRouter);
 
 // 管理报表接口（需登录）
 app.use('/api/reports', requireAuth, reportsRouter);
+
+// 预订调度接口（需登录）
+app.use('/api/booking', requireAuth, bookingBoardRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);

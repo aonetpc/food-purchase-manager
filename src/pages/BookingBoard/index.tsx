@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, OrderStatus } from './types';
 import {
@@ -24,14 +24,14 @@ import {
   getItemDateRange,
   type FlatItem,
 } from './utils';
-import { generateMockData } from './mockData';
+import { bookingApi, type BookingApiOrder } from '../../lib/api';
 import CreateFormRaw from './Create';
 
 const CreateForm = CreateFormRaw as unknown as React.FC<{
   mode: 'create' | 'edit' | 'copy';
   order?: BookingOrder;
   onClose: () => void;
-  onSaved: (order: BookingOrder) => void;
+  onSaved: (order: BookingOrder) => Promise<void> | void;
 }>;
 
 // ================================================
@@ -50,6 +50,32 @@ interface BoardCard {
 const ALL_BIZ: BizType[] = BUSINESS.map(b => b.type);
 const ALL_STATUS: OrderStatus[] = ['pending', 'reviewing', 'confirmed', 'rejected', 'completed'];
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+// ================================================
+// 后端订单 → 前端订单适配
+// 后端字段：orderNo, paymentMethod, rejectionReason, rejectedByName
+// 前端字段：id(显示用orderNo), payment, rejectReason, rejectedBy
+// ================================================
+function adaptOrder(apiOrder: BookingApiOrder): BookingOrder {
+  return {
+    id: apiOrder.orderNo || apiOrder.id,
+    customerName: apiOrder.customerName || '',
+    contactName: apiOrder.contactName || '',
+    contactPhone: apiOrder.contactPhone || '',
+    salesPerson: apiOrder.salesPerson || '',
+    payment: apiOrder.paymentMethod || '',
+    remark: apiOrder.remark || '',
+    items: (apiOrder.items || []).map((it: any) => ({
+      ...it,
+      extra: it.extra || {},
+    })),
+    status: (apiOrder.status as OrderStatus) || 'pending',
+    createdAt: apiOrder.createdAt || '',
+    confirmedAt: apiOrder.confirmedAt,
+    rejectedBy: apiOrder.rejectedByName || apiOrder.rejectedBy || '',
+    rejectReason: apiOrder.rejectionReason || '',
+  };
+}
 
 // 会话多类型 session 取值辅助（ItemExtra.sessions 在类型上声明为 MealSession[]，
 // 但实际也会承载 MeetingSession / WellnessSession，这里仅做受控断言）
@@ -565,11 +591,38 @@ export default function BookingBoard() {
   const [selectedOrder, setSelectedOrder] = useState<BookingOrder | null>(null);
   const [mobileDate, setMobileDate] = useState<string>(() => todayStr());
   const [createDrawer, setCreateDrawer] = useState<null | { mode: 'create' | 'edit' | 'copy'; order?: BookingOrder }>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // orderNo → backend UUID 映射（编辑/状态操作时需要 UUID 调后端）
+  const orderUuidMap = useRef<Record<string, string>>({});
 
-  // 切换周时重新生成 mock 数据并重置移动端选中日期
+  // 切换周时从后端加载订单数据
   useEffect(() => {
-    setOrders(generateMockData(weekStart));
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const weekStartStr = fmt(weekStart);
+        const { data } = await bookingApi.getOrders({ weekStart: weekStartStr });
+        if (!cancelled) {
+          const map: Record<string, string> = {};
+          const adapted = data.map(apiOrder => {
+            const displayId = apiOrder.orderNo || apiOrder.id;
+            map[displayId] = apiOrder.id;
+            return adaptOrder(apiOrder);
+          });
+          orderUuidMap.current = map;
+          setOrders(adapted);
+        }
+      } catch (e) {
+        console.error('[BookingBoard] 加载订单失败:', e);
+        if (!cancelled) setOrders([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
     setMobileDate(fmt(weekStart));
+    return () => { cancelled = true; };
   }, [weekStart]);
 
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
@@ -643,6 +696,47 @@ export default function BookingBoard() {
   const goPrevWeek = useCallback(() => setWeekStart(s => addDays(s, -7)), []);
   const goNextWeek = useCallback(() => setWeekStart(s => addDays(s, 7)), []);
   const goToday = useCallback(() => setWeekStart(getWeekStart(new Date())), []);
+
+  // 前端 BookingOrder → 后端 payload（payment → paymentMethod）
+  function toPayload(order: BookingOrder) {
+    return {
+      customerName: order.customerName,
+      contactName: order.contactName,
+      contactPhone: order.contactPhone,
+      salesPerson: order.salesPerson,
+      paymentMethod: order.payment,
+      remark: order.remark,
+      items: order.items,
+    };
+  }
+
+  // 保存订单（新建/编辑/复制）
+  const handleSave = useCallback(async (newOrder: BookingOrder) => {
+    setSaving(true);
+    try {
+      if (createDrawer?.mode === 'edit' && createDrawer.order) {
+        const uuid = orderUuidMap.current[createDrawer.order.id];
+        if (!uuid) throw new Error('找不到订单UUID，请刷新后重试');
+        const updated = await bookingApi.updateOrder(uuid, toPayload(newOrder));
+        const adapted = adaptOrder(updated);
+        orderUuidMap.current[adapted.id] = updated.id;
+        setOrders(prev => prev.map(o => o.id === createDrawer.order!.id ? adapted : o));
+      } else {
+        // create 或 copy 都走新建
+        const created = await bookingApi.createOrder(toPayload(newOrder));
+        const adapted = adaptOrder(created);
+        orderUuidMap.current[adapted.id] = created.id;
+        setOrders(prev => [...prev, adapted]);
+      }
+      // 成功后由 Create.tsx 调用 onClose 关闭抽屉
+    } catch (e) {
+      console.error('[BookingBoard] 保存失败:', e);
+      alert('保存失败: ' + (e as Error).message);
+      throw e;
+    } finally {
+      setSaving(false);
+    }
+  }, [createDrawer]);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -760,6 +854,12 @@ export default function BookingBoard() {
 
         {/* ============ 甘特画板（桌面端 ≥980px） ============ */}
         <div className="hidden min-[980px]:block">
+          {loading && (
+            <div className="text-center text-gray-500 text-sm py-6 bg-white rounded-lg border border-gray-200 mb-3">
+              <span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
+              加载中...
+            </div>
+          )}
           <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
             <div className="min-w-[1110px]">
               {/* 表头 */}
@@ -950,7 +1050,7 @@ export default function BookingBoard() {
                 mode={createDrawer.mode}
                 order={createDrawer.order}
                 onClose={() => setCreateDrawer(null)}
-                onSaved={(newOrder) => { setOrders(prev => [...prev, newOrder]); setCreateDrawer(null); }}
+                onSaved={handleSave}
               />
             </div>
           </div>
