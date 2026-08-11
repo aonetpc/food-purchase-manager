@@ -24,15 +24,20 @@ const SYSTEM_ROLES = [
 /**
  * 确保系统内置角色存在（幂等）
  * 在获取角色列表前自动补齐缺失的内置角色
+ * 使用 INSERT IGNORE + code 唯一约束天然幂等，不依赖 UUID() 函数
  */
 async function ensureSystemRoles() {
   for (const role of SYSTEM_ROLES) {
-    await pool.query(
-      `INSERT INTO roles (id, code, name, description, is_system, sort_order)
-       SELECT UUID(), ?, ?, ?, 1, ?
-       FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM roles WHERE code = ?)`,
-      [role.code, role.name, role.description, role.sortOrder, role.code]
-    );
+    try {
+      const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 8);
+      await pool.query(
+        'INSERT IGNORE INTO roles (id, code, name, description, is_system, sort_order) VALUES (?, ?, ?, ?, 1, ?)',
+        [id, role.code, role.name, role.description, role.sortOrder]
+      );
+    } catch (e) {
+      console.error('[ensureSystemRoles] failed for', role.code, e.message);
+      // 单个角色失败不影响其他角色和主流程
+    }
   }
 }
 
