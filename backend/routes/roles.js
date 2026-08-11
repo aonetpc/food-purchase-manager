@@ -55,24 +55,26 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res) => {
     );
 
     // 查每个角色的用户数（仅统计启用的用户，与销售员选择器口径一致）
+    // 使用 UNION DISTINCT 合并 user_roles（多角色）和 users.role_id（旧单角色）两处来源，
+    // 避免同一用户在两处都有时被双重计数
     const [countRows] = await pool.query(`
-      SELECT r.id AS role_id, COUNT(DISTINCT ur.user_id) AS user_count
-      FROM roles r
-      LEFT JOIN user_roles ur ON r.id = ur.role_id
-      LEFT JOIN users u ON u.id = ur.user_id
-      WHERE u.status = 1 OR u.status IS NULL
-      GROUP BY r.id
+      SELECT t.role_id, COUNT(DISTINCT t.user_id) AS user_count
+      FROM (
+        SELECT ur.role_id, ur.user_id
+        FROM user_roles ur
+        INNER JOIN users u ON u.id = ur.user_id
+        WHERE u.status = 1
+
+        UNION DISTINCT
+
+        SELECT u.role_id, u.id AS user_id
+        FROM users u
+        WHERE u.role_id IS NOT NULL AND u.status = 1
+      ) t
+      GROUP BY t.role_id
     `);
     const countMap = {};
     countRows.forEach(c => { countMap[c.role_id] = c.user_count; });
-
-    // 旧 users.role_id 的用户数（同样过滤禁用用户）
-    const [oldCountRows] = await pool.query(`
-      SELECT role_id, COUNT(*) AS user_count FROM users WHERE role_id IS NOT NULL AND status = 1 GROUP BY role_id
-    `);
-    oldCountRows.forEach(c => {
-      countMap[c.role_id] = (countMap[c.role_id] || 0) + c.user_count;
-    });
 
     const result = rows.map(r => ({
       ...r,
