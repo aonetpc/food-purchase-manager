@@ -1,5 +1,32 @@
-import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry } from './types';
-import { CHECKUP_PACKAGES, LODGING_TYPES, MEETING_HALLS, WELLNESS_TYPES, BIZ_MAP } from './constants';
+import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow } from './types';
+import { BIZ_MAP } from './constants';
+
+// 为兼容旧调用保留硬编码兜底常量（仅后端无数据时使用）
+const FALLBACK_PACKAGES: Record<string, { name: string; price: number }> = {
+  A: { name: '基础体检套餐', price: 588 },
+  B: { name: '综合体检套餐', price: 1288 },
+  C: { name: '深度体检套餐', price: 2888 },
+  D: { name: 'VIP体检套餐',   price: 5888 },
+};
+const FALLBACK_ROOMS: Record<string, { name: string; price: number }> = {
+  standard: { name: '标准间',   price: 480 }, bigbed:   { name: '大床房',   price: 520 },
+  suite:    { name: '套房',     price: 880 }, vipsuite: { name: 'VIP套房',  price: 1880 },
+};
+const FALLBACK_HALLS: Record<string, { name: string; capacity: number; halfPrice: number; fullPrice: number }> = {
+  siji:     { name: '四季厅', capacity: 80,  halfPrice: 2000, fullPrice: 3500 },
+  shanshui: { name: '山水厅', capacity: 40,  halfPrice: 1200, fullPrice: 2200 },
+  qingquan: { name: '清泉厅', capacity: 20,  halfPrice: 600,  fullPrice: 1100 },
+  wanghu:   { name: '望湖厅', capacity: 120, halfPrice: 3000, fullPrice: 5800 },
+};
+const FALLBACK_WELLNESS: Record<string, { name: string; minHours: number; price: number; free: boolean }> = {
+  mahjong:     { name: '棋牌室',   minHours: 4, price: 80,  free: false },
+  fishing:     { name: '钓鱼',     minHours: 2, price: 60,  free: false },
+  ktv:         { name: 'KTV',      minHours: 2, price: 120, free: false },
+  swimming:    { name: '游泳池',   minHours: 0, price: 0,   free: true },
+  gym:         { name: '健身房',   minHours: 0, price: 0,   free: true },
+  billiards:   { name: '台球室',   minHours: 0, price: 0,   free: true },
+  tabletennis: { name: '乒乓房',   minHours: 0, price: 0,   free: true },
+};
 
 // ================================================
 // 日期工具
@@ -41,32 +68,60 @@ export function parseDate(s: string): Date {
   return new Date(s);
 }
 
-// ================================================
-// 金额计算
-// ================================================
 export function groupTotal(g: BookingOrder): number {
   return g.items.reduce((sum, it) => sum + (it.amount || 0), 0);
 }
 
-export function calcCheckupAmount(paxList: PaxEntry[]): number {
-  return paxList.reduce((sum, p) => sum + (CHECKUP_PACKAGES[p.package]?.price || 0), 0);
+// ================================================
+// 金额计算（优先使用后端动态配置，缺失时降级到兜底常量）
+// ================================================
+interface BizConfigInput {
+  packages?: PackageRow[];
+  roomTypes?: RoomTypeRow[];
+  meetingHalls?: MeetingHallRow[];
+  wellnessTypes?: WellnessTypeRow[];
 }
 
-export function calcLodgingAmount(lodgingType: string, rooms: number, nights: number): number {
-  const t = LODGING_TYPES[lodgingType as keyof typeof LODGING_TYPES];
-  return (t?.price || 0) * rooms * nights;
+function buildMap<T extends { code: string }>(rows?: T[]): Record<string, T> {
+  return (rows || []).reduce((acc, r) => { acc[r.code] = r; return acc; }, {} as Record<string, T>);
 }
 
-export function calcMeetingAmount(hall: string, slotType: 'half' | 'full'): number {
-  const h = MEETING_HALLS[hall as keyof typeof MEETING_HALLS];
-  if (!h) return 0;
-  return slotType === 'half' ? h.halfPrice : h.fullPrice;
+export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput): number {
+  const pkgMap = buildMap(config?.packages);
+  return paxList.reduce((sum, p) => {
+    const row = pkgMap[p.package];
+    const price = row ? Number(row.price) : (FALLBACK_PACKAGES[p.package]?.price || 0);
+    return sum + (price || 0);
+  }, 0);
 }
 
-export function calcWellnessAmount(type: string, hours: number): number {
-  const w = WELLNESS_TYPES[type as keyof typeof WELLNESS_TYPES];
-  if (!w || w.free) return 0;
-  return w.price * Math.max(hours, w.minHours);
+export function calcLodgingAmount(lodgingType: string, rooms: number, nights: number, config?: BizConfigInput): number {
+  const row = buildMap(config?.roomTypes)[lodgingType];
+  const price = row ? Number(row.price) : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+  return (price || 0) * Math.max(0, rooms) * Math.max(0, nights);
+}
+
+export function calcMeetingAmount(hall: string, slotType: 'half' | 'full', config?: BizConfigInput): number {
+  const row = buildMap(config?.meetingHalls)[hall];
+  if (row) return slotType === 'half' ? Number(row.half_price || 0) : Number(row.full_price || 0);
+  const f = FALLBACK_HALLS[hall];
+  if (!f) return 0;
+  return slotType === 'half' ? f.halfPrice : f.fullPrice;
+}
+
+export function calcWellnessAmount(type: string, hours: number, config?: BizConfigInput): number {
+  const row = buildMap(config?.wellnessTypes)[type];
+  let minHours = 0; let price = 0; let free = false;
+  if (row) {
+    minHours = Number(row.min_hours || 0);
+    price = Number(row.price || 0);
+    free = Number(row.is_free) === 1;
+  } else {
+    const f = FALLBACK_WELLNESS[type];
+    if (f) { minHours = f.minHours; price = f.price; free = f.free; }
+  }
+  if (free) return 0;
+  return price * Math.max(hours, minHours);
 }
 
 // ================================================

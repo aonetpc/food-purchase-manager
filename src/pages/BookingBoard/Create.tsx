@@ -55,7 +55,8 @@ import {
   downloadFile,
   groupTotal,
 } from './utils';
-import { bookingApi, type BookingSalesUser } from '../../lib/api';
+import { bookingApi, type BookingSalesUser, type BookingConfig } from '../../lib/api';
+import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow } from './types';
 
 // ================================================
 // 样式常量
@@ -127,13 +128,13 @@ function copyItemsForCopy(src: BookingOrder): BookingItem[] {
       amount = 0;
     } else if (it.itemType === 'meeting') {
       extra.sessions = (extra.sessions || []).map((s) => ({ ...s, date: '' }));
-      amount = (extra.sessions || []).reduce(
+      amount = (extra.sessions as MeetingSession[] || []).reduce(
         (sum, s) => sum + calcMeetingAmount(s.hall, s.slotType),
         0,
       );
     } else if (it.itemType === 'wellness') {
       extra.sessions = (extra.sessions || []).map((s) => ({ ...s, date: '' }));
-      amount = (extra.sessions || []).reduce(
+      amount = (extra.sessions as WellnessSession[] || []).reduce(
         (sum, s) => sum + calcWellnessAmount(s.wellnessType, s.hours),
         0,
       );
@@ -176,8 +177,16 @@ function parsePackage(raw: string): PackageCode {
   return 'A';
 }
 
-// 项目摘要
-function itemSummary(item: BookingItem): { main: string; sub: string } {
+// 项目摘要（动态数据优先，兜底常量保底）
+function makeItemSummary(
+  item: BookingItem,
+  helpers: {
+    getPackageInfo: (c: string) => { name: string; price: number; label: string };
+    getRoomInfo: (c: string) => { name: string; price: number };
+    getHallInfo: (c: string) => { name: string; capacity: number; halfPrice: number; fullPrice: number };
+    getWellnessInfo: (c: string) => { name: string; minHours: number; price: number; free: boolean };
+  },
+): { main: string; sub: string } {
   let main = '';
   let sub = '';
   if (item.itemType === 'checkup') {
@@ -190,11 +199,11 @@ function itemSummary(item: BookingItem): { main: string; sub: string } {
       {} as Record<string, number>,
     );
     sub = `${item.pax}人 · ${Object.entries(pkgs)
-      .map(([k, v]) => `${k}×${v}`)
+      .map(([k, v]) => `${helpers.getPackageInfo(k).name || k}×${v}`)
       .join(' ')}`;
   } else if (item.itemType === 'lodging') {
     main = `${item.extra.dateCheckIn || '-'} → ${item.extra.dateCheckOut || '-'}`;
-    sub = `${LODGING_TYPES[item.extra.lodgingType || 'standard'].name} ${item.pax}间 · ${
+    sub = `${helpers.getRoomInfo(item.extra.lodgingType || 'standard').name} ${item.pax}间 · ${
       item.extra.nights || 0
     }晚`;
   } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
@@ -205,11 +214,11 @@ function itemSummary(item: BookingItem): { main: string; sub: string } {
   } else if (item.itemType === 'meeting') {
     const ss = item.extra.sessions || [];
     main = `${ss[0]?.date || item.date} · ${ss.length}场`;
-    sub = ss.map((s) => MEETING_HALLS[s.hall].name).join('、');
+    sub = ss.map((s: any) => helpers.getHallInfo(s.hall).name).join('、');
   } else if (item.itemType === 'wellness') {
     const ss = item.extra.sessions || [];
     main = `${ss[0]?.date || item.date} · ${ss.length}场`;
-    sub = ss.map((s) => `${WELLNESS_TYPES[s.wellnessType].name} ${s.hours}h`).join('、');
+    sub = ss.map((s: any) => `${helpers.getWellnessInfo(s.wellnessType).name} ${s.hours}h`).join('、');
   }
   return { main, sub };
 }
@@ -323,22 +332,144 @@ export default function BookingBoardCreate(props: {
   // 销售员列表（从后端拉取，仅含 sales 角色的用户）
   const [salesUsers, setSalesUsers] = useState<BookingSalesUser[]>([]);
   const [salesPickerOpen, setSalesPickerOpen] = useState(false);
+  // 4 类业务动态配置（含启用的套餐/房型/会议厅/康乐）
+  const [bizConfig, setBizConfig] = useState<BookingConfig>({
+    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], salesUsers: [],
+  });
 
-  // 拉取销售员列表（仅一次）
+  // 拉取配置（一次）：销售员 + 业务常量
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const cfg = await bookingApi.getConfig();
-        if (mounted && Array.isArray(cfg.salesUsers)) {
-          setSalesUsers(cfg.salesUsers);
-        }
+        if (!mounted) return;
+        setSalesUsers(Array.isArray(cfg.salesUsers) ? cfg.salesUsers : []);
+        setBizConfig({
+          packages: Array.isArray(cfg.packages) ? cfg.packages : [],
+          roomTypes: Array.isArray(cfg.roomTypes) ? cfg.roomTypes : [],
+          meetingHalls: Array.isArray(cfg.meetingHalls) ? cfg.meetingHalls : [],
+          wellnessTypes: Array.isArray(cfg.wellnessTypes) ? cfg.wellnessTypes : [],
+          salesUsers: cfg.salesUsers || [],
+        });
       } catch (e) {
-        // 静默失败，不影响表单使用
+        // 静默失败，下方使用兜底
       }
     })();
     return () => { mounted = false; };
   }, []);
+
+  // 动态映射（code -> 完整记录；name -> code）
+  const pkgMap = useMemo<Record<string, PackageRow & { label: string }>>(
+    () => bizConfig.packages.reduce((acc, p) => {
+      acc[p.code] = { ...p, label: `${p.name} · ¥${Number(p.price || 0).toLocaleString()}` };
+      return acc;
+    }, {} as Record<string, PackageRow & { label: string }>),
+    [bizConfig.packages],
+  );
+  const roomMap = useMemo<Record<string, RoomTypeRow>>(
+    () => bizConfig.roomTypes.reduce((acc, r) => { acc[r.code] = r; return acc; }, {} as Record<string, RoomTypeRow>),
+    [bizConfig.roomTypes],
+  );
+  const hallMap = useMemo<Record<string, MeetingHallRow>>(
+    () => bizConfig.meetingHalls.reduce((acc, r) => { acc[r.code] = r; return acc; }, {} as Record<string, MeetingHallRow>),
+    [bizConfig.meetingHalls],
+  );
+  const wellnessMap = useMemo<Record<string, WellnessTypeRow>>(
+    () => bizConfig.wellnessTypes.reduce((acc, r) => { acc[r.code] = r; return acc; }, {} as Record<string, WellnessTypeRow>),
+    [bizConfig.wellnessTypes],
+  );
+  const pkgNameToCode = useMemo<Record<string, string>>(
+    () => bizConfig.packages.reduce((acc, p) => { acc[p.name] = p.code; return acc; }, {} as Record<string, string>),
+    [bizConfig.packages],
+  );
+  const roomNameToCode = useMemo<Record<string, string>>(
+    () => bizConfig.roomTypes.reduce((acc, r) => { acc[r.name] = r.code; return acc; }, {} as Record<string, string>),
+    [bizConfig.roomTypes],
+  );
+  const hallNameToCode = useMemo<Record<string, string>>(
+    () => bizConfig.meetingHalls.reduce((acc, r) => { acc[r.name] = r.code; return acc; }, {} as Record<string, string>),
+    [bizConfig.meetingHalls],
+  );
+  const wellnessNameToCode = useMemo<Record<string, string>>(
+    () => bizConfig.wellnessTypes.reduce((acc, r) => { acc[r.name] = r.code; return acc; }, {} as Record<string, string>),
+    [bizConfig.wellnessTypes],
+  );
+
+  // 下拉选项（按 sort_order 排序）：仅启用项
+  const pkgOptions = useMemo(() => bizConfig.packages.filter(p => p.status === 1), [bizConfig.packages]);
+  const roomOptions = useMemo(() => bizConfig.roomTypes.filter(p => p.status === 1), [bizConfig.roomTypes]);
+  const hallOptions = useMemo(() => bizConfig.meetingHalls.filter(p => p.status === 1), [bizConfig.meetingHalls]);
+  const wellnessOptions = useMemo(() => bizConfig.wellnessTypes.filter(p => p.status === 1), [bizConfig.wellnessTypes]);
+
+  // 兜底：如果后端没返回数据（首次部署未执行迁移），用硬编码保证 UI 可用
+  const finalPkgOptions = pkgOptions.length > 0
+    ? pkgOptions
+    : ([
+        { id: 'fb_A', code: 'A', name: '基础体检套餐', price: 588, status: 1, sort_order: 1 },
+        { id: 'fb_B', code: 'B', name: '综合体检套餐', price: 1288, status: 1, sort_order: 2 },
+        { id: 'fb_C', code: 'C', name: '深度体检套餐', price: 2888, status: 1, sort_order: 3 },
+        { id: 'fb_D', code: 'D', name: 'VIP体检套餐', price: 5888, status: 1, sort_order: 4 },
+      ] as PackageRow[]);
+  const finalRoomOptions = roomOptions.length > 0 ? roomOptions : ([
+    { id: 'fb_std', code: 'standard', name: '标准间', price: 480, status: 1, sort_order: 1 },
+    { id: 'fb_big', code: 'bigbed', name: '大床房', price: 520, status: 1, sort_order: 2 },
+    { id: 'fb_sui', code: 'suite', name: '套房', price: 880, status: 1, sort_order: 3 },
+    { id: 'fb_vip', code: 'vipsuite', name: 'VIP套房', price: 1880, status: 1, sort_order: 4 },
+  ] as RoomTypeRow[]);
+  const finalHallOptions = hallOptions.length > 0 ? hallOptions : ([
+    { id: 'fb_sj', code: 'siji', name: '四季厅', capacity: 80, half_price: 2000, full_price: 3500, status: 1, sort_order: 1 },
+    { id: 'fb_ss', code: 'shanshui', name: '山水厅', capacity: 40, half_price: 1200, full_price: 2200, status: 1, sort_order: 2 },
+    { id: 'fb_qq', code: 'qingquan', name: '清泉厅', capacity: 20, half_price: 600, full_price: 1100, status: 1, sort_order: 3 },
+    { id: 'fb_wh', code: 'wanghu', name: '望湖厅', capacity: 120, half_price: 3000, full_price: 5800, status: 1, sort_order: 4 },
+  ] as MeetingHallRow[]);
+  const finalWellnessOptions = wellnessOptions.length > 0 ? wellnessOptions : ([
+    { id: 'fb_mj', code: 'mahjong', name: '棋牌室', min_hours: 4, price: 80, is_free: 0, status: 1, sort_order: 1 },
+    { id: 'fb_fish', code: 'fishing', name: '钓鱼', min_hours: 2, price: 60, is_free: 0, status: 1, sort_order: 2 },
+    { id: 'fb_ktv', code: 'ktv', name: 'KTV', min_hours: 2, price: 120, is_free: 0, status: 1, sort_order: 3 },
+    { id: 'fb_swim', code: 'swimming', name: '游泳池', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 4 },
+    { id: 'fb_gym', code: 'gym', name: '健身房', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 5 },
+    { id: 'fb_bl', code: 'billiards', name: '台球室', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 6 },
+    { id: 'fb_tt', code: 'tabletennis', name: '乒乓房', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 7 },
+  ] as WellnessTypeRow[]);
+
+  // 查找 code→显示信息（优先用动态配置，其次用 constants 的兜底常量）
+  function getPackageInfo(code: string): { name: string; price: number; label: string } {
+    const row = pkgMap[code] ?? finalPkgOptions.find(p => p.code === code);
+    if (row) {
+      const price = Number(row.price || 0);
+      return { name: row.name, price, label: `${row.code} · ¥${price.toLocaleString()}` };
+    }
+    const fb = (CHECKUP_PACKAGES as any)[code];
+    if (fb) return { name: fb.name, price: fb.price, label: `${code} · ¥${fb.price.toLocaleString()}` };
+    return { name: code, price: 0, label: code };
+  }
+  function getRoomInfo(code: string): { name: string; price: number } {
+    const row = roomMap[code] ?? finalRoomOptions.find(p => p.code === code);
+    if (row) return { name: row.name, price: Number(row.price || 0) };
+    const fb = (LODGING_TYPES as any)[code];
+    return fb ? { name: fb.name, price: fb.price } : { name: code, price: 0 };
+  }
+  function getHallInfo(code: string): { name: string; capacity: number; halfPrice: number; fullPrice: number } {
+    const row = hallMap[code] ?? finalHallOptions.find(p => p.code === code);
+    if (row) return { name: row.name, capacity: Number(row.capacity || 0), halfPrice: Number(row.half_price || 0), fullPrice: Number(row.full_price || 0) };
+    const fb = (MEETING_HALLS as any)[code];
+    return fb ? { name: fb.name, capacity: fb.capacity, halfPrice: fb.halfPrice, fullPrice: fb.fullPrice }
+              : { name: code, capacity: 0, halfPrice: 0, fullPrice: 0 };
+  }
+  function getWellnessInfo(code: string): { name: string; minHours: number; price: number; free: boolean } {
+    const row = wellnessMap[code] ?? finalWellnessOptions.find(p => p.code === code);
+    if (row) return { name: row.name, minHours: Number(row.min_hours || 0), price: Number(row.price || 0), free: Number(row.is_free) === 1 };
+    const fb = (WELLNESS_TYPES as any)[code];
+    return fb ? { name: fb.name, minHours: fb.minHours, price: fb.price, free: fb.free }
+              : { name: code, minHours: 0, price: 0, free: false };
+  }
+  const finalBizConfigForCalc = {
+    packages: finalPkgOptions,
+    roomTypes: finalRoomOptions,
+    meetingHalls: finalHallOptions,
+    wellnessTypes: finalWellnessOptions,
+  };
 
   // 用餐场次自动生成（日期范围 / 默认值变化时）
   useEffect(() => {
@@ -374,16 +505,16 @@ export default function BookingBoardCreate(props: {
   const drawerAmount = useMemo(() => {
     const t = drawer.itemType;
     if (!t) return 0;
-    if (t === 'checkup') return calcCheckupAmount(chkPax.filter((p) => p.name.trim()));
+    if (t === 'checkup') return calcCheckupAmount(chkPax.filter((p) => p.name.trim()), finalBizConfigForCalc);
     if (t === 'lodging')
-      return calcLodgingAmount(lgType, lgRooms, Math.max(0, daysBetween(lgIn, lgOut)));
+      return calcLodgingAmount(lgType, lgRooms, Math.max(0, daysBetween(lgIn, lgOut)), finalBizConfigForCalc);
     if (t === 'lunch' || t === 'dinner') return 0;
     if (t === 'meeting')
-      return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType), 0);
+      return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
     if (t === 'wellness')
-      return wlSessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours), 0);
+      return wlSessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0);
     return 0;
-  }, [drawer.itemType, chkPax, lgType, lgRooms, lgIn, lgOut, mtSessions, wlSessions]);
+  }, [drawer.itemType, chkPax, lgType, lgRooms, lgIn, lgOut, mtSessions, wlSessions, finalBizConfigForCalc]);
 
   // ================================================
   // 抽屉操作
@@ -441,11 +572,11 @@ export default function BookingBoardCreate(props: {
       setMlTime(item.extra.defaultTime || (item.itemType === 'lunch' ? '12:00' : '18:00'));
       setMlTables(item.extra.defaultTables ?? 1);
       setMlPerTable(item.extra.defaultPerTable ?? 10);
-      setMlSessions((item.extra.sessions || []).map((s) => ({ ...s })));
+      setMlSessions((item.extra.sessions as MealSession[] || []).map((s) => ({ ...s })));
     } else if (item.itemType === 'meeting') {
-      setMtSessions((item.extra.sessions || []).map((s) => ({ ...s })));
+      setMtSessions((item.extra.sessions as MeetingSession[] || []).map((s) => ({ ...s })));
     } else if (item.itemType === 'wellness') {
-      setWlSessions((item.extra.sessions || []).map((s) => ({ ...s })));
+      setWlSessions((item.extra.sessions as WellnessSession[] || []).map((s) => ({ ...s })));
     }
   }
 
@@ -472,7 +603,7 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一名体检人员');
         return;
       }
-      const amount = calcCheckupAmount(paxList);
+      const amount = calcCheckupAmount(paxList, finalBizConfigForCalc);
       item = {
         id: keepId,
         itemType,
@@ -484,7 +615,7 @@ export default function BookingBoardCreate(props: {
       };
     } else if (itemType === 'lodging') {
       const nights = Math.max(0, daysBetween(lgIn, lgOut));
-      const amount = calcLodgingAmount(lgType, lgRooms, nights);
+      const amount = calcLodgingAmount(lgType, lgRooms, nights, finalBizConfigForCalc);
       item = {
         id: keepId,
         itemType,
@@ -524,14 +655,14 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一场会务');
         return;
       }
-      const amount = sessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType), 0);
+      const amount = sessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
       item = {
         id: keepId,
         itemType,
         date: sessions[0].date,
         startTime: sessions[0].startTime,
         pax: sessions.reduce((s, x) => s + x.pax, 0),
-        extra: { sessions },
+        extra: { sessions: sessions as any },
         amount,
       };
     } else {
@@ -541,14 +672,14 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一场康乐');
         return;
       }
-      const amount = sessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours), 0);
+      const amount = sessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0);
       item = {
         id: keepId,
         itemType,
         date: sessions[0].date,
         startTime: sessions[0].startTime,
         pax: sessions.reduce((s, x) => s + x.pax, 0),
-        extra: { sessions },
+        extra: { sessions: sessions as any },
         amount,
       };
     }
@@ -648,25 +779,36 @@ export default function BookingBoardCreate(props: {
             const r = chkRows[i];
             if (!r[0]) continue;
             const get = colGetter(headers, r);
+            // 本地 parse：优先 pkgNameToCode（动态配置），其次再兜底
+            const raw = get('套餐');
+            const v = (raw || '').trim();
+            const up = v.toUpperCase();
+            let pkgCode: string = finalPkgOptions[0]?.code || 'A';
+            if (v) {
+              if (['A', 'B', 'C', 'D'].includes(up[0])) pkgCode = up[0];
+              else if (pkgNameToCode[v]) pkgCode = pkgNameToCode[v];
+              else if (PACKAGE_NAME_MAP[v]) pkgCode = PACKAGE_NAME_MAP[v];
+            }
             paxList.push({
               name: get('姓名'),
               idCard: get('身份证号'),
               phone: get('手机号'),
               gender: get('性别') === '女' ? '女' : '男',
               married: ['是', 'true', '1', '已婚'].includes(get('婚否').trim()),
-              package: parsePackage(get('套餐')),
+              package: pkgCode,
             });
           }
           if (paxList.length) {
             const date = todayStr();
+            const pkgTotal = calcCheckupAmount(paxList, finalBizConfigForCalc);
             newItems.push({
               id: genItemId(),
               itemType: 'checkup',
               date,
               startTime: '08:00',
               pax: paxList.length,
-              extra: { paxList, packageTotal: calcCheckupAmount(paxList) },
-              amount: calcCheckupAmount(paxList),
+              extra: { paxList, packageTotal: pkgTotal },
+              amount: pkgTotal,
             });
           }
         }
@@ -680,7 +822,7 @@ export default function BookingBoardCreate(props: {
           const checkIn = get('入住日期');
           const checkOut = get('离店日期');
           const arrivalTime = get('到达时间') || '14:00';
-          const lodgingType = LODGING_NAME_MAP[get('房型')] || 'standard';
+          const lodgingType = roomNameToCode[get('房型')] || LODGING_NAME_MAP[get('房型')] || 'standard';
           const rooms = parseInt(get('间数')) || 1;
           const nights = checkIn && checkOut ? Math.max(0, daysBetween(checkIn, checkOut)) : 0;
           newItems.push({
@@ -690,7 +832,7 @@ export default function BookingBoardCreate(props: {
             startTime: arrivalTime,
             pax: rooms,
             extra: { lodgingType, dateCheckIn: checkIn, dateCheckOut: checkOut, arrivalTime, nights },
-            amount: calcLodgingAmount(lodgingType, rooms, nights),
+            amount: calcLodgingAmount(lodgingType, rooms, nights, finalBizConfigForCalc),
           });
         }
 
@@ -726,7 +868,7 @@ export default function BookingBoardCreate(props: {
           const r = mtRows[i];
           if (!r[0]) continue;
           const get = colGetter(mtRows[0], r);
-          const hall = HALL_NAME_MAP[get('会议厅')] || 'siji';
+          const hall = hallNameToCode[get('会议厅')] || HALL_NAME_MAP[get('会议厅')] || 'siji';
           const slotName = get('时段');
           const slotType: 'half' | 'full' = slotName.includes('半') ? 'half' : 'full';
           mtSess.push({
@@ -744,8 +886,8 @@ export default function BookingBoardCreate(props: {
             date: mtSess[0].date,
             startTime: mtSess[0].startTime,
             pax: mtSess.reduce((s, x) => s + x.pax, 0),
-            extra: { sessions: mtSess },
-            amount: mtSess.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType), 0),
+            extra: { sessions: mtSess as any },
+            amount: mtSess.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0),
           });
         }
 
@@ -756,7 +898,7 @@ export default function BookingBoardCreate(props: {
           const r = wlRows[i];
           if (!r[0]) continue;
           const get = colGetter(wlRows[0], r);
-          const wellnessType = WELLNESS_NAME_MAP[get('项目')] || 'mahjong';
+          const wellnessType = wellnessNameToCode[get('项目')] || WELLNESS_NAME_MAP[get('项目')] || 'mahjong';
           wlSess.push({
             date: get('日期'),
             startTime: get('开始时间') || '15:00',
@@ -772,8 +914,8 @@ export default function BookingBoardCreate(props: {
             date: wlSess[0].date,
             startTime: wlSess[0].startTime,
             pax: wlSess.reduce((s, x) => s + x.pax, 0),
-            extra: { sessions: wlSess },
-            amount: wlSess.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours), 0),
+            extra: { sessions: wlSess as any },
+            amount: wlSess.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0),
           });
         }
 
@@ -818,13 +960,20 @@ export default function BookingBoardCreate(props: {
     for (let i = startIdx; i < rows.length; i++) {
       const r = rows[i];
       if (!r[0] && !r[1]) continue;
+      const raw = r[5] || 'A';
+      const v = (raw || '').trim();
+      const up = v.toUpperCase();
+      let pkgCode: string = finalPkgOptions[0]?.code || 'A';
+      if (['A', 'B', 'C', 'D'].includes(up[0])) pkgCode = up[0];
+      else if (pkgNameToCode[v]) pkgCode = pkgNameToCode[v];
+      else if (PACKAGE_NAME_MAP[v]) pkgCode = PACKAGE_NAME_MAP[v];
       paxList.push({
         name: r[0] || '',
         idCard: r[1] || '',
         phone: r[2] || '',
         gender: r[3] === '女' ? '女' : '男',
         married: ['是', 'true', '1', '已婚'].includes((r[4] || '').trim()),
-        package: parsePackage(r[5] || 'A'),
+        package: pkgCode,
       });
     }
     if (paxList.length) {
@@ -1142,7 +1291,7 @@ export default function BookingBoardCreate(props: {
             <div className="space-y-2">
               {draftGroup.items.map((item, idx) => {
                 const biz = BIZ_MAP[item.itemType];
-                const sum = itemSummary(item);
+                const sum = makeItemSummary(item, { getPackageInfo, getRoomInfo, getHallInfo, getWellnessInfo });
                 return (
                   <div
                     key={item.id}
@@ -1375,9 +1524,9 @@ export default function BookingBoardCreate(props: {
                                 }
                                 className={cellInput}
                               >
-                                {(['A', 'B', 'C', 'D'] as PackageCode[]).map((k) => (
-                                  <option key={k} value={k}>
-                                    {k} · ¥{CHECKUP_PACKAGES[k].price}
+                                {finalPkgOptions.map((pkg) => (
+                                  <option key={pkg.code} value={pkg.code}>
+                                    {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
                                   </option>
                                 ))}
                               </select>
@@ -1396,7 +1545,7 @@ export default function BookingBoardCreate(props: {
                     </table>
                   </div>
                   <div className="text-right text-sm text-green-600 font-mono">
-                    合计：¥{calcCheckupAmount(chkPax.filter((p) => p.name.trim())).toLocaleString()}
+                    合计：¥{calcCheckupAmount(chkPax.filter((p) => p.name.trim()), finalBizConfigForCalc).toLocaleString()}
                   </div>
                 </div>
               ) : drawer.itemType === 'lodging' ? (
@@ -1442,19 +1591,19 @@ export default function BookingBoardCreate(props: {
                     <div className="col-span-2">
                       <label className={labelCls}>房型</label>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {(Object.keys(LODGING_TYPES) as LodgingType[]).map((k) => (
+                        {finalRoomOptions.map((rt) => (
                           <button
-                            key={k}
-                            onClick={() => setLgType(k)}
+                            key={rt.code}
+                            onClick={() => setLgType(rt.code)}
                             className={`px-2 py-2 rounded-lg text-xs border transition-colors ${
-                              lgType === k
+                              lgType === rt.code
                                 ? 'bg-green-500/15 border-green-500 text-green-600'
                                 : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                             }`}
                           >
-                            <div className="font-medium">{LODGING_TYPES[k].name}</div>
+                            <div className="font-medium">{rt.name}</div>
                             <div className="text-[10px] opacity-70 font-mono">
-                              ¥{LODGING_TYPES[k].price}
+                              ¥{Number(rt.price || 0).toLocaleString()}
                             </div>
                           </button>
                         ))}
@@ -1468,8 +1617,8 @@ export default function BookingBoardCreate(props: {
                         共 <span className="text-green-600 font-mono">{lgNights}</span> 晚
                       </span>
                       <span className="text-green-600 font-mono">
-                        ¥{LODGING_TYPES[lgType].price} × {lgRooms} × {lgNights} = ¥
-                        {calcLodgingAmount(lgType, lgRooms, lgNights).toLocaleString()}
+                        ¥{getRoomInfo(lgType).price.toLocaleString()} × {lgRooms} × {lgNights} = ¥
+                        {calcLodgingAmount(lgType, lgRooms, lgNights, finalBizConfigForCalc).toLocaleString()}
                       </span>
                     </div>
                     {lgNights > 0 && (
@@ -1735,8 +1884,8 @@ export default function BookingBoardCreate(props: {
                                 value={s.hall}
                                 onChange={(e) =>
                                   setMtSessions((prev) =>
-                                    prev.map((x, i) =>
-                                      i === idx
+                                    prev.map((x, idx0) =>
+                                      idx0 === idx
                                         ? { ...x, hall: e.target.value as MeetingSession['hall'] }
                                         : x,
                                     ),
@@ -1744,13 +1893,11 @@ export default function BookingBoardCreate(props: {
                                 }
                                 className={cellInput}
                               >
-                                {(Object.keys(MEETING_HALLS) as Array<keyof typeof MEETING_HALLS>).map(
-                                  (k) => (
-                                    <option key={k} value={k}>
-                                      {MEETING_HALLS[k].name}
-                                    </option>
-                                  ),
-                                )}
+                                {finalHallOptions.map((h) => (
+                                  <option key={h.code} value={h.code}>
+                                    {h.name}
+                                  </option>
+                                ))}
                               </select>
                             </td>
                             <td className="px-1.5 py-1">
@@ -1758,8 +1905,8 @@ export default function BookingBoardCreate(props: {
                                 value={s.slotType}
                                 onChange={(e) =>
                                   setMtSessions((prev) =>
-                                    prev.map((x, i) =>
-                                      i === idx
+                                    prev.map((x, idx0) =>
+                                      idx0 === idx
                                         ? { ...x, slotType: e.target.value as 'half' | 'full' }
                                         : x,
                                     ),
@@ -1778,8 +1925,8 @@ export default function BookingBoardCreate(props: {
                                 value={s.pax}
                                 onChange={(e) =>
                                   setMtSessions((prev) =>
-                                    prev.map((x, i) =>
-                                      i === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
+                                    prev.map((x, idx0) =>
+                                      idx0 === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
                                     ),
                                   )
                                 }
@@ -1787,7 +1934,7 @@ export default function BookingBoardCreate(props: {
                               />
                             </td>
                             <td className="px-1.5 py-1 font-mono text-green-600">
-                              ¥{calcMeetingAmount(s.hall, s.slotType).toLocaleString()}
+                              ¥{calcMeetingAmount(s.hall, s.slotType, finalBizConfigForCalc).toLocaleString()}
                             </td>
                             <td className="px-1.5 py-1">
                               <button
@@ -1842,7 +1989,7 @@ export default function BookingBoardCreate(props: {
                       </thead>
                       <tbody>
                         {wlSessions.map((s, idx) => {
-                          const w = WELLNESS_TYPES[s.wellnessType];
+                          const w = getWellnessInfo(s.wellnessType);
                           return (
                             <tr key={idx} className="border-t border-gray-100">
                               <td className="px-1.5 py-1">
@@ -1851,8 +1998,8 @@ export default function BookingBoardCreate(props: {
                                   value={s.date}
                                   onChange={(e) =>
                                     setWlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx ? { ...x, date: e.target.value } : x,
+                                      prev.map((x, idx0) =>
+                                        idx0 === idx ? { ...x, date: e.target.value } : x,
                                       ),
                                     )
                                   }
@@ -1865,8 +2012,8 @@ export default function BookingBoardCreate(props: {
                                   value={s.startTime}
                                   onChange={(e) =>
                                     setWlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx ? { ...x, startTime: e.target.value } : x,
+                                      prev.map((x, idx0) =>
+                                        idx0 === idx ? { ...x, startTime: e.target.value } : x,
                                       ),
                                     )
                                   }
@@ -1878,8 +2025,8 @@ export default function BookingBoardCreate(props: {
                                   value={s.wellnessType}
                                   onChange={(e) =>
                                     setWlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx
+                                      prev.map((x, idx0) =>
+                                        idx0 === idx
                                           ? {
                                               ...x,
                                               wellnessType:
@@ -1891,13 +2038,9 @@ export default function BookingBoardCreate(props: {
                                   }
                                   className={cellInput}
                                 >
-                                  {(
-                                    Object.keys(WELLNESS_TYPES) as Array<
-                                      keyof typeof WELLNESS_TYPES
-                                    >
-                                  ).map((k) => (
-                                    <option key={k} value={k}>
-                                      {WELLNESS_TYPES[k].name}
+                                  {finalWellnessOptions.map((w2) => (
+                                    <option key={w2.code} value={w2.code}>
+                                      {w2.name}
                                     </option>
                                   ))}
                                 </select>
@@ -1909,8 +2052,8 @@ export default function BookingBoardCreate(props: {
                                   value={s.hours}
                                   onChange={(e) =>
                                     setWlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx ? { ...x, hours: parseInt(e.target.value) || 0 } : x,
+                                      prev.map((x, idx0) =>
+                                        idx0 === idx ? { ...x, hours: parseInt(e.target.value) || 0 } : x,
                                       ),
                                     )
                                   }
@@ -1924,8 +2067,8 @@ export default function BookingBoardCreate(props: {
                                   value={s.pax}
                                   onChange={(e) =>
                                     setWlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
+                                      prev.map((x, idx0) =>
+                                        idx0 === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
                                       ),
                                     )
                                   }
@@ -1936,7 +2079,7 @@ export default function BookingBoardCreate(props: {
                                 {w.free ? (
                                   <span className="text-emerald-400">免费</span>
                                 ) : (
-                                  `¥${calcWellnessAmount(s.wellnessType, s.hours).toLocaleString()}`
+                                  `¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc).toLocaleString()}`
                                 )}
                               </td>
                               <td className="px-1.5 py-1">

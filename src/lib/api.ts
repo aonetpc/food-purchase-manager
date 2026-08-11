@@ -104,7 +104,7 @@ function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 }
 function camelToSnake(s: string): string {
-  return s.replace(/([A-Z])/g, '_', c => c.toLowerCase());
+  return s.replace(/([A-Z])/g, (_, c) => '_' + c.toLowerCase());
 }
 
 function transformKeys(obj: any, fn: (k: string) => string): any {
@@ -170,11 +170,51 @@ export interface BookingSalesUser {
   username?: string;
 }
 
+export interface PackageRow {
+  id: string;
+  code: string;
+  name: string;
+  price: number;
+  status: number;
+  sort_order: number;
+}
+
+export interface RoomTypeRow {
+  id: string;
+  code: string;
+  name: string;
+  price: number;
+  status: number;
+  sort_order: number;
+}
+
+export interface MeetingHallRow {
+  id: string;
+  code: string;
+  name: string;
+  capacity: number;
+  half_price: number;
+  full_price: number;
+  status: number;
+  sort_order: number;
+}
+
+export interface WellnessTypeRow {
+  id: string;
+  code: string;
+  name: string;
+  min_hours: number;
+  price: number;
+  is_free: number;
+  status: number;
+  sort_order: number;
+}
+
 export interface BookingConfig {
-  packages: any[];
-  roomTypes: any[];
-  meetingHalls: any[];
-  wellnessTypes: any[];
+  packages: PackageRow[];
+  roomTypes: RoomTypeRow[];
+  meetingHalls: MeetingHallRow[];
+  wellnessTypes: WellnessTypeRow[];
   salesUsers?: BookingSalesUser[];
 }
 
@@ -316,5 +356,70 @@ export const bookingApi = {
   async applyTemplate(id: string): Promise<BookingApiOrder> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/templates/${id}/apply`, {});
     return fromBackend(res.data);
+  },
+
+  // ===== 4 类业务常量 CRUD =====
+  async listPackages(): Promise<PackageRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/packages');
+    return (res.data || []).map(fromBackend) as PackageRow[];
+  },
+  async createPackage(payload: Partial<PackageRow>): Promise<PackageRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/packages', payload);
+    return fromBackend(res.data) as PackageRow;
+  },
+  async updatePackage(id: string, payload: Partial<PackageRow>): Promise<PackageRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/packages/${id}`, payload);
+    return fromBackend(res.data) as PackageRow;
+  },
+  async deletePackage(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/packages/${id}`);
+  },
+
+  async listRoomTypes(): Promise<RoomTypeRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/room-types');
+    return (res.data || []).map(fromBackend) as RoomTypeRow[];
+  },
+  async createRoomType(payload: Partial<RoomTypeRow>): Promise<RoomTypeRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/room-types', payload);
+    return fromBackend(res.data) as RoomTypeRow;
+  },
+  async updateRoomType(id: string, payload: Partial<RoomTypeRow>): Promise<RoomTypeRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/room-types/${id}`, payload);
+    return fromBackend(res.data) as RoomTypeRow;
+  },
+  async deleteRoomType(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/room-types/${id}`);
+  },
+
+  async listMeetingHalls(): Promise<MeetingHallRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/meeting-halls');
+    return (res.data || []).map(fromBackend) as MeetingHallRow[];
+  },
+  async createMeetingHall(payload: Partial<MeetingHallRow>): Promise<MeetingHallRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/meeting-halls', payload);
+    return fromBackend(res.data) as MeetingHallRow;
+  },
+  async updateMeetingHall(id: string, payload: Partial<MeetingHallRow>): Promise<MeetingHallRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/meeting-halls/${id}`, payload);
+    return fromBackend(res.data) as MeetingHallRow;
+  },
+  async deleteMeetingHall(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/meeting-halls/${id}`);
+  },
+
+  async listWellnessTypes(): Promise<WellnessTypeRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/wellness-types');
+    return (res.data || []).map(fromBackend) as WellnessTypeRow[];
+  },
+  async createWellnessType(payload: Partial<WellnessTypeRow>): Promise<WellnessTypeRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/wellness-types', payload);
+    return fromBackend(res.data) as WellnessTypeRow;
+  },
+  async updateWellnessType(id: string, payload: Partial<WellnessTypeRow>): Promise<WellnessTypeRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/wellness-types/${id}`, payload);
+    return fromBackend(res.data) as WellnessTypeRow;
+  },
+  async deleteWellnessType(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/wellness-types/${id}`);
   },
 };

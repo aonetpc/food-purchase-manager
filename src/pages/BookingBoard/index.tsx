@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, OrderStatus } from './types';
 import {
   BUSINESS,
@@ -27,6 +27,7 @@ import {
 import { bookingApi, type BookingApiOrder } from '../../lib/api';
 import { useAuthStore } from '@/store/authStore';
 import CreateFormRaw from './Create';
+import BizConfigModal from './BizConfigModal';
 
 const CreateForm = CreateFormRaw as unknown as React.FC<{
   mode: 'create' | 'edit' | 'copy';
@@ -625,6 +626,8 @@ export default function BookingBoard() {
   const [templateNameInput, setTemplateNameInput] = useState('');
   // orderNo → backend UUID 映射（编辑/状态操作时需要 UUID 调后端）
   const orderUuidMap = useRef<Record<string, string>>({});
+  // 业务常量配置弹窗
+  const [bizConfigOpen, setBizConfigOpen] = useState(false);
 
   // 权限：仅 admin / booker 可执行写操作（新建/编辑/复制/导入/模板等），其他角色仅查看
   const authUser = useAuthStore(s => s.user);
@@ -882,6 +885,13 @@ export default function BookingBoard() {
             </button>
             {isBookingOperator && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setBizConfigOpen(true)}
+                  className="px-3 py-1.5 text-xs rounded border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
+                >
+                  <Settings size={12} /> 业务配置
+                </button>
                 <a
                   href="/templates/预订订单导入模板.xlsx"
                   download="预订订单导入模板.xlsx"
@@ -1217,6 +1227,9 @@ export default function BookingBoard() {
           }}
         />
       )}
+
+      {/* ============ 业务常量配置弹窗 ============ */}
+      <BizConfigModal open={bizConfigOpen} onClose={() => setBizConfigOpen(false)} />
 
       {/* ============ Create 抽屉 ============ */}
       {createDrawer && (

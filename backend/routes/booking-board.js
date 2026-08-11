@@ -243,6 +243,126 @@ router.get('/config', requireAuth, async (_req, res) => {
 });
 
 // ============================================================
+// 业务常量 CRUD（体检套餐 / 房型 / 会议厅 / 康乐项目）
+// 公用读写权限：写 requireBookingWrite  读 requireAuth
+// ============================================================
+
+function makeBizConfigCrud({ basePath, table, requiredFields, editableFields, sortDefault }) {
+  // list（含禁用，按 sort_order+id 排）
+  router.get(`${basePath}`, requireAuth, async (req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `SELECT * FROM ${table} ORDER BY sort_order ASC, id ASC`
+      );
+      res.json({ ok: true, data: rows });
+    } catch (e) {
+      console.error(`[${basePath} list] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // create
+  router.post(`${basePath}`, requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      for (const f of requiredFields) {
+        if (req.body[f] === undefined || req.body[f] === null || req.body[f] === '') {
+          return res.status(400).json({ ok: false, error: `缺少必要字段：${f}` });
+        }
+      }
+      const id = uuidv4();
+      const fields = ['id', ...requiredFields, ...editableFields.filter(f => req.body[f] !== undefined)];
+      const values = [id, ...requiredFields.map(f => req.body[f])];
+      editableFields.filter(f => req.body[f] !== undefined).forEach(f => values.push(req.body[f]));
+      if (!fields.includes('sort_order')) { fields.push('sort_order'); values.push(sortDefault != null ? sortDefault : 0); }
+      if (!fields.includes('status')) { fields.push('status'); values.push(1); }
+      const placeholders = fields.map(() => '?').join(',');
+      await conn.query(`INSERT INTO ${table} (${fields.join(',')}) VALUES (${placeholders})`, values);
+      const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, table, 'create', req.body, req);
+      res.json({ ok: true, data: rows[0] });
+    } catch (e) {
+      console.error(`[${basePath} create] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // update
+  router.put(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const { id } = req.params;
+      const [exist] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      if (exist.length === 0) return res.status(404).json({ ok: false, error: '记录不存在' });
+      const sets = [];
+      const values = [];
+      [...requiredFields, ...editableFields].forEach(f => {
+        if (req.body[f] !== undefined) { sets.push(`${f} = ?`); values.push(req.body[f]); }
+      });
+      if (sets.length > 0) {
+        values.push(id);
+        await conn.query(`UPDATE ${table} SET ${sets.join(',')} WHERE id = ?`, values);
+      }
+      const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, table, 'update', req.body, req);
+      res.json({ ok: true, data: rows[0] });
+    } catch (e) {
+      console.error(`[${basePath} update] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // delete（软删除：status=0）
+  router.delete(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await pool.query(`UPDATE ${table} SET status = 0 WHERE id = ?`, [id]);
+      await logOperation(req.user.id, id, table, 'delete', {}, req);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(`[${basePath} delete] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+}
+
+makeBizConfigCrud({
+  basePath: '/config/packages',
+  table: 'booking_packages',
+  requiredFields: ['code', 'name', 'price'],
+  editableFields: ['status', 'sort_order'],
+  sortDefault: 1,
+});
+
+makeBizConfigCrud({
+  basePath: '/config/room-types',
+  table: 'booking_room_types',
+  requiredFields: ['code', 'name', 'price'],
+  editableFields: ['status', 'sort_order'],
+  sortDefault: 1,
+});
+
+makeBizConfigCrud({
+  basePath: '/config/meeting-halls',
+  table: 'booking_meeting_halls',
+  requiredFields: ['code', 'name', 'capacity', 'half_price', 'full_price'],
+  editableFields: ['status', 'sort_order'],
+  sortDefault: 1,
+});
+
+makeBizConfigCrud({
+  basePath: '/config/wellness-types',
+  table: 'booking_wellness_types',
+  requiredFields: ['code', 'name', 'min_hours', 'price', 'is_free'],
+  editableFields: ['status', 'sort_order'],
+  sortDefault: 1,
+});
+
+// ============================================================
 // GET /api/booking/orders
 // 按周查询订单列表（画板用）
 // 参数：weekStart=YYYY-MM-DD（默认本周一）

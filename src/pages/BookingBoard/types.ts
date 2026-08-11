@@ -4,17 +4,58 @@ export type OrderStatus = 'pending' | 'reviewing' | 'confirmed' | 'rejected' | '
 // 业务类型
 export type BizType = 'checkup' | 'lodging' | 'breakfast' | 'lunch' | 'dinner' | 'meeting' | 'wellness' | 'carpickup';
 
-// 体检套餐代码
-export type PackageCode = 'A' | 'B' | 'C' | 'D';
+// 体检套餐代码（改为动态 string，后端可新增任意套餐）
+export type PackageCode = string;
 
-// 房型
-export type LodgingType = 'standard' | 'bigbed' | 'suite' | 'vipsuite';
+// 房型（改为动态 string）
+export type LodgingType = string;
 
-// 会议厅
-export type MeetingHall = 'siji' | 'shanshui' | 'qingquan' | 'wanghu';
+// 会议厅（改为动态 string）
+export type MeetingHall = string;
 
-// 康乐项目
-export type WellnessType = 'mahjong' | 'fishing' | 'ktv' | 'swimming' | 'gym' | 'billiards' | 'tabletennis';
+// 康乐项目（改为动态 string）
+export type WellnessType = string;
+
+// 4 类业务常量记录
+export interface PackageRow {
+  id: string;
+  code: string;
+  name: string;
+  price: number;
+  status: number;
+  sort_order: number;
+}
+
+export interface RoomTypeRow {
+  id: string;
+  code: string;
+  name: string;
+  price: number;
+  status: number;
+  sort_order: number;
+}
+
+export interface MeetingHallRow {
+  id: string;
+  code: string;
+  name: string;
+  capacity: number;
+  half_price: number;
+  full_price: number;
+  status: number;
+  sort_order: number;
+}
+
+export interface WellnessTypeRow {
+  id: string;
+  code: string;
+  name: string;
+  min_hours: number;
+  price: number;
+  is_free: number;
+  status: number;
+  sort_order: number;
+}
 
 // 业务项目
 export interface BookingItem {
@@ -41,19 +82,13 @@ export interface ItemExtra {
   arrivalTime?: string;
   nights?: number;
 
-  // 午餐/晚餐
+  // 午餐/晚餐/会议/康乐 统一 sessions 字段（联合类型）
   dateStart?: string;
   dateEnd?: string;
   defaultTime?: string;
   defaultTables?: number;
   defaultPerTable?: number;
-  sessions?: MealSession[];
-
-  // 会务
-  // sessions 复用
-
-  // 康乐
-  // sessions 复用
+  sessions?: (MealSession | MeetingSession | WellnessSession)[];
 
   // 早餐（派生）
   derived?: boolean;
