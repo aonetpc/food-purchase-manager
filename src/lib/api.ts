@@ -282,4 +282,26 @@ export const bookingApi = {
       wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
     };
   },
+
+  // 设为模板
+  async setTemplate(id: string, templateName: string): Promise<void> {
+    await api.post<{ ok: boolean }>(`/booking/orders/${id}/set-template`, { templateName });
+  },
+
+  // 取消模板
+  async unsetTemplate(id: string): Promise<void> {
+    await api.post<{ ok: boolean }>(`/booking/orders/${id}/unset-template`, {});
+  },
+
+  // 模板列表
+  async getTemplates(): Promise<any[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/templates');
+    return (res.data || []).map(fromBackend);
+  },
+
+  // 从模板创建订单
+  async applyTemplate(id: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/templates/${id}/apply`, {});
+    return fromBackend(res.data);
+  },
 };

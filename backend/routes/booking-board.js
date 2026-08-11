@@ -233,8 +233,14 @@ router.get('/orders', requireAuth, async (req, res) => {
     const wheres = [];
     const params = [];
 
-    // 日期覆盖：订单里任一 item 日期在 [weekStart, weekEnd] 范围内
-    wheres.push(`o.id IN (SELECT DISTINCT order_id FROM booking_items WHERE date BETWEEN ? AND ?)`);
+    // 日期覆盖：订单里任一 item 日期在范围内，或 没有 items 的 pending 草稿（待完善），或 不是模板的订单
+    wheres.push(`(
+      o.is_template = 0
+      AND (
+        o.id IN (SELECT DISTINCT order_id FROM booking_items WHERE date BETWEEN ? AND ?)
+        OR (o.status = 'pending' AND o.id NOT IN (SELECT DISTINCT order_id FROM booking_items))
+      )
+    )`);
     params.push(weekStart, weekEnd);
 
     if (status) {
@@ -604,6 +610,155 @@ router.put('/orders/:id', requireAuth, async (req, res) => {
   } catch (e) {
     await conn.rollback();
     console.error('[booking PUT order] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// ============================================================
+// POST /api/booking/orders/:id/set-template
+// 设为模板（传 template_name）
+// ============================================================
+router.post('/orders/:id/set-template', requireAuth, async (req, res) => {
+  try {
+    const { templateName } = req.body;
+    if (!templateName) return res.status(400).json({ ok: false, error: '模板名称必填' });
+    const [existing] = await pool.query('SELECT id FROM booking_orders WHERE id=? AND is_template=0 LIMIT 1', [req.params.id]);
+    if (!existing || !existing.length) return res.status(404).json({ ok: false, error: '订单不存在' });
+    await pool.query('UPDATE booking_orders SET is_template=1, template_name=? WHERE id=?', [templateName, req.params.id]);
+    logOperation(req, '预订订单', '设为模板', `模板名=${templateName}`, req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[booking set-template] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================
+// POST /api/booking/orders/:id/unset-template
+// 取消模板
+// ============================================================
+router.post('/orders/:id/unset-template', requireAuth, async (req, res) => {
+  try {
+    const [existing] = await pool.query('SELECT id FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
+    if (!existing || !existing.length) return res.status(404).json({ ok: false, error: '模板不存在' });
+    await pool.query('UPDATE booking_orders SET is_template=0, template_name=NULL WHERE id=?', [req.params.id]);
+    logOperation(req, '预订订单', '取消模板', '', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[booking unset-template] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================
+// GET /api/booking/templates
+// 模板列表（精简信息+items）
+// ============================================================
+router.get('/templates', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, order_no, customer_name, template_name, total_amount, remark
+      FROM booking_orders
+      WHERE is_template = 1
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `);
+    if (!rows || rows.length === 0) return res.json({ ok: true, data: [] });
+    const ids = rows.map(r => r.id);
+    const [itemRows] = await pool.query(
+      `SELECT * FROM booking_items WHERE order_id IN (${ids.map(() => '?').join(',')}) ORDER BY sort_order ASC, id ASC`,
+      ids
+    );
+    const itemsMap = {};
+    itemRows.forEach(r => {
+      if (!itemsMap[r.order_id]) itemsMap[r.order_id] = [];
+      itemsMap[r.order_id].push(normalizeItem(r));
+    });
+    const data = rows.map(r => ({
+      id: r.id,
+      orderNo: r.order_no,
+      customerName: r.customer_name,
+      templateName: r.template_name,
+      totalAmount: Number(r.total_amount) || 0,
+      remark: r.remark,
+      items: itemsMap[r.id] || [],
+    }));
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[booking GET templates] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================
+// POST /api/booking/templates/:id/apply
+// 从模板创建草稿订单（日期偏移到以今天为基准的本周）
+// ============================================================
+router.post('/templates/:id/apply', requireAuth, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [tpl] = await pool.query('SELECT * FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
+    if (!tpl || !tpl.length) return res.status(404).json({ ok: false, error: '模板不存在' });
+
+    const today = new Date();
+    const newOrderNo = await genOrderNo(today);
+    const newId = require('uuid').v4();
+    const userName = (req.user && (req.user.name || req.user.userName)) || '';
+
+    await conn.query(`
+      INSERT INTO booking_orders (id, order_no, customer_name, contact_name, contact_phone,
+        sales_person, payment_method, remark, status, total_amount, booker_id, booker_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+    `, [
+      newId, newOrderNo,
+      tpl.customer_name, tpl.contact_name, tpl.contact_phone,
+      tpl.sales_person, tpl.payment_method,
+      `[从模板创建] ${tpl.template_name || ''}`,
+      Number(tpl.total_amount) || 0,
+      req.user && req.user.id ? req.user.id : null,
+      userName,
+    ]);
+
+    // 复制 items，同时日期偏移：以模板第一个 item 的日期为基准，对齐到"今天所在周"
+    const [origItems] = await conn.query('SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC', [tpl.id]);
+    let baseOrigDate = null;
+    origItems.forEach(ri => { if (ri.date && !baseOrigDate) baseOrigDate = new Date(String(ri.date).slice(0, 10)); });
+    const dow = (today.getDay() + 6) % 7; // 今天是周几(0=周一)
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - dow);
+
+    let sort = 0;
+    for (const ri of origItems) {
+      let newDate = null;
+      if (ri.date && baseOrigDate) {
+        const origD = new Date(String(ri.date).slice(0, 10));
+        const diff = Math.round((origD - baseOrigDate) / 86400000);
+        const target = new Date(weekStart);
+        target.setDate(weekStart.getDate() + diff);
+        newDate = target.toISOString().slice(0, 10);
+      }
+      sort += 10;
+      await conn.query(`
+        INSERT INTO booking_items (id, order_id, item_type, date, adult_count, child_count,
+          qty, unit_price, amount, package_code, package_name, remark, extra, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        require('uuid').v4(), newId, ri.item_type, newDate,
+        ri.adult_count, ri.child_count, ri.qty, ri.unit_price, ri.amount,
+        ri.package_code, ri.package_name, ri.remark, ri.extra, sort,
+      ]);
+    }
+
+    await conn.commit();
+    logOperation(req, '预订订单', '从模板创建', `模板=${tpl.template_name}`, newId);
+    const order = await readOrderFull(newId);
+    res.json({ ok: true, data: order });
+  } catch (e) {
+    await conn.rollback();
+    console.error('[booking template apply] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   } finally {
     conn.release();

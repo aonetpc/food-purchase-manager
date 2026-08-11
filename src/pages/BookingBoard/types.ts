@@ -2,7 +2,7 @@
 export type OrderStatus = 'pending' | 'reviewing' | 'confirmed' | 'rejected' | 'completed';
 
 // 业务类型
-export type BizType = 'checkup' | 'lodging' | 'breakfast' | 'lunch' | 'dinner' | 'meeting' | 'wellness';
+export type BizType = 'checkup' | 'lodging' | 'breakfast' | 'lunch' | 'dinner' | 'meeting' | 'wellness' | 'carpickup';
 
 // 体检套餐代码
 export type PackageCode = 'A' | 'B' | 'C' | 'D';

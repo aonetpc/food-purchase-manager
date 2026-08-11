@@ -9,6 +9,7 @@ export const BUSINESS: BizConfig[] = [
   { type: 'dinner',    label: '晚餐', unit: '桌', color: '#EC4899', icon: '🌙' },
   { type: 'meeting',   label: '会务', unit: '场', color: '#14B8A6', icon: '📊' },
   { type: 'wellness',  label: '康乐', unit: '项', color: '#84CC16', icon: '🎯' },
+  { type: 'carpickup', label: '用车', unit: '次', color: '#6B7280', icon: '🚗' },
 ];
 
 export const BIZ_MAP = Object.fromEntries(BUSINESS.map(b => [b.type, b])) as Record<BizType, BizConfig>;

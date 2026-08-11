@@ -37,14 +37,54 @@ CREATE TABLE IF NOT EXISTS booking_orders (
   confirmed_at DATETIME COMMENT '确认通过时间',
   completed_at DATETIME COMMENT '已完成时间',
   rejected_at DATETIME COMMENT '驳回时间',
+  is_template TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为模板 1=模板 0=普通订单',
+  template_name VARCHAR(100) COMMENT '模板名称（is_template=1时有效）',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_order_no (order_no),
   INDEX idx_status (status),
   INDEX idx_sales (sales_person),
   INDEX idx_booker (booker_id),
-  INDEX idx_created (created_at)
+  INDEX idx_created (created_at),
+  INDEX idx_template (is_template)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='预订调度订单主表';
+
+-- 确保 booking_orders 表有模板字段（幂等 ALTER）
+SET @dbname = DATABASE();
+SET @tablename = 'booking_orders';
+
+SET @columnname = 'is_template';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) NOT NULL DEFAULT 0 COMMENT ''是否为模板'' AFTER rejected_at')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @columnname = 'template_name';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100) COMMENT ''模板名称'' AFTER is_template')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_template';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (is_template)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
 
 -- ================================================
 -- 2. 预订订单项目明细表
