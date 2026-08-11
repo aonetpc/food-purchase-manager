@@ -7,7 +7,7 @@ interface UserItem {
   id: string;
   username: string;
   name: string;
-  role: 'admin' | 'finance' | 'boss' | 'viewer' | 'temp_auditor' | 'temp_chairman' | 'purchaser';
+  role: string;
   role_id: string;
   roles?: { id: string; code: string; name: string }[];
   status: number;
@@ -26,17 +26,10 @@ const ROLE_LABELS: Record<string, { label: string; color: string }> = {
   temp_auditor: { label: '外请审核员', color: 'bg-blue-100 text-blue-700' },
   temp_chairman: { label: '外请董事长', color: 'bg-teal-100 text-teal-700' },
   purchaser: { label: '采购员', color: 'bg-green-100 text-green-700' },
+  warehouse: { label: '仓库管理员', color: 'bg-orange-100 text-orange-700' },
+  booker: { label: '预订员', color: 'bg-indigo-100 text-indigo-700' },
+  sales: { label: '销售员', color: 'bg-pink-100 text-pink-700' },
 };
-
-const ROLE_OPTIONS = [
-  { value: 'admin', label: '管理员' },
-  { value: 'finance', label: '财务' },
-  { value: 'boss', label: '董事长' },
-  { value: 'viewer', label: '普通员工' },
-  { value: 'temp_auditor', label: '外请审核员' },
-  { value: 'temp_chairman', label: '外请董事长' },
-  { value: 'purchaser', label: '采购员' },
-];
 
 export default function UserManager(props: { embedded?: boolean }) {
   const { embedded = false } = props || {};
@@ -61,7 +54,7 @@ export default function UserManager(props: { embedded?: boolean }) {
   const [formData, setFormData] = useState({
     username: '',
     name: '',
-    role: 'viewer' as 'admin' | 'finance' | 'boss' | 'viewer',
+    role: 'viewer' as string,
     phone: '',
     department_id: '',
     password: '',
@@ -75,7 +68,17 @@ export default function UserManager(props: { embedded?: boolean }) {
 
   useEffect(() => {
     fetchUsers();
+    fetchAllRoles();
   }, []);
+
+  const fetchAllRoles = async () => {
+    try {
+      const roles = await api.get<any[]>('/roles');
+      setAllRoles(roles);
+    } catch (err: any) {
+      console.error('获取角色列表失败:', err.message);
+    }
+  };
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -556,16 +559,33 @@ export default function UserManager(props: { embedded?: boolean }) {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">角色</label>
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                >
-                  {ROLE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-2">角色</label>
+                <div className="flex flex-wrap gap-2">
+                  {allRoles.length === 0 ? (
+                    <div className="text-xs text-gray-400 py-2">加载中...</div>
+                  ) : (
+                    allRoles.map((r) => {
+                      const label = ROLE_LABELS[r.code]?.label || r.name;
+                      const color = ROLE_LABELS[r.code]?.color || 'bg-gray-100 text-gray-700';
+                      const selected = formData.role === r.code;
+                      return (
+                        <button
+                          key={r.code}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, role: r.code as any })}
+                          className={`px-3 py-1.5 text-sm rounded-full transition-all ${color} ${
+                            selected
+                              ? 'ring-2 ring-green-500 ring-offset-1 shadow-sm scale-[1.02]'
+                              : 'hover:shadow-sm hover:scale-[1.02] opacity-80 hover:opacity-100'
+                          }`}
+                        >
+                          {label}
+                          {r.is_system === 1 && <span className="ml-1.5 text-[10px] opacity-70">●</span>}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
@@ -645,16 +665,33 @@ export default function UserManager(props: { embedded?: boolean }) {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">角色</label>
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                >
-                  {ROLE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-2">角色</label>
+                <div className="flex flex-wrap gap-2">
+                  {allRoles.length === 0 ? (
+                    <div className="text-xs text-gray-400 py-2">加载中...</div>
+                  ) : (
+                    allRoles.map((r) => {
+                      const label = ROLE_LABELS[r.code]?.label || r.name;
+                      const color = ROLE_LABELS[r.code]?.color || 'bg-gray-100 text-gray-700';
+                      const selected = formData.role === r.code;
+                      return (
+                        <button
+                          key={r.code}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, role: r.code as any })}
+                          className={`px-3 py-1.5 text-sm rounded-full transition-all ${color} ${
+                            selected
+                              ? 'ring-2 ring-green-500 ring-offset-1 shadow-sm scale-[1.02]'
+                              : 'hover:shadow-sm hover:scale-[1.02] opacity-80 hover:opacity-100'
+                          }`}
+                        >
+                          {label}
+                          {r.is_system === 1 && <span className="ml-1.5 text-[10px] opacity-70">●</span>}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
