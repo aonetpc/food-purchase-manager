@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS booking_orders (
   customer_name VARCHAR(200) NOT NULL COMMENT '客户名称',
   contact_name VARCHAR(100) COMMENT '联系人',
   contact_phone VARCHAR(50) COMMENT '联系电话',
-  sales_person VARCHAR(100) COMMENT '销售员姓名',
+  sales_person VARCHAR(100) COMMENT '销售员姓名（冗余）',
+  sales_person_id VARCHAR(36) COMMENT '销售员 users.id（用于业绩统计）',
   payment_method VARCHAR(100) COMMENT '付款方式',
   remark TEXT COMMENT '备注',
   status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '状态 pending/reviewing/confirmed/rejected/completed',
@@ -81,6 +82,29 @@ SET @preparedStatement = (SELECT IF(
     WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
   'SELECT 1',
   CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (is_template)')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- sales_person_id 字段（用于销售业绩统计 JOIN users）
+SET @columnname = 'sales_person_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) COMMENT ''销售员 users.id（用于业绩统计）'' AFTER sales_person')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+SET @indexname = 'idx_sales_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = @dbname AND table_name = @tablename AND index_name = @indexname) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (sales_person_id)')
 ));
 PREPARE alterIfNotExists FROM @preparedStatement;
 EXECUTE alterIfNotExists;
@@ -251,6 +275,11 @@ WHERE code = 'menu:booking-board';
 -- 10. 角色权限分配
 -- ================================================
 
+-- 10.0 新增 booker（预订员）和 sales（销售员）角色（幂等）
+INSERT IGNORE INTO roles (id, code, name, description, is_system, sort_order) VALUES
+  (UUID(), 'booker', '预订员', '预订调度模块操作员，可创建/编辑/提交订单', 1, 5),
+  (UUID(), 'sales',  '销售员', '销售业务员，仅可查看预订订单',           1, 6);
+
 -- 10.1 admin 角色：预订模块全部权限
 INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT UUID(), r.id, p.id
@@ -258,7 +287,14 @@ FROM roles r
 CROSS JOIN permissions p
 WHERE r.code = 'admin' AND p.module_id = 'booking-board';
 
--- 10.2 boss 角色：菜单 + 查看
+-- 10.2 booker 角色：菜单 + 全部操作权限（创建/编辑/提交/审核/完成/配置）
+INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
+SELECT UUID(), r.id, p.id
+FROM roles r
+CROSS JOIN permissions p
+WHERE r.code = 'booker' AND p.module_id = 'booking-board';
+
+-- 10.3 boss 角色：菜单 + 查看 + 审核 + 完成
 INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT UUID(), r.id, p.id
 FROM roles r
@@ -266,12 +302,20 @@ CROSS JOIN permissions p
 WHERE r.code = 'boss'
   AND p.code IN ('menu:booking-board','action:booking:view','action:booking:approve','action:booking:complete');
 
--- 10.3 finance 角色：菜单 + 查看
+-- 10.4 finance 角色：菜单 + 查看
 INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT UUID(), r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
 WHERE r.code = 'finance'
+  AND p.code IN ('menu:booking-board','action:booking:view');
+
+-- 10.5 sales 角色：菜单 + 查看（销售员只可查看，不可操作）
+INSERT IGNORE INTO role_permissions (id, role_id, permission_id)
+SELECT UUID(), r.id, p.id
+FROM roles r
+CROSS JOIN permissions p
+WHERE r.code = 'sales'
   AND p.code IN ('menu:booking-board','action:booking:view');
 
 -- ================================================

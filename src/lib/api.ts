@@ -145,6 +145,7 @@ export interface BookingApiOrder {
   contactName?: string;
   contactPhone?: string;
   salesPerson?: string;
+  salesPersonId?: string;
   paymentMethod?: string;
   remark?: string;
   status: string;
@@ -163,11 +164,18 @@ export interface BookingApiOrder {
   derivedBreakfasts?: any[];
 }
 
+export interface BookingSalesUser {
+  id: string;
+  name: string;
+  username?: string;
+}
+
 export interface BookingConfig {
   packages: any[];
   roomTypes: any[];
   meetingHalls: any[];
   wellnessTypes: any[];
+  salesUsers?: BookingSalesUser[];
 }
 
 export const bookingApi = {
@@ -199,6 +207,7 @@ export const bookingApi = {
     contactName?: string;
     contactPhone?: string;
     salesPerson?: string;
+    salesPersonId?: string;
     paymentMethod?: string;
     remark?: string;
     items: any[];
@@ -208,6 +217,7 @@ export const bookingApi = {
       contactName: payload.contactName,
       contactPhone: payload.contactPhone,
       salesPerson: payload.salesPerson,
+      salesPersonId: payload.salesPersonId,
       paymentMethod: payload.paymentMethod,
       remark: payload.remark,
       items: itemsToBackend(payload.items),
@@ -222,6 +232,7 @@ export const bookingApi = {
     contactName?: string;
     contactPhone?: string;
     salesPerson?: string;
+    salesPersonId?: string;
     paymentMethod?: string;
     remark?: string;
     items: any[];
@@ -231,6 +242,7 @@ export const bookingApi = {
       contactName: payload.contactName,
       contactPhone: payload.contactPhone,
       salesPerson: payload.salesPerson,
+      salesPersonId: payload.salesPersonId,
       paymentMethod: payload.paymentMethod,
       remark: payload.remark,
       items: itemsToBackend(payload.items),
@@ -280,6 +292,7 @@ export const bookingApi = {
       roomTypes: (res.data?.roomTypes || []).map(fromBackend),
       meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
       wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
+      salesUsers: (res.data?.salesUsers || []).map(fromBackend),
     };
   },
 

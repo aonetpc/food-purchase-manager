@@ -99,6 +99,7 @@ export interface BookingOrder {
   contactName: string;
   contactPhone: string;
   salesPerson: string;
+  salesPersonId?: string;
   payment: string;
   remark: string;
   items: BookingItem[];

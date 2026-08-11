@@ -232,6 +232,55 @@ function requirePermission(permissionCode) {
 }
 
 /**
+ * 预订模块写操作权限校验中间件
+ * 仅允许 admin / booker 角色执行写操作（创建/编辑/提交/审核/驳回/完成/模板等）
+ * 其他角色（如 sales / finance / boss / viewer）仅可查看
+ *
+ * 使用：router.post('/orders', requireAuth, requireBookingWrite, handler)
+ */
+async function requireBookingWrite(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: '未登录' });
+  }
+
+  // 允许的角色白名单
+  const allowedRoles = ['admin', 'booker'];
+
+  // 1. 优先校验 user.role（requireAuth 中已动态查询并回填）
+  if (allowedRoles.includes(req.user.role)) {
+    return next();
+  }
+
+  // 2. 多角色查询（user_roles 表 + users.role_id）
+  try {
+    const [roleCodeRows] = await pool.query(`
+      SELECT DISTINCT r.code
+      FROM (
+        SELECT role_id FROM user_roles WHERE user_id = ?
+        UNION
+        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+      ) t
+      JOIN roles r ON r.id = t.role_id
+    `, [req.user.id, req.user.id]);
+    const userRoleCodes = roleCodeRows.map(r => r.code);
+    if (allowedRoles.some(r => userRoleCodes.includes(r))) {
+      return next();
+    }
+  } catch (e) {
+    // 查询失败，忽略
+  }
+
+  // 3. 降级：检查权限码（admin 应有 action:booking:create 或 action:booking:config）
+  if (req.user.permissionCodes &&
+      (req.user.permissionCodes.has('action:booking:create') ||
+       req.user.permissionCodes.has('action:booking:config'))) {
+    return next();
+  }
+
+  return res.status(403).json({ error: '无操作权限，仅管理员和预订员可执行此操作' });
+}
+
+/**
  * 获取用户权限列表
  * 返回当前用户的所有权限（菜单+按钮+API）
  */
@@ -380,6 +429,7 @@ module.exports = {
   requireAuth,
   requireRole,
   requirePermission,
+  requireBookingWrite,
   getUserPermissions,
   getRoles,
   getPermissions,

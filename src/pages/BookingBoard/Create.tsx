@@ -13,6 +13,7 @@ import {
   AlertCircle,
   CheckCircle,
   ClipboardList,
+  ChevronDown,
 } from 'lucide-react';
 import type {
   BookingOrder,
@@ -54,6 +55,7 @@ import {
   downloadFile,
   groupTotal,
 } from './utils';
+import { bookingApi, type BookingSalesUser } from '../../lib/api';
 
 // ================================================
 // 样式常量
@@ -254,6 +256,7 @@ export default function BookingBoardCreate(props: {
         contactName: '',
         contactPhone: '',
         salesPerson: copySource.salesPerson,
+        salesPersonId: copySource.salesPersonId,
         payment: copySource.payment,
         remark: copySource.remark,
         items: copyItemsForCopy(copySource),
@@ -267,6 +270,7 @@ export default function BookingBoardCreate(props: {
       contactName: '',
       contactPhone: '',
       salesPerson: '',
+      salesPersonId: undefined,
       payment: PAYMENT_OPTIONS[0],
       remark: '',
       items: [],
@@ -315,6 +319,26 @@ export default function BookingBoardCreate(props: {
   const [err, setErr] = useState('');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 销售员列表（从后端拉取，仅含 sales 角色的用户）
+  const [salesUsers, setSalesUsers] = useState<BookingSalesUser[]>([]);
+  const [salesPickerOpen, setSalesPickerOpen] = useState(false);
+
+  // 拉取销售员列表（仅一次）
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const cfg = await bookingApi.getConfig();
+        if (mounted && Array.isArray(cfg.salesUsers)) {
+          setSalesUsers(cfg.salesUsers);
+        }
+      } catch (e) {
+        // 静默失败，不影响表单使用
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // 用餐场次自动生成（日期范围 / 默认值变化时）
   useEffect(() => {
@@ -758,12 +782,18 @@ export default function BookingBoardCreate(props: {
           return;
         }
 
+        // 导入的销售员姓名尝试匹配 salesUsers 以补全 salesPersonId
+        const matchedSalesUser = customer.salesPerson
+          ? salesUsers.find((u) => (u.name || u.username || '') === customer.salesPerson)
+          : undefined;
+
         setDraftGroup((g) => ({
           ...g,
           customerName: customer.customerName || g.customerName,
           contactName: customer.contactName || g.contactName,
           contactPhone: customer.contactPhone || g.contactPhone,
           salesPerson: customer.salesPerson || g.salesPerson,
+          salesPersonId: matchedSalesUser?.id || g.salesPersonId,
           payment: customer.payment || g.payment,
           remark: customer.remark || g.remark,
           items: [...g.items, ...newItems],
@@ -820,6 +850,7 @@ export default function BookingBoardCreate(props: {
       contactName: '',
       contactPhone: '',
       salesPerson: '',
+      salesPersonId: undefined,
       payment: PAYMENT_OPTIONS[0],
       remark: '',
       items: [],
@@ -987,12 +1018,79 @@ export default function BookingBoardCreate(props: {
             </div>
             <div>
               <label className={labelCls}>销售员</label>
-              <input
-                value={draftGroup.salesPerson}
-                onChange={(e) => setDraftGroup((g) => ({ ...g, salesPerson: e.target.value }))}
-                placeholder="请输入销售员"
-                className={inputCls}
-              />
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setSalesPickerOpen((v) => !v)}
+                  className={`${inputCls} text-left flex items-center justify-between ${draftGroup.salesPerson ? 'text-gray-900' : 'text-gray-400'}`}
+                >
+                  <span className="truncate">{draftGroup.salesPerson || '点击选择销售员'}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {draftGroup.salesPerson && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDraftGroup((g) => ({ ...g, salesPerson: '', salesPersonId: undefined }));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.stopPropagation();
+                            setDraftGroup((g) => ({ ...g, salesPerson: '', salesPersonId: undefined }));
+                          }
+                        }}
+                        className="text-gray-400 hover:text-red-500"
+                        title="清除"
+                      >
+                        <X size={14} />
+                      </span>
+                    )}
+                    <ChevronDown size={14} className={`text-gray-400 transition-transform ${salesPickerOpen ? 'rotate-180' : ''}`} />
+                  </span>
+                </button>
+                {salesPickerOpen && (
+                  <>
+                    {/* 点击遮罩关闭 */}
+                    <div className="fixed inset-0 z-10" onClick={() => setSalesPickerOpen(false)} />
+                    <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg p-2 max-h-56 overflow-y-auto">
+                      {salesUsers.length === 0 ? (
+                        <div className="text-center py-4 text-xs text-gray-400">
+                          暂无销售员，请先在用户管理中为员工分配「销售员」角色
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {salesUsers.map((u) => {
+                            const active = u.id === draftGroup.salesPersonId;
+                            return (
+                              <button
+                                key={u.id}
+                                type="button"
+                                onClick={() => {
+                                  setDraftGroup((g) => ({
+                                    ...g,
+                                    salesPerson: u.name || u.username || '',
+                                    salesPersonId: u.id,
+                                  }));
+                                  setSalesPickerOpen(false);
+                                }}
+                                className={`px-3 py-2 rounded-md text-sm text-left transition-colors border ${
+                                  active
+                                    ? 'bg-green-50 border-green-500 text-green-700 font-medium'
+                                    : 'bg-white border-gray-200 text-gray-700 hover:bg-green-50 hover:border-green-300 hover:text-green-700'
+                                }`}
+                                title={u.username ? `账号：${u.username}` : u.name}
+                              >
+                                <span className="truncate block">{u.name || u.username || '未命名'}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
             <div>
               <label className={labelCls}>付款方式</label>

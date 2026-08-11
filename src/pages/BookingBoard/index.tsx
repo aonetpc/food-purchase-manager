@@ -25,6 +25,7 @@ import {
   type FlatItem,
 } from './utils';
 import { bookingApi, type BookingApiOrder } from '../../lib/api';
+import { useAuthStore } from '@/store/authStore';
 import CreateFormRaw from './Create';
 
 const CreateForm = CreateFormRaw as unknown as React.FC<{
@@ -63,6 +64,7 @@ function adaptOrder(apiOrder: BookingApiOrder): BookingOrder {
     contactName: apiOrder.contactName || '',
     contactPhone: apiOrder.contactPhone || '',
     salesPerson: apiOrder.salesPerson || '',
+    salesPersonId: apiOrder.salesPersonId || '',
     payment: apiOrder.paymentMethod || '',
     remark: apiOrder.remark || '',
     items: (apiOrder.items || []).map((it: any) => ({
@@ -384,14 +386,18 @@ function DetailModal({
   onClose,
   onCopy,
   onEdit,
+  canOperate,
+  onSetTemplate,
 }: {
   order: BookingOrder;
   onClose: () => void;
   onCopy: () => void;
   onEdit: () => void;
+  canOperate: boolean;
+  onSetTemplate: (orderId: string, customerName: string) => void;
 }) {
-  const canEdit =
-    order.status === 'pending' || order.status === 'reviewing' || order.status === 'confirmed';
+  const canEdit = canOperate &&
+    (order.status === 'pending' || order.status === 'reviewing' || order.status === 'confirmed');
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
 
@@ -551,23 +557,24 @@ function DetailModal({
 
         {/* 底部按钮 */}
         <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white">
-          <button
-            type="button"
-            onClick={onCopy}
-            className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-          >
-            复制为新单
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowSetTemplate(order.id);
-              setTemplateNameInput(order.customerName || '');
-            }}
-            className="px-3 py-1.5 text-xs rounded border border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 font-medium flex items-center gap-1"
-          >
-            <Star size={12} /> 设为模板
-          </button>
+          {canOperate && (
+            <>
+              <button
+                type="button"
+                onClick={onCopy}
+                className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              >
+                复制为新单
+              </button>
+              <button
+                type="button"
+                onClick={() => onSetTemplate(order.id, order.customerName || '')}
+                className="px-3 py-1.5 text-xs rounded border border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 font-medium flex items-center gap-1"
+              >
+                <Star size={12} /> 设为模板
+              </button>
+            </>
+          )}
           {canEdit && (
             <button
               type="button"
@@ -618,6 +625,17 @@ export default function BookingBoard() {
   const [templateNameInput, setTemplateNameInput] = useState('');
   // orderNo → backend UUID 映射（编辑/状态操作时需要 UUID 调后端）
   const orderUuidMap = useRef<Record<string, string>>({});
+
+  // 权限：仅 admin / booker 可执行写操作（新建/编辑/复制/导入/模板等），其他角色仅查看
+  const authUser = useAuthStore(s => s.user);
+  const isBookingOperator = (() => {
+    if (!authUser) return false;
+    const role = authUser.role;
+    const roles = authUser.roles || [];
+    // roles 可能是字符串数组或对象数组
+    const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
+    return role === 'admin' || role === 'booker' || roleCodes.includes('admin') || roleCodes.includes('booker');
+  })();
 
   // 切换周时从后端加载订单数据
   useEffect(() => {
@@ -791,6 +809,7 @@ export default function BookingBoard() {
       contactName: order.contactName,
       contactPhone: order.contactPhone,
       salesPerson: order.salesPerson,
+      salesPersonId: order.salesPersonId,
       paymentMethod: order.payment,
       remark: order.remark,
       items: order.items,
@@ -861,53 +880,57 @@ export default function BookingBoard() {
             >
               <Calendar size={12} /> 今天
             </button>
-            <a
-              href="/templates/预订订单导入模板.xlsx"
-              download="预订订单导入模板.xlsx"
-              className="px-3 py-1.5 text-xs rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium flex items-center gap-1"
-            >
-              <Download size={12} /> 下载模板
-            </a>
-            <button
-              type="button"
-              onClick={() => setShowImport(true)}
-              className="px-3 py-1.5 text-xs rounded border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 font-medium flex items-center gap-1"
-            >
-              <Upload size={12} /> 导入Excel
-            </button>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowNewMenu(s => !s)}
-                className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium flex items-center gap-1 shadow-sm"
-              >
-                <Plus size={12} /> 新建订单 <ChevronDown size={12} />
-              </button>
-              {showNewMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowNewMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-xl border border-gray-200 z-50 py-1 overflow-hidden">
-                    <button
-                      onClick={() => { setShowNewMenu(false); setCreateDrawer({ mode: 'create' }); }}
-                      className="w-full px-4 py-2 text-xs text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                    >
-                      <FileText size={14} className="text-gray-500" /> 空白新建
-                    </button>
-                    <div className="border-t border-gray-100 my-1" />
-                    <button
-                      onClick={() => {
-                        setShowNewMenu(false);
-                        setShowTemplatePicker(true);
-                        loadTemplates();
-                      }}
-                      className="w-full px-4 py-2 text-xs text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                    >
-                      <Star size={14} className="text-yellow-500" /> 从模板创建
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {isBookingOperator && (
+              <>
+                <a
+                  href="/templates/预订订单导入模板.xlsx"
+                  download="预订订单导入模板.xlsx"
+                  className="px-3 py-1.5 text-xs rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium flex items-center gap-1"
+                >
+                  <Download size={12} /> 下载模板
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowImport(true)}
+                  className="px-3 py-1.5 text-xs rounded border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 font-medium flex items-center gap-1"
+                >
+                  <Upload size={12} /> 导入Excel
+                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewMenu(s => !s)}
+                    className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium flex items-center gap-1 shadow-sm"
+                  >
+                    <Plus size={12} /> 新建订单 <ChevronDown size={12} />
+                  </button>
+                  {showNewMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowNewMenu(false)} />
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-xl border border-gray-200 z-50 py-1 overflow-hidden">
+                        <button
+                          onClick={() => { setShowNewMenu(false); setCreateDrawer({ mode: 'create' }); }}
+                          className="w-full px-4 py-2 text-xs text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <FileText size={14} className="text-gray-500" /> 空白新建
+                        </button>
+                        <div className="border-t border-gray-100 my-1" />
+                        <button
+                          onClick={() => {
+                            setShowNewMenu(false);
+                            setShowTemplatePicker(true);
+                            loadTemplates();
+                          }}
+                          className="w-full px-4 py-2 text-xs text-left text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <Star size={14} className="text-yellow-500" /> 从模板创建
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -924,7 +947,7 @@ export default function BookingBoard() {
                 <div
                   key={o.id}
                   className="bg-white rounded-lg border border-amber-200 p-3 cursor-pointer hover:shadow-md hover:border-amber-400 transition-all"
-                  onClick={() => setCreateDrawer({ mode: 'edit', order: o })}
+                  onClick={() => isBookingOperator ? setCreateDrawer({ mode: 'edit', order: o }) : setSelectedOrder(o)}
                 >
                   <div className="flex items-start justify-between">
                     <div className="min-w-0 flex-1">
@@ -934,7 +957,7 @@ export default function BookingBoard() {
                         {o.salesPerson ? `销售：${o.salesPerson}` : '未填销售'} · {o.createdAt?.slice(0, 10) || '今天'}
                       </div>
                     </div>
-                    <Edit2 size={14} className="text-amber-500 flex-shrink-0 ml-2 mt-1" />
+                    {isBookingOperator && <Edit2 size={14} className="text-amber-500 flex-shrink-0 ml-2 mt-1" />}
                   </div>
                 </div>
               ))}
@@ -1187,6 +1210,11 @@ export default function BookingBoard() {
           onClose={() => setSelectedOrder(null)}
           onCopy={() => { setCreateDrawer({ mode: 'copy', order: selectedOrder }); setSelectedOrder(null); }}
           onEdit={() => { setCreateDrawer({ mode: 'edit', order: selectedOrder }); setSelectedOrder(null); }}
+          canOperate={isBookingOperator}
+          onSetTemplate={(orderId, customerName) => {
+            setShowSetTemplate(orderId);
+            setTemplateNameInput(customerName);
+          }}
         />
       )}
 

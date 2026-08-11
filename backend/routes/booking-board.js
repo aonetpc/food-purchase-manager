@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
-const { requireAuth } = require('../middleware/rbac');
+const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
 
 // ------------------------------------------------------------
@@ -200,9 +200,41 @@ router.get('/config', requireAuth, async (_req, res) => {
     const [roomTypes] = await pool.query('SELECT * FROM booking_room_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [meetingHalls] = await pool.query('SELECT * FROM booking_meeting_halls WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [wellnessTypes] = await pool.query('SELECT * FROM booking_wellness_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+
+    // 销售员列表：所有拥有 sales 角色的启用用户（用于销售员人员选择面板）
+    let salesUsers = [];
+    try {
+      [salesUsers] = await pool.query(`
+        SELECT DISTINCT u.id, u.name, u.username
+        FROM users u
+        INNER JOIN (
+          SELECT user_id FROM user_roles ur
+          JOIN roles r ON r.id = ur.role_id AND r.code = 'sales'
+          UNION
+          SELECT u2.id FROM users u2
+          JOIN roles r2 ON r2.id = u2.role_id AND r2.code = 'sales'
+        ) t ON t.user_id = u.id
+        WHERE u.status = 1
+        ORDER BY u.name ASC
+      `);
+    } catch (e) {
+      // user_roles 表可能不存在，降级到 users.role_id
+      try {
+        [salesUsers] = await pool.query(`
+          SELECT u.id, u.name, u.username
+          FROM users u
+          JOIN roles r ON r.id = u.role_id AND r.code = 'sales'
+          WHERE u.status = 1
+          ORDER BY u.name ASC
+        `);
+      } catch (e2) {
+        salesUsers = [];
+      }
+    }
+
     res.json({
       ok: true,
-      data: { packages, roomTypes, meetingHalls, wellnessTypes },
+      data: { packages, roomTypes, meetingHalls, wellnessTypes, salesUsers },
     });
   } catch (e) {
     console.error('[booking config] error:', e);
@@ -318,7 +350,7 @@ router.get('/orders', requireAuth, async (req, res) => {
 // ============================================================
 // POST /api/booking/orders  新建
 // ============================================================
-router.post('/orders', requireAuth, async (req, res) => {
+router.post('/orders', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -334,15 +366,16 @@ router.post('/orders', requireAuth, async (req, res) => {
     await conn.query(`
       INSERT INTO booking_orders
         (id, order_no, customer_name, contact_name, contact_phone,
-         sales_person, payment_method, remark, status, total_amount,
+         sales_person, sales_person_id, payment_method, remark, status, total_amount,
          booker_id, booker_name)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `, [
       orderId, orderNo,
       req.body.customerName || null,
       req.body.contactName || null,
       req.body.contactPhone || null,
       req.body.salesPerson || null,
+      req.body.salesPersonId || null,
       req.body.paymentMethod || null,
       req.body.remark || null,
       'pending',
@@ -371,7 +404,7 @@ router.post('/orders', requireAuth, async (req, res) => {
 // ============================================================
 
 // POST /api/booking/orders/:id/duplicate  复制为新单
-router.post('/orders/:id/duplicate', requireAuth, async (req, res) => {
+router.post('/orders/:id/duplicate', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -444,7 +477,7 @@ router.post('/orders/:id/duplicate', requireAuth, async (req, res) => {
 });
 
 // POST /api/booking/orders/:id/submit   提交审核：pending → reviewing
-router.post('/orders/:id/submit', requireAuth, async (req, res) => {
+router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const orderId = req.params.id;
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
@@ -464,7 +497,7 @@ router.post('/orders/:id/submit', requireAuth, async (req, res) => {
 });
 
 // POST /api/booking/orders/:id/approve  审核通过 reviewing → confirmed
-router.post('/orders/:id/approve', requireAuth, async (req, res) => {
+router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const user = req.user || {};
     const orderId = req.params.id;
@@ -491,7 +524,7 @@ router.post('/orders/:id/approve', requireAuth, async (req, res) => {
 // POST /api/booking/orders/:id/reject   驳回
 //   pending   → rejected（销售员自己驳回）
 //   reviewing → rejected（总经理驳回）
-router.post('/orders/:id/reject', requireAuth, async (req, res) => {
+router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const user = req.user || {};
     const orderId = req.params.id;
@@ -525,7 +558,7 @@ router.post('/orders/:id/reject', requireAuth, async (req, res) => {
 });
 
 // POST /api/booking/orders/:id/complete  标记完成 confirmed → completed
-router.post('/orders/:id/complete', requireAuth, async (req, res) => {
+router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const orderId = req.params.id;
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
@@ -562,7 +595,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
 
 // PUT /api/booking/orders/:id   编辑
 // 允许状态：pending / reviewing / confirmed
-router.put('/orders/:id', requireAuth, async (req, res) => {
+router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -585,13 +618,14 @@ router.put('/orders/:id', requireAuth, async (req, res) => {
     await conn.query(`
       UPDATE booking_orders SET
         customer_name = ?, contact_name = ?, contact_phone = ?,
-        sales_person = ?, payment_method = ?, remark = ?, total_amount = ?
+        sales_person = ?, sales_person_id = ?, payment_method = ?, remark = ?, total_amount = ?
       WHERE id = ?
     `, [
       req.body.customerName || cur.customer_name,
       req.body.contactName || cur.contact_name,
       req.body.contactPhone || cur.contact_phone,
       req.body.salesPerson || cur.sales_person,
+      req.body.salesPersonId || cur.sales_person_id,
       req.body.paymentMethod || cur.payment_method,
       req.body.remark ?? cur.remark,
       totalAmount,
@@ -620,7 +654,7 @@ router.put('/orders/:id', requireAuth, async (req, res) => {
 // POST /api/booking/orders/:id/set-template
 // 设为模板（传 template_name）
 // ============================================================
-router.post('/orders/:id/set-template', requireAuth, async (req, res) => {
+router.post('/orders/:id/set-template', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const { templateName } = req.body;
     if (!templateName) return res.status(400).json({ ok: false, error: '模板名称必填' });
@@ -639,7 +673,7 @@ router.post('/orders/:id/set-template', requireAuth, async (req, res) => {
 // POST /api/booking/orders/:id/unset-template
 // 取消模板
 // ============================================================
-router.post('/orders/:id/unset-template', requireAuth, async (req, res) => {
+router.post('/orders/:id/unset-template', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const [existing] = await pool.query('SELECT id FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
     if (!existing || !existing.length) return res.status(404).json({ ok: false, error: '模板不存在' });
@@ -696,7 +730,7 @@ router.get('/templates', requireAuth, async (req, res) => {
 // POST /api/booking/templates/:id/apply
 // 从模板创建草稿订单（日期偏移到以今天为基准的本周）
 // ============================================================
-router.post('/templates/:id/apply', requireAuth, async (req, res) => {
+router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
