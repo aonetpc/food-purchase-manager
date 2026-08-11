@@ -1155,48 +1155,180 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
 });
 
 // ============================================================
+// 工具：克隆一条订单为模板（原订单保持不变，克隆产生新记录为 is_template=1）
+// ============================================================
+async function cloneOrderAsTemplate(conn, sourceOrderId, templateName, operatorId) {
+  const uuid = require('uuid');
+  // 查原订单（必须是普通订单或历史误转为模板的订单都行）
+  const [src] = await conn.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [sourceOrderId]);
+  if (!src || !src.length) throw new Error('来源订单不存在');
+  const o = src[0];
+
+  const newId = uuid.v4();
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const rand = Math.floor(Math.random() * 9000 + 1000);
+  const newOrderNo = `TPL${yyyy}${mm}${dd}${rand}`;
+
+  await conn.query(`
+    INSERT INTO booking_orders (
+      id, order_no, customer_name, contact_name, contact_phone,
+      sales_person, payment_method, remark, status, total_amount,
+      is_template, template_name, booker_id, booker_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+  `, [
+    newId, newOrderNo,
+    o.customer_name, o.contact_name, o.contact_phone,
+    o.sales_person, o.payment_method, o.remark,
+    o.status || 'pending',
+    Number(o.total_amount) || 0,
+    templateName,
+    operatorId || (o.booker_id || null),
+    o.booker_name || null,
+  ]);
+
+  // 克隆 items
+  const [origItems] = await conn.query(
+    'SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC',
+    [sourceOrderId]
+  );
+  if (origItems && origItems.length) {
+    const itemPlaceholders = origItems.map(() =>
+      `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).join(',\n');
+    const itemValues = [];
+    origItems.forEach(ri => {
+      const nid = uuid.v4();
+      itemValues.push(
+        nid, newId, ri.type, ri.status || 'pending',
+        ri.date, ri.checkin_date, ri.checkout_date,
+        ri.lodging_type, ri.hall_id, ri.meal_type,
+        ri.wellness_type, ri.vehicle_type, ri.package,
+        ri.session_count, ri.sessions ? JSON.stringify(ri.sessions) : null,
+        ri.pax, ri.guest_names ? JSON.stringify(ri.guest_names) : null,
+        ri.checkup_count, ri.checkup_pax ? JSON.stringify(ri.checkup_pax) : null,
+        ri.extra ? JSON.stringify(ri.extra) : null,
+        ri.unit_price, ri.total_price,
+        ri.sort_order || 0, ri.remark,
+        ri.created_at || null, ri.updated_at || null
+      );
+    });
+    await conn.query(`
+      INSERT INTO booking_items (
+        id, order_id, type, status, date, checkin_date, checkout_date,
+        lodging_type, hall_id, meal_type, wellness_type, vehicle_type, package,
+        session_count, sessions, pax, guest_names,
+        checkup_count, checkup_pax, extra,
+        unit_price, total_price, sort_order, remark, created_at, updated_at
+      ) VALUES ${itemPlaceholders}
+    `, itemValues);
+  }
+  return { id: newId, order_no: newOrderNo };
+}
+
+// ============================================================
 // POST /api/booking/orders/:id/set-template
-// 设为模板（传 template_name）
+// 克隆为模板（原订单保持普通订单不变，新生成一条模板记录）
 // ============================================================
 router.post('/orders/:id/set-template', requireAuth, requireBookingWrite, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { templateName } = req.body;
     if (!templateName) return res.status(400).json({ ok: false, error: '模板名称必填' });
-    const [existing] = await pool.query('SELECT id FROM booking_orders WHERE id=? AND is_template=0 LIMIT 1', [req.params.id]);
+    const [existing] = await conn.query('SELECT id FROM booking_orders WHERE id=? LIMIT 1', [req.params.id]);
     if (!existing || !existing.length) return res.status(404).json({ ok: false, error: '订单不存在' });
-    await pool.query('UPDATE booking_orders SET is_template=1, template_name=? WHERE id=?', [templateName, req.params.id]);
-    logOperation(req, '预订订单', '设为模板', `模板名=${templateName}`, req.params.id);
-    res.json({ ok: true });
+
+    await conn.beginTransaction();
+    const tpl = await cloneOrderAsTemplate(conn, req.params.id, templateName, req.user && req.user.id);
+    await conn.commit();
+    logOperation(req, '预订订单', '克隆为模板', `模板名=${templateName}, 新模板ID=${tpl.order_no}`, req.params.id);
+    res.json({ ok: true, data: tpl });
   } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
     console.error('[booking set-template] error:', e);
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
   }
 });
 
 // ============================================================
 // POST /api/booking/orders/:id/unset-template
-// 取消模板
+// 删除模板副本（不影响来源订单本身）
 // ============================================================
 router.post('/orders/:id/unset-template', requireAuth, requireBookingWrite, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    const [existing] = await pool.query('SELECT id FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
+    const [existing] = await conn.query('SELECT id, template_name, order_no FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
     if (!existing || !existing.length) return res.status(404).json({ ok: false, error: '模板不存在' });
-    await pool.query('UPDATE booking_orders SET is_template=0, template_name=NULL WHERE id=?', [req.params.id]);
-    logOperation(req, '预订订单', '取消模板', '', req.params.id);
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM booking_items WHERE order_id = ?', [req.params.id]);
+    await conn.query('DELETE FROM booking_orders WHERE id = ? AND is_template = 1', [req.params.id]);
+    await conn.commit();
+    logOperation(req, '预订订单', '删除模板', `模板名=${existing[0].template_name}, 模板单号=${existing[0].order_no}`, req.params.id);
     res.json({ ok: true });
   } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
     console.error('[booking unset-template] error:', e);
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
   }
 });
+
+// ============================================================
+// 内部工具：一次性修复历史数据（把被误转为 is_template=1 的正常订单
+//   恢复为普通订单 + 克隆同名模板，保证两者都存在）
+// 触发方式：/templates 或 /orders 首次调用时自动检测并修复
+// ============================================================
+let _legacyTemplateFixDone = false;
+async function ensureFixLegacyTemplates(conn) {
+  if (_legacyTemplateFixDone) return;
+  try {
+    // 找出所有 is_template=1 但"本应是普通订单"的记录：
+    // ① order_no 不带 TPL 前缀（不是克隆产生的模板单号）
+    // ② 存在 booking_items（有实际业务项目，非空壳模板）
+    const [needFix] = await conn.query(`
+      SELECT o.id, o.order_no, o.template_name
+      FROM booking_orders o
+      WHERE o.is_template = 1
+        AND o.order_no NOT LIKE 'TPL%'
+        AND EXISTS (SELECT 1 FROM booking_items bi WHERE bi.order_id = o.id)
+    `);
+    if (!needFix || !needFix.length) { _legacyTemplateFixDone = true; return; }
+    console.log(`[booking-tpl-fix] 发现 ${needFix.length} 条历史模板数据需修复：`, needFix.map(r => r.order_no));
+
+    for (const row of needFix) {
+      try {
+        // 1) 先恢复为普通订单（原订单保留在列表中）
+        await conn.query(
+          'UPDATE booking_orders SET is_template=0, template_name=NULL WHERE id=? AND is_template=1',
+          [row.id]
+        );
+        // 2) 再克隆一条同名模板
+        await cloneOrderAsTemplate(conn, row.id, row.template_name || `${row.order_no}模板`, null);
+        console.log(`[booking-tpl-fix] 已修复 ${row.order_no}: 恢复普通订单 + 克隆模板`);
+      } catch (inner) {
+        console.error(`[booking-tpl-fix] 修复 ${row.order_no} 失败:`, inner.message);
+      }
+    }
+    _legacyTemplateFixDone = true;
+  } catch (e) {
+    console.error('[booking-tpl-fix] 整体修复失败:', e.message);
+  }
+}
 
 // ============================================================
 // GET /api/booking/templates
 // 模板列表（精简信息+items）
 // ============================================================
 router.get('/templates', requireAuth, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    const [rows] = await pool.query(`
+    await ensureFixLegacyTemplates(conn);
+    const [rows] = await conn.query(`
       SELECT id, order_no, customer_name, template_name, total_amount, remark
       FROM booking_orders
       WHERE is_template = 1
@@ -1205,7 +1337,7 @@ router.get('/templates', requireAuth, async (req, res) => {
     `);
     if (!rows || rows.length === 0) return res.json({ ok: true, data: [] });
     const ids = rows.map(r => r.id);
-    const [itemRows] = await pool.query(
+    const [itemRows] = await conn.query(
       `SELECT * FROM booking_items WHERE order_id IN (${ids.map(() => '?').join(',')}) ORDER BY sort_order ASC, id ASC`,
       ids
     );
@@ -1227,6 +1359,8 @@ router.get('/templates', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[booking GET templates] error:', e);
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
   }
 });
 

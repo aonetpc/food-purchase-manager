@@ -732,27 +732,28 @@ export default function BookingBoard() {
     }
   };
 
-  // 确认设为模板
+  // 确认设为模板（克隆模式：原订单不变，生成副本为模板）
   const handleConfirmSetTemplate = async () => {
     const orderId = showSetTemplate;
     const name = templateNameInput.trim();
     if (!orderId || !name) { alert('请输入模板名称'); return; }
     try {
       await bookingApi.setTemplate(orderUuidMap.current[orderId] || orderId, name);
-      alert('已设为模板');
+      alert('✅ 已生成模板副本，原订单仍保留在订单列表中');
       setShowSetTemplate(null);
       setTemplateNameInput('');
+      await loadTemplates(); // 仅刷新模板列表（订单还在，不需要刷新订单列表）
     } catch (e) {
       alert('设置失败: ' + (e as Error).message);
     }
   };
 
-  // 取消模板
+  // 删除模板副本（不影响来源订单本身）
   const handleUnsetTemplate = async (tplId: string) => {
-    if (!confirm('确定取消该模板？')) return;
+    if (!confirm('确定删除该模板？\n\n⚠️ 仅删除模板副本，不影响来源的普通订单本身。')) return;
     try {
       await bookingApi.unsetTemplate(tplId);
-      alert('已取消模板');
+      alert('模板已删除');
       await loadTemplates();
     } catch (e) {
       alert('操作失败: ' + (e as Error).message);
@@ -1406,16 +1407,19 @@ export default function BookingBoard() {
                             <span className="text-sm font-semibold text-gray-900">{tpl.templateName || '未命名模板'}</span>
                           </div>
                           <button
-                            title="取消模板"
+                            title="删除模板副本（不影响来源订单本身）"
                             onClick={(e) => { e.stopPropagation(); handleUnsetTemplate(tpl.id); }}
                             className="text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                           >
-                            取消模板
+                            删除模板
                           </button>
                         </div>
                         <div className="text-xs text-gray-500 mb-1">原客户：{tpl.customerName || '-'}</div>
                         <div className="text-xs text-gray-500 mb-3">
-                          共 {tpl.items?.length || 0} 项业务 · 
+                          模板单号 <span className="font-mono text-[11px] text-gray-600">{tpl.orderNo}</span>
+                          <span className="mx-1.5 text-gray-300">|</span>
+                          共 {tpl.items?.length || 0} 项业务
+                          <span className="mx-1.5 text-gray-300">|</span>
                           金额 <span className="text-orange-600 font-medium">¥{tpl.totalAmount || 0}</span>
                         </div>
                         {tpl.items && tpl.items.length > 0 && (
@@ -1463,8 +1467,11 @@ export default function BookingBoard() {
                 </button>
               </div>
               <div className="px-5 py-5 space-y-4">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
-                  设置模板名称后，可通过顶部【新建订单 → 从模板创建】快速复制本订单。
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800 space-y-1">
+                  <div className="font-medium">✅ 克隆模式：原订单保持不变</div>
+                  <div>• 将生成一条新的模板副本，用于快速下单；</div>
+                  <div>• 您当前的订单仍保留在订单列表里；</div>
+                  <div>• 通过【新建订单 → 从模板创建】可快速复制生成新订单。</div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">模板名称 <span className="text-red-500">*</span></label>
