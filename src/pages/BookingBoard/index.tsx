@@ -9,6 +9,7 @@ import {
   MEETING_HALLS,
   WELLNESS_TYPES,
   CHECKUP_PACKAGES,
+  hexAlpha,
 } from './constants';
 import {
   fmt,
@@ -79,7 +80,7 @@ function formatWeekRange(start: Date): string {
 
 function rowMinHeight(cards: BoardCard[]): number {
   const maxTrack = cards.length ? Math.max(...cards.map(c => c.track)) : -1;
-  return Math.max(118, (maxTrack + 1) * 92 + 16);
+  return Math.max(130, (maxTrack + 1) * 104 + 20);
 }
 
 // 卡片摘要文本（用于跨天合并卡）
@@ -173,42 +174,45 @@ function GanttCard({
   const { item, group, startCol, endCol, track, isMerged } = card;
   const left = `calc(${(startCol / 7) * 100}% + 4px)`;
   const width = `calc(${((endCol - startCol + 1) / 7) * 100}% - 8px)`;
-  const top = `${track * 92}px`;
+  const top = `${track * 104}px`;
   const status = STATUS_MAP[group.status];
   const days = endCol - startCol + 1;
+  const cardBg = hexAlpha(bizColor, 0.06);
+  const borderCol = hexAlpha(bizColor, 0.35);
 
   if (isMerged) {
     return (
       <button
         type="button"
         onClick={onClick}
-        className="absolute text-left bg-white rounded-md shadow-sm hover:shadow-md transition-shadow overflow-hidden"
+        className="absolute text-left rounded-lg shadow-sm hover:shadow-md transition-all overflow-hidden hover:-translate-y-0.5"
         style={{
           left,
           width,
           top,
-          height: '84px',
-          border: '1px solid #e5e7eb',
-          borderLeft: `3px solid ${bizColor}`,
+          height: '96px',
+          background: cardBg,
+          border: `1.5px solid ${borderCol}`,
+          borderLeft: `4px solid ${bizColor}`,
         }}
       >
         <div
-          className="flex items-center justify-between px-2 py-0.5"
-          style={{ borderBottom: `1px solid ${bizColor}22` }}
+          className="flex items-center justify-between px-3 py-1"
+          style={{ borderBottom: `1px solid ${hexAlpha(bizColor, 0.25)}`, background: hexAlpha(bizColor, 0.08) }}
         >
-          <span className="text-[10px] font-mono text-gray-500">
+          <span className="text-[11px] font-medium text-gray-700">
             {BIZ_MAP[item.itemType].label}
           </span>
-          <span className="text-[10px] flex items-center gap-0.5" style={{ color: bizColor }}>
-            <ArrowLeftRight size={9} /> {days}天
+          <span className="text-[11px] flex items-center gap-0.5 font-medium" style={{ color: bizColor }}>
+            <ArrowLeftRight size={11} /> {days}天
           </span>
         </div>
-        <div className="px-2 py-1">
-          <div className="text-xs font-bold text-gray-800 truncate">{group.customerName}</div>
-          <div className="text-[11px] text-gray-600 truncate">{cardSummary(item, days)}</div>
-          <div className="flex items-center gap-1 mt-0.5">
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
-            <span className="text-[10px] text-gray-500 truncate">{group.salesPerson}</span>
+        <div className="px-3 py-1.5">
+          <div className="text-sm font-bold text-gray-900 truncate">{group.customerName}</div>
+          <div className="text-xs text-gray-700 truncate">{cardSummary(item, days)}</div>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="w-2 h-2 rounded-full" style={{ background: status.color }} />
+            <span className="text-[11px] text-gray-600 truncate">{group.salesPerson}</span>
           </div>
         </div>
       </button>
@@ -219,24 +223,32 @@ function GanttCard({
     <button
       type="button"
       onClick={onClick}
-      className="absolute text-left bg-white rounded-md shadow-sm hover:shadow-md transition-shadow overflow-hidden"
-      style={{ left, width, top, height: '84px', border: '1px solid #e5e7eb', borderLeft: `3px solid ${bizColor}` }}
+      className="absolute text-left rounded-lg shadow-sm hover:shadow-md transition-all overflow-hidden hover:-translate-y-0.5"
+      style={{
+        left,
+        width,
+        top,
+        height: '96px',
+        background: cardBg,
+        border: `1.5px solid ${borderCol}`,
+        borderLeft: `4px solid ${bizColor}`,
+      }}
     >
-      <div className="px-2 py-1">
+      <div className="px-3 py-1.5">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono text-gray-500">
+          <span className="text-[11px] font-mono text-gray-600">
             {item.startTime}
             {item.endTime ? `-${item.endTime}` : ''}
           </span>
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
+          <span className="w-2 h-2 rounded-full" style={{ background: status.color }} />
         </div>
-        <div className="text-xs font-bold text-gray-800 truncate mt-0.5">{group.customerName}</div>
-        <div className="text-[11px] text-gray-600 truncate">
+        <div className="text-sm font-bold text-gray-900 truncate mt-0.5">{group.customerName}</div>
+        <div className="text-xs text-gray-700 truncate">
           {item.pax}
           {BIZ_MAP[item.itemType].unit}
           {item.amount ? ` · ¥${item.amount}` : ''}
         </div>
-        <div className="text-[10px] text-gray-400 truncate">{group.salesPerson}</div>
+        <div className="text-[11px] text-gray-500 truncate">{group.salesPerson}</div>
       </div>
     </button>
   );
@@ -259,17 +271,18 @@ function BizRow({
   onCardClick: (g: BookingOrder) => void;
 }) {
   const height = rowMinHeight(cards);
+  const laneBg = hexAlpha(biz.color, 0.08);
   return (
     <div className="flex border-b border-gray-200 min-w-[1110px]" style={{ minHeight: `${height}px` }}>
       {/* 左侧固定栏 */}
       <div
-        className="w-[200px] flex-shrink-0 sticky left-0 z-10 bg-gray-50 flex items-center gap-2 px-3 border-r border-gray-200"
-        style={{ borderLeft: `3px solid ${biz.color}` }}
+        className="w-[200px] flex-shrink-0 sticky left-0 z-10 flex items-center gap-2.5 px-3 border-r border-gray-200"
+        style={{ background: laneBg, borderLeft: `4px solid ${biz.color}` }}
       >
-        <span className="text-lg leading-none">{biz.icon}</span>
+        <span className="text-xl leading-none flex-shrink-0">{biz.icon}</span>
         <div className="min-w-0">
-          <div className="text-sm font-medium text-gray-700 truncate">{biz.label}</div>
-          <div className="text-[10px] text-gray-500">{cards.length} 项</div>
+          <div className="text-sm font-semibold text-gray-800 truncate">{biz.label}</div>
+          <div className="text-[11px] text-gray-500">{cards.length} 项</div>
         </div>
       </div>
       {/* 右侧日历区 */}
@@ -292,7 +305,7 @@ function BizRow({
                     ? '#ecfdf5'
                     : isWeekend
                       ? '#f9fafb'
-                      : 'transparent',
+                      : '#fafbfc',
                 }}
               />
             );
@@ -682,11 +695,11 @@ export default function BookingBoard() {
           {statCards.map((c, i) => (
             <div
               key={i}
-              className="bg-white rounded-lg p-3 border border-gray-200"
-              style={{ borderLeft: `3px solid ${c.color}` }}
+              className="bg-white rounded-lg p-4 border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
+              style={{ borderLeft: `4px solid ${c.color}` }}
             >
-              <div className="text-xs text-gray-500">{c.label}</div>
-              <div className="text-lg font-bold font-mono text-gray-900 mt-1 truncate">
+              <div className="text-sm text-gray-500">{c.label}</div>
+              <div className="text-2xl font-bold font-mono text-gray-900 mt-1 truncate">
                 {c.value}
               </div>
             </div>
@@ -694,9 +707,9 @@ export default function BookingBoard() {
         </div>
 
         {/* ============ 筛选栏 ============ */}
-        <div className="bg-white rounded-lg p-3 border border-gray-200 mb-5 space-y-3">
+        <div className="bg-white rounded-lg p-4 border border-gray-200 mb-5 space-y-3 shadow-sm">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-gray-500 w-12">业务</span>
+            <span className="text-sm text-gray-600 w-12 font-medium">业务</span>
             <div className="flex items-center gap-1.5 flex-wrap">
               {BUSINESS.map(biz => {
                 const active = bizFilter.has(biz.type);
@@ -705,10 +718,10 @@ export default function BookingBoard() {
                     key={biz.type}
                     type="button"
                     onClick={() => setBizFilter(s => toggleInSet(s, biz.type))}
-                    className={`px-2.5 py-1 rounded text-xs flex items-center gap-1 border transition-colors ${
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 border-2 transition-all ${
                       active
-                        ? 'text-white border-transparent'
-                        : 'text-gray-600 border-gray-200 hover:border-gray-400'
+                        ? 'text-white border-transparent shadow-sm'
+                        : 'text-gray-600 border-gray-200 hover:border-gray-300 bg-white'
                     }`}
                     style={active ? { background: biz.color, borderColor: biz.color } : undefined}
                   >
@@ -720,7 +733,7 @@ export default function BookingBoard() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-gray-500 w-12">状态</span>
+            <span className="text-sm text-gray-600 w-12 font-medium">状态</span>
             <div className="flex items-center gap-1.5 flex-wrap">
               {ALL_STATUS.map(st => {
                 const cfg = STATUS_MAP[st];
@@ -730,10 +743,10 @@ export default function BookingBoard() {
                     key={st}
                     type="button"
                     onClick={() => setStatusFilter(s => toggleInSet(s, st))}
-                    className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all ${
                       active
-                        ? 'text-white border-transparent'
-                        : 'text-gray-600 border-gray-200 hover:border-gray-400'
+                        ? 'text-white border-transparent shadow-sm'
+                        : 'text-gray-600 border-gray-200 hover:border-gray-300 bg-white'
                     }`}
                     style={active ? { background: cfg.color, borderColor: cfg.color } : undefined}
                   >
@@ -753,9 +766,9 @@ export default function BookingBoard() {
           >
             <div className="min-w-[1110px]">
               {/* 表头 */}
-              <div className="flex sticky top-0 z-20 bg-white border-b border-gray-200">
-                <div className="w-[200px] flex-shrink-0 sticky left-0 z-30 bg-white px-3 py-2 border-r border-gray-200">
-                  <div className="text-[11px] text-gray-500">业务 / 日期</div>
+              <div className="flex sticky top-0 z-20 bg-white border-b-2 border-gray-200">
+                <div className="w-[200px] flex-shrink-0 sticky left-0 z-30 bg-white px-4 py-3 border-r border-gray-200">
+                  <div className="text-xs font-medium text-gray-600">业务 / 日期</div>
                 </div>
                 <div
                   className="grid flex-1"
@@ -768,24 +781,24 @@ export default function BookingBoard() {
                     return (
                       <div
                         key={i}
-                        className="px-2 py-2 text-center border-r border-gray-200"
+                        className="px-2 py-3 text-center border-r border-gray-200"
                         style={{ background: isToday ? '#ecfdf5' : 'transparent' }}
                       >
-                        <div className="text-[10px] text-gray-500">
+                        <div className="text-xs text-gray-500 font-medium">
                           {WEEKDAY_LABELS[d.getDay()]}
                         </div>
                         <div
-                          className={`text-sm font-mono ${
+                          className={`text-base font-mono font-bold mt-0.5 ${
                             isToday
-                              ? 'text-green-600 font-bold'
+                              ? 'text-green-600'
                               : isWeekend
                                 ? 'text-gray-500'
-                                : 'text-gray-700'
+                                : 'text-gray-800'
                           }`}
                         >
                           {d.getMonth() + 1}/{d.getDate()}
                         </div>
-                        <div className="text-[10px] text-gray-500">{dayOrderCount[ds] || 0} 单</div>
+                        <div className="text-xs text-gray-500 mt-0.5 font-medium">{dayOrderCount[ds] || 0} 单</div>
                       </div>
                     );
                   })}
@@ -849,38 +862,39 @@ export default function BookingBoard() {
               {mobileDayGroups.map(({ biz, cards }) => (
                 <div
                   key={biz.type}
-                  className="bg-white rounded-lg border border-gray-200 overflow-hidden"
+                  className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm"
                 >
                   <div
-                    className="px-3 py-2 flex items-center gap-2 border-b border-gray-200"
-                    style={{ borderLeft: `3px solid ${biz.color}` }}
+                    className="px-3 py-2.5 flex items-center gap-2"
+                    style={{ background: hexAlpha(biz.color, 0.08), borderLeft: `4px solid ${biz.color}` }}
                   >
-                    <span>{biz.icon}</span>
-                    <span className="text-sm text-gray-700">{biz.label}</span>
-                    <span className="text-[10px] text-gray-500 ml-auto">{cards.length} 项</span>
+                    <span className="text-base">{biz.icon}</span>
+                    <span className="text-sm font-semibold text-gray-800">{biz.label}</span>
+                    <span className="text-[11px] text-gray-500 ml-auto">{cards.length} 项</span>
                   </div>
                   <div className="divide-y divide-gray-200">
                     {cards.map(card => {
-                      const { item, group, isMerged } = card;
+                      const { item, group } = card;
                       const status = STATUS_MAP[group.status];
                       return (
                         <button
                           key={item.id + card.startCol}
                           type="button"
                           onClick={() => setSelectedOrder(group)}
-                          className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3"
+                          className="w-full text-left px-3 py-2.5 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                          style={{ background: hexAlpha(biz.color, 0.04) }}
                         >
                           <span
-                            className="w-1 self-stretch rounded-full flex-shrink-0"
+                            className="w-1.5 self-stretch rounded-full flex-shrink-0"
                             style={{ background: biz.color }}
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-800 truncate">
+                              <span className="text-sm font-semibold text-gray-900 truncate">
                                 {group.customerName}
                               </span>
                               <span
-                                className="px-1.5 py-0.5 rounded text-[10px] flex-shrink-0"
+                                className="px-2 py-0.5 rounded text-[11px] font-medium flex-shrink-0"
                                 style={{ color: status.color, background: status.bg }}
                               >
                                 {status.label}

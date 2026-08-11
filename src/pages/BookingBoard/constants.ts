@@ -13,6 +13,17 @@ export const BUSINESS: BizConfig[] = [
 
 export const BIZ_MAP = Object.fromEntries(BUSINESS.map(b => [b.type, b])) as Record<BizType, BizConfig>;
 
+// ================================================
+// 颜色工具（hex → rgba，用于生成业务色浅色背景）
+// ================================================
+export function hexAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // 订单状态
 export const STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg: string }> = {
   pending:   { label: '待确认', color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
