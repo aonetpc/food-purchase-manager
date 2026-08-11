@@ -17,13 +17,9 @@ WHERE id = @timyan_user_id;
 DELETE FROM user_roles 
 WHERE user_id = @timyan_user_id AND role_id = @admin_role_id;
 
--- 4. 确保 timyan 只有 temp_auditor 和 viewer 角色
--- 先删除所有角色
-DELETE FROM user_roles WHERE user_id = @timyan_user_id;
-
--- 重新添加正确的角色
-INSERT INTO user_roles (user_id, role_id) VALUES (@timyan_user_id, @temp_auditor_role_id);
-INSERT INTO user_roles (user_id, role_id) VALUES (@timyan_user_id, @viewer_role_id);
+-- 4. 确保 timyan 有 temp_auditor 和 viewer 角色（幂等，不删除已分配的其他角色）
+INSERT IGNORE INTO user_roles (id, user_id, role_id) VALUES (UUID(), @timyan_user_id, @temp_auditor_role_id);
+INSERT IGNORE INTO user_roles (id, user_id, role_id) VALUES (UUID(), @timyan_user_id, @viewer_role_id);
 
 -- 5. 确保角色权限配置正确
 -- 先删除 timyan 的角色可能拥有的错误权限

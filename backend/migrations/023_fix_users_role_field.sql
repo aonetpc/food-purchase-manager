@@ -11,12 +11,9 @@ SET @admin_role_id = (SELECT id FROM roles WHERE code = 'admin');
 SET @viewer_role_id = (SELECT id FROM roles WHERE code = 'viewer');
 SET @temp_auditor_role_id = (SELECT id FROM roles WHERE code = 'temp_auditor');
 
--- 清空timyan的user_roles记录
-DELETE FROM user_roles WHERE user_id = @timyan_user_id;
-
--- 添加正确的角色：外请审核员 + 普通员工
-INSERT INTO user_roles (id, user_id, role_id) VALUES (UUID(), @timyan_user_id, @temp_auditor_role_id);
-INSERT INTO user_roles (id, user_id, role_id) VALUES (UUID(), @timyan_user_id, @viewer_role_id);
+-- 确保 timyan 有 temp_auditor 和 viewer 角色（幂等，不删除已分配的其他角色）
+INSERT IGNORE INTO user_roles (id, user_id, role_id) VALUES (UUID(), @timyan_user_id, @temp_auditor_role_id);
+INSERT IGNORE INTO user_roles (id, user_id, role_id) VALUES (UUID(), @timyan_user_id, @viewer_role_id);
 
 -- 更新主角色
 UPDATE users 

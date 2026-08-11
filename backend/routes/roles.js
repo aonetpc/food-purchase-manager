@@ -54,19 +54,21 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res) => {
       'SELECT id, code, name, description, is_system, sort_order FROM roles ORDER BY sort_order ASC'
     );
 
-    // 查每个角色的用户数
+    // 查每个角色的用户数（仅统计启用的用户，与销售员选择器口径一致）
     const [countRows] = await pool.query(`
       SELECT r.id AS role_id, COUNT(DISTINCT ur.user_id) AS user_count
       FROM roles r
       LEFT JOIN user_roles ur ON r.id = ur.role_id
+      LEFT JOIN users u ON u.id = ur.user_id
+      WHERE u.status = 1 OR u.status IS NULL
       GROUP BY r.id
     `);
     const countMap = {};
     countRows.forEach(c => { countMap[c.role_id] = c.user_count; });
 
-    // 旧 users.role_id 的用户数
+    // 旧 users.role_id 的用户数（同样过滤禁用用户）
     const [oldCountRows] = await pool.query(`
-      SELECT role_id, COUNT(*) AS user_count FROM users WHERE role_id IS NOT NULL GROUP BY role_id
+      SELECT role_id, COUNT(*) AS user_count FROM users WHERE role_id IS NOT NULL AND status = 1 GROUP BY role_id
     `);
     oldCountRows.forEach(c => {
       countMap[c.role_id] = (countMap[c.role_id] || 0) + c.user_count;
