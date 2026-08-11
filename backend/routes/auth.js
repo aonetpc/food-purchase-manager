@@ -374,10 +374,14 @@ router.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
       return res.status(400).json({ error: '用户名、姓名、角色为必填项' });
     }
 
-    const validRoles = ['admin', 'finance', 'boss', 'viewer', 'temp_auditor', 'temp_chairman', 'purchaser'];
-    if (!validRoles.includes(role)) {
+    const [roleRows] = await pool.query(
+      'SELECT id FROM roles WHERE code = ?',
+      [role]
+    );
+    if (roleRows.length === 0) {
       return res.status(400).json({ error: '无效的角色' });
     }
+    const roleId = roleRows[0].id;
 
     const [existRows] = await pool.query(
       'SELECT id FROM users WHERE username = ?',
@@ -386,15 +390,6 @@ router.post('/users', requireAuth, requireRole('admin'), async (req, res) => {
     if (existRows.length > 0) {
       return res.status(400).json({ error: '用户名已存在' });
     }
-
-    const [roleRows] = await pool.query(
-      'SELECT id FROM roles WHERE code = ?',
-      [role]
-    );
-    if (roleRows.length === 0) {
-      return res.status(400).json({ error: '角色不存在' });
-    }
-    const roleId = roleRows[0].id;
 
     const hashedPassword = await bcrypt.hash(password || '123456', 10);
     const userId = Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -431,16 +426,11 @@ router.put('/users/:id', requireAuth, requireRole('admin'), async (req, res) => 
       return res.status(404).json({ error: '用户不存在' });
     }
 
-    const validRoles = ['admin', 'finance', 'boss', 'viewer', 'temp_auditor', 'temp_chairman', 'purchaser'];
-    if (role && !validRoles.includes(role)) {
-      return res.status(400).json({ error: '无效的角色' });
-    }
-
     let roleId = null;
     if (role) {
       const [roleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', [role]);
       if (roleRows.length === 0) {
-        return res.status(400).json({ error: '角色不存在' });
+        return res.status(400).json({ error: '无效的角色' });
       }
       roleId = roleRows[0].id;
     }
@@ -967,10 +957,6 @@ router.put('/users/:id/role', requireAuth, requireRole('admin'), async (req, res
   try {
     const { id } = req.params;
     const { role } = req.body;
-    const validRoles = ['admin', 'finance', 'boss', 'viewer', 'temp_auditor', 'temp_chairman', 'purchaser'];
-    if (!validRoles.includes(role)) {
-      return res.status(400).json({ error: '无效的角色' });
-    }
 
     const [userRows] = await pool.query('SELECT username, name, role AS original_role FROM users WHERE id = ?', [id]);
     if (userRows.length === 0) {
@@ -979,7 +965,7 @@ router.put('/users/:id/role', requireAuth, requireRole('admin'), async (req, res
 
     const [roleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', [role]);
     if (roleRows.length === 0) {
-      return res.status(400).json({ error: '角色不存在' });
+      return res.status(400).json({ error: '无效的角色' });
     }
     const roleId = roleRows[0].id;
 
