@@ -71,7 +71,6 @@ app.use('/api/wecom', wecomRouter);
 // 权限相关接口（需登录）
 app.get('/api/permissions', requireAuth, getUserPermissions);
 app.get('/api/permissions/list', requireAuth, requireRole('admin'), getPermissions);
-app.get('/api/roles', requireAuth, requireRole('admin'), getRoles);
 app.get('/api/modules', requireAuth, getModules);
 
 // 角色管理接口（管理员专用）
