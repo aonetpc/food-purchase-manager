@@ -874,7 +874,7 @@ export default function BookingBoard() {
                   </div>
                   <div className="divide-y divide-gray-200">
                     {cards.map(card => {
-                      const { item, group } = card;
+                      const { item, group, isMerged } = card;
                       const status = STATUS_MAP[group.status];
                       return (
                         <button
