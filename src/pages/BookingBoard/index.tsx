@@ -640,34 +640,40 @@ export default function BookingBoard() {
     return role === 'admin' || role === 'booker' || roleCodes.includes('admin') || roleCodes.includes('booker');
   })();
 
+  // 统一的加载订单函数（切周 / 修复数据后刷新都复用）
+  const loadOrders = useCallback(async (ws?: Date) => {
+    const start = ws || weekStart;
+    const weekStartStr = fmt(start);
+    try {
+      const { data } = await bookingApi.getOrders({ weekStart: weekStartStr });
+      const map: Record<string, string> = {};
+      const adapted = data.map(apiOrder => {
+        const displayId = apiOrder.orderNo || apiOrder.id;
+        map[displayId] = apiOrder.id;
+        return adaptOrder(apiOrder);
+      });
+      orderUuidMap.current = map;
+      setOrders(adapted);
+    } catch (e) {
+      console.error('[BookingBoard] 加载订单失败:', e);
+      setOrders([]);
+    }
+  }, [weekStart]);
+
   // 切换周时从后端加载订单数据
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const weekStartStr = fmt(weekStart);
-        const { data } = await bookingApi.getOrders({ weekStart: weekStartStr });
-        if (!cancelled) {
-          const map: Record<string, string> = {};
-          const adapted = data.map(apiOrder => {
-            const displayId = apiOrder.orderNo || apiOrder.id;
-            map[displayId] = apiOrder.id;
-            return adaptOrder(apiOrder);
-          });
-          orderUuidMap.current = map;
-          setOrders(adapted);
-        }
-      } catch (e) {
-        console.error('[BookingBoard] 加载订单失败:', e);
-        if (!cancelled) setOrders([]);
+        await loadOrders(weekStart);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     setMobileDate(fmt(weekStart));
     return () => { cancelled = true; };
-  }, [weekStart]);
+  }, [weekStart, loadOrders]);
 
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
   const todayKey = todayStr();
@@ -703,18 +709,20 @@ export default function BookingBoard() {
     );
   }, [orders]);
 
-  // 加载模板列表
+  // 加载模板列表（加载完模板后自动刷新一次订单列表，确保后端自动修复后的历史订单立即回显）
   const loadTemplates = useCallback(async () => {
     setTplLoading(true);
     try {
       const list = await bookingApi.getTemplates();
       setTemplates(list);
+      // 后端在 GET /templates 里会自动修复 is_template=1 的历史数据 → 需要刷新订单看到
+      await loadOrders();
     } catch (e) {
       console.error('加载模板失败:', e);
     } finally {
       setTplLoading(false);
     }
-  }, []);
+  }, [loadOrders]);
 
   // 应用模板创建新单
   const handleApplyTemplate = async (tpl: any) => {

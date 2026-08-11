@@ -756,7 +756,10 @@ makeBizConfigCrud({
 //       customerName=xxx（可选，模糊）
 // ============================================================
 router.get('/orders', requireAuth, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
+    // 打开订单页时也自动触发历史模板修复（确保被误转为模板的订单立即恢复可见）
+    await ensureFixLegacyTemplates(conn);
     let { weekStart, weekEnd, status, bizType, salesPerson, customerName } = req.query;
 
     if (!weekStart) {
@@ -804,7 +807,7 @@ router.get('/orders', requireAuth, async (req, res) => {
 
     const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
-    const [rows] = await pool.query(`
+    const [rows] = await conn.query(`
       SELECT o.* FROM booking_orders o
       ${whereSql}
       ORDER BY o.created_at DESC
@@ -820,7 +823,7 @@ router.get('/orders', requireAuth, async (req, res) => {
     }
 
     const orderIds = rows.map(r => r.id);
-    const [itemRows] = await pool.query(`
+    const [itemRows] = await conn.query(`
       SELECT * FROM booking_items WHERE order_id IN (${orderIds.map(() => '?').join(',')})
       ORDER BY sort_order ASC, id ASC
     `, orderIds);
@@ -848,6 +851,8 @@ router.get('/orders', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[booking GET /orders] error:', e);
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
   }
 });
 
@@ -1372,13 +1377,18 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [tpl] = await pool.query('SELECT * FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
-    if (!tpl || !tpl.length) return res.status(404).json({ ok: false, error: '模板不存在' });
+    // 修复解构：pool.query 返回 [rows, fields]
+    const [tplRows] = await conn.query('SELECT * FROM booking_orders WHERE id=? AND is_template=1 LIMIT 1', [req.params.id]);
+    const tpl = tplRows && tplRows[0];
+    if (!tpl) return res.status(404).json({ ok: false, error: '模板不存在' });
 
     const today = new Date();
     const newOrderNo = await genOrderNo(today);
     const newId = require('uuid').v4();
     const userName = (req.user && (req.user.name || req.user.userName)) || '';
+
+    // 兼容：customer_name 为空时给一个占位值，避免 NOT NULL 列报错
+    const safeCustomer = tpl.customer_name || (tpl.template_name ? `${tpl.template_name}-客户` : '未命名客户');
 
     await conn.query(`
       INSERT INTO booking_orders (id, order_no, customer_name, contact_name, contact_phone,
@@ -1386,8 +1396,11 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
     `, [
       newId, newOrderNo,
-      tpl.customer_name, tpl.contact_name, tpl.contact_phone,
-      tpl.sales_person, tpl.payment_method,
+      safeCustomer,
+      tpl.contact_name || null,
+      tpl.contact_phone || null,
+      tpl.sales_person || null,
+      tpl.payment_method || null,
       `[从模板创建] ${tpl.template_name || ''}`,
       Number(tpl.total_amount) || 0,
       req.user && req.user.id ? req.user.id : null,
@@ -1395,6 +1408,7 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
     ]);
 
     // 复制 items，同时日期偏移：以模板第一个 item 的日期为基准，对齐到"今天所在周"
+    // 字段与迁移 064 保持一致：item_type/date/start_time/end_time/pax/extra/amount/sort_order
     const [origItems] = await conn.query('SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC', [tpl.id]);
     let baseOrigDate = null;
     origItems.forEach(ri => { if (ri.date && !baseOrigDate) baseOrigDate = new Date(String(ri.date).slice(0, 10)); });
@@ -1411,16 +1425,24 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
         const target = new Date(weekStart);
         target.setDate(weekStart.getDate() + diff);
         newDate = target.toISOString().slice(0, 10);
+      } else if (!baseOrigDate) {
+        // 模板没有 date 时，默认放到本周一
+        newDate = weekStart.toISOString().slice(0, 10);
       }
       sort += 10;
       await conn.query(`
-        INSERT INTO booking_items (id, order_id, item_type, date, adult_count, child_count,
-          qty, unit_price, amount, package_code, package_name, remark, extra, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO booking_items (id, order_id, item_type, date, start_time, end_time, pax, extra, amount, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
-        require('uuid').v4(), newId, ri.item_type, newDate,
-        ri.adult_count, ri.child_count, ri.qty, ri.unit_price, ri.amount,
-        ri.package_code, ri.package_name, ri.remark, ri.extra, sort,
+        require('uuid').v4(), newId,
+        ri.item_type || ri.type || 'checkup',
+        newDate,
+        ri.start_time || null,
+        ri.end_time || null,
+        Number(ri.pax) || 0,
+        ri.extra ? (typeof ri.extra === 'string' ? ri.extra : JSON.stringify(ri.extra)) : null,
+        Number(ri.amount) || 0,
+        sort,
       ]);
     }
 
@@ -1429,7 +1451,7 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
     const order = await readOrderFull(newId);
     res.json({ ok: true, data: order });
   } catch (e) {
-    await conn.rollback();
+    try { await conn.rollback(); } catch (_) {}
     console.error('[booking template apply] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   } finally {
