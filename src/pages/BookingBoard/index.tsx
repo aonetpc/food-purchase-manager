@@ -1003,7 +1003,7 @@ export default function BookingBoard() {
                       <div className="text-sm font-medium text-gray-900 truncate">{o.id}</div>
                       <div className="text-xs text-gray-600 font-medium mt-0.5 truncate">👥 {o.customerName || '（未填客户名）'}</div>
                       <div className="text-[11px] text-gray-400 mt-1 truncate">
-                        {o.salesPerson ? `销售：${o.salesPerson}` : '未填销售'} · {o.createdAt?.slice(0, 10) || '今天'}
+                        📝 {o.remark?.trim() ? o.remark : '（无备注）'} · {o.createdAt?.slice(0, 10) || '今天'}
                       </div>
                     </div>
                     {isBookingOperator && (
