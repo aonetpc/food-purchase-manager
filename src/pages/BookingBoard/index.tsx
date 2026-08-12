@@ -241,7 +241,7 @@ function GanttCard({
           <div className="text-[11px] text-gray-700 truncate">{cardSummary(item, days)}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
-            <span className="text-[10px] text-gray-600 truncate">{group.salesPerson}</span>
+            <span className="text-[10px] text-gray-600 truncate">{group.remark?.trim() || '—'}</span>
           </div>
         </div>
       </button>
@@ -277,7 +277,7 @@ function GanttCard({
           {BIZ_MAP[item.itemType].unit}
           {item.amount ? ` · ¥${item.amount}` : ''}
         </div>
-        <div className="text-[10px] text-gray-500 truncate">{group.salesPerson}</div>
+        <div className="text-[10px] text-gray-500 truncate">{group.remark?.trim() || '—'}</div>
       </div>
     </button>
   );
@@ -1003,7 +1003,7 @@ export default function BookingBoard() {
                       <div className="text-sm font-medium text-gray-900 truncate">{o.id}</div>
                       <div className="text-xs text-gray-600 font-medium mt-0.5 truncate">👥 {o.customerName || '（未填客户名）'}</div>
                       <div className="text-[11px] text-gray-400 mt-1 truncate">
-                        📝 {o.remark?.trim() ? o.remark : '（无备注）'} · {o.createdAt?.slice(0, 10) || '今天'}
+                        {o.salesPerson ? `销售：${o.salesPerson}` : '未填销售'} · {o.createdAt?.slice(0, 10) || '今天'}
                       </div>
                     </div>
                     {isBookingOperator && (
@@ -1269,7 +1269,7 @@ export default function BookingBoard() {
                             <div className="text-[11px] text-gray-500 mt-0.5 truncate">
                               {item.startTime}
                               {item.endTime ? `-${item.endTime}` : ''} · {item.pax}
-                              {biz.unit} · {group.salesPerson}
+                              {biz.unit} · {group.remark?.trim() || '—'}
                             </div>
                           </div>
                           {isMerged && (
