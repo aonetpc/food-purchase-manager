@@ -116,7 +116,7 @@ function rowMinHeight(cards: BoardCard[]): number {
 function cardSummary(item: BookingItem, days: number): string {
   const parts: string[] = [];
   if (item.itemType === 'lodging') {
-    const lt = LODGING_TYPES[item.extra.lodgingType || 'standard'];
+    const lt = LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间', price: 0 };
     parts.push(lt.name, `${item.pax}间`);
     if (item.extra.nights) parts.push(`${item.extra.nights}晚`);
     if (item.amount) parts.push(`¥${item.amount}`);
@@ -126,14 +126,14 @@ function cardSummary(item: BookingItem, days: number): string {
     if (days > 1) parts.push(`${days}天`);
   } else if (item.itemType === 'meeting') {
     const s = meetingSession(item);
-    if (s) parts.push(MEETING_HALLS[s.hall].name);
+    if (s) parts.push((MEETING_HALLS[s.hall] || { name: s.hall }).name);
     parts.push(`${item.pax}人`);
     if (days > 1) parts.push(`${days}天`);
     if (item.amount) parts.push(`¥${item.amount}`);
   } else if (item.itemType === 'wellness') {
     const s = wellnessSession(item);
     if (s) {
-      parts.push(WELLNESS_TYPES[s.wellnessType].name, `${s.hours}时`);
+      parts.push((WELLNESS_TYPES[s.wellnessType] || { name: s.wellnessType }).name, `${s.hours}时`);
     }
     parts.push(`${item.pax}人`);
     if (item.amount) parts.push(`¥${item.amount}`);
@@ -166,20 +166,20 @@ function itemDetail(item: BookingItem): string {
     const counts: Record<string, number> = {};
     paxList.forEach(p => { counts[p.package] = (counts[p.package] || 0) + 1; });
     return Object.entries(counts)
-      .map(([k, v]) => `${CHECKUP_PACKAGES[k as keyof typeof CHECKUP_PACKAGES].name}×${v}`)
+      .map(([k, v]) => `${(CHECKUP_PACKAGES as Record<string, { name: string }>)[k]?.name || k}×${v}`)
       .join(', ');
   }
-  if (item.itemType === 'lodging') return LODGING_TYPES[item.extra.lodgingType || 'standard'].name;
+  if (item.itemType === 'lodging') return (LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间' }).name;
   if (item.itemType === 'lunch' || item.itemType === 'dinner') {
     return `${item.extra.defaultTables || 0}桌 × ${item.extra.defaultPerTable || 0}人/桌`;
   }
   if (item.itemType === 'meeting') {
     const s = meetingSession(item);
-    if (s) return `${MEETING_HALLS[s.hall].name} · ${s.slotType === 'half' ? '半天' : '全天'}`;
+    if (s) return `${(MEETING_HALLS[s.hall] || { name: s.hall }).name} · ${s.slotType === 'half' ? '半天' : '全天'}`;
   }
   if (item.itemType === 'wellness') {
     const s = wellnessSession(item);
-    if (s) return `${WELLNESS_TYPES[s.wellnessType].name} · ${s.hours}小时`;
+    if (s) return `${(WELLNESS_TYPES[s.wellnessType] || { name: s.wellnessType }).name} · ${s.hours}小时`;
   }
   if (item.itemType === 'breakfast') {
     const src = item.extra.source;

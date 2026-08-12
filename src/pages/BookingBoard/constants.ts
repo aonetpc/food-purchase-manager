@@ -42,12 +42,30 @@ export const CHECKUP_PACKAGES: Record<PackageCode, { name: string; price: number
   D: { name: 'VIP体检套餐',   price: 5888 },
 };
 
-// 房型
+// 房型（旧编码兼容 + 新编码 RM001~RM016）
 export const LODGING_TYPES: Record<LodgingType, { name: string; price: number }> = {
+  // 旧编码（兼容历史数据，070 迁移后会逐步统一为 RM 编码）
   standard: { name: '标准间',   price: 480 },
   bigbed:   { name: '大床房',   price: 520 },
   suite:    { name: '套房',     price: 880 },
   vipsuite: { name: 'VIP套房',  price: 1880 },
+  // 新编码 RM001~RM016（与 067 迁移脚本一致）
+  RM001: { name: '【稻香楼】标准大床房',     price: 1118 },
+  RM002: { name: '【稻香楼】标准双床房',     price: 1118 },
+  RM003: { name: '【稻香楼】稻香山林大床房', price: 1118 },
+  RM004: { name: '【稻香楼】稻香山林双床房', price: 1118 },
+  RM005: { name: '【蝉鸣院】单人房',         price: 1500 },
+  RM006: { name: '【蝉鸣院】标准大床房',     price: 1500 },
+  RM007: { name: '【蝉鸣院】大床房',         price: 1680 },
+  RM008: { name: '【蝉鸣院】双床房',         price: 1680 },
+  RM009: { name: '【蝉鸣院】大床房带露台',   price: 1780 },
+  RM010: { name: '【蝉鸣院】行政双床套房',   price: 1780 },
+  RM011: { name: '【蝉鸣院】多床家庭套房',   price: 2380 },
+  RM012: { name: '竹風别墅大床房',           price: 2880 },
+  RM013: { name: '竹風临湖别墅大床房',       price: 3380 },
+  RM014: { name: '竹風别墅多床房',           price: 3580 },
+  RM015: { name: '竹風临湖别墅多床房',       price: 4080 },
+  RM016: { name: '湖畔别墅',                 price: 11888 },
 };
 
 // 会议厅
