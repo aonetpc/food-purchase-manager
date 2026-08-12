@@ -30,6 +30,26 @@ const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 
 const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', category: '其他', description: '', default_price: 0, unit: '次', status: 1, sort_order: 100 };
 
 // ================================================
+// 编码自动生成（按类型前缀 + 3位序号）
+// ================================================
+const CODE_PREFIX: Record<TabKey, string> = {
+  packages: 'PKG',
+  checkupItems: 'CI',
+  roomTypes: 'RM',
+  meetingHalls: 'MH',
+  wellnessTypes: 'WL',
+};
+function generateCode(tab: TabKey, existing: { code?: string }[]): string {
+  const prefix = CODE_PREFIX[tab];
+  let maxNum = 0;
+  existing.forEach(r => {
+    const m = (r.code || '').match(new RegExp(`^${prefix}(\\d+)$`));
+    if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+  });
+  return `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
+}
+
+// ================================================
 // 会话内缓存（sessionStorage）
 // ================================================
 const CACHE_KEY = 'biz_config_cache_v1';
@@ -196,6 +216,17 @@ export default function BizConfigModal({
   }, [tab, open]);
 
   // ========== 通用增删改 ==========
+  // 编码唯一性校验
+  function checkCodeUnique(tabKey: TabKey, code: string, excludeId?: number): boolean {
+    if (!code) return true;
+    const list = tabKey === 'packages' ? packages
+      : tabKey === 'checkupItems' ? checkupItems
+      : tabKey === 'roomTypes' ? roomTypes
+      : tabKey === 'meetingHalls' ? meetingHalls
+      : wellnessTypes;
+    return !list.some(r => r.code === code && r.id !== excludeId);
+  }
+
   async function handleSave(
     apiFn: () => Promise<any>,
     onSuccess: () => void = () => {},
@@ -299,11 +330,15 @@ export default function BizConfigModal({
               checkupItems={checkupItems}
               editing={editing?.mode ? editing : null}
               bumpEditing={bumpEditing}
-              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_PKG, items: [] } })}
+              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_PKG, code: generateCode('packages', packages), items: [] } })}
               onEdit={(r) => setEditing({ mode: 'update', data: { ...r, items: (r as any).items || [] } })}
               onCancel={() => setEditing(null)}
               onSave={(d) => {
                 const data = d as any;
+                if (data.code && !checkCodeUnique('packages', data.code, data.id)) {
+                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  return;
+                }
                 const itemsData = data.items || [];
                 if ((editing as any)?.mode === 'update' && data.id) {
                   handleSave(
@@ -342,11 +377,16 @@ export default function BizConfigModal({
             <CheckupItemsTable
               rows={checkupItems}
               editing={editing?.mode ? editing : null}
-              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_CHECKUP } })}
+              bumpEditing={bumpEditing}
+              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_CHECKUP, code: generateCode('checkupItems', checkupItems) } })}
               onEdit={(r) => setEditing({ mode: 'update', data: { ...r } })}
               onCancel={() => setEditing(null)}
               onSave={(d) => {
                 const data = d as Partial<CheckupItemRow>;
+                if (data.code && !checkCodeUnique('checkupItems', data.code, data.id)) {
+                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  return;
+                }
                 if ((editing as any)?.mode === 'update' && data.id) {
                   handleSave(() => bookingApi.updateCheckupItem(data.id!, data), () => {}, ['checkupItems', 'packages']);
                 } else {
@@ -366,11 +406,16 @@ export default function BizConfigModal({
             <RoomTypesTable
               rows={roomTypes}
               editing={editing?.mode ? editing : null}
-              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_ROOM } })}
+              bumpEditing={bumpEditing}
+              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_ROOM, code: generateCode('roomTypes', roomTypes) } })}
               onEdit={(r) => setEditing({ mode: 'update', data: { ...r } })}
               onCancel={() => setEditing(null)}
               onSave={(d) => {
                 const data = d as Partial<RoomTypeRow>;
+                if (data.code && !checkCodeUnique('roomTypes', data.code, data.id)) {
+                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  return;
+                }
                 if ((editing as any)?.mode === 'update' && data.id) {
                   handleSave(() => bookingApi.updateRoomType(data.id!, data), () => {}, ['roomTypes']);
                 } else {
@@ -390,11 +435,16 @@ export default function BizConfigModal({
             <MeetingHallsTable
               rows={meetingHalls}
               editing={editing?.mode ? editing : null}
-              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_HALL } })}
+              bumpEditing={bumpEditing}
+              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_HALL, code: generateCode('meetingHalls', meetingHalls) } })}
               onEdit={(r) => setEditing({ mode: 'update', data: { ...r } })}
               onCancel={() => setEditing(null)}
               onSave={(d) => {
                 const data = d as Partial<MeetingHallRow>;
+                if (data.code && !checkCodeUnique('meetingHalls', data.code, data.id)) {
+                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  return;
+                }
                 if ((editing as any)?.mode === 'update' && data.id) {
                   handleSave(() => bookingApi.updateMeetingHall(data.id!, data), () => {}, ['meetingHalls']);
                 } else {
@@ -414,11 +464,16 @@ export default function BizConfigModal({
             <WellnessTypesTable
               rows={wellnessTypes}
               editing={editing?.mode ? editing : null}
-              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_WELL } })}
+              bumpEditing={bumpEditing}
+              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_WELL, code: generateCode('wellnessTypes', wellnessTypes) } })}
               onEdit={(r) => setEditing({ mode: 'update', data: { ...r } })}
               onCancel={() => setEditing(null)}
               onSave={(d) => {
                 const data = d as Partial<WellnessTypeRow>;
+                if (data.code && !checkCodeUnique('wellnessTypes', data.code, data.id)) {
+                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  return;
+                }
                 if ((editing as any)?.mode === 'update' && data.id) {
                   handleSave(() => bookingApi.updateWellnessType(data.id!, data), () => {}, ['wellnessTypes']);
                 } else {
@@ -512,6 +567,7 @@ interface TableProps<T> {
   onSave: (d: any) => void;
   onDel: (r: T) => void;
   saving: boolean;
+  bumpEditing: () => void;
 }
 
 function Upd({ value, onChange, type = 'text', step }:
@@ -859,11 +915,14 @@ function PackageEditRow({
 // 体检项目表（CheckupItems）
 // ============================================================
 function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
-  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving } = props;
+  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving, bumpEditing } = props;
   const isCreating = editing?.mode === 'create';
   const isEditingThis = (r: CheckupItemRow) => editing?.mode === 'update' && editing.data.id === r.id;
   const setField = (k: string, v: any) => {
-    if (editing) editing.data[k] = v;
+    if (editing) {
+      editing.data[k] = v;
+      bumpEditing();
+    }
   };
 
   return (
@@ -975,11 +1034,14 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
 // 房型表
 // ============================================================
 function RoomTypesTable(props: TableProps<RoomTypeRow>) {
-  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving } = props;
+  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving, bumpEditing } = props;
   const isCreating = editing?.mode === 'create';
   const isEditingThis = (r: RoomTypeRow) => editing?.mode === 'update' && editing.data.id === r.id;
   const setField = (k: string, v: any) => {
-    if (editing) editing.data[k] = v;
+    if (editing) {
+      editing.data[k] = v;
+      bumpEditing();
+    }
   };
 
   return (
@@ -1053,11 +1115,14 @@ function RoomTypesTable(props: TableProps<RoomTypeRow>) {
 // 会议厅表
 // ============================================================
 function MeetingHallsTable(props: TableProps<MeetingHallRow>) {
-  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving } = props;
+  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving, bumpEditing } = props;
   const isCreating = editing?.mode === 'create';
   const isEditingThis = (r: MeetingHallRow) => editing?.mode === 'update' && editing.data.id === r.id;
   const setField = (k: string, v: any) => {
-    if (editing) editing.data[k] = v;
+    if (editing) {
+      editing.data[k] = v;
+      bumpEditing();
+    }
   };
 
   return (
@@ -1137,11 +1202,14 @@ function MeetingHallsTable(props: TableProps<MeetingHallRow>) {
 // 康乐项目表
 // ============================================================
 function WellnessTypesTable(props: TableProps<WellnessTypeRow>) {
-  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving } = props;
+  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving, bumpEditing } = props;
   const isCreating = editing?.mode === 'create';
   const isEditingThis = (r: WellnessTypeRow) => editing?.mode === 'update' && editing.data.id === r.id;
   const setField = (k: string, v: any) => {
-    if (editing) editing.data[k] = v;
+    if (editing) {
+      editing.data[k] = v;
+      bumpEditing();
+    }
   };
 
   return (
