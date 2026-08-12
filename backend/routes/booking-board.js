@@ -1087,6 +1087,37 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
 });
 
 // ============================================================
+// DELETE /api/booking/orders/:id  删除订单（草稿专用，级联删 items）
+// 仅允许 pending 状态的订单删除
+// ============================================================
+router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows || !rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
+    const o = rows[0];
+    if (o.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: `仅草稿状态（pending）可删除，当前状态 ${o.status} 不允许删除` });
+    }
+    if (o.is_template === 1) {
+      return res.status(400).json({ ok: false, error: '模板订单请使用 unset-template 接口删除' });
+    }
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM booking_items WHERE order_id = ?', [req.params.id]);
+    await conn.query('DELETE FROM booking_orders WHERE id = ? AND status = ? AND is_template = 0', [req.params.id, 'pending']);
+    await conn.commit();
+    logOperation(req, '预订订单', '删除草稿', `订单号=${o.order_no}`, req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
+    console.error('[booking DELETE order] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// ============================================================
 // 以下是通配动态段 /:id 路由（放最后）
 // ============================================================
 
@@ -1194,39 +1225,39 @@ async function cloneOrderAsTemplate(conn, sourceOrderId, templateName, operatorI
     o.booker_name || null,
   ]);
 
-  // 克隆 items
+  // 克隆 items（与迁移 064 表结构一致：item_type/date/start_time/end_time/pax/extra/amount/sort_order）
   const [origItems] = await conn.query(
     'SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC',
     [sourceOrderId]
   );
   if (origItems && origItems.length) {
     const itemPlaceholders = origItems.map(() =>
-      `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).join(',\n');
     const itemValues = [];
     origItems.forEach(ri => {
       const nid = uuid.v4();
+      // 兼容字段别名：优先用新字段，缺失时尝试从旧字段兼容取值
+      const itemType = ri.item_type || ri.type || '';
+      const extraStr = ri.extra
+        ? (typeof ri.extra === 'string' ? ri.extra : JSON.stringify(ri.extra))
+        : null;
+      const amount = ri.amount != null ? Number(ri.amount)
+                   : (ri.total_price != null ? Number(ri.total_price) : 0);
       itemValues.push(
-        nid, newId, ri.type, ri.status || 'pending',
-        ri.date, ri.checkin_date, ri.checkout_date,
-        ri.lodging_type, ri.hall_id, ri.meal_type,
-        ri.wellness_type, ri.vehicle_type, ri.package,
-        ri.session_count, ri.sessions ? JSON.stringify(ri.sessions) : null,
-        ri.pax, ri.guest_names ? JSON.stringify(ri.guest_names) : null,
-        ri.checkup_count, ri.checkup_pax ? JSON.stringify(ri.checkup_pax) : null,
-        ri.extra ? JSON.stringify(ri.extra) : null,
-        ri.unit_price, ri.total_price,
-        ri.sort_order || 0, ri.remark,
-        ri.created_at || null, ri.updated_at || null
+        nid, newId, itemType,
+        ri.date ? String(ri.date).slice(0, 10) : null,
+        ri.start_time || null,
+        ri.end_time || null,
+        Number(ri.pax) || 0,
+        extraStr,
+        amount,
+        Number(ri.sort_order) || 0,
       );
     });
     await conn.query(`
       INSERT INTO booking_items (
-        id, order_id, type, status, date, checkin_date, checkout_date,
-        lodging_type, hall_id, meal_type, wellness_type, vehicle_type, package,
-        session_count, sessions, pax, guest_names,
-        checkup_count, checkup_pax, extra,
-        unit_price, total_price, sort_order, remark, created_at, updated_at
+        id, order_id, item_type, date, start_time, end_time, pax, extra, amount, sort_order
       ) VALUES ${itemPlaceholders}
     `, itemValues);
   }
@@ -1302,7 +1333,26 @@ async function ensureFixLegacyTemplates(conn) {
         AND o.order_no NOT LIKE 'TPL%'
         AND EXISTS (SELECT 1 FROM booking_items bi WHERE bi.order_id = o.id)
     `);
-    if (!needFix || !needFix.length) { _legacyTemplateFixDone = true; return; }
+    if (!needFix || !needFix.length) { _legacyTemplateFixDone = true; }
+
+    if (_legacyTemplateFixDone) {
+      // 继续清理旧的克隆空模板：TPL 前缀但没有 booking_items 的模板（之前 clone INSERT 字段错误导致）
+      const [emptyTpls] = await conn.query(`
+        SELECT o.id, o.order_no, o.template_name
+        FROM booking_orders o
+        WHERE o.is_template = 1
+          AND o.order_no LIKE 'TPL%'
+          AND NOT EXISTS (SELECT 1 FROM booking_items bi WHERE bi.order_id = o.id)
+      `);
+      if (emptyTpls && emptyTpls.length) {
+        console.log(`[booking-tpl-fix] 清理 ${emptyTpls.length} 条空模板（克隆字段错误导致items丢失）:`, emptyTpls.map(r => r.order_no));
+        for (const t of emptyTpls) {
+          await conn.query('DELETE FROM booking_orders WHERE id=? AND is_template=1 AND order_no LIKE ?', [t.id, 'TPL%']);
+          console.log(`[booking-tpl-fix] 已清理空模板 ${t.order_no}`);
+        }
+      }
+      return;
+    }
     console.log(`[booking-tpl-fix] 发现 ${needFix.length} 条历史模板数据需修复：`, needFix.map(r => r.order_no));
 
     for (const row of needFix) {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2 } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, OrderStatus } from './types';
 import {
   BUSINESS,
@@ -624,6 +624,16 @@ export default function BookingBoard() {
   // 设为模板弹窗
   const [showSetTemplate, setShowSetTemplate] = useState<null | string>(null);
   const [templateNameInput, setTemplateNameInput] = useState('');
+  // 通用确认弹窗（替代原生 confirm）
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    confirmColor?: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
   // orderNo → backend UUID 映射（编辑/状态操作时需要 UUID 调后端）
   const orderUuidMap = useRef<Record<string, string>>({});
   // 业务常量配置弹窗
@@ -725,19 +735,28 @@ export default function BookingBoard() {
   }, [loadOrders]);
 
   // 应用模板创建新单
-  const handleApplyTemplate = async (tpl: any) => {
-    if (!confirm(`确定从模板「${tpl.templateName}」创建订单吗？\n日期会自动偏移到本周。`)) return;
-    try {
-      const created = await bookingApi.applyTemplate(tpl.id);
-      const adapted = adaptOrder(created);
-      orderUuidMap.current[adapted.id] = created.id;
-      setOrders(prev => [...prev, adapted]);
-      setShowTemplatePicker(false);
-      // 直接进入编辑模式
-      setCreateDrawer({ mode: 'edit', order: adapted });
-    } catch (e) {
-      alert('创建失败: ' + (e as Error).message);
-    }
+  const handleApplyTemplate = (tpl: any) => {
+    setConfirmDialog({
+      open: true,
+      title: '从模板创建订单',
+      message: `确定从模板「${tpl.templateName || '未命名模板'}」创建订单吗？\n\n日期会自动偏移到本周。`,
+      confirmText: '创建',
+      cancelText: '取消',
+      confirmColor: 'green',
+      onConfirm: async () => {
+        try {
+          const created = await bookingApi.applyTemplate(tpl.id);
+          const adapted = adaptOrder(created);
+          orderUuidMap.current[adapted.id] = created.id;
+          setOrders(prev => [...prev, adapted]);
+          setShowTemplatePicker(false);
+          // 直接进入编辑模式
+          setCreateDrawer({ mode: 'edit', order: adapted });
+        } catch (e) {
+          alert('创建失败: ' + (e as Error).message);
+        }
+      },
+    });
   };
 
   // 确认设为模板（克隆模式：原订单不变，生成副本为模板）
@@ -757,15 +776,24 @@ export default function BookingBoard() {
   };
 
   // 删除模板副本（不影响来源订单本身）
-  const handleUnsetTemplate = async (tplId: string) => {
-    if (!confirm('确定删除该模板？\n\n⚠️ 仅删除模板副本，不影响来源的普通订单本身。')) return;
-    try {
-      await bookingApi.unsetTemplate(tplId);
-      alert('模板已删除');
-      await loadTemplates();
-    } catch (e) {
-      alert('操作失败: ' + (e as Error).message);
-    }
+  const handleUnsetTemplate = (tplId: string) => {
+    setConfirmDialog({
+      open: true,
+      title: '删除模板副本',
+      message: '确定删除该模板？\n\n⚠️ 仅删除模板副本，不影响来源的普通订单本身。',
+      confirmText: '删除模板',
+      cancelText: '取消',
+      confirmColor: 'red',
+      onConfirm: async () => {
+        try {
+          await bookingApi.unsetTemplate(tplId);
+          alert('模板已删除');
+          await loadTemplates();
+        } catch (e) {
+          alert('操作失败: ' + (e as Error).message);
+        }
+      },
+    });
   };
 
   // 统计卡片
@@ -965,18 +993,59 @@ export default function BookingBoard() {
               {draftOrders.map(o => (
                 <div
                   key={o.id}
-                  className="bg-white rounded-lg border border-amber-200 p-3 cursor-pointer hover:shadow-md hover:border-amber-400 transition-all"
-                  onClick={() => isBookingOperator ? setCreateDrawer({ mode: 'edit', order: o }) : setSelectedOrder(o)}
+                  className="bg-white rounded-lg border border-amber-200 p-3 hover:shadow-md hover:border-amber-400 transition-all"
                 >
                   <div className="flex items-start justify-between">
-                    <div className="min-w-0 flex-1">
+                    <div
+                      className="min-w-0 flex-1 cursor-pointer"
+                      onClick={() => isBookingOperator ? setCreateDrawer({ mode: 'edit', order: o }) : setSelectedOrder(o)}
+                    >
                       <div className="text-sm font-medium text-gray-900 truncate">{o.id}</div>
                       <div className="text-xs text-gray-600 font-medium mt-0.5 truncate">👥 {o.customerName || '（未填客户名）'}</div>
                       <div className="text-[11px] text-gray-400 mt-1 truncate">
                         {o.salesPerson ? `销售：${o.salesPerson}` : '未填销售'} · {o.createdAt?.slice(0, 10) || '今天'}
                       </div>
                     </div>
-                    {isBookingOperator && <Edit2 size={14} className="text-amber-500 flex-shrink-0 ml-2 mt-1" />}
+                    {isBookingOperator && (
+                      <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          title="编辑草稿"
+                          onClick={(e) => { e.stopPropagation(); setCreateDrawer({ mode: 'edit', order: o }); }}
+                          className="p-1 rounded text-amber-500 hover:bg-amber-100"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          title="删除草稿"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const orderId = o.id;
+                            const uuid = orderUuidMap.current[orderId] || orderId;
+                            setConfirmDialog({
+                              open: true,
+                              title: '删除草稿订单',
+                              message: `确定删除草稿「${orderId}」吗？\n客户：${o.customerName || '（未填客户名）'}\n\n⚠️ 删除后不可恢复。`,
+                              confirmText: '确定删除',
+                              cancelText: '取消',
+                              confirmColor: 'red',
+                              onConfirm: async () => {
+                                try {
+                                  await bookingApi.deleteOrder(uuid);
+                                  setOrders(prev => prev.filter(x => x.id !== orderId));
+                                } catch (err) {
+                                  alert('删除失败: ' + (err as Error).message);
+                                }
+                              },
+                            });
+                          }}
+                          className="p-1 rounded text-gray-400 hover:bg-red-100 hover:text-red-500"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1506,6 +1575,56 @@ export default function BookingBoard() {
                     确定设为模板
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============ 通用确认弹窗 ============ */}
+        {confirmDialog && confirmDialog.open && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center" onClick={() => setConfirmDialog(null)}>
+            <div className="absolute inset-0 bg-black/40" />
+            <div
+              className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-5 py-4 border-b border-gray-100">
+                <h3 className="text-base font-semibold text-gray-900">
+                  {confirmDialog.title}
+                </h3>
+              </div>
+              <div className="px-5 py-4">
+                <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
+                  {confirmDialog.message}
+                </div>
+              </div>
+              <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDialog(null)}
+                  className="px-4 py-1.5 text-sm rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                >
+                  {confirmDialog.cancelText || '取消'}
+                </button>
+                <button
+                  onClick={async () => {
+                    const fn = confirmDialog.onConfirm;
+                    setConfirmDialog(null);
+                    try {
+                      await fn();
+                    } catch (e) {
+                      // 错误由 onConfirm 内部处理
+                    }
+                  }}
+                  className={`px-4 py-1.5 text-sm rounded-lg text-white font-medium ${
+                    confirmDialog.confirmColor === 'red'
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : confirmDialog.confirmColor === 'yellow'
+                        ? 'bg-yellow-500 hover:bg-yellow-600'
+                        : 'bg-green-500 hover:bg-green-600'
+                  }`}
+                >
+                  {confirmDialog.confirmText || '确定'}
+                </button>
               </div>
             </div>
           </div>

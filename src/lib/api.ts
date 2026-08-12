@@ -351,6 +351,11 @@ export const bookingApi = {
     return fromBackend(res.data);
   },
 
+  // 删除草稿订单（仅 pending 状态）
+  async deleteOrder(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/orders/${id}`);
+  },
+
   // 获取业务常量
   async getConfig(): Promise<BookingConfig> {
     const res = await api.get<{ ok: boolean; data: any }>('/booking/config');

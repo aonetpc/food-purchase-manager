@@ -105,39 +105,62 @@ function genMealSessions(
 }
 
 // 复制为新单：清日期、保配置、重算金额
+// 复制订单项目（日期统一偏移 +7 天到下周，保留所有业务配置和明细信息，不强制清空）
 function copyItemsForCopy(src: BookingOrder): BookingItem[] {
+  const OFFSET = 7; // 向后偏移一周
   return src.items.map((it) => {
-    const extra = { ...it.extra };
-    let date = '';
-    let startTime = '';
+    const extra = JSON.parse(JSON.stringify(it.extra || {}));
+    let date = it.date ? fmt(addDays(parseDateLocal(it.date), OFFSET)) : '';
+    let startTime = it.startTime || '';
     let amount = 0;
+
     if (it.itemType === 'checkup') {
-      extra.paxList = (extra.paxList || []).map((p) => ({ ...p }));
+      // 体检：保留 paxList，重新按当前套餐单价计算金额
+      extra.paxList = (extra.paxList || []).map((p: any) => ({ ...p }));
       extra.packageTotal = calcCheckupAmount(extra.paxList || []);
       amount = extra.packageTotal;
     } else if (it.itemType === 'lodging') {
-      extra.dateCheckIn = '';
-      extra.dateCheckOut = '';
-      extra.arrivalTime = '';
-      extra.nights = undefined;
-      amount = 0;
+      // 住宿：日期 +7 天，nights 保持不变，按新单价重新计算
+      extra.dateCheckIn = extra.dateCheckIn ? fmt(addDays(parseDateLocal(extra.dateCheckIn), OFFSET)) : '';
+      extra.dateCheckOut = extra.dateCheckOut ? fmt(addDays(parseDateLocal(extra.dateCheckOut), OFFSET)) : '';
+      // 没有 date 时回退到 +7
+      if (!date && extra.dateCheckIn) date = extra.dateCheckIn;
+      extra.arrivalTime = extra.arrivalTime || '';
+      if (extra.dateCheckIn && extra.dateCheckOut) {
+        extra.nights = daysBetween(extra.dateCheckIn, extra.dateCheckOut);
+        amount = calcLodgingAmount(extra.lodgingType, Number(it.pax) || 1, Number(extra.nights) || 0);
+      } else {
+        extra.nights = undefined;
+        amount = 0;
+      }
     } else if (it.itemType === 'lunch' || it.itemType === 'dinner') {
-      extra.dateStart = '';
-      extra.dateEnd = '';
-      extra.sessions = (extra.sessions || []).map((s) => ({ ...s, date: '' }));
+      // 餐食：日期范围 + sessions 日期都偏移 7 天
+      extra.dateStart = extra.dateStart ? fmt(addDays(parseDateLocal(extra.dateStart), OFFSET)) : '';
+      extra.dateEnd = extra.dateEnd ? fmt(addDays(parseDateLocal(extra.dateEnd), OFFSET)) : '';
+      extra.sessions = (extra.sessions || []).map((s: any) => ({
+        ...s,
+        date: s.date ? fmt(addDays(parseDateLocal(s.date), OFFSET)) : '',
+      }));
+      if (!date && extra.dateStart) date = extra.dateStart;
       amount = 0;
     } else if (it.itemType === 'meeting') {
-      extra.sessions = (extra.sessions || []).map((s) => ({ ...s, date: '' }));
-      amount = (extra.sessions as MeetingSession[] || []).reduce(
-        (sum, s) => sum + calcMeetingAmount(s.hall, s.slotType),
-        0,
-      );
+      extra.sessions = (extra.sessions || []).map((s: any) => ({
+        ...s,
+        date: s.date ? fmt(addDays(parseDateLocal(s.date), OFFSET)) : '',
+      }));
+      const sessions = extra.sessions as MeetingSession[] || [];
+      if (!date && sessions[0]?.date) date = sessions[0].date;
+      amount = sessions.reduce((sum, s) => sum + calcMeetingAmount(s.hall, s.slotType), 0);
     } else if (it.itemType === 'wellness') {
-      extra.sessions = (extra.sessions || []).map((s) => ({ ...s, date: '' }));
-      amount = (extra.sessions as WellnessSession[] || []).reduce(
-        (sum, s) => sum + calcWellnessAmount(s.wellnessType, s.hours),
-        0,
-      );
+      extra.sessions = (extra.sessions || []).map((s: any) => ({
+        ...s,
+        date: s.date ? fmt(addDays(parseDateLocal(s.date), OFFSET)) : '',
+      }));
+      const sessions = extra.sessions as WellnessSession[] || [];
+      if (!date && sessions[0]?.date) date = sessions[0].date;
+      amount = sessions.reduce((sum, s) => sum + calcWellnessAmount(s.wellnessType, s.hours), 0);
+    } else {
+      amount = Number(it.amount) || 0;
     }
     return { ...it, id: genItemId(), date, startTime, extra, amount };
   });

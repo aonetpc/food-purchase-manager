@@ -29,6 +29,50 @@ const DEFAULT_HALL: Partial<MeetingHallRow> = { code: '', name: '', capacity: 20
 const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, price: 0, is_free: 0, status: 1, sort_order: 100 };
 const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', category: '其他', description: '', default_price: 0, unit: '次', status: 1, sort_order: 100 };
 
+// ================================================
+// 会话内缓存（sessionStorage）
+// ================================================
+const CACHE_KEY = 'biz_config_cache_v1';
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
+
+type CacheData = {
+  packages?: PackageRow[];
+  checkupItems?: CheckupItemRow[];
+  roomTypes?: RoomTypeRow[];
+  meetingHalls?: MeetingHallRow[];
+  wellnessTypes?: WellnessTypeRow[];
+  cachedAt: number;
+};
+
+function readCache(): Partial<CacheData> | null {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as CacheData;
+    if (!data.cachedAt || Date.now() - data.cachedAt > CACHE_TTL_MS) return null;
+    return data;
+  } catch { return null; }
+}
+function writeCache(patch: Partial<CacheData>) {
+  try {
+    const cur = readCache() || {};
+    const next: CacheData = { ...cur, ...patch, cachedAt: Date.now() };
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(next));
+  } catch { /* 忽略 storage 失败 */ }
+}
+function clearCache() {
+  try { sessionStorage.removeItem(CACHE_KEY); } catch {}
+}
+
+// Tab → 依赖的数据组（packages 需要 checkupItems 作为下拉选项）
+const TAB_LOADERS: Record<TabKey, TabKey[]> = {
+  packages:     ['packages', 'checkupItems'],
+  checkupItems: ['checkupItems'],
+  roomTypes:    ['roomTypes'],
+  meetingHalls: ['meetingHalls'],
+  wellnessTypes:['wellnessTypes'],
+};
+
 export default function BizConfigModal({
   open,
   onClose,
@@ -38,6 +82,9 @@ export default function BizConfigModal({
 }) {
   const [tab, setTab] = useState<TabKey>('packages');
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState<Record<TabKey, boolean>>({
+    packages: false, checkupItems: false, roomTypes: false, meetingHalls: false, wellnessTypes: false,
+  });
 
   // 5 类数据
   const [packages, setPackages] = useState<PackageRow[]>([]);
@@ -52,46 +99,113 @@ export default function BizConfigModal({
     | null
   >(null);
 
+  // 自定义确认弹窗
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    confirmColor?: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
   const bumpEditing = () => {
     setEditing(prev => prev ? { ...prev } : null);
   };
 
-  const loadAll = async () => {
+  // 根据 key 写本地 state + cache
+  function setStateAndCache<K extends TabKey>(key: K, data: any[]) {
+    switch (key) {
+      case 'packages':     setPackages(data as PackageRow[]);     writeCache({ packages: data as PackageRow[] }); break;
+      case 'checkupItems': setCheckupItems(data as CheckupItemRow[]); writeCache({ checkupItems: data as CheckupItemRow[] }); break;
+      case 'roomTypes':    setRoomTypes(data as RoomTypeRow[]);    writeCache({ roomTypes: data as RoomTypeRow[] }); break;
+      case 'meetingHalls': setMeetingHalls(data as MeetingHallRow[]); writeCache({ meetingHalls: data as MeetingHallRow[] }); break;
+      case 'wellnessTypes':setWellnessTypes(data as WellnessTypeRow[]); writeCache({ wellnessTypes: data as WellnessTypeRow[] }); break;
+    }
+  }
+
+  async function loadTabGroup(targetKeys: TabKey[], force = false) {
+    const cache = readCache();
+    const needLoad: TabKey[] = [];
+    targetKeys.forEach(k => {
+      // 如果缓存有数据 & 非强制，用缓存
+      const cached = cache?.[k];
+      if (!force && cached && Array.isArray(cached) && cached.length >= 0) {
+        setStateAndCache(k, cached);
+      } else {
+        needLoad.push(k);
+      }
+    });
+    if (!needLoad.length) return;
+
+    // 设置 loading
+    setLoading(prev => {
+      const next = { ...prev };
+      needLoad.forEach(k => { next[k] = true; });
+      return next;
+    });
     try {
-      const [ps, cs, rs, hs, ws] = await Promise.all([
-        bookingApi.listPackages(),
-        bookingApi.listCheckupItems(),
-        bookingApi.listRoomTypes(),
-        bookingApi.listMeetingHalls(),
-        bookingApi.listWellnessTypes(),
-      ]);
-      setPackages((ps as any[]) || []);
-      setCheckupItems((cs as any[]) || []);
-      setRoomTypes((rs as any[]) || []);
-      setMeetingHalls((hs as any[]) || []);
-      setWellnessTypes((ws as any[]) || []);
+      // 并行加载需要的 keys
+      const promises = needLoad.map(async k => {
+        let data: any[];
+        switch (k) {
+          case 'packages':     data = await bookingApi.listPackages(); break;
+          case 'checkupItems': data = await bookingApi.listCheckupItems(); break;
+          case 'roomTypes':    data = await bookingApi.listRoomTypes(); break;
+          case 'meetingHalls': data = await bookingApi.listMeetingHalls(); break;
+          case 'wellnessTypes':data = await bookingApi.listWellnessTypes(); break;
+        }
+        return { k, data };
+      });
+      const results = await Promise.all(promises);
+      results.forEach(({ k, data }) => setStateAndCache(k, data || []));
     } catch (e) {
       alert('加载业务常量失败：' + (e as Error).message);
+    } finally {
+      setLoading(prev => {
+        const next = { ...prev };
+        needLoad.forEach(k => { next[k] = false; });
+        return next;
+      });
     }
-  };
+  }
 
+  // 弹窗打开：初始化缓存（会话级第一次打开时用缓存，否则按当前 tab 懒加载）
   useEffect(() => {
     if (open) {
-      loadAll();
+      // 从缓存恢复已有的数据，避免闪烁
+      const cache = readCache();
+      if (cache?.packages) setPackages(cache.packages);
+      if (cache?.checkupItems) setCheckupItems(cache.checkupItems);
+      if (cache?.roomTypes) setRoomTypes(cache.roomTypes);
+      if (cache?.meetingHalls) setMeetingHalls(cache.meetingHalls);
+      if (cache?.wellnessTypes) setWellnessTypes(cache.wellnessTypes);
       setEditing(null);
+      // 再触发当前 tab 对应 group 的加载（有缓存则直接 return，否则网络拉取）
+      loadTabGroup(TAB_LOADERS[tab], false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Tab 切换：加载对应 group
+  useEffect(() => {
+    if (!open) return;
+    loadTabGroup(TAB_LOADERS[tab], false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, open]);
 
   // ========== 通用增删改 ==========
   async function handleSave(
     apiFn: () => Promise<any>,
     onSuccess: () => void = () => {},
+    affectedTabs: TabKey[] = [tab],
   ) {
     setSaving(true);
     try {
       await apiFn();
-      await loadAll();
+      clearCache(); // 保存后清除缓存，强制下次从服务器拉取
+      await loadTabGroup(Array.from(new Set([...affectedTabs, ...TAB_LOADERS[tab]])), true);
       setEditing(null);
       onSuccess();
     } catch (e) {
@@ -101,17 +215,28 @@ export default function BizConfigModal({
     }
   }
 
-  async function handleDelete(
+  function handleDelete(
     apiFn: () => Promise<any>,
     confirmMsg: string,
+    affectedTabs: TabKey[] = [tab],
   ) {
-    if (!confirm(confirmMsg)) return;
-    try {
-      await apiFn();
-      await loadAll();
-    } catch (e) {
-      alert('删除失败：' + (e as Error).message);
-    }
+    setConfirmDialog({
+      open: true,
+      title: '确认操作',
+      message: confirmMsg,
+      confirmText: '确定',
+      cancelText: '取消',
+      confirmColor: 'red',
+      onConfirm: async () => {
+        try {
+          await apiFn();
+          clearCache();
+          await loadTabGroup(Array.from(new Set([...affectedTabs, ...TAB_LOADERS[tab]])), true);
+        } catch (e) {
+          alert('删除失败：' + (e as Error).message);
+        }
+      },
+    });
   }
 
   if (!open) return null;
@@ -136,25 +261,39 @@ export default function BizConfigModal({
 
         {/* Tab 栏 */}
         <div className="flex border-b border-gray-200 bg-gray-50 px-3 pt-3 shrink-0">
-          {TABS.map(t => (
-            <button
-              key={t.key}
-              onClick={() => { setTab(t.key); setEditing(null); }}
-              className={`px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors relative ${
-                tab === t.key
-                  ? 'bg-white border-gray-200 text-gray-900'
-                  : 'text-gray-500 hover:text-gray-700 border-transparent'
-              }`}
-              style={tab === t.key ? { borderTop: `3px solid ${t.color}` } : undefined}
-            >
-              {t.label}
-            </button>
-          ))}
+          {TABS.map(t => {
+            const isLoading = loading[t.key];
+            return (
+              <button
+                key={t.key}
+                onClick={() => { setTab(t.key); setEditing(null); }}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors relative ${
+                  tab === t.key
+                    ? 'bg-white border-gray-200 text-gray-900'
+                    : 'text-gray-500 hover:text-gray-700 border-transparent'
+                }`}
+                style={tab === t.key ? { borderTop: `3px solid ${t.color}` } : undefined}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  {isLoading && (
+                    <span className="inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                  )}
+                  {t.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {/* 内容区 */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {tab === 'packages' && (
+          {(tab === 'packages' || tab === 'checkupItems' || tab === 'roomTypes' || tab === 'meetingHalls' || tab === 'wellnessTypes') && loading[tab] && (
+            <div className="text-center py-10 text-gray-500 text-sm bg-white rounded-lg border border-dashed border-gray-200">
+              <span className="inline-block w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
+              加载中...
+            </div>
+          )}
+          {tab === 'packages' && !loading.packages && !loading.checkupItems && (
             <PackagesTable
               rows={packages}
               checkupItems={checkupItems}
@@ -175,6 +314,7 @@ export default function BizConfigModal({
                       }
                     },
                     () => {},
+                    ['packages', 'checkupItems'],
                   );
                 } else {
                   handleSave(
@@ -185,18 +325,20 @@ export default function BizConfigModal({
                       }
                     },
                     () => {},
+                    ['packages'],
                   );
                 }
               }}
               onDel={(r) => handleDelete(
                 () => bookingApi.deletePackage(r.id),
                 `确定禁用套餐「${r.name}」吗？禁用后订单下拉不会再显示它，已有订单不受影响。`,
+                ['packages'],
               )}
               saving={saving}
             />
           )}
 
-          {tab === 'checkupItems' && (
+          {tab === 'checkupItems' && !loading.checkupItems && (
             <CheckupItemsTable
               rows={checkupItems}
               editing={editing?.mode ? editing : null}
@@ -206,20 +348,21 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<CheckupItemRow>;
                 if ((editing as any)?.mode === 'update' && data.id) {
-                  handleSave(() => bookingApi.updateCheckupItem(data.id!, data), () => {});
+                  handleSave(() => bookingApi.updateCheckupItem(data.id!, data), () => {}, ['checkupItems', 'packages']);
                 } else {
-                  handleSave(() => bookingApi.createCheckupItem(data), () => {});
+                  handleSave(() => bookingApi.createCheckupItem(data), () => {}, ['checkupItems', 'packages']);
                 }
               }}
               onDel={(r) => handleDelete(
                 () => bookingApi.deleteCheckupItem(r.id),
                 `确定禁用体检项目「${r.name}」吗？`,
+                ['checkupItems', 'packages'],
               )}
               saving={saving}
             />
           )}
 
-          {tab === 'roomTypes' && (
+          {tab === 'roomTypes' && !loading.roomTypes && (
             <RoomTypesTable
               rows={roomTypes}
               editing={editing?.mode ? editing : null}
@@ -229,20 +372,21 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<RoomTypeRow>;
                 if ((editing as any)?.mode === 'update' && data.id) {
-                  handleSave(() => bookingApi.updateRoomType(data.id!, data), () => {});
+                  handleSave(() => bookingApi.updateRoomType(data.id!, data), () => {}, ['roomTypes']);
                 } else {
-                  handleSave(() => bookingApi.createRoomType(data), () => {});
+                  handleSave(() => bookingApi.createRoomType(data), () => {}, ['roomTypes']);
                 }
               }}
               onDel={(r) => handleDelete(
                 () => bookingApi.deleteRoomType(r.id),
                 `确定禁用房型「${r.name}」吗？`,
+                ['roomTypes'],
               )}
               saving={saving}
             />
           )}
 
-          {tab === 'meetingHalls' && (
+          {tab === 'meetingHalls' && !loading.meetingHalls && (
             <MeetingHallsTable
               rows={meetingHalls}
               editing={editing?.mode ? editing : null}
@@ -252,20 +396,21 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<MeetingHallRow>;
                 if ((editing as any)?.mode === 'update' && data.id) {
-                  handleSave(() => bookingApi.updateMeetingHall(data.id!, data), () => {});
+                  handleSave(() => bookingApi.updateMeetingHall(data.id!, data), () => {}, ['meetingHalls']);
                 } else {
-                  handleSave(() => bookingApi.createMeetingHall(data), () => {});
+                  handleSave(() => bookingApi.createMeetingHall(data), () => {}, ['meetingHalls']);
                 }
               }}
               onDel={(r) => handleDelete(
                 () => bookingApi.deleteMeetingHall(r.id),
                 `确定禁用会议厅「${r.name}」吗？`,
+                ['meetingHalls'],
               )}
               saving={saving}
             />
           )}
 
-          {tab === 'wellnessTypes' && (
+          {tab === 'wellnessTypes' && !loading.wellnessTypes && (
             <WellnessTypesTable
               rows={wellnessTypes}
               editing={editing?.mode ? editing : null}
@@ -275,14 +420,15 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<WellnessTypeRow>;
                 if ((editing as any)?.mode === 'update' && data.id) {
-                  handleSave(() => bookingApi.updateWellnessType(data.id!, data), () => {});
+                  handleSave(() => bookingApi.updateWellnessType(data.id!, data), () => {}, ['wellnessTypes']);
                 } else {
-                  handleSave(() => bookingApi.createWellnessType(data), () => {});
+                  handleSave(() => bookingApi.createWellnessType(data), () => {}, ['wellnessTypes']);
                 }
               }}
               onDel={(r) => handleDelete(
                 () => bookingApi.deleteWellnessType(r.id),
                 `确定禁用康乐项目「${r.name}」吗？`,
+                ['wellnessTypes'],
               )}
               saving={saving}
             />
@@ -299,6 +445,56 @@ export default function BizConfigModal({
           </button>
         </div>
       </div>
+
+      {/* 自定义确认弹窗 */}
+      {confirmDialog && confirmDialog.open && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center" onClick={() => setConfirmDialog(null)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h3 className="text-base font-semibold text-gray-900">
+                {confirmDialog.title}
+              </h3>
+            </div>
+            <div className="px-5 py-4">
+              <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
+                {confirmDialog.message}
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-1.5 text-sm rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+              >
+                {confirmDialog.cancelText || '取消'}
+              </button>
+              <button
+                onClick={async () => {
+                  const fn = confirmDialog.onConfirm;
+                  setConfirmDialog(null);
+                  try {
+                    await fn();
+                  } catch (e) {
+                    // 错误由 onConfirm 内部处理
+                  }
+                }}
+                className={`px-4 py-1.5 text-sm rounded-lg text-white font-medium ${
+                  confirmDialog.confirmColor === 'red'
+                    ? 'bg-red-500 hover:bg-red-600'
+                    : confirmDialog.confirmColor === 'yellow'
+                      ? 'bg-yellow-500 hover:bg-yellow-600'
+                      : 'bg-green-500 hover:bg-green-600'
+                }`}
+              >
+                {confirmDialog.confirmText || '确定'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
