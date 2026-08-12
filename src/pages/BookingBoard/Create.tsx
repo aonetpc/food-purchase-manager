@@ -524,6 +524,17 @@ export default function BookingBoardCreate(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mlStart, mlEnd, mlTime, mlTables, mlPerTable, drawer.open, drawer.itemType]);
 
+  // 住宿：入住日期变化时，保证离店日期 >= 入住日期 + 1 天
+  useEffect(() => {
+    if (!drawer.open || drawer.itemType !== 'lodging') return;
+    if (!lgIn) return;
+    const minOut = fmt(addDays(parseDateLocal(lgIn), 1));
+    if (!lgOut || parseDateLocal(lgOut) < parseDateLocal(minOut)) {
+      setLgOut(minOut);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lgIn, drawer.open, drawer.itemType]);
+
   // 总金额
   const totalAmount = useMemo(() => groupTotal(draftGroup), [draftGroup]);
 
@@ -640,7 +651,11 @@ export default function BookingBoardCreate(props: {
         amount,
       };
     } else if (itemType === 'lodging') {
-      const nights = Math.max(0, daysBetween(lgIn, lgOut));
+      if (!lgDateValid) {
+        setErr('离店日期必须晚于入住日期（至少 1 天）');
+        return;
+      }
+      const nights = daysBetween(lgIn, lgOut);
       const amount = calcLodgingAmount(lgType, lgRooms, nights, finalBizConfigForCalc);
       item = {
         id: keepId,
@@ -1089,6 +1104,7 @@ export default function BookingBoardCreate(props: {
   // ================================================
   const title = isEdit ? '编辑订单' : '新建订单';
   const lgNights = Math.max(0, daysBetween(lgIn, lgOut));
+  const lgDateValid = lgIn && lgOut && daysBetween(lgIn, lgOut) >= 1;
 
   return (
     <div className="flex flex-col h-full text-gray-800">
@@ -1681,12 +1697,17 @@ export default function BookingBoardCreate(props: {
                     </div>
                   </div>
 
-                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+                  <div className={`rounded-lg p-3 border ${
+                    lgDateValid ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'
+                  }`}>
                     <div className="flex items-center justify-between text-sm mb-2">
                       <span className="text-gray-500">
-                        共 <span className="text-green-600 font-mono">{lgNights}</span> 晚
+                        共 <span className={`font-mono ${lgDateValid ? 'text-green-600' : 'text-red-500'}`}>{lgNights}</span> 晚
+                        {!lgDateValid && (
+                          <span className="ml-2 text-xs text-red-500">⚠ 离店日期需晚于入住日期</span>
+                        )}
                       </span>
-                      <span className="text-green-600 font-mono">
+                      <span className={`font-mono ${lgDateValid ? 'text-green-600' : 'text-red-500'}`}>
                         ¥{getRoomInfo(lgType).price.toLocaleString()} × {lgRooms} × {lgNights} = ¥
                         {calcLodgingAmount(lgType, lgRooms, lgNights, finalBizConfigForCalc).toLocaleString()}
                       </span>
