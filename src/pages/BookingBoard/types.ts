@@ -168,6 +168,30 @@ export interface WellnessSession {
   pax: number;
 }
 
+// 用车 - 单个客户信息（支持客户一、客户二…拼车多客户）
+export interface CarCustomer {
+  contactName: string;       // 客户负责人
+  contactPhone: string;      // 联系方式
+  paxCount: number;          // 预计人数
+  pickupDate: string;        // 接客日期
+  pickupTime: string;        // 接客时间（支持"7:00"或"体检结束后"等自由文本）
+  pickupRoute: string;       // 接客行程（多行文本）
+  dropoffDate: string;       // 送客日期
+  dropoffTime: string;       // 送客时间
+  dropoffRoute: string;      // 送客行程（多行文本）
+}
+
+// 用车 - 业务会话
+export interface CarpickupSession {
+  date: string;              // 业务主日期（取第一个客户的接客日期）
+  startTime: string;         // 业务主开始时间（取第一个客户的接客时间）
+  shareRide: boolean;        // 是否拼车
+  pricePerCustomer: number;  // 单价（元/客户），用于自动计算：客户数 × 单价
+  customAmount?: number;     // 手工覆盖总金额（undefined 表示用自动计算）
+  remark?: string;           // 备注
+  customers: CarCustomer[];  // 客户列表（客户一、二、三...）
+}
+
 // 订单
 export interface BookingOrder {
   id: string;

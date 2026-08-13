@@ -28,6 +28,8 @@ import type {
   MealSession,
   MeetingSession,
   WellnessSession,
+  CarCustomer,
+  CarpickupSession,
 } from './types';
 import {
   BIZ_MAP,
@@ -848,6 +850,17 @@ export default function BookingBoardCreate(props: {
   // 康乐表单
   const [wlSessions, setWlSessions] = useState<WellnessSession[]>([]);
 
+  // 用车表单（单条会话，里面含客户一/二/三...列表）
+  const [carSession, setCarSession] = useState<CarpickupSession>(() => ({
+    date: todayStr(),
+    startTime: '07:00',
+    shareRide: false,
+    pricePerCustomer: 0,
+    customers: [],
+  }));
+  // 当前正在编辑的客户索引
+  const [carActiveCust, setCarActiveCust] = useState<number>(0);
+
   // 页面状态
   const [err, setErr] = useState('');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -1055,8 +1068,14 @@ export default function BookingBoardCreate(props: {
       return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
     if (t === 'wellness')
       return wlSessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0);
+    if (t === 'carpickup') {
+      if (!carSession.customers?.length) return 0;
+      return carSession.customAmount !== undefined && carSession.customAmount !== null
+        ? Number(carSession.customAmount)
+        : Math.max(0, carSession.customers.length * Number(carSession.pricePerCustomer || 0));
+    }
     return 0;
-  }, [drawer.itemType, chkPax, lgType, lgRooms, lgIn, lgOut, mtSessions, wlSessions, finalBizConfigForCalc]);
+  }, [drawer.itemType, chkPax, lgType, lgRooms, lgIn, lgOut, mtSessions, wlSessions, carSession, finalBizConfigForCalc]);
 
   // ================================================
   // 抽屉操作
@@ -1093,6 +1112,27 @@ export default function BookingBoardCreate(props: {
       setWlSessions([
         { date: todayStr(), startTime: '15:00', wellnessType: 'mahjong', hours: 4, pax: 2 },
       ]);
+    } else if (type === 'carpickup') {
+      // 用车：默认 1 个客户，填入截图1的示例
+      const firstCustomer: CarCustomer = {
+        contactName: '孙老师',
+        contactPhone: '15921728857',
+        paxCount: 20,
+        pickupDate: todayStr(),
+        pickupTime: '7:00',
+        pickupRoute: '7:00重固镇政府--7:40画一（走高速）',
+        dropoffDate: todayStr(),
+        dropoffTime: '体检结束后',
+        dropoffRoute: '原路送回',
+      };
+      setCarSession({
+        date: firstCustomer.pickupDate,
+        startTime: firstCustomer.pickupTime,
+        shareRide: false,
+        pricePerCustomer: 0,
+        customers: [firstCustomer],
+      });
+      setCarActiveCust(0);
     }
   }
 
@@ -1120,6 +1160,28 @@ export default function BookingBoardCreate(props: {
       setMtSessions((item.extra.sessions as MeetingSession[] || []).map((s) => ({ ...s })));
     } else if (item.itemType === 'wellness') {
       setWlSessions((item.extra.sessions as WellnessSession[] || []).map((s) => ({ ...s })));
+    } else if (item.itemType === 'carpickup') {
+      const sess: CarpickupSession = item.extra?.carpickup
+        ? (item.extra.carpickup as CarpickupSession)
+        : {
+            date: item.date || todayStr(),
+            startTime: item.startTime || '07:00',
+            shareRide: false,
+            pricePerCustomer: 0,
+            customAmount: item.amount,
+            customers: [],
+          };
+      if (!sess.customers || sess.customers.length === 0) {
+        // 兼容老数据：至少保留一个空客户
+        sess.customers = [{
+          contactName: '', contactPhone: '', paxCount: 0,
+          pickupDate: sess.date || todayStr(), pickupTime: sess.startTime || '07:00',
+          pickupRoute: '', dropoffDate: sess.date || todayStr(),
+          dropoffTime: '', dropoffRoute: '',
+        }];
+      }
+      setCarSession(sess);
+      setCarActiveCust(0);
     }
   }
 
@@ -1398,7 +1460,7 @@ export default function BookingBoardCreate(props: {
         extra: { sessions: sessions as any },
         amount,
       };
-    } else {
+    } else if (itemType === 'wellness') {
       // wellness
       const sessions = wlSessions.filter((s) => s.date);
       if (sessions.length === 0) {
@@ -1413,6 +1475,38 @@ export default function BookingBoardCreate(props: {
         startTime: sessions[0].startTime,
         pax: sessions.reduce((s, x) => s + x.pax, 0),
         extra: { sessions: sessions as any },
+        amount,
+      };
+    } else if (itemType === 'carpickup') {
+      const sess = carSession;
+      if (!sess.customers || sess.customers.length === 0) {
+        setErr('请至少添加一位用车客户');
+        return;
+      }
+      // 校验第一个客户的接客日期/时间必填
+      const first = sess.customers[0];
+      if (!first.pickupDate) {
+        setErr('第一个客户的接客日期必填');
+        return;
+      }
+      // 计算金额：手工覆盖优先，否则 单价×客户数
+      const amount = sess.customAmount !== undefined && sess.customAmount !== null
+        ? Number(sess.customAmount)
+        : Math.max(0, sess.customers.length * Number(sess.pricePerCustomer || 0));
+      // 会话的 date/startTime 取第一客户（画板展示用）
+      const normalizedSess: CarpickupSession = {
+        ...sess,
+        date: first.pickupDate,
+        startTime: first.pickupTime || '',
+      };
+      const totalPax = sess.customers.reduce((s, c) => s + Number(c.paxCount || 0), 0);
+      item = {
+        id: keepId,
+        itemType,
+        date: first.pickupDate,
+        startTime: first.pickupTime || '',
+        pax: totalPax,
+        extra: { carpickup: normalizedSess },
         amount,
       };
     }
@@ -2948,6 +3042,237 @@ export default function BookingBoardCreate(props: {
                         })}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              ) : drawer.itemType === 'carpickup' ? (
+                <div className="space-y-3">
+                  {/* 顶部配置：是否拼车 + 单价 + 总金额 */}
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-4 text-xs">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={carSession.shareRide}
+                          onChange={(e) => setCarSession(prev => ({ ...prev, shareRide: e.target.checked }))}
+                          className="accent-green-500 w-3.5 h-3.5"
+                        />
+                        <span className="text-gray-700">是否拼车</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-gray-500">单价(¥/客户)</span>
+                        <input
+                          type="number"
+                          value={carSession.pricePerCustomer}
+                          onChange={(e) => setCarSession(prev => ({ ...prev, pricePerCustomer: Number(e.target.value) || 0 }))}
+                          className={`${cellInput} w-20 font-mono text-right`}
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-gray-500">总金额(手工覆盖)</span>
+                        <input
+                          type="number"
+                          value={carSession.customAmount ?? ''}
+                          placeholder="留空=客户数×单价"
+                          onChange={(e) => setCarSession(prev => ({
+                            ...prev,
+                            customAmount: e.target.value === '' ? undefined : Number(e.target.value) || 0
+                          }))}
+                          className={`${cellInput} w-32 font-mono text-right`}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      共 <span className="font-mono text-gray-700 font-medium">{carSession.customers.length}</span> 位客户
+                      <span className="mx-1.5 text-gray-300">·</span>
+                      预计总人数 <span className="font-mono text-gray-700 font-medium">{carSession.customers.reduce((s, c) => s + Number(c.paxCount || 0), 0)}</span>
+                    </div>
+                  </div>
+
+                  {/* 客户Tab + 加/删客户 */}
+                  <div className="border border-gray-200 rounded-xl overflow-hidden">
+                    {/* Tab 行 */}
+                    <div className="flex items-center gap-1 p-2 border-b border-gray-200 bg-gray-50/50 flex-wrap">
+                      {carSession.customers.map((c, idx) => {
+                        const isActive = idx === carActiveCust;
+                        const hasAny = c.contactName.trim() || c.contactPhone.trim() || c.paxCount > 0;
+                        const title = hasAny
+                          ? `${['一','二','三','四','五','六','七','八','九','十'][idx] || `客户${idx + 1}`} · ${c.contactName || '未命名'}`
+                          : `客户${['一','二','三','四','五','六','七','八','九','十'][idx] || (idx + 1)} (空)`;
+                        return (
+                          <div key={idx} className="flex items-center shrink-0">
+                            <button
+                              onClick={() => setCarActiveCust(idx)}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-colors border ${
+                                isActive
+                                  ? 'bg-green-500 border-green-500 text-white shadow-sm'
+                                  : 'bg-white border-gray-200 text-gray-600 hover:border-green-300 hover:text-green-600'
+                              }`}
+                              title={c.contactName || '客户'}
+                            >
+                              <span className="font-semibold">客户{['一','二','三','四','五','六','七','八','九','十'][idx] || (idx + 1)}</span>
+                              {c.contactName.trim() && (
+                                <>
+                                  <span className={isActive ? 'text-green-100' : 'text-gray-300'}>·</span>
+                                  <span className="max-w-12 truncate">{c.contactName}</span>
+                                </>
+                              )}
+                              {c.paxCount > 0 && (
+                                <span className={`font-mono ${isActive ? 'text-green-100' : 'text-gray-400'}`}>{c.paxCount}人</span>
+                              )}
+                            </button>
+                            {carSession.customers.length > 1 && (
+                              <button
+                                onClick={() => {
+                                  const del = idx;
+                                  setCarSession(prev => {
+                                    const next = prev.customers.filter((_, i) => i !== del);
+                                    return { ...prev, customers: next };
+                                  });
+                                  setCarActiveCust(i => {
+                                    if (carSession.customers.length - 1 === i) return Math.max(0, i - 1);
+                                    if (idx <= i) return Math.max(0, i - 1);
+                                    return i;
+                                  });
+                                }}
+                                className="ml-1 w-4 h-4 flex items-center justify-center rounded text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                                title="删除该客户"
+                              >
+                                <X size={11} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <button
+                        onClick={() => {
+                          const newCust: CarCustomer = {
+                            contactName: '', contactPhone: '', paxCount: 0,
+                            pickupDate: carSession.customers[0]?.pickupDate || todayStr(),
+                            pickupTime: '', pickupRoute: '',
+                            dropoffDate: carSession.customers[0]?.dropoffDate || todayStr(),
+                            dropoffTime: '', dropoffRoute: '',
+                          };
+                          setCarSession(prev => ({ ...prev, customers: [...prev.customers, newCust] }));
+                          setCarActiveCust(carSession.customers.length);
+                        }}
+                        className="inline-flex items-center gap-0.5 px-2 py-1 rounded-md text-xs bg-white border border-dashed border-gray-300 text-gray-500 hover:border-green-400 hover:text-green-600 transition-colors shrink-0"
+                      >
+                        <Plus size={11} /> 增加客户
+                      </button>
+                    </div>
+
+                    {/* 当前客户编辑区 */}
+                    {(() => {
+                      const i = carActiveCust;
+                      const cust = carSession.customers[i];
+                      if (!cust) return null;
+                      const patchCust = (patch: Partial<CarCustomer>) => {
+                        setCarSession(prev => {
+                          const next = [...prev.customers];
+                          next[i] = { ...next[i], ...patch };
+                          return { ...prev, customers: next };
+                        });
+                      };
+                      const labelCls = 'text-[11px] text-gray-500 bg-gray-100 px-2 py-1 text-right whitespace-nowrap';
+                      return (
+                        <div className="p-3 text-xs">
+                          {/* 负责人 + 联系电话 + 人数 */}
+                          <div className="grid grid-cols-[auto_1fr_auto_1fr_auto_1fr] gap-y-px bg-gray-200 border border-gray-200 overflow-hidden rounded-lg">
+                            <div className={labelCls}>客户负责人</div>
+                            <div className="bg-white px-2 py-1">
+                              <input
+                                value={cust.contactName}
+                                onChange={(e) => patchCust({ contactName: e.target.value })}
+                                placeholder="如：孙老师"
+                                className="w-full focus:outline-none text-[12px]"
+                              />
+                            </div>
+                            <div className={labelCls}>联系方式:</div>
+                            <div className="bg-white px-2 py-1 border-l border-gray-100">
+                              <input
+                                value={cust.contactPhone}
+                                onChange={(e) => patchCust({ contactPhone: e.target.value })}
+                                placeholder="手机号"
+                                className="w-full focus:outline-none font-mono text-[12px]"
+                              />
+                            </div>
+                            <div className={labelCls}>预计人数</div>
+                            <div className="bg-white px-2 py-1 border-l border-gray-100">
+                              <input
+                                type="number"
+                                min="0"
+                                value={cust.paxCount || ''}
+                                onChange={(e) => patchCust({ paxCount: Number(e.target.value) || 0 })}
+                                placeholder="人数"
+                                className="w-full focus:outline-none font-mono text-right text-[12px]"
+                              />
+                            </div>
+
+                            {/* 接客日期/时间 + 接客行程(右侧rowspan) */}
+                            <div className={labelCls}>接客日期</div>
+                            <div className="bg-white px-2 py-1">
+                              <input
+                                type="date"
+                                value={cust.pickupDate || ''}
+                                onChange={(e) => patchCust({ pickupDate: e.target.value })}
+                                className="w-full focus:outline-none font-mono text-[12px]"
+                              />
+                            </div>
+                            <div className={labelCls + ' row-span-2'}>接客行程</div>
+                            <div className="bg-white px-2 py-1 border-l border-gray-100 row-span-2 col-span-3">
+                              <textarea
+                                rows={3}
+                                value={cust.pickupRoute || ''}
+                                onChange={(e) => patchCust({ pickupRoute: e.target.value })}
+                                placeholder={'例如：\n7:00重固镇政府 → 7:40画一（走高速）'}
+                                className="w-full focus:outline-none text-[12px] text-gray-800 resize-y leading-relaxed"
+                              />
+                            </div>
+
+                            <div className={labelCls}>接客时间</div>
+                            <div className="bg-white px-2 py-1 border-t border-gray-100">
+                              <input
+                                value={cust.pickupTime || ''}
+                                onChange={(e) => patchCust({ pickupTime: e.target.value })}
+                                placeholder="如：7:00 或 体检结束后"
+                                className="w-full focus:outline-none font-mono text-[12px]"
+                              />
+                            </div>
+
+                            {/* 送客日期/时间 + 送客行程(右侧rowspan) */}
+                            <div className={labelCls}>送客日期</div>
+                            <div className="bg-white px-2 py-1 border-t border-gray-100">
+                              <input
+                                type="date"
+                                value={cust.dropoffDate || ''}
+                                onChange={(e) => patchCust({ dropoffDate: e.target.value })}
+                                className="w-full focus:outline-none font-mono text-[12px]"
+                              />
+                            </div>
+                            <div className={labelCls + ' row-span-2'}>送客行程</div>
+                            <div className="bg-white px-2 py-1 border-t border-gray-100 border-l border-gray-100 row-span-2 col-span-3">
+                              <textarea
+                                rows={3}
+                                value={cust.dropoffRoute || ''}
+                                onChange={(e) => patchCust({ dropoffRoute: e.target.value })}
+                                placeholder={'例如：原路送回\n或：17:30画一 → 18:10重固镇政府'}
+                                className="w-full focus:outline-none text-[12px] text-gray-800 resize-y leading-relaxed"
+                              />
+                            </div>
+
+                            <div className={labelCls}>送客时间</div>
+                            <div className="bg-white px-2 py-1 border-t border-gray-100">
+                              <input
+                                value={cust.dropoffTime || ''}
+                                onChange={(e) => patchCust({ dropoffTime: e.target.value })}
+                                placeholder="如：体检结束后 或 17:30"
+                                className="w-full focus:outline-none font-mono text-[12px]"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ) : null}
