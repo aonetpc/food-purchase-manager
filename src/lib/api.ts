@@ -177,6 +177,7 @@ export interface PackageItemRow {
   item_name_snapshot: string;
   item_price: number;
   quantity: number;
+  remark?: string;
   sort_order: number;
 }
 
@@ -429,11 +430,11 @@ export const bookingApi = {
     const res = await api.get<{ ok: boolean; data: any[] }>(`/booking/config/packages/${pkgId}/items`);
     return (res.data || []).map(fromBackend) as PackageItemRow[];
   },
-  async addPackageItem(pkgId: string, payload: { item_id: string; item_price?: number; quantity?: number; sort_order?: number }): Promise<PackageItemRow> {
+  async addPackageItem(pkgId: string, payload: { item_id: string; item_price?: number; quantity?: number; remark?: string; sort_order?: number }): Promise<PackageItemRow> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/config/packages/${pkgId}/items`, payload);
     return fromBackend(res.data) as PackageItemRow;
   },
-  async updatePackageItem(pkgId: string, id: string, payload: { item_price?: number; quantity?: number; sort_order?: number }): Promise<PackageItemRow> {
+  async updatePackageItem(pkgId: string, id: string, payload: { item_price?: number; quantity?: number; remark?: string; sort_order?: number }): Promise<PackageItemRow> {
     const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/packages/${pkgId}/items/${id}`, payload);
     return fromBackend(res.data) as PackageItemRow;
   },

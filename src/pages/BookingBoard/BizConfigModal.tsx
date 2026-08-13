@@ -750,6 +750,7 @@ function PackageEditRow({
       item_name_snapshot: ci.name,
       item_price: ci.default_price || 0,
       quantity: 1,
+      remark: '',
       sort_order: (items.length) * 10 + 10,
     };
     data.items = [...items, newItem];
@@ -811,6 +812,7 @@ function PackageEditRow({
                     <th className="text-left font-medium py-1 pr-2">项目名称</th>
                     <th className="text-right font-medium py-1 px-2 w-20">单价(¥)</th>
                     <th className="text-center font-medium py-1 px-2 w-14">数量</th>
+                    <th className="text-left font-medium py-1 px-2 w-32">备注</th>
                     <th className="text-right font-medium py-1 px-2 w-20">小计(¥)</th>
                     <th className="text-center font-medium py-1 w-16">排序</th>
                     <th className="text-center font-medium py-1 w-16">操作</th>
@@ -827,6 +829,9 @@ function PackageEditRow({
                         </td>
                         <td className="py-1 px-2">
                           <Upd type="number" value={item.quantity} onChange={(v) => updateItemField(idx, 'quantity', v)} />
+                        </td>
+                        <td className="py-1 px-2">
+                          <Upd value={item.remark || ''} onChange={(v) => updateItemField(idx, 'remark', v)} placeholder="如：需空腹" />
                         </td>
                         <td className="py-1 px-2 text-right font-mono">¥{subtotal.toLocaleString()}</td>
                         <td className="py-1">
@@ -846,7 +851,7 @@ function PackageEditRow({
                 </tbody>
                 <tfoot>
                   <tr className="border-t border-gray-200">
-                    <td colSpan={3} className="py-1.5 text-right font-medium text-gray-500">合计：</td>
+                    <td colSpan={4} className="py-1.5 text-right font-medium text-gray-500">合计：</td>
                     <td className="py-1.5 text-right font-mono font-semibold text-green-600">¥{autoTotal.toLocaleString()}</td>
                     <td colSpan={2}></td>
                   </tr>

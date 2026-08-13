@@ -591,7 +591,7 @@ function makePackageItemCrud(routerRef) {
     const conn = await pool.getConnection();
     try {
       const { pkgId } = req.params;
-      const { item_id, item_price, quantity, sort_order } = req.body;
+      const { item_id, item_price, quantity, sort_order, remark } = req.body;
       if (!item_id) return res.status(400).json({ ok: false, error: '缺少 item_id' });
 
       const [items] = await conn.query(`SELECT * FROM booking_checkup_items WHERE id = ?`, [item_id]);
@@ -607,8 +607,8 @@ function makePackageItemCrud(routerRef) {
 
       const id = uuidv4();
       await conn.query(
-        `INSERT INTO booking_package_items (id, package_id, item_id, item_name_snapshot, item_price, quantity, sort_order) VALUES (?,?,?,?,?,?,?)`,
-        [id, pkgId, item_id, item.name, item_price != null ? item_price : item.default_price || 0, quantity || 1, sort_order || newSort]
+        `INSERT INTO booking_package_items (id, package_id, item_id, item_name_snapshot, item_price, quantity, remark, sort_order) VALUES (?,?,?,?,?,?,?)`,
+        [id, pkgId, item_id, item.name, item_price != null ? item_price : item.default_price || 0, quantity || 1, remark || '', sort_order || newSort]
       );
 
       // 更新套餐 item_count
@@ -637,7 +637,7 @@ function makePackageItemCrud(routerRef) {
       if (exist.length === 0) return res.status(404).json({ ok: false, error: '记录不存在' });
       const sets = [];
       const values = [];
-      ['item_price', 'quantity', 'sort_order'].forEach(f => {
+      ['item_price', 'quantity', 'remark', 'sort_order'].forEach(f => {
         if (req.body[f] !== undefined) { sets.push(`${f} = ?`); values.push(req.body[f]); }
       });
       if (sets.length > 0) {
@@ -681,7 +681,7 @@ function makePackageItemCrud(routerRef) {
     const conn = await pool.getConnection();
     try {
       const { pkgId } = req.params;
-      const items = req.body.items; // [{ id, item_id, item_price, quantity, sort_order }]
+      const items = req.body.items; // [{ id, item_id, item_price, quantity, remark, sort_order }]
       if (!Array.isArray(items)) return res.status(400).json({ ok: false, error: 'items 必须为数组' });
 
       // 删除现有关联
@@ -695,8 +695,8 @@ function makePackageItemCrud(routerRef) {
         const checkItem = checkItems[0];
         const id = it.id || uuidv4();
         await conn.query(
-          `INSERT INTO booking_package_items (id, package_id, item_id, item_name_snapshot, item_price, quantity, sort_order) VALUES (?,?,?,?,?,?,?)`,
-          [id, pkgId, it.item_id, it.item_name_snapshot || checkItem.name, it.item_price ?? checkItem.default_price ?? 0, it.quantity ?? 1, it.sort_order ?? 0]
+          `INSERT INTO booking_package_items (id, package_id, item_id, item_name_snapshot, item_price, quantity, remark, sort_order) VALUES (?,?,?,?,?,?,?,?)`,
+          [id, pkgId, it.item_id, it.item_name_snapshot || checkItem.name, it.item_price ?? checkItem.default_price ?? 0, it.quantity ?? 1, it.remark ?? '', it.sort_order ?? 0]
         );
       }
 
