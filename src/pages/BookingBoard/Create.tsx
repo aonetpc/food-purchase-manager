@@ -451,6 +451,297 @@ function PaxItemsEditor(props: {
   );
 }
 
+// -------- 单人项目编辑弹窗（包裹 PaxItemsEditor，附加头部+关闭+同步套餐标准） --------
+function PaxItemsEditorModal(props: {
+  pax: PaxEntry;
+  paxAmount: number;
+  items: CustomPackageItem[];
+  hasCustom: boolean;
+  pkgName: string;
+  pkgCode: string;
+  checkupItemsLib: CheckupItemRow[];
+  hasSharedEdits: boolean;
+  onRemoveItem: (itemIdx: number) => void;
+  onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
+  onReset: () => void;
+  onAddItem: (ci: CheckupItemRow) => void;
+  onSyncShared: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" onClick={props.onClose}>
+      <div className="absolute inset-0 bg-black/60" />
+      <div
+        className="relative bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-4 py-2.5 border-b border-gray-200 shrink-0 flex items-center justify-between">
+          <div className="text-sm">
+            <span className="font-semibold text-gray-900">{props.pax.name}</span>
+            <span className="text-gray-400 mx-1.5">·</span>
+            <span className={`${props.hasCustom ? 'text-amber-600' : 'text-gray-500'}`}>
+              {props.pkgName} ({props.pkgCode})
+              {props.hasCustom && ' ✎ 已定制'}
+            </span>
+            <span className="text-gray-400 mx-1.5">·</span>
+            <span className="font-mono text-green-600 font-semibold">¥{props.paxAmount.toLocaleString()}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {props.hasCustom && props.hasSharedEdits && (
+              <button
+                onClick={props.onSyncShared}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-600 border border-cyan-200 transition-colors"
+                title="将当前套餐共享版本同步过来，覆盖此人的定制"
+              >
+                ↺ 同步套餐标准
+              </button>
+            )}
+            {props.hasCustom && !props.hasSharedEdits && (
+              <button
+                onClick={props.onReset}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded-lg bg-white hover:bg-gray-100 text-gray-500 border border-gray-200"
+              >
+                <RefreshCw size={10}/> 重置为套餐默认
+              </button>
+            )}
+            <button onClick={props.onClose} className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-800">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-3 py-2">
+          <PaxItemsEditor
+            index={-1}
+            pax={props.pax}
+            paxAmount={props.paxAmount}
+            items={props.items}
+            hasCustom={props.hasCustom}
+            pkgName={props.pkgName}
+            pkgCode={props.pkgCode}
+            checkupItemsLib={props.checkupItemsLib}
+            onRemoveItem={props.onRemoveItem}
+            onUpdateItemField={props.onUpdateItemField}
+            onReset={props.onReset}
+            onAddItem={props.onAddItem}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -------- 套餐汇总卡片（批量编辑套餐共享版 + 展示组信息） --------
+function PackageGroupSummary(props: {
+  pkgCode: string;
+  pkgName: string;
+  pkgPrice: number;
+  paxList: PaxEntry[];
+  sharedItems: CustomPackageItem[];
+  hasSharedEdits: boolean;
+  isCustomizedFn: (p: PaxEntry) => boolean;
+  checkupItemsLib: CheckupItemRow[];
+  singlePaxAmountFn: (sharedOverride: CustomPackageItem[]) => number;
+  onAddItem: (ci: CheckupItemRow) => void;
+  onRemoveItem: (itemIdx: number) => void;
+  onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
+  onReset: () => void;
+}) {
+  const {
+    pkgCode, pkgName, paxList, sharedItems, hasSharedEdits,
+    isCustomizedFn, checkupItemsLib, singlePaxAmountFn,
+    onAddItem, onRemoveItem, onUpdateItemField, onReset,
+  } = props;
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFilter, setPickerFilter] = useState('');
+
+  const nTotal = paxList.length;
+  const nCustom = paxList.filter(isCustomizedFn).length;
+  const nStandard = nTotal - nCustom;
+  const singleAmt = singlePaxAmountFn(sharedItems);
+  const groupTotal = (nCustom === 0
+    ? nTotal * singleAmt
+    : nStandard * singleAmt + paxList.filter(isCustomizedFn).reduce((s, p) => {
+        if (!p.customItems) return s;
+        return s + p.customItems.reduce((a, i) => a + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      }, 0));
+
+  const itemsSubtotal = sharedItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+      {/* 卡片头 */}
+      <div className="bg-gray-50 px-4 py-2.5 text-xs flex items-center justify-between border-b border-gray-200">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-500/10 text-green-600 font-semibold border border-green-200">
+            {pkgCode}
+          </span>
+          <span className="font-semibold text-gray-800 truncate">{pkgName}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-500">
+            <span className="font-mono text-gray-700 font-medium">{nTotal}</span> 人
+            {nStandard > 0 && <span className="ml-2"><span className="text-green-600">●</span> 标准 {nStandard}</span>}
+            {nCustom > 0 && <span className="ml-2 text-amber-600">✎ 已定制 {nCustom} (不参与批量修改)</span>}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {hasSharedEdits && (
+            <button
+              onClick={onReset}
+              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded-lg bg-white hover:bg-gray-100 text-gray-500 border border-gray-200"
+            >
+              <RefreshCw size={10}/> 重置为套餐默认
+            </button>
+          )}
+          <div className="text-right">
+            <div className="text-[10px] text-gray-400">
+              单人 <span className="font-mono">¥{singleAmt.toLocaleString()}</span>
+              <span className="mx-1">·</span>
+              {nStandard} 标准人
+            </div>
+            <div className="font-mono text-green-600 font-semibold text-sm">合计 ¥{groupTotal.toLocaleString()}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 项目表 */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead className="text-gray-500 bg-gray-50/50">
+            <tr>
+              <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
+              <th className="px-3 py-1.5 text-left font-medium">项目</th>
+              <th className="px-3 py-1.5 text-left font-medium w-28">备注</th>
+              <th className="px-3 py-1.5 text-right font-medium w-20">单价</th>
+              <th className="px-3 py-1.5 text-center font-medium w-14">数量</th>
+              <th className="px-3 py-1.5 text-right font-medium w-20">小计</th>
+              <th className="px-3 py-1.5 text-center font-medium w-16">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sharedItems.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-3 py-4 text-center text-xs text-gray-400">
+                  当前无项目，请从下方「批量追加项目」添加
+                </td>
+              </tr>
+            ) : sharedItems.map((it, iIdx) => {
+              const subtotal = Number(it.item_price || 0) * Number(it.quantity || 1);
+              return (
+                <tr key={iIdx} className={`border-t border-gray-100 ${it.__temporary ? 'bg-cyan-50/40' : ''}`}>
+                  <td className="px-3 py-1 text-gray-400 font-mono text-center">{iIdx + 1}</td>
+                  <td className="px-3 py-1 text-gray-700">
+                    {it.__temporary && <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>}
+                    {it.item_name_snapshot}
+                  </td>
+                  <td className="px-3 py-1">
+                    <input
+                      value={it.remark || ''}
+                      onChange={e => onUpdateItemField(iIdx, 'remark', e.target.value)}
+                      className={`w-full px-1.5 py-0.5 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                      placeholder="如：需空腹"
+                    />
+                  </td>
+                  <td className="px-3 py-1 text-right">
+                    <input
+                      type="number"
+                      value={it.item_price}
+                      onChange={e => onUpdateItemField(iIdx, 'item_price', Number(e.target.value) || 0)}
+                      className={`w-20 px-1 py-0.5 text-[11px] border border-gray-200 rounded font-mono text-right focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                    />
+                  </td>
+                  <td className="px-3 py-1 text-center">
+                    <input
+                      type="number"
+                      min="1"
+                      value={it.quantity}
+                      onChange={e => onUpdateItemField(iIdx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
+                      className={`w-14 px-1 py-0.5 text-[11px] border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                    />
+                  </td>
+                  <td className="px-3 py-1 text-right font-mono text-gray-700">¥{subtotal.toLocaleString()}</td>
+                  <td className="px-3 py-1 text-center">
+                    <button
+                      onClick={() => onRemoveItem(iIdx)}
+                      className="text-red-400 hover:text-red-600 inline-flex items-center gap-0.5"
+                      title="移除"
+                    >
+                      <Trash2 size={12}/>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-gray-200 bg-gray-50/40">
+              <td colSpan={5} className="py-1.5 pr-4 text-right font-medium text-gray-500 text-xs">
+                项目合计（× {nStandard} 标准人 = 标准部分 ¥{(itemsSubtotal * nStandard).toLocaleString()}）
+              </td>
+              <td className="py-1.5 text-right font-mono font-semibold text-green-600">¥{itemsSubtotal.toLocaleString()}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* 底部：批量追加 + 说明 */}
+      <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between">
+        <div className="relative inline-block">
+          <button
+            onClick={() => { setPickerOpen(!pickerOpen); setPickerFilter(''); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
+          >
+            <Plus size={11}/> 批量追加项目（同步到 {nStandard} 位标准人员）
+            <ChevronDown size={11} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
+          </button>
+          {pickerOpen && (
+            <div className="absolute top-full left-0 mt-1 w-[300px] max-h-80 overflow-hidden bg-white border border-gray-200 rounded-lg shadow-xl z-30 flex flex-col">
+              <div className="p-2 border-b border-gray-100">
+                <div className="relative">
+                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input
+                    value={pickerFilter}
+                    onChange={e => setPickerFilter(e.target.value)}
+                    placeholder="搜索体检项目..."
+                    className="w-full pl-7 pr-2 py-1 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="overflow-y-auto flex-1">
+                {checkupItemsLib
+                  .filter(ci => !pickerFilter || ci.name.includes(pickerFilter))
+                  .map(ci => (
+                    <button
+                      key={ci.id}
+                      onClick={() => { onAddItem(ci); setPickerOpen(false); }}
+                      className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-green-50 transition-colors"
+                    >
+                      <span className="text-gray-800">{ci.name}</span>
+                      <span className="text-gray-400 font-mono">¥{Number(ci.default_price || 0).toLocaleString()}</span>
+                    </button>
+                  ))}
+                {checkupItemsLib.length === 0 && (
+                  <div className="px-3 py-4 text-center text-[11px] text-gray-400">
+                    项目库暂无数据
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+        {nCustom > 0 && (
+          <div className="text-[10px] text-amber-600 inline-flex items-center gap-1">
+            <AlertCircle size={12}/>
+            {nCustom} 人已独立定制，不受批量修改影响，点击表格「✎ 已定制 [编辑]」进行单人调整
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ================================================
 // 主组件
 // ================================================
@@ -529,6 +820,12 @@ export default function BookingBoardCreate(props: {
   const [chkPax, setChkPax] = useState<PaxEntry[]>([emptyPax()]);
   const [showChkPaste, setShowChkPaste] = useState(false);
   const [chkPasteText, setChkPasteText] = useState('');
+  // 套餐共享批量编辑：key=套餐code, value=CustomPackageItem[]
+  //   undefined = 未做过批量修改，跟随套餐表默认项目
+  //   数组 = 该套餐下所有"标准状态"人员的共享项目版本
+  const [packageSharedEdits, setPackageSharedEdits] = useState<Record<string, CustomPackageItem[] | undefined>>({});
+  // 单人编辑弹窗：当前正在编辑的人员索引
+  const [editingPaxIdx, setEditingPaxIdx] = useState<number | null>(null);
 
   // 住宿表单
   const [lgIn, setLgIn] = useState(todayStr());
@@ -750,7 +1047,7 @@ export default function BookingBoardCreate(props: {
   const drawerAmount = useMemo(() => {
     const t = drawer.itemType;
     if (!t) return 0;
-    if (t === 'checkup') return calcCheckupAmount(chkPax.filter((p) => p.name.trim()), finalBizConfigForCalc);
+    if (t === 'checkup') return calcCheckupEffective(chkPax.filter((p) => p.name.trim()));
     if (t === 'lodging')
       return calcLodgingAmount(lgType, lgRooms, Math.max(0, daysBetween(lgIn, lgOut)), finalBizConfigForCalc);
     if (t === 'lunch' || t === 'dinner') return 0;
@@ -888,6 +1185,128 @@ export default function BookingBoardCreate(props: {
     }));
   }
 
+  // ============================================================
+  // 套餐汇总层：项目有效解析 + 套餐共享批量编辑
+  // ============================================================
+
+  // 【有效解析】获取一个 pax 的最终项目列表
+  // 优先级：pax.customItems（独立定制）> packageSharedEdits[package] > 套餐表默认
+  function resolvePaxItemsEffective(p: PaxEntry): CustomPackageItem[] {
+    if (p.customItems && p.customItems.length > 0) {
+      return p.customItems;
+    }
+    const shared = packageSharedEdits[p.package];
+    if (shared && shared.length > 0) {
+      return shared;
+    }
+    if (shared && shared.length === 0) {
+      // 批量清空了项目
+      return [];
+    }
+    return resolvePaxItems(p, finalBizConfigForCalc);
+  }
+
+  // 【有效解析】获取一个 pax 的最终金额
+  // customItems 或 sharedEdits 存在时按 items 累加；否则用套餐单价
+  function calcSinglePaxEffective(p: PaxEntry): number {
+    if (p.customItems && p.customItems.length > 0) {
+      return p.customItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+    }
+    const shared = packageSharedEdits[p.package];
+    if (shared) {
+      return shared.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+    }
+    return calcSinglePaxAmount(p, finalBizConfigForCalc);
+  }
+
+  // 【有效解析】合计体检总额（用于UI展示，不影响保存）
+  function calcCheckupEffective(paxList: PaxEntry[]): number {
+    return paxList.reduce((s, p) => s + calcSinglePaxEffective(p), 0);
+  }
+
+  // 获取某套餐的共享项目（未设置共享版则返回套餐默认）
+  function getSharedItems(pkgCode: string): CustomPackageItem[] {
+    const shared = packageSharedEdits[pkgCode];
+    if (shared) return shared;
+    const pkgMap = (finalBizConfigForCalc?.packages || []).reduce((acc: any, r: any) => { acc[r.code] = r; return acc; }, {});
+    const row = pkgMap[pkgCode];
+    if (row && row.items && row.items.length > 0) {
+      return row.items.map((i: any) => ({
+        item_id: i.item_id,
+        item_name_snapshot: i.item_name_snapshot,
+        item_price: Number(i.item_price || 0),
+        quantity: Number(i.quantity || 1),
+        remark: (i as any).remark || '',
+        __temporary: false,
+      }));
+    }
+    // fallback: 套餐表没返回 items，用 resolvePaxItems 传入一个假的 pax 来兜底
+    const fake: PaxEntry = { name: '', idCard: '', phone: '', gender: '男', married: false, package: pkgCode as PackageCode };
+    return resolvePaxItems(fake, finalBizConfigForCalc);
+  }
+
+  // 判断套餐是否有独立于默认的共享修改
+  function hasSharedEdits(pkgCode: string): boolean {
+    return packageSharedEdits[pkgCode] !== undefined;
+  }
+
+  // ==== 套餐共享批量编辑操作 ====
+
+  // 套餐共享版：追加项目
+  function addSharedItem(pkgCode: string, ci: CheckupItemRow) {
+    const base = getSharedItems(pkgCode);
+    const next: CustomPackageItem[] = [
+      ...base,
+      {
+        item_id: ci.id,
+        item_name_snapshot: ci.name,
+        item_price: ci.default_price || 0,
+        quantity: 1,
+        remark: '',
+        __temporary: true,
+      },
+    ];
+    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
+  }
+
+  // 套餐共享版：移除项目
+  function removeSharedItem(pkgCode: string, itemIdx: number) {
+    const base = getSharedItems(pkgCode);
+    const next = base.filter((_, i) => i !== itemIdx);
+    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
+  }
+
+  // 套餐共享版：更新某个字段
+  function updateSharedItemField(pkgCode: string, itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) {
+    const base = [...getSharedItems(pkgCode)];
+    base[itemIdx] = { ...base[itemIdx], [field]: val };
+    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: base }));
+  }
+
+  // 套餐共享版：重置为套餐默认（清掉 sharedEdits 记录）
+  function resetSharedItems(pkgCode: string) {
+    setPackageSharedEdits(prev => {
+      const next = { ...prev };
+      delete next[pkgCode];
+      return next;
+    });
+  }
+
+  // 套餐汇总统计：按套餐分组
+  function getPaxGroups(paxList: PaxEntry[]): Record<string, PaxEntry[]> {
+    const groups: Record<string, PaxEntry[]> = {};
+    paxList.forEach(p => {
+      if (!groups[p.package]) groups[p.package] = [];
+      groups[p.package].push(p);
+    });
+    return groups;
+  }
+
+  // 判断某个 pax 是否已独立定制（customItems !== null && customItems !== undefined）
+  function isPaxCustomized(p: PaxEntry): boolean {
+    return p.customItems !== null && p.customItems !== undefined;
+  }
+
   function saveDrawer() {
     const itemType = drawer.itemType;
     if (!itemType) return;
@@ -903,16 +1322,17 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一名体检人员');
         return;
       }
-      // 第4期：为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
+      // 为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
+      // 使用 resolvePaxItemsEffective（合并了套餐共享批量编辑版）
       const paxList = paxListRaw.map(p => {
-        const finalItems = resolvePaxItems(p, finalBizConfigForCalc);
+        const finalItems = resolvePaxItemsEffective(p);
         return {
           ...p,
           finalItems,  // 最终体检项目快照（订完后不再依赖项目库/套餐）
-          finalAmount: calcSinglePaxAmount(p, finalBizConfigForCalc),
+          finalAmount: calcSinglePaxEffective(p),
         };
       });
-      const amount = calcCheckupAmount(paxListRaw, finalBizConfigForCalc);
+      const amount = calcCheckupEffective(paxListRaw);
       item = {
         id: keepId,
         itemType,
@@ -1788,118 +2208,189 @@ export default function BookingBoardCreate(props: {
                           <th className="px-2 py-2 text-left font-medium">性别</th>
                           <th className="px-2 py-2 text-center font-medium">婚否</th>
                           <th className="px-2 py-2 text-left font-medium">套餐</th>
+                          <th className="px-2 py-2 text-center font-medium w-36">项目状态</th>
                           <th className="px-2 py-2"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {chkPax.map((p, idx) => (
-                          <tr key={idx} className="border-t border-gray-100">
-                            <td className="px-1.5 py-1">
-                              <input
-                                value={p.name}
-                                onChange={(e) => updChkPax(idx, { name: e.target.value })}
-                                className={`${cellInput} w-20`}
-                              />
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <input
-                                value={p.idCard}
-                                onChange={(e) => updChkPax(idx, { idCard: e.target.value })}
-                                className={`${cellInput} w-36 font-mono`}
-                              />
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <input
-                                value={p.phone}
-                                onChange={(e) => updChkPax(idx, { phone: e.target.value })}
-                                className={`${cellInput} w-28 font-mono`}
-                              />
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <select
-                                value={p.gender}
-                                onChange={(e) =>
-                                  updChkPax(idx, { gender: e.target.value as '男' | '女' })
-                                }
-                                className={cellInput}
-                              >
-                                <option value="男">男</option>
-                                <option value="女">女</option>
-                              </select>
-                            </td>
-                            <td className="px-1.5 py-1 text-center">
-                              <input
-                                type="checkbox"
-                                checked={p.married}
-                                onChange={(e) => updChkPax(idx, { married: e.target.checked })}
-                                className="accent-green-500"
-                              />
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <select
-                                value={p.package}
-                                onChange={(e) =>
-                                  updChkPax(idx, { package: e.target.value as PackageCode })
-                                }
-                                className={cellInput}
-                              >
-                                {finalPkgOptions.map((pkg) => (
-                                  <option key={pkg.code} value={pkg.code}>
-                                    {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <button
-                                onClick={() => setChkPax((prev) => prev.filter((_, i) => i !== idx))}
-                                className="text-red-400 hover:text-red-600"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {chkPax.map((p, idx) => {
+                          const customized = isPaxCustomized(p);
+                          const pkgInfo = getPackageInfo(p.package);
+                          return (
+                            <tr key={idx} className="border-t border-gray-100">
+                              <td className="px-1.5 py-1">
+                                <input
+                                  value={p.name}
+                                  onChange={(e) => updChkPax(idx, { name: e.target.value })}
+                                  className={`${cellInput} w-20`}
+                                />
+                              </td>
+                              <td className="px-1.5 py-1">
+                                <input
+                                  value={p.idCard}
+                                  onChange={(e) => updChkPax(idx, { idCard: e.target.value })}
+                                  className={`${cellInput} w-36 font-mono`}
+                                />
+                              </td>
+                              <td className="px-1.5 py-1">
+                                <input
+                                  value={p.phone}
+                                  onChange={(e) => updChkPax(idx, { phone: e.target.value })}
+                                  className={`${cellInput} w-28 font-mono`}
+                                />
+                              </td>
+                              <td className="px-1.5 py-1">
+                                <select
+                                  value={p.gender}
+                                  onChange={(e) =>
+                                    updChkPax(idx, { gender: e.target.value as '男' | '女' })
+                                  }
+                                  className={cellInput}
+                                >
+                                  <option value="男">男</option>
+                                  <option value="女">女</option>
+                                </select>
+                              </td>
+                              <td className="px-1.5 py-1 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={p.married}
+                                  onChange={(e) => updChkPax(idx, { married: e.target.checked })}
+                                  className="accent-green-500"
+                                />
+                              </td>
+                              <td className="px-1.5 py-1">
+                                <select
+                                  value={p.package}
+                                  onChange={(e) => {
+                                    // 切换套餐时：若该人是"标准状态"，保持标准；若已定制，询问是否重置？
+                                    // 简化处理：切换套餐时自动清除 customItems（避免旧套餐的项目残留在新套餐里）
+                                    updChkPax(idx, { package: e.target.value as PackageCode, customItems: null });
+                                  }}
+                                  className={cellInput}
+                                >
+                                  {finalPkgOptions.map((pkg) => (
+                                    <option key={pkg.code} value={pkg.code}>
+                                      {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-1.5 py-1 text-center">
+                                {p.name.trim() ? (
+                                  <button
+                                    onClick={() => setEditingPaxIdx(idx)}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] transition-colors ${
+                                      customized
+                                        ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                                        : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
+                                    }`}
+                                  >
+                                    {customized ? (
+                                      <>
+                                        <span>✎</span>
+                                        <span>已定制</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="text-[10px]">●</span>
+                                        <span>标准</span>
+                                      </>
+                                    )}
+                                    <span className={`mx-0.5 ${customized ? 'text-amber-400' : 'text-green-400'}`}>|</span>
+                                    <span className="font-medium">编辑</span>
+                                    <span className="font-mono text-[10px] opacity-60 ml-0.5">
+                                      ¥{calcSinglePaxEffective(p).toLocaleString()}
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300 text-[11px]">—</span>
+                                )}
+                              </td>
+                              <td className="px-1.5 py-1">
+                                <button
+                                  onClick={() => setChkPax((prev) => prev.filter((_, i) => i !== idx))}
+                                  className="text-red-400 hover:text-red-600"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                   <div className="text-right text-sm text-green-600 font-mono">
-                    合计：¥{calcCheckupAmount(chkPax.filter((p) => p.name.trim()), finalBizConfigForCalc).toLocaleString()}
+                    合计：¥{calcCheckupEffective(chkPax.filter((p) => p.name.trim())).toLocaleString()}
                   </div>
-                  {/* 第4期：按人展示套餐项目明细，支持临时加减项目 */}
+                  {/* 套餐汇总层：按套餐分组展示共享项目，支持批量修改；单人定制通过上方「编辑」弹窗调整 */}
                   {(() => {
                     const validPax = chkPax.filter(p => p.name.trim());
                     if (validPax.length === 0) return null;
+                    const groups = getPaxGroups(validPax);
                     return (
-                      <div className="space-y-3">
+                      <div className="space-y-3 mt-2">
                         <div className="text-xs text-gray-500 font-medium flex items-center justify-between">
-                          <span>定制项目明细（支持套餐内移除 & 临时追加）</span>
+                          <span>📦 套餐项目汇总（批量修改同步到所有「● 标准」人员；「✎ 已定制」需点击人员行单独调整）</span>
+                          <span>共 {Object.keys(groups).length} 组 · {validPax.length} 人</span>
                         </div>
-                        {chkPax.map((pax, allIdx) => {
-                          if (!pax.name.trim()) return null;
-                          const items = resolvePaxItems(pax, finalBizConfigForCalc);
-                          const paxAmount = calcSinglePaxAmount(pax, finalBizConfigForCalc);
-                          const hasCustom = !!pax.customItems && pax.customItems.length !== 0;
-                          const pkgInfo = getPackageInfo(pax.package);
+                        {Object.entries(groups).map(([pkgCode, paxGroup]) => {
+                          const pkgInfo = getPackageInfo(pkgCode);
+                          const sharedItems = getSharedItems(pkgCode);
+                          const sharedEdited = hasSharedEdits(pkgCode);
                           return (
-                            <PaxItemsEditor
-                              key={`pax-item-edit-${allIdx}`}
-                              index={allIdx}
-                              pax={pax}
-                              paxAmount={paxAmount}
-                              items={items}
-                              hasCustom={hasCustom}
+                            <PackageGroupSummary
+                              key={pkgCode}
+                              pkgCode={pkgCode}
                               pkgName={pkgInfo.name}
-                              pkgCode={pax.package}
+                              pkgPrice={Number(pkgInfo.price || 0)}
+                              paxList={paxGroup}
+                              sharedItems={sharedItems}
+                              hasSharedEdits={sharedEdited}
+                              isCustomizedFn={isPaxCustomized}
                               checkupItemsLib={checkupItemsLib}
-                              onRemoveItem={(itemIdx) => removePaxItem(allIdx, itemIdx)}
-                              onUpdateItemField={(itemIdx, field, val) => updatePaxItemField(allIdx, itemIdx, field, val)}
-                              onReset={() => resetPaxItems(allIdx)}
-                              onAddItem={(ci) => addItemToPax(allIdx, ci)}
+                              singlePaxAmountFn={(items) =>
+                                items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0)
+                              }
+                              onAddItem={(ci) => addSharedItem(pkgCode, ci)}
+                              onRemoveItem={(ii) => removeSharedItem(pkgCode, ii)}
+                              onUpdateItemField={(ii, f, v) => updateSharedItemField(pkgCode, ii, f, v)}
+                              onReset={() => resetSharedItems(pkgCode)}
                             />
                           );
                         })}
                       </div>
+                    );
+                  })()}
+                  {/* 单人项目编辑弹窗 */}
+                  {editingPaxIdx !== null && chkPax[editingPaxIdx] && (() => {
+                    const pax = chkPax[editingPaxIdx];
+                    const items = resolvePaxItemsEffective(pax);
+                    const paxAmount = calcSinglePaxEffective(pax);
+                    const hasCustom = isPaxCustomized(pax);
+                    const pkgInfo = getPackageInfo(pax.package);
+                    // 同步套餐共享版：把此人的 customItems 设为 null（回归共享版本）
+                    const syncShared = () => {
+                      setChkPax(prev => prev.map((pp, i) => i === editingPaxIdx ? { ...pp, customItems: null } : pp));
+                    };
+                    return (
+                      <PaxItemsEditorModal
+                        pax={pax}
+                        paxAmount={paxAmount}
+                        items={items}
+                        hasCustom={hasCustom}
+                        pkgName={pkgInfo.name}
+                        pkgCode={pax.package}
+                        checkupItemsLib={checkupItemsLib}
+                        hasSharedEdits={hasSharedEdits(pax.package)}
+                        onRemoveItem={(itemIdx) => removePaxItem(editingPaxIdx, itemIdx)}
+                        onUpdateItemField={(itemIdx, field, val) => updatePaxItemField(editingPaxIdx, itemIdx, field, val)}
+                        onReset={() => resetPaxItems(editingPaxIdx)}
+                        onAddItem={(ci) => addItemToPax(editingPaxIdx, ci)}
+                        onSyncShared={syncShared}
+                        onClose={() => setEditingPaxIdx(null)}
+                      />
                     );
                   })()}
                 </div>
