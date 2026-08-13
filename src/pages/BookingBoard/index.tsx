@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2 } from 'lucide-react';
-import type { BookingOrder, BookingItem, BizType, OrderStatus } from './types';
+import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList } from 'lucide-react';
+import type { BookingOrder, BookingItem, BizType, OrderStatus, PaxEntry, CustomPackageItem } from './types';
 import {
   BUSINESS,
   BIZ_MAP,
@@ -8,7 +8,6 @@ import {
   LODGING_TYPES,
   MEETING_HALLS,
   WELLNESS_TYPES,
-  CHECKUP_PACKAGES,
   hexAlpha,
 } from './constants';
 import {
@@ -115,7 +114,23 @@ function rowMinHeight(cards: BoardCard[]): number {
 // 卡片摘要文本（用于跨天合并卡）
 function cardSummary(item: BookingItem, days: number): string {
   const parts: string[] = [];
-  if (item.itemType === 'lodging') {
+  if (item.itemType === 'checkup') {
+    // 第5期：优先使用 finalAmount 快照计算金额，避免依赖常量套餐定价
+    const paxList: PaxEntry[] = item.extra.paxList || [];
+    // 统计各套餐人数（仅用于概览标签，finalItems 才是权威数据）
+    const pkgCounts: Record<string, number> = {};
+    let snapTotal = 0;
+    let itemCount = 0;
+    paxList.forEach((p: any) => {
+      pkgCounts[p.package] = (pkgCounts[p.package] || 0) + 1;
+      if (typeof p.finalAmount === 'number') snapTotal += p.finalAmount;
+      if (Array.isArray(p.finalItems)) itemCount += p.finalItems.length;
+    });
+    parts.push(`${item.pax}人`);
+    if (itemCount > 0) parts.push(`${itemCount}项`);
+    const displayAmount = snapTotal > 0 ? snapTotal : (item.amount || 0);
+    if (displayAmount) parts.push(`¥${displayAmount.toLocaleString()}`);
+  } else if (item.itemType === 'lodging') {
     const lt = LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间', price: 0 };
     parts.push(lt.name, `${item.pax}间`);
     if (item.extra.nights) parts.push(`${item.extra.nights}晚`);
@@ -162,12 +177,25 @@ function itemDateRange(item: BookingItem): string {
 // 详情弹窗中显示的项目细节
 function itemDetail(item: BookingItem): string {
   if (item.itemType === 'checkup') {
-    const paxList = item.extra.paxList || [];
-    const counts: Record<string, number> = {};
-    paxList.forEach(p => { counts[p.package] = (counts[p.package] || 0) + 1; });
-    return Object.entries(counts)
-      .map(([k, v]) => `${(CHECKUP_PACKAGES as Record<string, { name: string }>)[k]?.name || k}×${v}`)
-      .join(', ');
+    // 第5期：优先基于 finalItems / finalAmount 快照展示，不再依赖 CHECKUP_PACKAGES 常量
+    const paxList: any[] = item.extra.paxList || [];
+    if (paxList.length === 0) return '—';
+    let snapTotal = 0;
+    let totalItems = 0;
+    let customCount = 0;
+    paxList.forEach(p => {
+      if (typeof p.finalAmount === 'number') snapTotal += p.finalAmount;
+      if (Array.isArray(p.finalItems)) {
+        totalItems += p.finalItems.length;
+        // 如果有 customItems 或 finalItems 与套餐不同，标记为"已定制"
+        if (p.customItems && p.customItems.length > 0) customCount++;
+      }
+    });
+    const parts: string[] = [`${paxList.length}人`];
+    if (totalItems > 0) parts.push(`${totalItems}项`);
+    if (customCount > 0) parts.push(`${customCount}人已定制`);
+    if (snapTotal > 0) parts.push(`人均¥${Math.round(snapTotal / paxList.length).toLocaleString()}`);
+    return parts.join(' · ');
   }
   if (item.itemType === 'lodging') return (LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间' }).name;
   if (item.itemType === 'lunch' || item.itemType === 'dinner') {
@@ -401,6 +429,16 @@ function DetailModal({
     (order.status === 'pending' || order.status === 'reviewing' || order.status === 'confirmed');
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
+  // 第5期：展开的体检项目明细行（item.id）
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  function toggleExpand(id: string) {
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   return (
     <div
@@ -512,26 +550,116 @@ function DetailModal({
                 <tbody>
                   {order.items.map(it => {
                     const biz = BIZ_MAP[it.itemType];
+                    const isCheckup = it.itemType === 'checkup';
+                    const paxList: any[] = it.extra.paxList || [];
+                    const hasFinalItems = isCheckup && paxList.some((p: any) => Array.isArray(p.finalItems) && p.finalItems.length > 0);
+                    const expanded = expandedItems.has(it.id);
+                    // 计算快照合计金额（用于对比 item.amount 是否一致）
+                    let snapTotal = 0;
+                    paxList.forEach((p: any) => { if (typeof p.finalAmount === 'number') snapTotal += p.finalAmount; });
+                    const displayAmount = snapTotal > 0 ? snapTotal : (it.amount || 0);
                     return (
-                      <tr key={it.id} className="border-t border-gray-200">
-                        <td className="px-2 py-1.5 whitespace-nowrap">
-                          <span style={{ color: biz.color }}>{biz.icon}</span>{' '}
-                          <span className="text-gray-700">{biz.label}</span>
-                        </td>
-                        <td className="px-2 py-1.5 font-mono text-gray-600">{itemDateRange(it)}</td>
-                        <td className="px-2 py-1.5 font-mono text-gray-600">
-                          {it.startTime}
-                          {it.endTime ? `-${it.endTime}` : ''}
-                        </td>
-                        <td className="px-2 py-1.5 text-right text-gray-700">
-                          {it.pax}
-                          {biz.unit}
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-mono text-gray-700">
-                          {it.amount ? `¥${it.amount.toLocaleString()}` : '-'}
-                        </td>
-                        <td className="px-2 py-1.5 text-gray-500">{itemDetail(it) || '-'}</td>
-                      </tr>
+                      <>
+                        <tr key={it.id} className={`border-t border-gray-200 ${isCheckup ? 'cursor-pointer hover:bg-gray-50/60' : ''}`}
+                            onClick={() => isCheckup && hasFinalItems && toggleExpand(it.id)}>
+                          <td className="px-2 py-1.5 whitespace-nowrap">
+                            <span style={{ color: biz.color }}>{biz.icon}</span>{' '}
+                            <span className="text-gray-700">{biz.label}</span>
+                            {isCheckup && hasFinalItems && (
+                              <ChevronDown
+                                size={12}
+                                className={`inline-block ml-1 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                              />
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono text-gray-600">{itemDateRange(it)}</td>
+                          <td className="px-2 py-1.5 font-mono text-gray-600">
+                            {it.startTime}
+                            {it.endTime ? `-${it.endTime}` : ''}
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-gray-700">
+                            {it.pax}
+                            {biz.unit}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono text-gray-700">
+                            {displayAmount ? `¥${displayAmount.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="px-2 py-1.5 text-gray-500">{itemDetail(it) || '-'}</td>
+                        </tr>
+                        {/* 第5期：展开 finalItems 明细（按人分组显示项目快照） */}
+                        {isCheckup && hasFinalItems && expanded && (
+                          <tr key={`${it.id}_detail`} className="bg-sky-50/40 border-t-0">
+                            <td colSpan={6} className="px-3 py-2">
+                              <div className="space-y-2">
+                                {paxList.map((p: any, pIdx: number) => {
+                                  const items: CustomPackageItem[] = Array.isArray(p.finalItems) ? p.finalItems : [];
+                                  const paxTotal = typeof p.finalAmount === 'number'
+                                    ? p.finalAmount
+                                    : items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+                                  const isCustom = (p.customItems && p.customItems.length > 0);
+                                  if (items.length === 0) return null;
+                                  return (
+                                    <div key={pIdx} className="border border-sky-100 rounded overflow-hidden bg-white">
+                                      <div className="bg-sky-50 px-3 py-1.5 text-[11px] flex items-center justify-between">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <Users size={11} className="text-sky-600 flex-shrink-0" />
+                                          <span className="font-medium text-gray-800 truncate">{p.name || `体检人${pIdx + 1}`}</span>
+                                          <span className="text-gray-400">·</span>
+                                          <span className={`truncate ${isCustom ? 'text-amber-600' : 'text-gray-500'}`}>
+                                            套餐{p.package || '-'}
+                                            {isCustom && ' ✎已定制'}
+                                          </span>
+                                        </div>
+                                        <span className="font-mono font-semibold text-green-600 flex-shrink-0 ml-2">
+                                          ¥{paxTotal.toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div className="overflow-x-auto">
+                                        <table className="w-full text-[11px]">
+                                          <thead className="text-gray-500 bg-sky-50/30 border-b border-sky-100">
+                                            <tr>
+                                              <th className="px-2 py-1 text-left font-medium w-6">#</th>
+                                              <th className="px-2 py-1 text-left font-medium">项目</th>
+                                              <th className="px-2 py-1 text-left font-medium w-24">备注</th>
+                                              <th className="px-2 py-1 text-right font-medium w-16">单价</th>
+                                              <th className="px-2 py-1 text-center font-medium w-12">数量</th>
+                                              <th className="px-2 py-1 text-right font-medium w-16">小计</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {items.map((itm, iIdx) => {
+                                              const subtotal = Number(itm.item_price || 0) * Number(itm.quantity || 1);
+                                              return (
+                                                <tr key={iIdx} className="border-t border-sky-50">
+                                                  <td className="px-2 py-1 text-gray-400 font-mono">{iIdx + 1}</td>
+                                                  <td className="px-2 py-1 text-gray-700">
+                                                    {(itm as any).__temporary && (
+                                                      <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>
+                                                    )}
+                                                    {itm.item_name_snapshot}
+                                                  </td>
+                                                  <td className="px-2 py-1 text-gray-500">{itm.remark || '-'}</td>
+                                                  <td className="px-2 py-1 text-right font-mono text-gray-600">
+                                                    ¥{Number(itm.item_price || 0).toLocaleString()}
+                                                  </td>
+                                                  <td className="px-2 py-1 text-center text-gray-600">{itm.quantity || 1}</td>
+                                                  <td className="px-2 py-1 text-right font-mono text-gray-700">
+                                                    ¥{subtotal.toLocaleString()}
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     );
                   })}
                 </tbody>

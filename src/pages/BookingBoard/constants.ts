@@ -34,7 +34,11 @@ export const STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg:
   completed: { label: '已完成', color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
 };
 
-// 体检套餐
+/**
+ * @deprecated 第5期起废弃静态套餐常量。仅作为后端数据库未初始化（尚未执行迁移）时的兜底保底。
+ * 新增/修改套餐统一通过：业务配置弹窗 → 体检套餐 Tab，数据来源于 booking_packages + booking_package_items 表。
+ * 历史订单详情展示也不再依赖该常量，直接使用订单提交时嵌入 extra.paxList[].finalItems 的快照数据。
+ */
 export const CHECKUP_PACKAGES: Record<PackageCode, { name: string; price: number }> = {
   A: { name: '基础体检套餐', price: 588 },
   B: { name: '综合体检套餐', price: 1288 },
@@ -103,4 +107,5 @@ export const MANUAL_BIZ_TYPES = BUSINESS.filter(b => !b.derived);
 export const LODGING_NAME_MAP = Object.entries(LODGING_TYPES).reduce((acc, [code, v]) => { acc[v.name] = code as LodgingType; return acc; }, {} as Record<string, LodgingType>);
 export const HALL_NAME_MAP = Object.entries(MEETING_HALLS).reduce((acc, [code, v]) => { acc[v.name] = code as MeetingHall; return acc; }, {} as Record<string, MeetingHall>);
 export const WELLNESS_NAME_MAP = Object.entries(WELLNESS_TYPES).reduce((acc, [code, v]) => { acc[v.name] = code as WellnessType; return acc; }, {} as Record<string, WellnessType>);
+/** @deprecated 依赖于废弃的 CHECKUP_PACKAGES，仅后端无数据时兜底使用，解析时请优先用 pkgNameToCode（动态配置） */
 export const PACKAGE_NAME_MAP = Object.entries(CHECKUP_PACKAGES).reduce((acc, [code, v]) => { acc[v.name] = code as PackageCode; return acc; }, {} as Record<string, PackageCode>);

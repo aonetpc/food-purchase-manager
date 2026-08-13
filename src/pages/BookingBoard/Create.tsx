@@ -109,8 +109,30 @@ function genMealSessions(
   }));
 }
 
-// 复制为新单：清日期、保配置、重算金额
-// 复制订单项目（日期统一偏移 +7 天到下周，保留所有业务配置和明细信息，不强制清空）
+// 第5期：从 finalItems 快照恢复 customItems（编辑/复制场景使用）
+// 订单项存储时使用 finalItems 快照，编辑时需要转为 customItems 才能进入"已定制"态继续修改
+function restoreCustomItemsFromSnapshot<T extends { package: string; customItems?: any; finalItems?: any }>(
+  paxList: T[],
+): T[] {
+  return (paxList || []).map((p) => {
+    // 如果已经有 customItems，直接保留
+    if (p.customItems && p.customItems.length > 0) return p;
+    // 没有 customItems 但有 finalItems 快照 → 恢复为 customItems（可继续编辑）
+    if (p.finalItems && p.finalItems.length > 0) {
+      return {
+        ...p,
+        customItems: p.finalItems.map((it: any) => {
+          // 去除 __temporary 标记：这些已在快照中，视为已正式保存的项目
+          const { __temporary, ...rest } = it || {};
+          return rest;
+        }),
+      };
+    }
+    return p;
+  });
+}
+
+// 复制为新单：日期偏移 +7 天，保留所有业务配置和明细信息
 function copyItemsForCopy(src: BookingOrder): BookingItem[] {
   const OFFSET = 7; // 向后偏移一周
   return src.items.map((it) => {
@@ -120,8 +142,8 @@ function copyItemsForCopy(src: BookingOrder): BookingItem[] {
     let amount = 0;
 
     if (it.itemType === 'checkup') {
-      // 体检：保留 paxList，重新按当前套餐单价计算金额
-      extra.paxList = (extra.paxList || []).map((p: any) => ({ ...p }));
+      // 体检：保留 paxList，并从 finalItems 快照恢复 customItems（让复制后的订单可继续编辑定制项）
+      extra.paxList = restoreCustomItemsFromSnapshot((extra.paxList || []).map((p: any) => ({ ...p })));
       extra.packageTotal = calcCheckupAmount(extra.paxList || []);
       amount = extra.packageTotal;
     } else if (it.itemType === 'lodging') {
@@ -447,7 +469,21 @@ export default function BookingBoardCreate(props: {
   // 订单草稿（客户信息 + 业务项目）
   const [draftGroup, setDraftGroup] = useState<BookingOrder>(() => {
     if (editOrder) {
-      return JSON.parse(JSON.stringify(editOrder)) as BookingOrder;
+      const cloned = JSON.parse(JSON.stringify(editOrder)) as BookingOrder;
+      // 第5期：编辑模式初始化时，从 finalItems 快照恢复每个体检项的 customItems
+      cloned.items = cloned.items.map((it) => {
+        if (it.itemType === 'checkup' && it.extra?.paxList) {
+          return {
+            ...it,
+            extra: {
+              ...it.extra,
+              paxList: restoreCustomItemsFromSnapshot(it.extra.paxList as any[]),
+            },
+          };
+        }
+        return it;
+      });
+      return cloned;
     }
     if (copySource) {
       return {
@@ -768,7 +804,8 @@ export default function BookingBoardCreate(props: {
     if (item.itemType === 'checkup') {
       setChkDate(item.date || todayStr());
       setChkTime(item.startTime || '08:00');
-      setChkPax((item.extra.paxList || []).map((p) => ({ ...p })));
+      // 第5期：编辑时从 finalItems 快照恢复 customItems，确保定制内容可继续编辑
+      setChkPax(restoreCustomItemsFromSnapshot((item.extra.paxList || []).map((p) => ({ ...p }))));
     } else if (item.itemType === 'lodging') {
       setLgIn(item.extra.dateCheckIn || todayStr());
       setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
