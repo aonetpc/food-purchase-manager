@@ -365,6 +365,7 @@ export const bookingApi = {
       roomTypes: (res.data?.roomTypes || []).map(fromBackend),
       meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
       wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
+      checkupItems: (res.data?.checkupItems || []).map(fromBackend),
       salesUsers: (res.data?.salesUsers || []).map(fromBackend),
     };
   },

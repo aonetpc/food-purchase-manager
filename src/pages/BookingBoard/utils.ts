@@ -1,4 +1,4 @@
-import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow } from './types';
+import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem } from './types';
 import { BIZ_MAP } from './constants';
 
 // 为兼容旧调用保留硬编码兜底常量（仅后端无数据时使用）
@@ -86,21 +86,53 @@ function buildMap<T extends { code: string }>(rows?: T[]): Record<string, T> {
   return (rows || []).reduce((acc, r) => { acc[r.code] = r; return acc; }, {} as Record<string, T>);
 }
 
-export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput): number {
+// 获取一个 pax 的最终体检项目列表（考虑 customItems 定制）
+export function resolvePaxItems(p: PaxEntry, config?: BizConfigInput): CustomPackageItem[] {
+  // 有定制则直接用定制
+  if (p.customItems && p.customItems.length > 0) {
+    return p.customItems;
+  }
   const pkgMap = buildMap(config?.packages);
-  return paxList.reduce((sum, p) => {
-    const row = pkgMap[p.package];
-    if (row) {
-      // 如果显式设置了 price，使用 price；否则用 items 的 auto_total
-      const explicitPrice = Number(row.price);
-      if (explicitPrice > 0) return sum + explicitPrice;
-      const autoTotal = (row.items || []).reduce((s: number, i: any) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
-      if (autoTotal > 0) return sum + autoTotal;
-      return sum;
-    }
-    const fb = FALLBACK_PACKAGES[p.package];
-    return sum + (fb?.price || 0);
-  }, 0);
+  const row = pkgMap[p.package];
+  if (row && row.items && row.items.length > 0) {
+    return row.items.map(i => ({
+      item_id: i.item_id,
+      item_name_snapshot: i.item_name_snapshot,
+      item_price: Number(i.item_price || 0),
+      quantity: Number(i.quantity || 1),
+      remark: (i as any).remark || '',
+      __temporary: false,
+    }));
+  }
+  // 兜底：找不到套餐，显示为一个占位项目
+  return [{
+    item_id: '',
+    item_name_snapshot: `套餐 ${p.package}`,
+    item_price: FALLBACK_PACKAGES[p.package]?.price || 0,
+    quantity: 1,
+    __temporary: false,
+  }];
+}
+
+// 计算单人最终金额（按 customItems 优先，否则按套餐定价）
+export function calcSinglePaxAmount(p: PaxEntry, config?: BizConfigInput): number {
+  if (p.customItems && p.customItems.length > 0) {
+    return p.customItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+  }
+  const pkgMap = buildMap(config?.packages);
+  const row = pkgMap[p.package];
+  if (row) {
+    const explicitPrice = Number(row.price);
+    if (explicitPrice > 0) return explicitPrice;
+    const autoTotal = (row.items || []).reduce((s: number, i: any) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+    if (autoTotal > 0) return autoTotal;
+  }
+  const fb = FALLBACK_PACKAGES[p.package];
+  return fb?.price || 0;
+}
+
+export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput): number {
+  return paxList.reduce((sum, p) => sum + calcSinglePaxAmount(p, config), 0);
 }
 
 export function calcLodgingAmount(lodgingType: string, rooms: number, nights: number, config?: BizConfigInput): number {

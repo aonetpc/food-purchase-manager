@@ -14,6 +14,9 @@ import {
   CheckCircle,
   ClipboardList,
   ChevronDown,
+  RefreshCw,
+  Edit3,
+  Search,
 } from 'lucide-react';
 import type {
   BookingOrder,
@@ -47,6 +50,8 @@ import {
   genItemId,
   genOrderNo,
   calcCheckupAmount,
+  calcSinglePaxAmount,
+  resolvePaxItems,
   calcLodgingAmount,
   calcMeetingAmount,
   calcWellnessAmount,
@@ -56,7 +61,7 @@ import {
   groupTotal,
 } from './utils';
 import { bookingApi, type BookingSalesUser, type BookingConfig } from '../../lib/api';
-import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow } from './types';
+import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, CheckupItemRow } from './types';
 
 // ================================================
 // 样式常量
@@ -261,6 +266,169 @@ interface ImportResult {
   warnings: string[];
 }
 
+// ============================================================
+// 第4期：单人定制项目编辑器子组件（可安全使用 useState）
+// ============================================================
+function PaxItemsEditor(props: {
+  index: number;
+  pax: PaxEntry;
+  paxAmount: number;
+  items: CustomPackageItem[];
+  hasCustom: boolean;
+  pkgName: string;
+  pkgCode: string;
+  checkupItemsLib: CheckupItemRow[];
+  onRemoveItem: (itemIdx: number) => void;
+  onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
+  onReset: () => void;
+  onAddItem: (ci: CheckupItemRow) => void;
+}) {
+  const { index, pax, paxAmount, items, hasCustom, pkgName, pkgCode, checkupItemsLib, onRemoveItem, onUpdateItemField, onReset, onAddItem } = props;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFilter, setPickerFilter] = useState('');
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-gray-50 px-3 py-2 text-xs flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-medium text-gray-800 truncate">{pax.name}</span>
+          <span className="text-gray-400">·</span>
+          <span className={`truncate ${hasCustom ? 'text-amber-600' : 'text-gray-500'}`}>
+            {pkgName} ({pkgCode})
+            {hasCustom && ' ✎已定制'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {hasCustom && (
+            <button
+              onClick={onReset}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-white hover:bg-gray-100 text-gray-500 border border-gray-200"
+            >
+              <RefreshCw size={10}/> 重置
+            </button>
+          )}
+          <span className="font-mono text-green-600 font-semibold">¥{paxAmount.toLocaleString()}</span>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-gray-500 border-b border-gray-100 bg-gray-50/50">
+            <tr>
+              <th className="px-2 py-1.5 text-left font-medium">项目</th>
+              <th className="px-2 py-1.5 text-left font-medium w-20">备注</th>
+              <th className="px-2 py-1.5 text-right font-medium w-16">单价</th>
+              <th className="px-2 py-1.5 text-center font-medium w-12">数量</th>
+              <th className="px-2 py-1.5 text-right font-medium w-16">小计</th>
+              <th className="px-2 py-1.5 text-center font-medium w-16">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, iIdx) => {
+              const subtotal = Number(it.item_price || 0) * Number(it.quantity || 1);
+              return (
+                <tr key={iIdx} className={`border-t border-gray-100 ${it.__temporary ? 'bg-cyan-50/40' : ''}`}>
+                  <td className="px-2 py-1.5 text-gray-700">
+                    {it.__temporary && <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>}
+                    {it.item_name_snapshot}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input
+                      value={it.remark || ''}
+                      onChange={e => onUpdateItemField(iIdx, 'remark', e.target.value)}
+                      className={`w-full px-1.5 py-0.5 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                      placeholder="如空腹"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <input
+                      type="number"
+                      value={it.item_price}
+                      onChange={e => onUpdateItemField(iIdx, 'item_price', Number(e.target.value) || 0)}
+                      className={`w-20 px-1 py-0.5 text-[11px] border border-gray-200 rounded font-mono text-right focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-center">
+                    <input
+                      type="number"
+                      min="1"
+                      value={it.quantity}
+                      onChange={e => onUpdateItemField(iIdx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
+                      className={`w-12 px-1 py-0.5 text-[11px] border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-gray-700">¥{subtotal.toLocaleString()}</td>
+                  <td className="px-2 py-1.5 text-center">
+                    <button
+                      onClick={() => onRemoveItem(iIdx)}
+                      className="text-red-400 hover:text-red-600 inline-flex items-center gap-0.5"
+                      title="移除"
+                    >
+                      <Trash2 size={12}/>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-3 text-center text-xs text-gray-400">
+                  当前无项目，请从下方「追加项目」按钮选择
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-gray-100 bg-gray-50/30 px-3 py-2">
+        <div className="relative inline-block">
+          <button
+            onClick={() => { setPickerOpen(!pickerOpen); setPickerFilter(''); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
+          >
+            <Plus size={11}/> 追加项目
+            <ChevronDown size={11} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
+          </button>
+          {pickerOpen && (
+            <div className="absolute top-full left-0 mt-1 w-[280px] max-h-80 overflow-hidden bg-white border border-gray-200 rounded-lg shadow-xl z-30 flex flex-col">
+              <div className="p-2 border-b border-gray-100">
+                <div className="relative">
+                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
+                  <input
+                    value={pickerFilter}
+                    onChange={e => setPickerFilter(e.target.value)}
+                    placeholder="搜索体检项目..."
+                    className="w-full pl-7 pr-2 py-1 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="overflow-y-auto flex-1">
+                {checkupItemsLib
+                  .filter(ci => !pickerFilter || ci.name.includes(pickerFilter))
+                  .map(ci => (
+                    <button
+                      key={ci.id}
+                      onClick={() => { onAddItem(ci); setPickerOpen(false); }}
+                      className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-green-50 transition-colors"
+                    >
+                      <span className="text-gray-800">{ci.name}</span>
+                      <span className="text-gray-400 font-mono">¥{Number(ci.default_price || 0).toLocaleString()}</span>
+                    </button>
+                  ))}
+                {checkupItemsLib.length === 0 && (
+                  <div className="px-3 py-4 text-center text-[11px] text-gray-400">
+                    项目库暂无数据
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ================================================
 // 主组件
 // ================================================
@@ -355,12 +523,14 @@ export default function BookingBoardCreate(props: {
   // 销售员列表（从后端拉取，仅含 sales 角色的用户）
   const [salesUsers, setSalesUsers] = useState<BookingSalesUser[]>([]);
   const [salesPickerOpen, setSalesPickerOpen] = useState(false);
-  // 4 类业务动态配置（含启用的套餐/房型/会议厅/康乐）
+  // 4 类业务动态配置（含启用的套餐/房型/会议厅/康乐 + 体检项目库）
   const [bizConfig, setBizConfig] = useState<BookingConfig>({
-    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], salesUsers: [],
+    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], checkupItems: [], salesUsers: [],
   });
+  // 体检项目库（供「追加项目」选择器使用）
+  const [checkupItemsLib, setCheckupItemsLib] = useState<CheckupItemRow[]>([]);
 
-  // 拉取配置（一次）：销售员 + 业务常量
+  // 拉取配置（一次）：销售员 + 业务常量 + 体检项目库
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -368,11 +538,13 @@ export default function BookingBoardCreate(props: {
         const cfg = await bookingApi.getConfig();
         if (!mounted) return;
         setSalesUsers(Array.isArray(cfg.salesUsers) ? cfg.salesUsers : []);
+        setCheckupItemsLib(Array.isArray(cfg.checkupItems) ? cfg.checkupItems.filter(c => c.status === 1) : []);
         setBizConfig({
           packages: Array.isArray(cfg.packages) ? cfg.packages : [],
           roomTypes: Array.isArray(cfg.roomTypes) ? cfg.roomTypes : [],
           meetingHalls: Array.isArray(cfg.meetingHalls) ? cfg.meetingHalls : [],
           wellnessTypes: Array.isArray(cfg.wellnessTypes) ? cfg.wellnessTypes : [],
+          checkupItems: Array.isArray(cfg.checkupItems) ? cfg.checkupItems : [],
           salesUsers: cfg.salesUsers || [],
         });
       } catch (e) {
@@ -622,7 +794,61 @@ export default function BookingBoardCreate(props: {
   }
 
   function updChkPax(idx: number, patch: Partial<PaxEntry>) {
-    setChkPax((prev) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+    setChkPax((prev) => prev.map((p, i) => {
+      if (i !== idx) return p;
+      const next = { ...p, ...patch };
+      // 套餐变更时重置 customItems
+      if (patch.package && patch.package !== p.package) {
+        next.customItems = null;
+      }
+      return next;
+    }));
+  }
+
+  // 定制：移除单项
+  function removePaxItem(idx: number, itemIdx: number) {
+    setChkPax((prev) => prev.map((p, i) => {
+      if (i !== idx) return p;
+      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const next = base.filter((_, j) => j !== itemIdx);
+      return { ...p, customItems: next };
+    }));
+  }
+
+  // 定制：重置为套餐原始项目
+  function resetPaxItems(idx: number) {
+    setChkPax((prev) => prev.map((p, i) => (i === idx ? { ...p, customItems: null } : p)));
+  }
+
+  // 定制：从项目库追加项目
+  function addItemToPax(idx: number, ci: CheckupItemRow) {
+    setChkPax((prev) => prev.map((p, i) => {
+      if (i !== idx) return p;
+      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const next: CustomPackageItem[] = [
+        ...base,
+        {
+          item_id: ci.id,
+          item_name_snapshot: ci.name,
+          item_price: ci.default_price || 0,
+          quantity: 1,
+          remark: '',
+          __temporary: true,
+        },
+      ];
+      return { ...p, customItems: next };
+    }));
+  }
+
+  // 定制：更新某项单价/数量/备注
+  function updatePaxItemField(idx: number, itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) {
+    setChkPax((prev) => prev.map((p, i) => {
+      if (i !== idx) return p;
+      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const next = [...base];
+      next[itemIdx] = { ...next[itemIdx], [field]: val };
+      return { ...p, customItems: next };
+    }));
   }
 
   function saveDrawer() {
@@ -635,12 +861,21 @@ export default function BookingBoardCreate(props: {
         : genItemId();
 
     if (itemType === 'checkup') {
-      const paxList = chkPax.filter((p) => p.name.trim());
-      if (paxList.length === 0) {
+      const paxListRaw = chkPax.filter((p) => p.name.trim());
+      if (paxListRaw.length === 0) {
         setErr('请至少添加一名体检人员');
         return;
       }
-      const amount = calcCheckupAmount(paxList, finalBizConfigForCalc);
+      // 第4期：为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
+      const paxList = paxListRaw.map(p => {
+        const finalItems = resolvePaxItems(p, finalBizConfigForCalc);
+        return {
+          ...p,
+          finalItems,  // 最终体检项目快照（订完后不再依赖项目库/套餐）
+          finalAmount: calcSinglePaxAmount(p, finalBizConfigForCalc),
+        };
+      });
+      const amount = calcCheckupAmount(paxListRaw, finalBizConfigForCalc);
       item = {
         id: keepId,
         itemType,
@@ -842,13 +1077,18 @@ export default function BookingBoardCreate(props: {
           if (paxList.length) {
             const date = todayStr();
             const pkgTotal = calcCheckupAmount(paxList, finalBizConfigForCalc);
+            const paxListWithSnap = paxList.map(p => ({
+              ...p,
+              finalItems: resolvePaxItems(p, finalBizConfigForCalc),
+              finalAmount: calcSinglePaxAmount(p, finalBizConfigForCalc),
+            }));
             newItems.push({
               id: genItemId(),
               itemType: 'checkup',
               date,
               startTime: '08:00',
-              pax: paxList.length,
-              extra: { paxList, packageTotal: pkgTotal },
+              pax: paxListWithSnap.length,
+              extra: { paxList: paxListWithSnap, packageTotal: pkgTotal },
               amount: pkgTotal,
             });
           }
@@ -1589,49 +1829,41 @@ export default function BookingBoardCreate(props: {
                   <div className="text-right text-sm text-green-600 font-mono">
                     合计：¥{calcCheckupAmount(chkPax.filter((p) => p.name.trim()), finalBizConfigForCalc).toLocaleString()}
                   </div>
-                  {/* 套餐项目明细展示 */}
+                  {/* 第4期：按人展示套餐项目明细，支持临时加减项目 */}
                   {(() => {
-                    const selectedCodes = [...new Set(chkPax.filter(p => p.name.trim()).map(p => p.package))];
-                    const rows = selectedCodes.map(code => {
-                      const info = getPackageInfo(code);
-                      if (!info.items || info.items.length === 0) return null;
-                      return (
-                        <div key={code} className="border border-gray-200 rounded-lg overflow-hidden">
-                          <div className="bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 flex items-center justify-between">
-                            <span>{info.name} ({code})</span>
-                            <span className="text-green-600 font-mono">
-                              ¥{(info.autoTotal ?? info.price).toLocaleString()}
-                            </span>
-                          </div>
-                          <table className="w-full text-xs">
-                            <thead className="text-gray-500 border-b border-gray-100">
-                              <tr>
-                                <th className="px-3 py-1 text-left">项目</th>
-                                <th className="px-3 py-1 text-right w-20">单价</th>
-                                <th className="px-3 py-1 text-center w-12">数量</th>
-                                <th className="px-3 py-1 text-right w-20">小计</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {info.items.map((item: any, i: number) => (
-                                <tr key={i} className="border-t border-gray-50">
-                                  <td className="px-3 py-1 text-gray-700">{item.item_name_snapshot}</td>
-                                  <td className="px-3 py-1 text-right font-mono">¥{Number(item.item_price || 0).toLocaleString()}</td>
-                                  <td className="px-3 py-1 text-center">{item.quantity || 1}</td>
-                                  <td className="px-3 py-1 text-right font-mono">¥{(Number(item.item_price || 0) * Number(item.quantity || 1)).toLocaleString()}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                    const validPax = chkPax.filter(p => p.name.trim());
+                    if (validPax.length === 0) return null;
+                    return (
+                      <div className="space-y-3">
+                        <div className="text-xs text-gray-500 font-medium flex items-center justify-between">
+                          <span>定制项目明细（支持套餐内移除 & 临时追加）</span>
                         </div>
-                      );
-                    }).filter(Boolean);
-                    return rows.length > 0 ? (
-                      <div className="space-y-2">
-                        <div className="text-xs text-gray-500 font-medium">套餐项目明细</div>
-                        {rows}
+                        {chkPax.map((pax, allIdx) => {
+                          if (!pax.name.trim()) return null;
+                          const items = resolvePaxItems(pax, finalBizConfigForCalc);
+                          const paxAmount = calcSinglePaxAmount(pax, finalBizConfigForCalc);
+                          const hasCustom = !!pax.customItems && pax.customItems.length !== 0;
+                          const pkgInfo = getPackageInfo(pax.package);
+                          return (
+                            <PaxItemsEditor
+                              key={`pax-item-edit-${allIdx}`}
+                              index={allIdx}
+                              pax={pax}
+                              paxAmount={paxAmount}
+                              items={items}
+                              hasCustom={hasCustom}
+                              pkgName={pkgInfo.name}
+                              pkgCode={pax.package}
+                              checkupItemsLib={checkupItemsLib}
+                              onRemoveItem={(itemIdx) => removePaxItem(allIdx, itemIdx)}
+                              onUpdateItemField={(itemIdx, field, val) => updatePaxItemField(allIdx, itemIdx, field, val)}
+                              onReset={() => resetPaxItems(allIdx)}
+                              onAddItem={(ci) => addItemToPax(allIdx, ci)}
+                            />
+                          );
+                        })}
                       </div>
-                    ) : null;
+                    );
                   })()}
                 </div>
               ) : drawer.itemType === 'lodging' ? (

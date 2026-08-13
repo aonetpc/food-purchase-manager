@@ -122,6 +122,16 @@ export interface ItemExtra {
   source?: { checkup?: number; lodging?: number };
 }
 
+// 临时定制的体检项目项（在套餐基础上加减项目时使用）
+export interface CustomPackageItem {
+  item_id: string;          // 体检项目库ID（空=临时新增，未入项目库）
+  item_name_snapshot: string; // 名称快照
+  item_price: number;       // 单价
+  quantity: number;         // 数量（默认1）
+  remark?: string;          // 备注
+  __temporary?: boolean;    // 是否为临时追加（不在原套餐中的标记，用于UI区分）
+}
+
 export interface PaxEntry {
   name: string;
   idCard: string;
@@ -129,6 +139,10 @@ export interface PaxEntry {
   gender: '男' | '女';
   married: boolean;
   package: PackageCode;
+  // 第4期新增：临时定制项目（在套餐基础上的修改）。
+  //   - undefined/null = 完全使用套餐原始项目
+  //   - 有值 = 使用该数组作为最终体检项目列表（已包含加减后的结果）
+  customItems?: CustomPackageItem[] | null;
 }
 
 export interface MealSession {
