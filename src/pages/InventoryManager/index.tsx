@@ -6,9 +6,6 @@ import { formatCurrency } from '@/utils/format';
 import StockTakePanel from './StockTakePanel';
 
 const MANAGER_ROLES = ['admin', 'finance', 'boss'];
-// 采购员角色：后端赋予全仓库可见权限（用于新建采购单选仓库），
-// 但库存查询页面不需要按仓库筛选，隐藏仓库下拉框
-const PURCHASER_ROLE = 'purchaser';
 
 // 仓库汇总信息
 interface WarehouseSummary {
@@ -36,7 +33,6 @@ interface InventoryItem {
 export default function InventoryManager() {
   const { user } = useAuthStore();
   const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
-  const isPurchaser = user?.role === PURCHASER_ROLE;
   const [activeTab, setActiveTab] = useState<'inventory' | 'stock-take' | 'annual-take' | 'trend'>('inventory');
   const [summary, setSummary] = useState<WarehouseSummary[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -121,7 +117,7 @@ export default function InventoryManager() {
         <div>
           <h1 className="text-2xl font-serif font-bold text-gray-800">库存管理</h1>
           <p className="text-gray-500 mt-1">
-            {isPurchaser ? '查看物资库存及预警情况' : isManager ? '查看各仓库物资库存及预警情况' : '查看本部门仓库及总仓物资库存'}
+            {isManager ? '查看各仓库物资库存及预警情况' : '查看本部门仓库及总仓物资库存'}
           </p>
         </div>
         <button onClick={handleRefresh} className="btn-secondary flex items-center gap-2">
@@ -222,8 +218,8 @@ export default function InventoryManager() {
           </div>
         </div>
 
-        {/* 各仓库汇总（采购员隐藏） */}
-        {!isPurchaser && summary.map((w) => (
+        {/* 各仓库汇总 */}
+        {summary.map((w) => (
           <div key={w.warehouse_id} className="stat-card">
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -255,24 +251,22 @@ export default function InventoryManager() {
       {/* 筛选栏 */}
       <div className="card">
         <div className="flex flex-col md:flex-row md:items-center gap-3">
-          {/* 仓库下拉（采购员隐藏，不需要按仓库筛选） */}
-          {!isPurchaser && (
-            <div className="flex items-center gap-2">
-              <Package size={18} className="text-gray-400 shrink-0" />
-              <select
-                value={warehouseId}
-                onChange={(e) => setWarehouseId(e.target.value)}
-                className="input-field md:w-48"
-              >
-                <option value="">全部仓库</option>
-                {summary.map((w) => (
-                  <option key={w.warehouse_id} value={w.warehouse_id}>
-                    {w.warehouse_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* 仓库下拉 */}
+          <div className="flex items-center gap-2">
+            <Package size={18} className="text-gray-400 shrink-0" />
+            <select
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              className="input-field md:w-48"
+            >
+              <option value="">全部仓库</option>
+              {summary.map((w) => (
+                <option key={w.warehouse_id} value={w.warehouse_id}>
+                  {w.warehouse_name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* 关键词搜索 */}
           <div className="relative flex-1">
@@ -323,7 +317,7 @@ export default function InventoryManager() {
             <table className="data-table">
               <thead>
                 <tr>
-                  {!isPurchaser && <th>仓库</th>}
+                  <th>仓库</th>
                   <th>物资名称</th>
                   <th>SKU</th>
                   <th>分类</th>
@@ -339,7 +333,7 @@ export default function InventoryManager() {
                   const low = isLowStock(item);
                   return (
                     <tr key={item.id} className={low ? 'bg-danger-50/60' : ''}>
-                      {!isPurchaser && <td className="text-gray-700 whitespace-nowrap">{item.warehouse_name}</td>}
+                      <td className="text-gray-700 whitespace-nowrap">{item.warehouse_name}</td>
                       <td className="font-medium text-gray-800 whitespace-nowrap">{item.item_name}</td>
                       <td className="text-gray-500 font-mono text-xs whitespace-nowrap">{item.sku}</td>
                       <td className="text-gray-600 whitespace-nowrap">{item.category_name}</td>

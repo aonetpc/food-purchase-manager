@@ -2,9 +2,7 @@
  * 仓库数据范围判定 —— 统一给 inventory.js / stock-movements.js / warehouse-purchases.js 等使用
  *
  * 判定顺序：
- *   1. 超级角色（admin / finance / boss / purchaser）→ 全仓库
- *      （purchaser 采购员需在新建采购单时选择任意仓库，故赋予全仓库可见权限；
- *       前端库存查询页面对采购员隐藏仓库筛选下拉框，仅展示物资明细）
+ *   1. 超级角色（admin / finance / boss）→ 全仓库
  *   2. 其他用户 → 以下 2 个集合的并集：
  *        A. 在 warehouse_users 里被配为 manager 或 viewer 的仓库
  *        B. 本部门下属的仓库（warehouses.department_id = user.department_id）
@@ -17,9 +15,7 @@
  */
 const pool = require('../db');
 
-// purchaser（采购员）需要能看到所有仓库以便新建采购单时选择目标仓库，
-// 但前端库存查询页面会对其隐藏仓库下拉框（只看物资明细不按仓库筛选）
-const SUPER_ROLES = ['admin', 'finance', 'boss', 'purchaser'];
+const SUPER_ROLES = ['admin', 'finance', 'boss'];
 
 async function isManagerUser(userId) {
   if (!userId) return false;

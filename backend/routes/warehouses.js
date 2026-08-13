@@ -8,18 +8,27 @@ const { isManagerUser, getUserWarehouseFilter } = require('../middleware/warehou
 // 仓库 CRUD
 // ================================================
 
-// 获取仓库列表（按当前用户可见范围过滤）
+// 获取仓库列表（按当前用户可见范围过滤；all=1 时返回所有启用仓库，用于采购下单等场景）
 router.get('/', async (req, res) => {
   try {
-    const perm = await getUserWarehouseFilter(req.user, 'w');
+    const { all } = req.query;
+    const showAll = all === '1';
+    
     let sql = `
       SELECT w.*, d.name as department_name
       FROM warehouses w
       LEFT JOIN departments d ON w.department_id = d.id
       WHERE w.status = 1
     `;
-    const params = [...perm.params];
-    sql += perm.sql;
+    const params = [];
+
+    if (!showAll) {
+      // 仅当未请求全量时，才应用用户仓库可见范围过滤
+      const perm = await getUserWarehouseFilter(req.user, 'w');
+      sql += perm.sql;
+      params.push(...perm.params);
+    }
+
     sql += ' ORDER BY w.sort_order ASC, w.created_at ASC';
     const [rows] = await pool.query(sql, params);
 

@@ -256,11 +256,12 @@ export default function WarehousePurchaseCreate() {
   }, [quickAddData.name, showQuickAdd]);
 
   // ===== 初始化：加载仓库、物资、分类树、部门、库存 =====
+  // 注意：采购单创建时需要显示所有仓库供选择，故调用 /warehouses?all=1 绕过权限过滤
   useEffect(() => {
     fetchDepartments();
     fetchSuppliers();
     Promise.all([
-      api.get<Warehouse[]>('/warehouses').catch(() => [] as Warehouse[]),
+      api.get<Warehouse[]>('/warehouses?all=1').catch(() => [] as Warehouse[]),
       api.get<WarehouseItem[]>('/warehouses/items').catch(() => [] as WarehouseItem[]),
       api.get<CategoryNode[]>('/warehouses/categories/tree').catch(() => [] as CategoryNode[]),
       api.get<Array<{ warehouse_id: string; item_id: string; quantity: number; unit?: string }>>('/inventory').catch(() => []),
