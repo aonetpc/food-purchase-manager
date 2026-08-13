@@ -607,16 +607,7 @@ function RowBtn({ children, onClick, cls }: { children: React.ReactNode; onClick
 // 体检套餐表（含 items 子表）
 // ============================================================
 function PackagesTable(props: TableProps<PackageRow> & { checkupItems: CheckupItemRow[]; bumpEditing: () => void }) {
-  const { rows, checkupItems, editing, bumpEditing, onNew, onEdit, onCancel, onSave, onDel, saving } = props;
-  const isCreating = editing?.mode === 'create';
-  const isEditingThis = (r: PackageRow) => editing?.mode === 'update' && editing.data.id === r.id;
-
-  const setField = (k: string, v: any) => {
-    if (editing) {
-      editing.data[k] = v;
-      bumpEditing();
-    }
-  };
+  const { rows, checkupItems, editing, onNew, onEdit, onCancel, onSave, onDel, saving } = props;
 
   // auto_total 计算
   const calcAutoTotal = (items: PackageItemRow[] = []) =>
@@ -655,21 +646,7 @@ function PackagesTable(props: TableProps<PackageRow> & { checkupItems: CheckupIt
             </tr>
           </thead>
           <tbody>
-            {isCreating && (
-              <PackageEditRow
-                editing={editing!}
-                checkupItems={checkupItems}
-                bumpEditing={bumpEditing}
-                saving={saving}
-                onSave={onSave}
-                onCancel={onCancel}
-                setField={setField}
-                calcAutoTotal={calcAutoTotal}
-              />
-            )}
             {rows.map(r => {
-              const editRow = isEditingThis(r);
-              if (editRow) return null; // edit row rendered below
               const dp = displayPrice(r);
               const itemCount = (r as any).items?.length ?? (r as any).item_count ?? 0;
               return (
@@ -692,22 +669,20 @@ function PackagesTable(props: TableProps<PackageRow> & { checkupItems: CheckupIt
                 </tr>
               );
             })}
-            {/* 编辑行（update 模式） */}
-            {editing?.mode === 'update' && (
-              <PackageEditRow
-                editing={editing}
-                checkupItems={checkupItems}
-                bumpEditing={bumpEditing}
-                saving={saving}
-                onSave={onSave}
-                onCancel={onCancel}
-                setField={setField}
-                calcAutoTotal={calcAutoTotal}
-              />
-            )}
           </tbody>
         </table>
       </div>
+
+      {/* 套餐编辑弹窗 */}
+      {editing && (
+        <PackageEditorModal
+          editing={editing}
+          checkupItems={checkupItems}
+          saving={saving}
+          onSave={onSave}
+          onCancel={onCancel}
+        />
+      )}
     </div>
   );
 }
@@ -998,60 +973,79 @@ function PackageBatchPasteModal({
   );
 }
 
-// -------- 套餐编辑行（含 items 子表） --------
-function PackageEditRow({
+// -------- 套餐编辑弹窗（双栏布局：左侧项目库胶囊块 + 右侧套餐明细） --------
+function PackageEditorModal({
   editing,
   checkupItems,
-  bumpEditing,
   saving,
   onSave,
   onCancel,
-  setField,
-  calcAutoTotal,
 }: {
   editing: { mode: 'create' | 'update'; data: any };
   checkupItems: CheckupItemRow[];
-  bumpEditing: () => void;
   saving: boolean;
   onSave: (d: any) => void;
   onCancel: () => void;
-  setField: (k: string, v: any) => void;
-  calcAutoTotal: (items: PackageItemRow[]) => number;
 }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [data, setData] = useState<any>({ ...editing.data, items: [...(editing.data.items || [])] });
   const [pickerFilter, setPickerFilter] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
 
-  const data = editing.data;
   const items: PackageItemRow[] = data.items || [];
+  const selectedItemIds = new Set(items.map(it => it.item_id));
 
-  const availableItems = checkupItems
-    .filter(ci => ci.status === 1)
-    .filter(ci => !items.some(pi => pi.item_id === ci.id))
-    .filter(ci => !pickerFilter || ci.name.includes(pickerFilter) || ci.code.includes(pickerFilter));
+  // 按分类分组的体检项目库
+  const groupedItems = useMemo(() => {
+    const active = checkupItems.filter(ci => ci.status === 1);
+    const filtered = pickerFilter
+      ? active.filter(ci => ci.name.includes(pickerFilter) || ci.code.includes(pickerFilter))
+      : active;
+    const groups: Record<string, CheckupItemRow[]> = {};
+    filtered.forEach(ci => {
+      const cat = ci.category || '其他';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(ci);
+    });
+    return groups;
+  }, [checkupItems, pickerFilter]);
 
-  function addItemToPackage(ci: CheckupItemRow) {
-    const newItem: PackageItemRow = {
-      id: '',
-      package_id: data.id || '',
-      item_id: ci.id,
-      item_name_snapshot: ci.name,
-      item_price: ci.default_price || 0,
-      quantity: 1,
-      remark: '',
-      sort_order: (items.length) * 10 + 10,
-    };
-    data.items = [...items, newItem];
-    editing.data = { ...data };
-    bumpEditing();
-    setPickerOpen(false);
-    setPickerFilter('');
+  function toggleItem(ci: CheckupItemRow) {
+    if (selectedItemIds.has(ci.id)) {
+      // 已选中 → 移除
+      setData(prev => ({
+        ...prev,
+        items: (prev.items || []).filter((it: PackageItemRow) => it.item_id !== ci.id),
+      }));
+    } else {
+      // 未选中 → 添加
+      const newItem: PackageItemRow = {
+        id: '',
+        package_id: data.id || '',
+        item_id: ci.id,
+        item_name_snapshot: ci.name,
+        item_price: ci.default_price || 0,
+        quantity: 1,
+        remark: '',
+        sort_order: items.length * 10 + 10,
+      };
+      setData(prev => ({ ...prev, items: [...(prev.items || []), newItem] }));
+    }
   }
 
   function removeItem(idx: number) {
-    data.items = items.filter((_, i) => i !== idx);
-    editing.data = { ...data };
-    bumpEditing();
+    setData(prev => ({ ...prev, items: (prev.items || []).filter((_: any, i: number) => i !== idx) }));
+  }
+
+  function updateItemField(idx: number, field: string, value: any) {
+    setData(prev => {
+      const arr = [...(prev.items || [])];
+      (arr[idx] as any)[field] = value;
+      return { ...prev, items: arr };
+    });
+  }
+
+  function setField(k: string, v: any) {
+    setData(prev => ({ ...prev, [k]: v }));
   }
 
   // 批量粘贴确认回调
@@ -1067,177 +1061,234 @@ function PackageEditRow({
       remark: r.remark,
       sort_order: baseSort + i * 10,
     }));
-    data.items = [...items, ...newItems];
-    editing.data = { ...data };
-    bumpEditing();
+    setData(prev => ({ ...prev, items: [...(prev.items || []), ...newItems] }));
     setPasteOpen(false);
   }
 
-  function updateItemField(idx: number, field: string, value: any) {
-    const arr = [...items];
-    (arr[idx] as any)[field] = value;
-    data.items = arr;
-    editing.data = { ...data };
-    bumpEditing();
-  }
-
-  const autoTotal = calcAutoTotal(items);
+  const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
   const itemCount = items.length;
+  const categoryNames = Object.keys(groupedItems);
 
   return (
-    <>
-      <tr className="bg-green-50/50 border-b border-gray-100">
-        <td className="px-2 py-1.5"><Upd value={data.code} onChange={(v) => setField('code', v)} /></td>
-        <td className="px-2 py-1.5"><Upd value={data.name} onChange={(v) => setField('name', v)} /></td>
-        <td className="px-2 py-1.5 text-center">{itemCount}</td>
-        <td className="px-2 py-1.5">
-          <div className="flex items-center gap-1">
-            <Upd type="number" step="0.01" value={data.price} onChange={(v) => setField('price', v)} />
-            {autoTotal > 0 && data.price == 0 && (
-              <span className="text-[10px] text-cyan-500 whitespace-nowrap">自动 ¥{autoTotal.toLocaleString()}</span>
-            )}
-          </div>
-        </td>
-        <td className="px-2 py-1.5"><Upd type="number" value={data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
-        <td className="px-2 py-1.5 text-center"><Checkbox value={data.status} onChange={(v) => setField('status', v)} /></td>
-        <td className="px-2 py-1.5 text-center space-x-1">
-          <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
-          <RowBtn onClick={onCancel}>取消</RowBtn>
-        </td>
-      </tr>
-      {/* items 子表 */}
-      {itemCount > 0 && (
-        <tr className="bg-green-50/30">
-          <td colSpan={7} className="px-4 py-2">
-            <div className="rounded-lg border border-green-200 bg-white p-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[11px] text-gray-500 font-medium">套餐项目明细</span>
-              </div>
-              <table className="w-full text-[11px]">
-                <thead className="text-gray-400">
-                  <tr>
-                    <th className="text-left font-medium py-1 pr-2">项目名称</th>
-                    <th className="text-right font-medium py-1 px-2 w-20">单价(¥)</th>
-                    <th className="text-center font-medium py-1 px-2 w-14">数量</th>
-                    <th className="text-left font-medium py-1 px-2 w-32">备注</th>
-                    <th className="text-right font-medium py-1 px-2 w-20">小计(¥)</th>
-                    <th className="text-center font-medium py-1 w-16">排序</th>
-                    <th className="text-center font-medium py-1 w-16">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, idx) => {
-                    const subtotal = Number(item.item_price || 0) * Number(item.quantity || 1);
-                    return (
-                      <tr key={idx} className="border-t border-gray-100">
-                        <td className="py-1 pr-2 text-gray-700">{item.item_name_snapshot}</td>
-                        <td className="py-1 px-2">
-                          <Upd type="number" step="0.01" value={item.item_price} onChange={(v) => updateItemField(idx, 'item_price', v)} />
-                        </td>
-                        <td className="py-1 px-2">
-                          <Upd type="number" value={item.quantity} onChange={(v) => updateItemField(idx, 'quantity', v)} />
-                        </td>
-                        <td className="py-1 px-2">
-                          <Upd value={item.remark || ''} onChange={(v) => updateItemField(idx, 'remark', v)} placeholder="如：需空腹" />
-                        </td>
-                        <td className="py-1 px-2 text-right font-mono">¥{subtotal.toLocaleString()}</td>
-                        <td className="py-1">
-                          <Upd type="number" value={item.sort_order} onChange={(v) => updateItemField(idx, 'sort_order', v)} />
-                        </td>
-                        <td className="py-1 text-center">
-                          <button
-                            onClick={() => removeItem(idx)}
-                            className="text-red-500 hover:text-red-700 inline-flex items-center gap-0.5"
-                          >
-                            <Trash2 size={10}/> 移除
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-gray-200">
-                    <td colSpan={4} className="py-1.5 text-right font-medium text-gray-500">合计：</td>
-                    <td className="py-1.5 text-right font-mono font-semibold text-green-600">¥{autoTotal.toLocaleString()}</td>
-                    <td colSpan={2}></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </td>
-        </tr>
-      )}
-      {/* 添加项目按钮 + 批量粘贴 + 选择器 */}
-      <tr className="bg-green-50/20">
-        <td colSpan={7} className="px-4 py-2">
-          <div className="flex items-center gap-2">
-            <div className="relative inline-block">
-              <button
-                onClick={() => setPickerOpen(!pickerOpen)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors"
-              >
-                <Plus size={12}/> 添加项目
-                <ChevronDown size={12} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
-              </button>
-            {pickerOpen && (
-              <div className="absolute z-50 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg">
-                <div className="p-2 border-b border-gray-100">
-                  <div className="relative">
-                    <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                    <input
-                      value={pickerFilter}
-                      onChange={(e) => setPickerFilter(e.target.value)}
-                      placeholder="搜索项目名称或编码..."
-                      className={`${inputCls} text-xs !py-1 !pl-6`}
-                      autoFocus
-                    />
-                  </div>
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {availableItems.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-xs text-gray-400">
-                      {checkupItems.filter(ci => ci.status === 1).length === 0 ? '暂无可用体检项目，请先到「体检项目」tab 添加' : '所有体检项目已添加'}
-                    </div>
-                  ) : (
-                    availableItems.map(ci => (
-                      <button
-                        key={ci.id}
-                        onClick={() => addItemToPackage(ci)}
-                        className="w-full text-left px-3 py-2 hover:bg-green-50 border-b border-gray-50 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <div className="font-medium text-gray-800">{ci.name}</div>
-                          <div className="text-gray-400 text-[10px]">{ci.code} · {ci.category} · {ci.unit}</div>
-                        </div>
-                        <div className="font-mono text-green-600">¥{ci.default_price || 0}</div>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-            </div>
-            {/* 批量粘贴按钮 */}
-            <button
-              onClick={() => setPasteOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 transition-colors"
-            >
-              <ClipboardPaste size={12}/> 批量粘贴
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="absolute inset-0 bg-black/60" />
+      <div
+        className="relative bg-white rounded-xl border border-gray-200 shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* 头部：基本信息 */}
+        <div className="px-5 py-3 border-b border-gray-200 shrink-0">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-base font-semibold text-gray-900">
+              {editing.mode === 'create' ? '新增体检套餐' : '编辑体检套餐'}
+            </h3>
+            <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-800">
+              <X size={18} />
             </button>
           </div>
-        </td>
-      </tr>
-      {/* 批量粘贴弹窗 */}
-      {pasteOpen && (
-        <PackageBatchPasteModal
-          checkupItems={checkupItems}
-          existingItemIds={items.map(it => it.item_id)}
-          onClose={() => setPasteOpen(false)}
-          onConfirm={handlePasteConfirm}
-        />
-      )}
-    </>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">编码</span>
+              <input value={data.code || ''} onChange={e => setField('code', e.target.value)} className={`${inputCls} !py-1 w-28`} />
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">名称</span>
+              <input value={data.name || ''} onChange={e => setField('name', e.target.value)} className={`${inputCls} !py-1 w-44`} />
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">单价(¥)</span>
+              <input type="number" step="0.01" value={data.price ?? 0} onChange={e => setField('price', e.target.value === '' ? '' : Number(e.target.value))} className={`${inputCls} !py-1 w-24`} />
+              {autoTotal > 0 && Number(data.price || 0) === 0 && (
+                <span className="text-[10px] text-cyan-500 whitespace-nowrap">自动 ¥{autoTotal.toLocaleString()}</span>
+              )}
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">排序</span>
+              <input type="number" value={data.sort_order ?? 100} onChange={e => setField('sort_order', e.target.value === '' ? '' : Number(e.target.value))} className={`${inputCls} !py-1 w-16`} />
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={Number(data.status) === 1} onChange={e => setField('status', e.target.checked ? 1 : 0)} className="accent-green-500 w-4 h-4" />
+              <span className="text-gray-500">启用</span>
+            </label>
+          </div>
+        </div>
+
+        {/* 双栏内容区 */}
+        <div className="flex-1 overflow-hidden flex">
+          {/* 左栏：体检项目库（胶囊块） */}
+          <div className="w-3/5 border-r border-gray-200 flex flex-col">
+            <div className="px-4 py-2 border-b border-gray-100 shrink-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium text-gray-700">📋 体检项目库</span>
+                <span className="text-[11px] text-gray-400">点击胶囊添加 / 再次点击移除</span>
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={pickerFilter}
+                  onChange={e => setPickerFilter(e.target.value)}
+                  placeholder="搜索项目名称或编码..."
+                  className={`${inputCls} !py-1.5 !pl-8`}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-2">
+              {checkupItems.filter(ci => ci.status === 1).length === 0 ? (
+                <div className="text-center py-8 text-xs text-gray-400">
+                  暂无可用体检项目，请先到「体检项目」Tab 添加
+                </div>
+              ) : categoryNames.length === 0 ? (
+                <div className="text-center py-8 text-xs text-gray-400">未找到匹配的项目</div>
+              ) : (
+                <div className="space-y-3">
+                  {categoryNames.map(cat => (
+                    <div key={cat}>
+                      <div className="text-[11px] font-medium text-gray-400 mb-1.5 flex items-center gap-1">
+                        <span className="inline-block w-1 h-3 rounded bg-green-400" />
+                        {cat}
+                        <span className="text-gray-300">({groupedItems[cat].length})</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {groupedItems[cat].map(ci => {
+                          const selected = selectedItemIds.has(ci.id);
+                          return (
+                            <button
+                              key={ci.id}
+                              onClick={() => toggleItem(ci)}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-all ${
+                                selected
+                                  ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                                  : 'bg-white text-gray-700 border-gray-200 hover:border-green-300 hover:bg-green-50'
+                              }`}
+                              title={selected ? '点击移除' : '点击添加'}
+                            >
+                              <span className="font-medium">{ci.name}</span>
+                              <span className={`text-[10px] font-mono ${selected ? 'text-green-100' : 'text-gray-400'}`}>¥{ci.default_price || 0}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 右栏：套餐明细 */}
+          <div className="w-2/5 flex flex-col">
+            <div className="px-4 py-2 border-b border-gray-100 shrink-0 flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-700">
+                📦 套餐明细
+                <span className="text-gray-400 ml-1">({itemCount} 项, ¥{autoTotal.toLocaleString()})</span>
+              </span>
+              <button
+                onClick={() => setPasteOpen(true)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded-lg bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 transition-colors"
+              >
+                <ClipboardPaste size={11} /> 批量粘贴
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 py-2">
+              {itemCount === 0 ? (
+                <div className="text-center py-12 text-xs text-gray-400">
+                  <Plus size={28} className="mx-auto mb-2 text-gray-300" />
+                  点击左侧项目添加到套餐
+                </div>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead className="text-gray-400 sticky top-0 bg-white">
+                    <tr>
+                      <th className="text-left font-medium py-1 pr-1">项目名称</th>
+                      <th className="text-right font-medium py-1 px-1 w-16">单价</th>
+                      <th className="text-center font-medium py-1 px-1 w-12">数量</th>
+                      <th className="text-left font-medium py-1 px-1 w-20">备注</th>
+                      <th className="text-right font-medium py-1 px-1 w-14">小计</th>
+                      <th className="w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, idx) => {
+                      const subtotal = Number(item.item_price || 0) * Number(item.quantity || 1);
+                      return (
+                        <tr key={idx} className="border-t border-gray-100">
+                          <td className="py-1 pr-1 text-gray-700 font-medium">{item.item_name_snapshot}</td>
+                          <td className="py-1 px-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={item.item_price ?? 0}
+                              onChange={e => updateItemField(idx, 'item_price', e.target.value === '' ? '' : Number(e.target.value))}
+                              className={`${inputCls} !py-0.5 !px-1 text-right w-14`}
+                            />
+                          </td>
+                          <td className="py-1 px-1">
+                            <input
+                              type="number"
+                              value={item.quantity ?? 1}
+                              onChange={e => updateItemField(idx, 'quantity', e.target.value === '' ? '' : Number(e.target.value))}
+                              className={`${inputCls} !py-0.5 !px-1 text-center w-12`}
+                            />
+                          </td>
+                          <td className="py-1 px-1">
+                            <input
+                              value={item.remark || ''}
+                              onChange={e => updateItemField(idx, 'remark', e.target.value)}
+                              placeholder="如：需空腹"
+                              className={`${inputCls} !py-0.5 !px-1 w-full`}
+                            />
+                          </td>
+                          <td className="py-1 px-1 text-right font-mono text-gray-600">¥{subtotal.toLocaleString()}</td>
+                          <td className="py-1 text-center">
+                            <button
+                              onClick={() => removeItem(idx)}
+                              className="text-red-400 hover:text-red-600"
+                              title="移除"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-200">
+                      <td colSpan={4} className="py-1.5 text-right font-medium text-gray-500">合计：</td>
+                      <td className="py-1.5 text-right font-mono font-semibold text-green-600">¥{autoTotal.toLocaleString()}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 底部操作栏 */}
+        <div className="px-5 py-3 border-t border-gray-200 shrink-0 flex items-center justify-end gap-2">
+          <button onClick={onCancel} className={btnGhost}>取消</button>
+          <button
+            onClick={() => onSave(data)}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white font-medium transition-colors disabled:opacity-50"
+          >
+            {saving ? '保存中...' : <><Save size={12} /> 保存套餐</>}
+          </button>
+        </div>
+
+        {/* 批量粘贴弹窗 */}
+        {pasteOpen && (
+          <PackageBatchPasteModal
+            checkupItems={checkupItems}
+            existingItemIds={items.map(it => it.item_id)}
+            onClose={() => setPasteOpen(false)}
+            onConfirm={handlePasteConfirm}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 
