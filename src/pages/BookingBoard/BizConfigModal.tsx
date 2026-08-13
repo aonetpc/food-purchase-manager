@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { X, Plus, Trash2, Save, Settings, ChevronDown, Search } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { X, Plus, Trash2, Save, Settings, ChevronDown, Search, ClipboardPaste, AlertCircle, CheckCircle } from 'lucide-react';
 import { bookingApi, type PackageRow, type PackageItemRow, type CheckupItemRow, type RoomTypeRow, type MeetingHallRow, type WellnessTypeRow } from '../../lib/api';
 
 // ================================================
@@ -570,13 +570,14 @@ interface TableProps<T> {
   bumpEditing: () => void;
 }
 
-function Upd({ value, onChange, type = 'text', step }:
-  { value: any; onChange: (v: any) => void; type?: string; step?: string }) {
+function Upd({ value, onChange, type = 'text', step, placeholder }:
+  { value: any; onChange: (v: any) => void; type?: string; step?: string; placeholder?: string }) {
   return (
     <input
       type={type}
       step={step}
       value={value ?? ''}
+      placeholder={placeholder}
       onChange={(e) => onChange(type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value)}
       className={`${inputCls} text-xs !py-1 !px-2`}
     />
@@ -711,6 +712,292 @@ function PackagesTable(props: TableProps<PackageRow> & { checkupItems: CheckupIt
   );
 }
 
+// ============================================================
+// 批量粘贴解析弹窗（三段式匹配：精确 → 模糊 → 新建）
+// ============================================================
+type ParsedLine = {
+  raw: string;
+  name: string;
+  remark: string;
+  matchType: 'exact' | 'fuzzy' | 'none';
+  matchedItem: CheckupItemRow | null;
+  fuzzyCandidates: CheckupItemRow[];
+  selectedItemId: string | null; // 用户在模糊匹配中手动选择的 item_id
+  action: 'link' | 'create' | 'skip'; // link=引用已有, create=新建到项目库, skip=跳过
+};
+
+function PackageBatchPasteModal({
+  checkupItems,
+  existingItemIds,
+  onClose,
+  onConfirm,
+}: {
+  checkupItems: CheckupItemRow[];
+  existingItemIds: string[]; // 套餐中已有的 item_id，避免重复添加
+  onClose: () => void;
+  onConfirm: (resolved: { item: CheckupItemRow; remark: string; isNew?: boolean }[]) => void;
+}) {
+  const [rawText, setRawText] = useState('');
+  const [parsed, setParsed] = useState<ParsedLine[] | null>(null);
+  const [parsing, setParsing] = useState(false);
+
+  // 三段式匹配核心逻辑
+  function doParse() {
+    setParsing(true);
+    const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+    const results: ParsedLine[] = lines.map(line => {
+      // 解析格式：项目名 | 备注（支持 | 或 ｜ 全角）
+      const parts = line.split(/\||｜/).map(s => s.trim());
+      const name = parts[0] || '';
+      const remark = parts[1] || '';
+
+      if (!name) {
+        return { raw: line, name: '', remark, matchType: 'none', matchedItem: null, fuzzyCandidates: [], selectedItemId: null, action: 'skip' };
+      }
+
+      // 阶段 1：精确匹配
+      const exact = checkupItems.find(ci => ci.name === name && !existingItemIds.includes(ci.id));
+      if (exact) {
+        return { raw: line, name, remark, matchType: 'exact', matchedItem: exact, fuzzyCandidates: [], selectedItemId: exact.id, action: 'link' };
+      }
+
+      // 阶段 2：模糊匹配（名称包含关系）
+      const fuzzy = checkupItems.filter(ci =>
+        !existingItemIds.includes(ci.id) &&
+        (ci.name.includes(name) || name.includes(ci.name))
+      );
+
+      if (fuzzy.length === 1) {
+        // 只有一个模糊结果，自动选中
+        return { raw: line, name, remark, matchType: 'fuzzy', matchedItem: fuzzy[0], fuzzyCandidates: fuzzy, selectedItemId: fuzzy[0].id, action: 'link' };
+      }
+
+      // 多个或零个模糊结果
+      return {
+        raw: line, name, remark,
+        matchType: fuzzy.length > 0 ? 'fuzzy' : 'none',
+        matchedItem: null,
+        fuzzyCandidates: fuzzy,
+        selectedItemId: null,
+        action: fuzzy.length > 0 ? 'link' : 'create',
+      };
+    });
+    setParsed(results);
+    setParsing(false);
+  }
+
+  // 用户手动选择模糊匹配项
+  function selectFuzzy(idx: number, itemId: string) {
+    if (!parsed) return;
+    const next = [...parsed];
+    const item = checkupItems.find(ci => ci.id === itemId);
+    next[idx] = { ...next[idx], selectedItemId: itemId, matchedItem: item || null, action: 'link' };
+    setParsed(next);
+  }
+
+  // 用户切换操作类型（link/create/skip）
+  function setAction(idx: number, action: 'link' | 'create' | 'skip') {
+    if (!parsed) return;
+    const next = [...parsed];
+    next[idx] = { ...next[idx], action };
+    setParsed(next);
+  }
+
+  // 统计
+  const stats = useMemo(() => {
+    if (!parsed) return { exact: 0, fuzzy: 0, create: 0, skip: 0, ready: 0 };
+    return {
+      exact: parsed.filter(p => p.matchType === 'exact').length,
+      fuzzy: parsed.filter(p => p.matchType === 'fuzzy').length,
+      create: parsed.filter(p => p.action === 'create').length,
+      skip: parsed.filter(p => p.action === 'skip').length,
+      ready: parsed.filter(p => p.action === 'link' && p.selectedItemId || p.action === 'create').length,
+    };
+  }, [parsed]);
+
+  function handleConfirm() {
+    if (!parsed) return;
+    const resolved: { item: CheckupItemRow; remark: string; isNew?: boolean }[] = [];
+    for (const p of parsed) {
+      if (p.action === 'link' && p.selectedItemId) {
+        const item = checkupItems.find(ci => ci.id === p.selectedItemId);
+        if (item) resolved.push({ item, remark: p.remark });
+      } else if (p.action === 'create' && p.name) {
+        // 新建项目（临时对象，保存时后端会创建）
+        resolved.push({
+          item: {
+            id: '',
+            code: '',
+            name: p.name,
+            category: '其他',
+            description: '',
+            default_price: 0,
+            unit: '次',
+            status: 1,
+            sort_order: 999,
+          } as CheckupItemRow,
+          remark: p.remark,
+          isNew: true,
+        });
+      }
+    }
+    onConfirm(resolved);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-[800px] max-w-[95vw] max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <ClipboardPaste size={16} className="text-green-600" />
+            <span className="text-sm font-medium text-gray-800">批量粘贴体检项目</span>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {!parsed ? (
+            /* 输入区 */
+            <div className="space-y-3">
+              <div className="text-xs text-gray-500 leading-relaxed">
+                每行一个项目，格式：<span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">项目名称</span>
+                {' '}或<span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">项目名称 | 备注</span>
+                <br/>
+                <span className="text-gray-400">分隔符支持 | 或 ｜（全角），示例：</span>
+              </div>
+              <pre className="text-[11px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-100">血常规
+心电图 | 需空腹
+腹部B超 | 女性专项
+肿瘤标志物筛查</pre>
+              <textarea
+                value={rawText}
+                onChange={e => setRawText(e.target.value)}
+                placeholder="在此粘贴项目列表..."
+                className={`${inputCls} font-mono text-xs h-48 resize-y`}
+                autoFocus
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-gray-400">{rawText.split('\n').filter(s => s.trim()).length} 行</span>
+                <button
+                  onClick={doParse}
+                  disabled={!rawText.trim() || parsing}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs rounded-lg bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Search size={12}/> 解析并匹配
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* 解析结果区 */
+            <div className="space-y-3">
+              {/* 统计栏 */}
+              <div className="flex items-center gap-4 text-xs">
+                <span className="text-green-600 flex items-center gap-1"><CheckCircle size={12}/> 精确匹配 {stats.exact}</span>
+                <span className="text-amber-600 flex items-center gap-1"><AlertCircle size={12}/> 模糊匹配 {stats.fuzzy}</span>
+                <span className="text-cyan-600">将新建 {stats.create}</span>
+                {stats.skip > 0 && <span className="text-gray-400">跳过 {stats.skip}</span>}
+                <span className="ml-auto text-gray-500">共 {parsed.length} 项，{stats.ready} 项就绪</span>
+              </div>
+
+              {/* 结果表格 */}
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium w-44">解析项目名</th>
+                      <th className="px-3 py-2 text-left font-medium w-28">备注</th>
+                      <th className="px-3 py-2 text-left font-medium">匹配结果</th>
+                      <th className="px-3 py-2 text-center font-medium w-28">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsed.map((p, idx) => (
+                      <tr key={idx} className="border-t border-gray-100">
+                        <td className="px-3 py-2 font-medium text-gray-800">{p.name || <span className="text-red-400">（空行已跳过）</span>}</td>
+                        <td className="px-3 py-2 text-gray-500">{p.remark || '-'}</td>
+                        <td className="px-3 py-2">
+                          {p.matchType === 'exact' && p.matchedItem && (
+                            <span className="text-green-600 flex items-center gap-1">
+                              <CheckCircle size={12}/> {p.matchedItem.name}（{p.matchedItem.code}）¥{p.matchedItem.default_price}
+                            </span>
+                          )}
+                          {p.matchType === 'fuzzy' && (
+                            <select
+                              value={p.selectedItemId || ''}
+                              onChange={e => selectFuzzy(idx, e.target.value)}
+                              className={`${inputCls} text-xs !py-1`}
+                            >
+                              <option value="">— 请选择匹配项 —</option>
+                              {p.fuzzyCandidates.map(ci => (
+                                <option key={ci.id} value={ci.id}>{ci.name}（{ci.code}）¥{ci.default_price}</option>
+                              ))}
+                            </select>
+                          )}
+                          {p.matchType === 'none' && p.action === 'create' && (
+                            <span className="text-cyan-600">将新建项目「{p.name}」</span>
+                          )}
+                          {p.matchType === 'none' && p.action !== 'create' && (
+                            <span className="text-gray-400">无匹配</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <div className="inline-flex gap-1">
+                            <button
+                              onClick={() => setAction(idx, 'link')}
+                              className={`px-2 py-0.5 rounded text-[10px] ${p.action === 'link' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                            >引用</button>
+                            <button
+                              onClick={() => setAction(idx, 'create')}
+                              className={`px-2 py-0.5 rounded text-[10px] ${p.action === 'create' ? 'bg-cyan-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                            >新建</button>
+                            <button
+                              onClick={() => setAction(idx, 'skip')}
+                              className={`px-2 py-0.5 rounded text-[10px] ${p.action === 'skip' ? 'bg-gray-400 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                            >跳过</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 重新解析按钮 */}
+              <button
+                onClick={() => { setParsed(null); }}
+                className="text-xs text-gray-400 hover:text-gray-600"
+              >
+                ← 返回重新粘贴
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        {parsed && (
+          <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200">
+            <span className="text-xs text-gray-400">
+              {stats.ready > 0 ? `${stats.ready} 项就绪待添加` : '没有可添加的项目'}
+            </span>
+            <div className="flex gap-2">
+              <button onClick={onClose} className="px-4 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-200">取消</button>
+              <button
+                onClick={handleConfirm}
+                disabled={stats.ready === 0}
+                className="px-4 py-1.5 text-xs rounded-lg bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                确认添加 {stats.ready} 项
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // -------- 套餐编辑行（含 items 子表） --------
 function PackageEditRow({
   editing,
@@ -733,6 +1020,7 @@ function PackageEditRow({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const data = editing.data;
   const items: PackageItemRow[] = data.items || [];
@@ -764,6 +1052,25 @@ function PackageEditRow({
     data.items = items.filter((_, i) => i !== idx);
     editing.data = { ...data };
     bumpEditing();
+  }
+
+  // 批量粘贴确认回调
+  function handlePasteConfirm(resolved: { item: CheckupItemRow; remark: string; isNew?: boolean }[]) {
+    const baseSort = items.length * 10 + 10;
+    const newItems: PackageItemRow[] = resolved.map((r, i) => ({
+      id: '',
+      package_id: data.id || '',
+      item_id: r.item.id,
+      item_name_snapshot: r.item.name,
+      item_price: r.item.default_price || 0,
+      quantity: 1,
+      remark: r.remark,
+      sort_order: baseSort + i * 10,
+    }));
+    data.items = [...items, ...newItems];
+    editing.data = { ...data };
+    bumpEditing();
+    setPasteOpen(false);
   }
 
   function updateItemField(idx: number, field: string, value: any) {
@@ -861,17 +1168,18 @@ function PackageEditRow({
           </td>
         </tr>
       )}
-      {/* 添加项目按钮 + 选择器 */}
+      {/* 添加项目按钮 + 批量粘贴 + 选择器 */}
       <tr className="bg-green-50/20">
         <td colSpan={7} className="px-4 py-2">
-          <div className="relative inline-block">
-            <button
-              onClick={() => setPickerOpen(!pickerOpen)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors"
-            >
-              <Plus size={12}/> 添加项目
-              <ChevronDown size={12} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
-            </button>
+          <div className="flex items-center gap-2">
+            <div className="relative inline-block">
+              <button
+                onClick={() => setPickerOpen(!pickerOpen)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors"
+              >
+                <Plus size={12}/> 添加项目
+                <ChevronDown size={12} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
+              </button>
             {pickerOpen && (
               <div className="absolute z-50 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg">
                 <div className="p-2 border-b border-gray-100">
@@ -909,9 +1217,26 @@ function PackageEditRow({
                 </div>
               </div>
             )}
+            </div>
+            {/* 批量粘贴按钮 */}
+            <button
+              onClick={() => setPasteOpen(true)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 transition-colors"
+            >
+              <ClipboardPaste size={12}/> 批量粘贴
+            </button>
           </div>
         </td>
       </tr>
+      {/* 批量粘贴弹窗 */}
+      {pasteOpen && (
+        <PackageBatchPasteModal
+          checkupItems={checkupItems}
+          existingItemIds={items.map(it => it.item_id)}
+          onClose={() => setPasteOpen(false)}
+          onConfirm={handlePasteConfirm}
+        />
+      )}
     </>
   );
 }
