@@ -829,12 +829,20 @@ export default function BookingBoardCreate(props: {
   // 单人编辑弹窗：当前正在编辑的人员索引
   const [editingPaxIdx, setEditingPaxIdx] = useState<number | null>(null);
 
-  // 住宿表单
+  // 住宿表单（多房型）：默认值（新增行时自动带入） + 明细行
+  type LodgingSession = {
+    id: string;
+    lodgingType: LodgingType;
+    dateCheckIn: string;
+    dateCheckOut: string;
+    arrivalTime: string;
+    rooms: number;
+  };
   const [lgIn, setLgIn] = useState(todayStr());
   const [lgOut, setLgOut] = useState(fmt(addDays(new Date(), 1)));
   const [lgArr, setLgArr] = useState('14:00');
-  const [lgType, setLgType] = useState<LodgingType>('standard');
   const [lgRooms, setLgRooms] = useState(1);
+  const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
 
   // 用餐表单
   const [mlStart, setMlStart] = useState(todayStr());
@@ -1062,7 +1070,10 @@ export default function BookingBoardCreate(props: {
     if (!t) return 0;
     if (t === 'checkup') return calcCheckupEffective(chkPax.filter((p) => p.name.trim()));
     if (t === 'lodging')
-      return calcLodgingAmount(lgType, lgRooms, Math.max(0, daysBetween(lgIn, lgOut)), finalBizConfigForCalc);
+      return lgSessions.reduce((s, x) => {
+        const n = Math.max(0, daysBetween(x.dateCheckIn, x.dateCheckOut));
+        return s + calcLodgingAmount(x.lodgingType, x.rooms, n, finalBizConfigForCalc);
+      }, 0);
     if (t === 'lunch' || t === 'dinner') return 0;
     if (t === 'meeting')
       return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
@@ -1075,7 +1086,7 @@ export default function BookingBoardCreate(props: {
         : Math.max(0, carSession.customers.length * Number(carSession.pricePerCustomer || 0));
     }
     return 0;
-  }, [drawer.itemType, chkPax, lgType, lgRooms, lgIn, lgOut, mtSessions, wlSessions, carSession, finalBizConfigForCalc]);
+  }, [drawer.itemType, chkPax, lgSessions, mtSessions, wlSessions, carSession, finalBizConfigForCalc]);
 
   // ================================================
   // 抽屉操作
@@ -1094,8 +1105,8 @@ export default function BookingBoardCreate(props: {
       setLgIn(todayStr());
       setLgOut(fmt(addDays(new Date(), 1)));
       setLgArr('14:00');
-      setLgType('standard');
       setLgRooms(1);
+      setLgSessions([]);
     } else if (type === 'lunch' || type === 'dinner') {
       const t = type === 'lunch' ? '12:00' : '18:00';
       setMlStart(todayStr());
@@ -1147,8 +1158,15 @@ export default function BookingBoardCreate(props: {
       setLgIn(item.extra.dateCheckIn || todayStr());
       setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
       setLgArr(item.extra.arrivalTime || '14:00');
-      setLgType(item.extra.lodgingType || 'standard');
       setLgRooms(item.pax || 1);
+      setLgSessions([{
+        id: item.id,
+        lodgingType: item.extra.lodgingType || 'standard',
+        dateCheckIn: item.extra.dateCheckIn || todayStr(),
+        dateCheckOut: item.extra.dateCheckOut || fmt(addDays(new Date(), 1)),
+        arrivalTime: item.extra.arrivalTime || '14:00',
+        rooms: item.pax || 1,
+      }]);
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
       setMlStart(item.extra.dateStart || todayStr());
       setMlEnd(item.extra.dateEnd || todayStr());
@@ -1405,27 +1423,49 @@ export default function BookingBoardCreate(props: {
         amount,
       };
     } else if (itemType === 'lodging') {
-      if (!lgDateValid) {
-        setErr('离店日期必须晚于入住日期（至少 1 天）');
+      const sessions = lgSessions.filter(s =>
+        s.dateCheckIn && s.dateCheckOut && daysBetween(s.dateCheckIn, s.dateCheckOut) >= 1
+      );
+      if (sessions.length === 0) {
+        setErr('请至少添加一个房型并设置有效的日期（离店至少晚于入住 1 天）');
         return;
       }
-      const nights = daysBetween(lgIn, lgOut);
-      const amount = calcLodgingAmount(lgType, lgRooms, nights, finalBizConfigForCalc);
-      item = {
-        id: keepId,
-        itemType,
-        date: lgIn,
-        startTime: lgArr,
-        pax: lgRooms,
-        extra: {
-          lodgingType: lgType,
-          dateCheckIn: lgIn,
-          dateCheckOut: lgOut,
-          arrivalTime: lgArr,
-          nights,
-        },
-        amount,
-      };
+      const newItems: BookingItem[] = sessions.map((s, i) => {
+        const nights = daysBetween(s.dateCheckIn, s.dateCheckOut);
+        const amt = calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc);
+        return {
+          id: i === 0 ? keepId : (s.id && s.id.startsWith('lg_') ? s.id : genItemId()),
+          itemType,
+          date: s.dateCheckIn,
+          startTime: s.arrivalTime,
+          pax: s.rooms,
+          extra: {
+            lodgingType: s.lodgingType,
+            dateCheckIn: s.dateCheckIn,
+            dateCheckOut: s.dateCheckOut,
+            arrivalTime: s.arrivalTime,
+            nights,
+          },
+          amount: amt,
+        };
+      });
+      setDraftGroup((g) => {
+        const items = [...g.items];
+        if (drawer.editIdx >= 0 && drawer.editIdx < items.length) {
+          // 编辑：替换当前 idx，其他项一起插入
+          if (newItems.length === 1) {
+            items[drawer.editIdx] = newItems[0];
+          } else {
+            items.splice(drawer.editIdx, 1, ...newItems);
+          }
+        } else {
+          items.push(...newItems);
+        }
+        return { ...g, items };
+      });
+      setErr('');
+      closeDrawer();
+      return;
     } else if (itemType === 'lunch' || itemType === 'dinner') {
       const sessions = mlSessions.filter((s) => s.date);
       item = {
@@ -2490,116 +2530,205 @@ export default function BookingBoardCreate(props: {
                 </div>
               ) : drawer.itemType === 'lodging' ? (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>入住日期</label>
-                      <input
-                        type="date"
-                        value={lgIn}
-                        onChange={(e) => setLgIn(e.target.value)}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>离店日期</label>
-                      <input
-                        type="date"
-                        value={lgOut}
-                        onChange={(e) => setLgOut(e.target.value)}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>到达时间</label>
-                      <input
-                        type="time"
-                        value={lgArr}
-                        onChange={(e) => setLgArr(e.target.value)}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>间数</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={lgRooms}
-                        onChange={(e) => setLgRooms(Math.max(1, parseInt(e.target.value) || 1))}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className={labelCls}>房型</label>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {finalRoomOptions.map((rt) => (
-                          <button
-                            key={rt.code}
-                            onClick={() => setLgType(rt.code)}
-                            className={`px-2 py-2 rounded-lg text-xs border transition-colors ${
-                              lgType === rt.code
-                                ? 'bg-green-500/15 border-green-500 text-green-600'
-                                : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
-                            }`}
-                          >
-                            <div className="font-medium">{rt.name}</div>
-                            <div className="text-[10px] opacity-70 font-mono">
-                              ¥{Number(rt.price || 0).toLocaleString()}
-                            </div>
-                          </button>
-                        ))}
+                  <div>
+                    <label className={labelCls}>默认日期/时间（点击添加房型时自动带入）</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div>
+                        <input
+                          type="date"
+                          value={lgIn}
+                          onChange={(e) => setLgIn(e.target.value)}
+                          className={`${inputCls} font-mono text-xs`}
+                          title="默认入住日期"
+                        />
+                      </div>
+                      <div>
+                        <input
+                          type="date"
+                          value={lgOut}
+                          onChange={(e) => setLgOut(e.target.value)}
+                          className={`${inputCls} font-mono text-xs`}
+                          title="默认离店日期"
+                        />
+                      </div>
+                      <div>
+                        <input
+                          type="time"
+                          value={lgArr}
+                          onChange={(e) => setLgArr(e.target.value)}
+                          className={`${inputCls} font-mono text-xs`}
+                          title="默认到达时间"
+                        />
+                      </div>
+                      <div>
+                        <input
+                          type="number"
+                          min="1"
+                          value={lgRooms}
+                          onChange={(e) => setLgRooms(Math.max(1, parseInt(e.target.value) || 1))}
+                          className={`${inputCls} font-mono text-xs`}
+                          title="默认间数"
+                        />
                       </div>
                     </div>
                   </div>
 
-                  <div className={`rounded-lg p-3 border ${
-                    lgDateValid ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'
-                  }`}>
-                    <div className="flex items-center justify-between text-sm mb-2">
-                      <span className="text-gray-500">
-                        共 <span className={`font-mono ${lgDateValid ? 'text-green-600' : 'text-red-500'}`}>{lgNights}</span> 晚
-                        {!lgDateValid && (
-                          <span className="ml-2 text-xs text-red-500">⚠ 离店日期需晚于入住日期</span>
-                        )}
-                      </span>
-                      <span className={`font-mono ${lgDateValid ? 'text-green-600' : 'text-red-500'}`}>
-                        ¥{getRoomInfo(lgType).price.toLocaleString()} × {lgRooms} × {lgNights} = ¥
-                        {calcLodgingAmount(lgType, lgRooms, lgNights, finalBizConfigForCalc).toLocaleString()}
-                      </span>
-                    </div>
-                    {lgNights > 0 && (
-                      <div className="flex gap-0.5 h-7">
-                        {Array.from({ length: lgNights + 1 }, (_, i) => {
-                          const isCheckIn = i === 0;
-                          const isCheckOut = i === lgNights;
-                          const cls = isCheckIn
-                            ? 'bg-green-500'
-                            : isCheckOut
-                              ? 'bg-emerald-500'
-                              : 'bg-purple-500';
-                          const label = isCheckIn ? '入住' : isCheckOut ? '退房' : `D${i + 1}`;
-                          return (
-                            <div
-                              key={i}
-                              className={`flex-1 rounded text-[10px] flex items-center justify-center text-white font-medium ${cls}`}
-                            >
-                              {label}
+                  <div>
+                    <label className={labelCls}>房型（点击添加）</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {finalRoomOptions.map((rt) => {
+                        const count = lgSessions.filter(s => s.lodgingType === rt.code).reduce((s, x) => s + x.rooms, 0);
+                        return (
+                          <button
+                            key={rt.code}
+                            onClick={() => {
+                              const minOut = fmt(addDays(parseDateLocal(lgIn), 1));
+                              const checkIn = lgIn || todayStr();
+                              const checkOut = lgOut && parseDateLocal(lgOut) >= parseDateLocal(minOut) ? lgOut : minOut;
+                              setLgSessions((prev) => [
+                                ...prev,
+                                {
+                                  id: `lg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                  lodgingType: rt.code,
+                                  dateCheckIn: checkIn,
+                                  dateCheckOut: checkOut,
+                                  arrivalTime: lgArr || '14:00',
+                                  rooms: lgRooms || 1,
+                                },
+                              ]);
+                            }}
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors relative ${
+                              count > 0
+                                ? 'bg-green-500/15 border-green-500 text-green-600'
+                                : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
+                            }`}
+                          >
+                            {count > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
+                                {count}
+                              </span>
+                            )}
+                            <div className="font-medium truncate">{rt.name}</div>
+                            <div className="text-[10px] opacity-70 font-mono">
+                              ¥{Number(rt.price || 0).toLocaleString()}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div className="flex gap-3 mt-2 text-[10px] text-gray-400">
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded bg-green-500" /> 入住
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded bg-purple-500" /> 在住
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded bg-emerald-500" /> 退房
-                      </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
+
+                  {/* 已添加住宿明细 */}
+                  {lgSessions.length > 0 && (
+                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="px-2 py-2 text-left font-medium">房型</th>
+                            <th className="px-2 py-2 text-left font-medium">入住</th>
+                            <th className="px-2 py-2 text-left font-medium">离店</th>
+                            <th className="px-2 py-2 text-left font-medium">到达</th>
+                            <th className="px-2 py-2 text-left font-medium">间数</th>
+                            <th className="px-2 py-2 text-left font-medium">晚数</th>
+                            <th className="px-2 py-2 text-left font-medium">小计</th>
+                            <th className="px-2 py-2"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lgSessions.map((s, idx) => {
+                            const nights = Math.max(0, daysBetween(s.dateCheckIn, s.dateCheckOut));
+                            const valid = s.dateCheckIn && s.dateCheckOut && nights >= 1;
+                            const info = getRoomInfo(s.lodgingType);
+                            const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc) : 0;
+                            return (
+                              <tr key={s.id} className="border-t border-gray-100">
+                                <td className="px-1.5 py-1.5">
+                                  <div className="font-medium text-gray-700">{info.name}</div>
+                                  <div className="text-[10px] text-gray-400 font-mono">¥{info.price.toLocaleString()}/晚</div>
+                                </td>
+                                <td className="px-1.5 py-1.5">
+                                  <input
+                                    type="date"
+                                    value={s.dateCheckIn}
+                                    onChange={(e) => {
+                                      const newIn = e.target.value;
+                                      setLgSessions((prev) => prev.map((x, i) => {
+                                        if (i !== idx) return x;
+                                        let out = x.dateCheckOut;
+                                        if (newIn && out) {
+                                          const minOut = fmt(addDays(parseDateLocal(newIn), 1));
+                                          if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
+                                        }
+                                        return { ...x, dateCheckIn: newIn, dateCheckOut: out };
+                                      }));
+                                    }}
+                                    className={`${cellInput} w-32 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1.5">
+                                  <input
+                                    type="date"
+                                    value={s.dateCheckOut}
+                                    onChange={(e) =>
+                                      setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, dateCheckOut: e.target.value } : x
+                                      ))
+                                    }
+                                    className={`${cellInput} w-32 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1.5">
+                                  <input
+                                    type="time"
+                                    value={s.arrivalTime}
+                                    onChange={(e) =>
+                                      setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, arrivalTime: e.target.value } : x
+                                      ))
+                                    }
+                                    className={`${cellInput} w-20 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1.5">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={s.rooms}
+                                    onChange={(e) =>
+                                      setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) } : x
+                                      ))
+                                    }
+                                    className={`${cellInput} w-14 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1.5 font-mono">
+                                  <span className={valid ? 'text-green-600' : 'text-red-500'}>
+                                    {valid ? `${nights}晚` : '⚠️ 无效'}
+                                  </span>
+                                </td>
+                                <td className="px-1.5 py-1.5 font-mono text-green-600">¥{amt.toLocaleString()}</td>
+                                <td className="px-1.5 py-1.5">
+                                  <button
+                                    onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
+                                    className="text-red-400 hover:text-red-600"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {lgSessions.length === 0 && (
+                    <div className="rounded-lg border-2 border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
+                      👆 请点击上方房型胶囊块，添加住宿信息
+                    </div>
+                  )}
                 </div>
               ) : drawer.itemType === 'lunch' || drawer.itemType === 'dinner' ? (
                 <div className="space-y-3">
@@ -2760,191 +2889,72 @@ export default function BookingBoardCreate(props: {
                 </div>
               ) : drawer.itemType === 'meeting' ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-700">会务场次（{mtSessions.length} 场）</span>
-                    <button
-                      onClick={() =>
-                        setMtSessions((prev) => [
-                          ...prev,
-                          {
-                            date: todayStr(),
-                            startTime: '09:00',
-                            hall: 'siji',
-                            slotType: 'full',
-                            pax: 20,
-                          },
-                        ])
-                      }
-                      className={btnGold}
-                    >
-                      <Plus size={12} /> 添加场次
-                    </button>
+                  <div>
+                    <label className={labelCls}>会议厅（点击添加场次）</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {finalHallOptions.map((h) => {
+                        const count = mtSessions.filter(s => s.hall === h.code).length;
+                        return (
+                          <button
+                            key={h.code}
+                            onClick={() =>
+                              setMtSessions((prev) => [
+                                ...prev,
+                                {
+                                  date: todayStr(),
+                                  startTime: '09:00',
+                                  hall: h.code,
+                                  slotType: 'full' as const,
+                                  pax: 20,
+                                },
+                              ])
+                            }
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left relative ${
+                              count > 0
+                                ? 'bg-green-500/15 border-green-500 text-green-600'
+                                : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
+                            }`}
+                          >
+                            {count > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
+                                {count}
+                              </span>
+                            )}
+                            <div className="font-medium truncate">{h.name}</div>
+                            <div className="text-[10px] opacity-70 font-mono">
+                              容{h.capacity}人 · 半¥{Number(h.half_price || 0).toLocaleString()} / 全¥{Number(h.full_price || 0).toLocaleString()}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="overflow-x-auto rounded-lg border border-gray-200">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50 text-gray-500">
-                        <tr>
-                          <th className="px-2 py-2 text-left font-medium">日期</th>
-                          <th className="px-2 py-2 text-left font-medium">开始</th>
-                          <th className="px-2 py-2 text-left font-medium">会议厅</th>
-                          <th className="px-2 py-2 text-left font-medium">时段</th>
-                          <th className="px-2 py-2 text-left font-medium">人数</th>
-                          <th className="px-2 py-2 text-left font-medium">金额</th>
-                          <th className="px-2 py-2"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mtSessions.map((s, idx) => (
-                          <tr key={idx} className="border-t border-gray-100">
-                            <td className="px-1.5 py-1">
-                              <input
-                                type="date"
-                                value={s.date}
-                                onChange={(e) =>
-                                  setMtSessions((prev) =>
-                                    prev.map((x, i) =>
-                                      i === idx ? { ...x, date: e.target.value } : x,
-                                    ),
-                                  )
-                                }
-                                className={`${cellInput} w-36 font-mono`}
-                              />
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <input
-                                type="time"
-                                value={s.startTime}
-                                onChange={(e) =>
-                                  setMtSessions((prev) =>
-                                    prev.map((x, i) =>
-                                      i === idx ? { ...x, startTime: e.target.value } : x,
-                                    ),
-                                  )
-                                }
-                                className={`${cellInput} w-20 font-mono`}
-                              />
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <select
-                                value={s.hall}
-                                onChange={(e) =>
-                                  setMtSessions((prev) =>
-                                    prev.map((x, idx0) =>
-                                      idx0 === idx
-                                        ? { ...x, hall: e.target.value as MeetingSession['hall'] }
-                                        : x,
-                                    ),
-                                  )
-                                }
-                                className={cellInput}
-                              >
-                                {finalHallOptions.map((h) => (
-                                  <option key={h.code} value={h.code}>
-                                    {h.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <select
-                                value={s.slotType}
-                                onChange={(e) =>
-                                  setMtSessions((prev) =>
-                                    prev.map((x, idx0) =>
-                                      idx0 === idx
-                                        ? { ...x, slotType: e.target.value as 'half' | 'full' }
-                                        : x,
-                                    ),
-                                  )
-                                }
-                                className={cellInput}
-                              >
-                                <option value="half">半天</option>
-                                <option value="full">全天</option>
-                              </select>
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <input
-                                type="number"
-                                min="0"
-                                value={s.pax}
-                                onChange={(e) =>
-                                  setMtSessions((prev) =>
-                                    prev.map((x, idx0) =>
-                                      idx0 === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
-                                    ),
-                                  )
-                                }
-                                className={`${cellInput} w-16 font-mono`}
-                              />
-                            </td>
-                            <td className="px-1.5 py-1 font-mono text-green-600">
-                              ¥{calcMeetingAmount(s.hall, s.slotType, finalBizConfigForCalc).toLocaleString()}
-                            </td>
-                            <td className="px-1.5 py-1">
-                              <button
-                                onClick={() =>
-                                  setMtSessions((prev) => prev.filter((_, i) => i !== idx))
-                                }
-                                className="text-red-400 hover:text-red-600"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </td>
+
+                  {mtSessions.length > 0 ? (
+                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="px-2 py-2 text-left font-medium">日期</th>
+                            <th className="px-2 py-2 text-left font-medium">开始</th>
+                            <th className="px-2 py-2 text-left font-medium">会议厅</th>
+                            <th className="px-2 py-2 text-left font-medium">时段</th>
+                            <th className="px-2 py-2 text-left font-medium">人数</th>
+                            <th className="px-2 py-2 text-left font-medium">金额</th>
+                            <th className="px-2 py-2"></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : drawer.itemType === 'wellness' ? (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-700">康乐场次（{wlSessions.length} 场）</span>
-                    <button
-                      onClick={() =>
-                        setWlSessions((prev) => [
-                          ...prev,
-                          {
-                            date: todayStr(),
-                            startTime: '15:00',
-                            wellnessType: 'mahjong',
-                            hours: 4,
-                            pax: 2,
-                          },
-                        ])
-                      }
-                      className={btnGold}
-                    >
-                      <Plus size={12} /> 添加场次
-                    </button>
-                  </div>
-                  <div className="overflow-x-auto rounded-lg border border-gray-200">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50 text-gray-500">
-                        <tr>
-                          <th className="px-2 py-2 text-left font-medium">日期</th>
-                          <th className="px-2 py-2 text-left font-medium">开始</th>
-                          <th className="px-2 py-2 text-left font-medium">项目</th>
-                          <th className="px-2 py-2 text-left font-medium">小时</th>
-                          <th className="px-2 py-2 text-left font-medium">人数</th>
-                          <th className="px-2 py-2 text-left font-medium">金额</th>
-                          <th className="px-2 py-2"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {wlSessions.map((s, idx) => {
-                          const w = getWellnessInfo(s.wellnessType);
-                          return (
+                        </thead>
+                        <tbody>
+                          {mtSessions.map((s, idx) => (
                             <tr key={idx} className="border-t border-gray-100">
                               <td className="px-1.5 py-1">
                                 <input
                                   type="date"
                                   value={s.date}
                                   onChange={(e) =>
-                                    setWlSessions((prev) =>
-                                      prev.map((x, idx0) =>
-                                        idx0 === idx ? { ...x, date: e.target.value } : x,
+                                    setMtSessions((prev) =>
+                                      prev.map((x, i) =>
+                                        i === idx ? { ...x, date: e.target.value } : x,
                                       ),
                                     )
                                   }
@@ -2956,9 +2966,9 @@ export default function BookingBoardCreate(props: {
                                   type="time"
                                   value={s.startTime}
                                   onChange={(e) =>
-                                    setWlSessions((prev) =>
-                                      prev.map((x, idx0) =>
-                                        idx0 === idx ? { ...x, startTime: e.target.value } : x,
+                                    setMtSessions((prev) =>
+                                      prev.map((x, i) =>
+                                        i === idx ? { ...x, startTime: e.target.value } : x,
                                       ),
                                     )
                                   }
@@ -2966,44 +2976,54 @@ export default function BookingBoardCreate(props: {
                                 />
                               </td>
                               <td className="px-1.5 py-1">
-                                <select
-                                  value={s.wellnessType}
-                                  onChange={(e) =>
-                                    setWlSessions((prev) =>
-                                      prev.map((x, idx0) =>
-                                        idx0 === idx
-                                          ? {
-                                              ...x,
-                                              wellnessType:
-                                                e.target.value as WellnessSession['wellnessType'],
-                                            }
-                                          : x,
-                                      ),
-                                    )
-                                  }
-                                  className={cellInput}
-                                >
-                                  {finalWellnessOptions.map((w2) => (
-                                    <option key={w2.code} value={w2.code}>
-                                      {w2.name}
-                                    </option>
+                                <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                  {finalHallOptions.map((h) => (
+                                    <button
+                                      key={h.code}
+                                      onClick={() =>
+                                        setMtSessions((prev) =>
+                                          prev.map((x, idx0) =>
+                                            idx0 === idx
+                                              ? { ...x, hall: h.code }
+                                              : x,
+                                          ),
+                                        )
+                                      }
+                                      className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                                        s.hall === h.code
+                                          ? 'bg-green-500/15 border-green-500 text-green-600'
+                                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                      }`}
+                                    >
+                                      {h.name}
+                                    </button>
                                   ))}
-                                </select>
+                                </div>
                               </td>
                               <td className="px-1.5 py-1">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={s.hours}
-                                  onChange={(e) =>
-                                    setWlSessions((prev) =>
-                                      prev.map((x, idx0) =>
-                                        idx0 === idx ? { ...x, hours: parseInt(e.target.value) || 0 } : x,
-                                      ),
-                                    )
-                                  }
-                                  className={`${cellInput} w-14 font-mono`}
-                                />
+                                <div className="flex gap-1">
+                                  {(['half', 'full'] as const).map((v) => (
+                                    <button
+                                      key={v}
+                                      onClick={() =>
+                                        setMtSessions((prev) =>
+                                          prev.map((x, idx0) =>
+                                            idx0 === idx
+                                              ? { ...x, slotType: v }
+                                              : x,
+                                          ),
+                                        )
+                                      }
+                                      className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                                        s.slotType === v
+                                          ? 'bg-green-500/15 border-green-500 text-green-600'
+                                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                      }`}
+                                    >
+                                      {v === 'half' ? '半天' : '全天'}
+                                    </button>
+                                  ))}
+                                </div>
                               </td>
                               <td className="px-1.5 py-1">
                                 <input
@@ -3011,26 +3031,22 @@ export default function BookingBoardCreate(props: {
                                   min="0"
                                   value={s.pax}
                                   onChange={(e) =>
-                                    setWlSessions((prev) =>
+                                    setMtSessions((prev) =>
                                       prev.map((x, idx0) =>
                                         idx0 === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
                                       ),
                                     )
                                   }
-                                  className={`${cellInput} w-14 font-mono`}
+                                  className={`${cellInput} w-16 font-mono`}
                                 />
                               </td>
                               <td className="px-1.5 py-1 font-mono text-green-600">
-                                {w.free ? (
-                                  <span className="text-emerald-400">免费</span>
-                                ) : (
-                                  `¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc).toLocaleString()}`
-                                )}
+                                ¥{calcMeetingAmount(s.hall, s.slotType, finalBizConfigForCalc).toLocaleString()}
                               </td>
                               <td className="px-1.5 py-1">
                                 <button
                                   onClick={() =>
-                                    setWlSessions((prev) => prev.filter((_, i) => i !== idx))
+                                    setMtSessions((prev) => prev.filter((_, i) => i !== idx))
                                   }
                                   className="text-red-400 hover:text-red-600"
                                 >
@@ -3038,11 +3054,197 @@ export default function BookingBoardCreate(props: {
                                 </button>
                               </td>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border-2 border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
+                      👆 请点击上方会议厅胶囊块，添加会务场次
+                    </div>
+                  )}
+                </div>
+              ) : drawer.itemType === 'wellness' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className={labelCls}>康乐项目（点击添加场次）</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {finalWellnessOptions.map((w) => {
+                        const count = wlSessions.filter(s => s.wellnessType === w.code).length;
+                        const free = Number(w.is_free) === 1;
+                        return (
+                          <button
+                            key={w.code}
+                            onClick={() =>
+                              setWlSessions((prev) => [
+                                ...prev,
+                                {
+                                  date: todayStr(),
+                                  startTime: '15:00',
+                                  wellnessType: w.code,
+                                  hours: Number(w.min_hours) || 1,
+                                  pax: 2,
+                                },
+                              ])
+                            }
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left relative ${
+                              count > 0
+                                ? 'bg-green-500/15 border-green-500 text-green-600'
+                                : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
+                            }`}
+                          >
+                            {count > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
+                                {count}
+                              </span>
+                            )}
+                            <div className="font-medium truncate flex items-center gap-1">
+                              {w.name}
+                              {free && (
+                                <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-600 font-medium">
+                                  免费
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] opacity-70 font-mono">
+                              {free ? '免费使用' : `至少${w.min_hours || 0}h · ¥${Number(w.price || 0).toLocaleString()}/h`}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
+
+                  {wlSessions.length > 0 ? (
+                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="px-2 py-2 text-left font-medium">日期</th>
+                            <th className="px-2 py-2 text-left font-medium">开始</th>
+                            <th className="px-2 py-2 text-left font-medium">项目</th>
+                            <th className="px-2 py-2 text-left font-medium">小时</th>
+                            <th className="px-2 py-2 text-left font-medium">人数</th>
+                            <th className="px-2 py-2 text-left font-medium">金额</th>
+                            <th className="px-2 py-2"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {wlSessions.map((s, idx) => {
+                            const w = getWellnessInfo(s.wellnessType);
+                            return (
+                              <tr key={idx} className="border-t border-gray-100">
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="date"
+                                    value={s.date}
+                                    onChange={(e) =>
+                                      setWlSessions((prev) =>
+                                        prev.map((x, idx0) =>
+                                          idx0 === idx ? { ...x, date: e.target.value } : x,
+                                        ),
+                                      )
+                                    }
+                                    className={`${cellInput} w-36 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="time"
+                                    value={s.startTime}
+                                    onChange={(e) =>
+                                      setWlSessions((prev) =>
+                                        prev.map((x, idx0) =>
+                                          idx0 === idx ? { ...x, startTime: e.target.value } : x,
+                                        ),
+                                      )
+                                    }
+                                    className={`${cellInput} w-20 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                    {finalWellnessOptions.map((w2) => (
+                                      <button
+                                        key={w2.code}
+                                        onClick={() =>
+                                          setWlSessions((prev) =>
+                                            prev.map((x, idx0) =>
+                                              idx0 === idx
+                                                ? { ...x, wellnessType: w2.code }
+                                                : x,
+                                            ),
+                                          )
+                                        }
+                                        className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                                          s.wellnessType === w2.code
+                                            ? 'bg-green-500/15 border-green-500 text-green-600'
+                                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                        }`}
+                                      >
+                                        {w2.name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={s.hours}
+                                    onChange={(e) =>
+                                      setWlSessions((prev) =>
+                                        prev.map((x, idx0) =>
+                                          idx0 === idx ? { ...x, hours: parseInt(e.target.value) || 0 } : x,
+                                        ),
+                                      )
+                                    }
+                                    className={`${cellInput} w-14 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={s.pax}
+                                    onChange={(e) =>
+                                      setWlSessions((prev) =>
+                                        prev.map((x, idx0) =>
+                                          idx0 === idx ? { ...x, pax: parseInt(e.target.value) || 0 } : x,
+                                        ),
+                                      )
+                                    }
+                                    className={`${cellInput} w-14 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1 font-mono text-green-600">
+                                  {w.free ? (
+                                    <span className="text-emerald-500">免费</span>
+                                  ) : (
+                                    `¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc).toLocaleString()}`
+                                  )}
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <button
+                                    onClick={() =>
+                                      setWlSessions((prev) => prev.filter((_, i) => i !== idx))
+                                    }
+                                    className="text-red-400 hover:text-red-600"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border-2 border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
+                      👆 请点击上方康乐项目胶囊块，添加场次
+                    </div>
+                  )}
                 </div>
               ) : drawer.itemType === 'carpickup' ? (
                 <div className="space-y-3">
