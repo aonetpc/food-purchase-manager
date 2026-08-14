@@ -854,6 +854,8 @@ export default function BookingBoardCreate(props: {
 
   // 用餐表单（多场次，每场含用餐标准/计价模式/特殊要求）
   const [mlSessions, setMlSessions] = useState<MealSession[]>([]);
+  // 用餐标准弹出面板状态：null=无，否则=当前正在修改的场次索引
+  const [mlPickerOpen, setMlPickerOpen] = useState<number | null>(null);
 
   // 会务表单
   const [mtSessions, setMtSessions] = useState<MeetingSession[]>([]);
@@ -2724,7 +2726,8 @@ export default function BookingBoardCreate(props: {
                   )}
                 </div>
               ) : drawer.itemType === 'lunch' || drawer.itemType === 'dinner' ? (
-                <div className="space-y-3">
+                <div className="space-y-3 relative">
+                  {/* 顶部：用餐标准胶囊块（点击加一场） */}
                   <div>
                     <label className={labelCls}>用餐标准（点击添加场次）</label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -2750,18 +2753,20 @@ export default function BookingBoardCreate(props: {
                                 },
                               ]);
                             }}
-                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left relative ${
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left ${
                               count > 0
                                 ? 'bg-green-500/15 border-green-500 text-green-600'
                                 : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                             }`}
                           >
-                            {count > 0 && (
-                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
-                                {count}
-                              </span>
-                            )}
-                            <div className="font-medium truncate">{m.name}</div>
+                            <div className="font-medium truncate flex items-center justify-between gap-1">
+                              <span className="truncate">{m.name}</span>
+                              {count > 0 && (
+                                <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-green-500 text-white font-medium">
+                                  +{count}
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[10px] opacity-70 font-mono">
                               {m.pricing_mode === 'per_person' ? `¥${Number(m.unit_price).toLocaleString()}/人` : `¥${Number(m.unit_price).toLocaleString()}/桌`}
                             </div>
@@ -2771,53 +2776,224 @@ export default function BookingBoardCreate(props: {
                     </div>
                   </div>
 
+                  {/* 场次：多张卡片 */}
                   {mlSessions.length > 0 ? (
-                    <div className="overflow-x-auto rounded-lg border border-gray-200">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50 text-gray-500">
-                          <tr>
-                            <th className="px-2 py-2 text-left font-medium">日期</th>
-                            <th className="px-2 py-2 text-left font-medium">时间</th>
-                            <th className="px-2 py-2 text-left font-medium">标准</th>
-                            <th className="px-2 py-2 text-left font-medium">计价</th>
-                            <th className="px-2 py-2 text-left font-medium">单价</th>
-                            <th className="px-2 py-2 text-left font-medium">数量</th>
-                            <th className="px-2 py-2 text-left font-medium">小计</th>
-                            <th className="px-2 py-2 text-left font-medium">特殊要求</th>
-                            <th className="px-2 py-2"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mlSessions.map((s, idx) => {
-                            const amt = calcMealAmount(s.pricingMode, s.unitPrice, s.tables, s.perTable, s.pax);
-                            return (
-                              <tr key={idx} className="border-t border-gray-100">
-                                <td className="px-1.5 py-1">
-                                  <input
-                                    type="date"
-                                    value={s.date}
-                                    onChange={(e) =>
+                    <div className="space-y-3">
+                      {mlSessions.map((s, idx) => {
+                        const amt = calcMealAmount(s.pricingMode, s.unitPrice, s.tables, s.perTable, s.pax);
+                        const mtInfo = getMealTypeInfo(s.mealType, bizConfig.mealTypes);
+                        return (
+                          <div
+                            key={idx}
+                            className="rounded-xl border border-gray-200 bg-white p-3 space-y-2 shadow-sm relative"
+                          >
+                            {/* 卡片头部：场次号 + 删除 */}
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs text-gray-500">
+                                场次 <span className="font-semibold text-gray-700">{idx + 1}</span>
+                              </div>
+                              <button
+                                onClick={() => setMlSessions((prev) => prev.filter((_, i) => i !== idx))}
+                                className="text-red-400 hover:text-red-600"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+
+                            {/* 日期 + 时间 */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-gray-400 mb-0.5 block">日期</label>
+                                <input
+                                  type="date"
+                                  value={s.date}
+                                  onChange={(e) =>
+                                    setMlSessions((prev) => prev.map((x, i) =>
+                                      i === idx ? { ...x, date: e.target.value } : x,
+                                    ))
+                                  }
+                                  className={`${inputCls} font-mono w-full`}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-400 mb-0.5 block">时间</label>
+                                <input
+                                  type="time"
+                                  value={s.time}
+                                  onChange={(e) =>
+                                    setMlSessions((prev) => prev.map((x, i) =>
+                                      i === idx ? { ...x, time: e.target.value } : x,
+                                    ))
+                                  }
+                                  className={`${inputCls} font-mono w-full`}
+                                />
+                              </div>
+                            </div>
+
+                            {/* 用餐标准：标签按钮 + 弹出面板 */}
+                            <div>
+                              <label className="text-[10px] text-gray-400 mb-0.5 block">用餐标准</label>
+                              <button
+                                onClick={() => setMlPickerOpen(idx)}
+                                className="w-full text-left px-2 py-1.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-300 transition-colors text-xs"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="w-7 h-7 shrink-0 rounded-md bg-orange-500/15 text-orange-600 flex items-center justify-center">
+                                      🍱
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="font-medium text-gray-700 truncate">{mtInfo.name}</div>
+                                      <div className="text-[10px] text-gray-400 font-mono">
+                                        ¥{Number(s.unitPrice).toLocaleString()}/{s.pricingMode === 'per_person' ? '人' : '桌'}
+                                        {s.unitPrice !== mtInfo.unitPrice && <span className="ml-1 text-amber-500">(已调整)</span>}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                                </div>
+                              </button>
+                            </div>
+
+                            {/* 计价模式 */}
+                            <div>
+                              <label className="text-[10px] text-gray-400 mb-0.5 block">计价模式</label>
+                              <div className="flex gap-1.5">
+                                {(['per_table', 'per_person'] as const).map((v) => (
+                                  <button
+                                    key={v}
+                                    onClick={() =>
                                       setMlSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, date: e.target.value } : x,
+                                        i === idx ? { ...x, pricingMode: v } : x,
                                       ))
                                     }
-                                    className={`${cellInput} w-36 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  <input
-                                    type="time"
-                                    value={s.time}
-                                    onChange={(e) =>
-                                      setMlSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, time: e.target.value } : x,
-                                      ))
-                                    }
-                                    className={`${cellInput} w-20 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                    className={`flex-1 px-2 py-1.5 rounded-lg text-xs border transition-colors ${
+                                      s.pricingMode === v
+                                        ? 'bg-green-500/15 border-green-500 text-green-600 font-medium'
+                                        : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                    }`}
+                                  >
+                                    {v === 'per_table' ? '按桌计价' : '按人计价'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* 单价 + 数量 */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-gray-400 mb-0.5 block">
+                                  单价（{s.pricingMode === 'per_person' ? '元/人' : '元/桌'}）
+                                </label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={s.unitPrice}
+                                  onChange={(e) =>
+                                    setMlSessions((prev) => prev.map((x, i) =>
+                                      i === idx ? { ...x, unitPrice: parseFloat(e.target.value) || 0 } : x,
+                                    ))
+                                  }
+                                  className={`${inputCls} font-mono w-full`}
+                                />
+                              </div>
+                              <div>
+                                {s.pricingMode === 'per_table' ? (
+                                  <>
+                                    <label className="text-[10px] text-gray-400 mb-0.5 block">数量</label>
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={s.tables}
+                                        onChange={(e) =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, tables: Math.max(1, parseInt(e.target.value) || 1) } : x,
+                                          ))
+                                        }
+                                        className={`${inputCls} font-mono flex-1`}
+                                      />
+                                      <span className="text-gray-400 text-xs shrink-0">桌 ×</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={s.perTable}
+                                        onChange={(e) =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, perTable: Math.max(1, parseInt(e.target.value) || 1) } : x,
+                                          ))
+                                        }
+                                        className={`${inputCls} font-mono flex-1`}
+                                      />
+                                      <span className="text-gray-400 text-xs shrink-0">人</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <label className="text-[10px] text-gray-400 mb-0.5 block">用餐人数</label>
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={s.pax}
+                                        onChange={(e) =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, pax: Math.max(0, parseInt(e.target.value) || 0) } : x,
+                                          ))
+                                        }
+                                        className={`${inputCls} font-mono w-full`}
+                                      />
+                                      <span className="text-gray-400 text-xs shrink-0">人</span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* 特殊要求 */}
+                            <div>
+                              <label className="text-[10px] text-gray-400 mb-0.5 block">特殊要求（忌口/偏好/分餐）</label>
+                              <textarea
+                                value={s.remark}
+                                placeholder="例如：3份素食、1份清真、5份儿童餐、高血糖不要甜点..."
+                                rows={2}
+                                onChange={(e) =>
+                                  setMlSessions((prev) => prev.map((x, i) =>
+                                    i === idx ? { ...x, remark: e.target.value } : x,
+                                  ))
+                                }
+                                className={`${inputCls} w-full text-xs resize-none`}
+                              />
+                            </div>
+
+                            {/* 小计 */}
+                            <div className="flex items-center justify-end pt-1 border-t border-gray-100">
+                              <span className="text-xs text-gray-400 mr-2">小计</span>
+                              <span className="font-mono font-semibold text-green-600 text-base">¥{amt.toLocaleString()}</span>
+                            </div>
+
+                            {/* 弹出面板 - 用餐标准选择器 */}
+                            {mlPickerOpen === idx && (
+                              <>
+                                {/* 背景遮罩 */}
+                                <div
+                                  className="fixed inset-0 z-40 bg-black/20"
+                                  onClick={() => setMlPickerOpen(null)}
+                                />
+                                {/* 面板主体 */}
+                                <div
+                                  className="absolute z-50 top-10 left-2 right-2 bg-white rounded-xl shadow-2xl border border-gray-200 p-3 animate-in fade-in zoom-in-95 duration-100"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="text-xs text-gray-500">选择用餐标准</div>
+                                    <button
+                                      onClick={() => setMlPickerOpen(null)}
+                                      className="text-gray-400 hover:text-gray-600"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                     {finalMealOptions.map((m) => (
                                       <button
                                         key={m.code}
@@ -2831,128 +3007,30 @@ export default function BookingBoardCreate(props: {
                                               unitPrice: info.unitPrice,
                                             } : x,
                                           ));
+                                          setMlPickerOpen(null);
                                         }}
-                                        className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                                        className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left ${
                                           s.mealType === m.code
-                                            ? 'bg-green-500/15 border-green-500 text-green-600'
-                                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                            ? 'bg-green-500/15 border-green-500 text-green-600 ring-2 ring-green-500/30'
+                                            : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                                         }`}
                                       >
-                                        {m.name}
+                                        <div className="font-medium truncate">{m.name}</div>
+                                        <div className="text-[10px] opacity-70 font-mono">
+                                          {m.pricing_mode === 'per_person' ? `¥${Number(m.unit_price).toLocaleString()}/人` : `¥${Number(m.unit_price).toLocaleString()}/桌`}
+                                        </div>
+                                        {s.mealType === m.code && (
+                                          <div className="text-[10px] text-green-600 mt-0.5">✓ 当前选择</div>
+                                        )}
                                       </button>
                                     ))}
                                   </div>
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  <div className="flex gap-1">
-                                    {(['per_table', 'per_person'] as const).map((v) => (
-                                      <button
-                                        key={v}
-                                        onClick={() =>
-                                          setMlSessions((prev) => prev.map((x, i) =>
-                                            i === idx ? { ...x, pricingMode: v } : x,
-                                          ))
-                                        }
-                                        className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
-                                          s.pricingMode === v
-                                            ? 'bg-green-500/15 border-green-500 text-green-600'
-                                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
-                                        }`}
-                                      >
-                                        {v === 'per_table' ? '按桌' : '按人'}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={s.unitPrice}
-                                    onChange={(e) =>
-                                      setMlSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, unitPrice: parseFloat(e.target.value) || 0 } : x,
-                                      ))
-                                    }
-                                    className={`${cellInput} w-20 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  {s.pricingMode === 'per_table' ? (
-                                    <div className="flex items-center gap-1">
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        value={s.tables}
-                                        onChange={(e) =>
-                                          setMlSessions((prev) => prev.map((x, i) =>
-                                            i === idx ? { ...x, tables: Math.max(1, parseInt(e.target.value) || 1) } : x,
-                                          ))
-                                        }
-                                        className={`${cellInput} w-14 font-mono`}
-                                        title="桌数"
-                                      />
-                                      <span className="text-gray-400 text-[10px]">桌</span>
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        value={s.perTable}
-                                        onChange={(e) =>
-                                          setMlSessions((prev) => prev.map((x, i) =>
-                                            i === idx ? { ...x, perTable: Math.max(1, parseInt(e.target.value) || 1) } : x,
-                                          ))
-                                        }
-                                        className={`${cellInput} w-14 font-mono`}
-                                        title="每桌人数"
-                                      />
-                                      <span className="text-gray-400 text-[10px]">人/桌</span>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-1">
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        value={s.pax}
-                                        onChange={(e) =>
-                                          setMlSessions((prev) => prev.map((x, i) =>
-                                            i === idx ? { ...x, pax: Math.max(0, parseInt(e.target.value) || 0) } : x,
-                                          ))
-                                        }
-                                        className={`${cellInput} w-16 font-mono`}
-                                      />
-                                      <span className="text-gray-400 text-[10px]">人</span>
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="px-1.5 py-1 font-mono text-green-600">
-                                  ¥{amt.toLocaleString()}
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  <input
-                                    type="text"
-                                    value={s.remark}
-                                    placeholder="如：素食/清真..."
-                                    onChange={(e) =>
-                                      setMlSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, remark: e.target.value } : x,
-                                      ))
-                                    }
-                                    className={`${cellInput} w-32`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1">
-                                  <button
-                                    onClick={() => setMlSessions((prev) => prev.filter((_, i) => i !== idx))}
-                                    className="text-red-400 hover:text-red-600"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="rounded-lg border-2 border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
@@ -2982,18 +3060,20 @@ export default function BookingBoardCreate(props: {
                                 },
                               ])
                             }
-                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left relative ${
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left ${
                               count > 0
                                 ? 'bg-green-500/15 border-green-500 text-green-600'
                                 : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                             }`}
                           >
-                            {count > 0 && (
-                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
-                                {count}
-                              </span>
-                            )}
-                            <div className="font-medium truncate">{h.name}</div>
+                            <div className="font-medium truncate flex items-center justify-between gap-1">
+                              <span className="truncate">{h.name}</span>
+                              {count > 0 && (
+                                <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-green-500 text-white font-medium">
+                                  +{count}
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[10px] opacity-70 font-mono">
                               容{h.capacity}人 · 半¥{Number(h.half_price || 0).toLocaleString()} / 全¥{Number(h.full_price || 0).toLocaleString()}
                             </div>
@@ -3160,22 +3240,24 @@ export default function BookingBoardCreate(props: {
                                 },
                               ])
                             }
-                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left relative ${
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left ${
                               count > 0
                                 ? 'bg-green-500/15 border-green-500 text-green-600'
                                 : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                             }`}
                           >
-                            {count > 0 && (
-                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
-                                {count}
+                            <div className="font-medium truncate flex items-center justify-between gap-1">
+                              <span className="truncate flex items-center gap-1">
+                                {w.name}
+                                {free && (
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-600 font-medium shrink-0">
+                                    免费
+                                  </span>
+                                )}
                               </span>
-                            )}
-                            <div className="font-medium truncate flex items-center gap-1">
-                              {w.name}
-                              {free && (
-                                <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-600 font-medium">
-                                  免费
+                              {count > 0 && (
+                                <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-green-500 text-white font-medium">
+                                  +{count}
                                 </span>
                               )}
                             </div>
