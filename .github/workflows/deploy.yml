@@ -733,6 +733,10 @@ jobs:
             echo "Running Node.js reimport-checkup-items.js ..."
             cd /opt/food-purchase/backend && node scripts/reimport-checkup-items.js 2>&1 || echo "⚠️ reimport-checkup-items.js 有错误（非致命）"
 
+            # 兜底3：修复体检项目价格/类型（按名称匹配 UPDATE，防止价格为0或类型全为普通的问题）
+            echo "Running Node.js fix-checkup-items-prices.js ..."
+            cd /opt/food-purchase/backend && node scripts/fix-checkup-items-prices.js 2>&1 || echo "⚠️ fix-checkup-items-prices.js 有错误（非致命）"
+
             # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
               SET @dbname = DATABASE();
