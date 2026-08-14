@@ -400,10 +400,14 @@ export default function WarehousePurchaseList() {
     setSendConfirmLoading(true);
     setError('');
     try {
-      await api.post(`/warehouse-purchases/${sendConfirmTarget.id}/send-confirm`);
+      const result = await api.post<any>(`/warehouse-purchases/${sendConfirmTarget.id}/send-confirm`);
       setShowSendConfirmModal(false);
       setSendConfirmTarget(null);
       await fetchList();
+      // 群消息发送失败时提示用户（个人消息已送达，不影响主流程）
+      if (result?.group_message && !result.group_message.success) {
+        setError(`群聊消息发送失败：${result.group_message.error || '未知原因'}（个人通知已送达）`);
+      }
     } catch (err: any) {
       setError(err.message || '发送确认通知失败');
     } finally {

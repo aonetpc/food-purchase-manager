@@ -16,6 +16,7 @@ const {
   getWecomConfig,
   sendMarkdownViaWebhook,
   sendWecomMessage,
+  sendTextViaWebhook,
   sendTemplateCardToUser,
   updateTemplateCardButton,
   getWecomUserName,
@@ -2712,21 +2713,27 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
         }
     }
 
-    // 发送群聊文本消息（text 类型 + mentioned_list 实现真正@提醒）
+    // 发送群聊文本消息（webhook text 类型 + mentioned_list 实现真正@提醒）
     // 不含金额等敏感信息，仅提醒相关人员前往应用内核对确认
-    // 发送失败不影响主流程，仅记录日志
-    if (config.chat_id && mentionedUsers.length > 0) {
+    // 发送失败不影响个人卡片推送和主流程，仅记录结果
+    let groupMsgResult = null;
+    const webhookUrl = config.webhook_url || config.test_webhook_url;
+    if (webhookUrl && mentionedUsers.length > 0) {
       try {
         let groupText = `【仓库采购确认通知】\n`;
         groupText += `采购单号：${purchaseNo || '未生成'}\n`;
         groupText += `涉及仓库：${warehouseNames.length > 0 ? warehouseNames.join('、') : '未指定'}\n`;
         groupText += `\n请相关人员尽快前往应用内核对入库清单并确认。`;
 
-        await sendWecomMessage(config, groupText, mentionedUsers);
+        await sendTextViaWebhook(webhookUrl, groupText, mentionedUsers);
         console.log('[send-confirm] 群聊@提醒消息发送成功');
+        groupMsgResult = { success: true, method: 'webhook' };
       } catch (groupErr) {
         console.error('[send-confirm] 群聊@提醒消息发送失败（不影响主流程）:', groupErr.message);
+        groupMsgResult = { success: false, error: groupErr.message };
       }
+    } else {
+      groupMsgResult = { success: false, error: '未配置 webhook 或无确认人' };
     }
 
     // 构建 user_departments 存库（按仓库维度组织，记录该仓库的确认人列表）
@@ -2769,11 +2776,14 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
 
       res.json({
         success: true,
-        message: `确认通知已发送`,
+        message: groupMsgResult?.success
+          ? '确认通知已发送（含群聊@提醒）'
+          : '确认通知已发送（群聊消息发送失败，个人消息已送达）',
         wecom_msg_id: wecomMsgId,
         sent_to_users: sentToUsers,
         failed_users: failedUsers,
         user_departments: userDepartmentsMap,
+        group_message: groupMsgResult,
       });
     }
   } catch (err) {
