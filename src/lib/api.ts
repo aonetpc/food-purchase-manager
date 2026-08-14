@@ -378,7 +378,8 @@ export const bookingApi = {
       roomTypes: (res.data?.roomTypes || []).map(fromBackend),
       meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
       wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
-      checkupItems: (res.data?.checkupItems || []).map(fromBackend),
+      // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
+      checkupItems: (res.data?.checkupItems || []) as CheckupItemRow[],
       salesUsers: (res.data?.salesUsers || []).map(fromBackend),
     };
   },
@@ -423,17 +424,19 @@ export const bookingApi = {
   },
 
   // ===== 体检项目主表 CRUD =====
+  // 注意：体检项目前端渲染代码（BizConfigModal.tsx）全部使用 snake_case
+  //       因此这里不做 fromBackend 转换，保持与后端字段一致
   async listCheckupItems(): Promise<CheckupItemRow[]> {
     const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/checkup-items');
-    return (res.data || []).map(fromBackend) as CheckupItemRow[];
+    return (res.data || []) as CheckupItemRow[];
   },
   async createCheckupItem(payload: Partial<CheckupItemRow>): Promise<CheckupItemRow> {
     const res = await api.post<{ ok: boolean; data: any }>('/booking/config/checkup-items', payload);
-    return fromBackend(res.data) as CheckupItemRow;
+    return res.data as CheckupItemRow;
   },
   async updateCheckupItem(id: string, payload: Partial<CheckupItemRow>): Promise<CheckupItemRow> {
     const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/checkup-items/${id}`, payload);
-    return fromBackend(res.data) as CheckupItemRow;
+    return res.data as CheckupItemRow;
   },
   async deleteCheckupItem(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/checkup-items/${id}`);
