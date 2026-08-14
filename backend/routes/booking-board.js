@@ -479,13 +479,49 @@ function makeCheckupItemCrud(routerRef) {
   const basePath = '/config/checkup-items';
   const table = 'booking_checkup_items';
   const requiredFields = ['code', 'name'];
-  const editableFields = ['category', 'description', 'default_price', 'unit', 'status', 'sort_order'];
+  const editableFields = ['item_type', 'category', 'description', 'default_price', 'unit', 'status', 'sort_order'];
+
+  // 查询组合项目的子项目列表
+  async function getSubItems(conn, comboItemId) {
+    const [subs] = await conn.query(
+      `SELECT si.sub_item_id, si.sort_order, ci.name, ci.code, ci.default_price, ci.category, ci.unit
+       FROM booking_item_sub_items si
+       JOIN booking_checkup_items ci ON ci.id = si.sub_item_id
+       WHERE si.combo_item_id = ? ORDER BY si.sort_order ASC`,
+      [comboItemId]
+    );
+    return subs;
+  }
+
+  // 保存组合项目的子项目关联（先删后插）
+  async function saveSubItems(conn, comboItemId, subItemIds) {
+    await conn.query(`DELETE FROM booking_item_sub_items WHERE combo_item_id = ?`, [comboItemId]);
+    if (subItemIds && subItemIds.length > 0) {
+      for (let i = 0; i < subItemIds.length; i++) {
+        await conn.query(
+          `INSERT IGNORE INTO booking_item_sub_items (id, combo_item_id, sub_item_id, sort_order) VALUES (UUID(), ?, ?, ?)`,
+          [comboItemId, subItemIds[i], (i + 1) * 10]
+        );
+      }
+    }
+  }
 
   routerRef.get(`${basePath}`, requireAuth, async (req, res) => {
     try {
       const [rows] = await pool.query(
         `SELECT * FROM ${table} ORDER BY category ASC, sort_order ASC, id ASC`
       );
+      // 为组合项目附加子项目列表
+      const conn = await pool.getConnection();
+      try {
+        for (const row of rows) {
+          if (row.item_type === 'combo') {
+            row.sub_items = await getSubItems(conn, row.id);
+          }
+        }
+      } finally {
+        conn.release();
+      }
       res.json({ ok: true, data: rows });
     } catch (e) {
       console.error(`[${basePath} list] error:`, e);
@@ -505,6 +541,7 @@ function makeCheckupItemCrud(routerRef) {
       const fields = ['id', ...requiredFields, ...editableFields.filter(f => req.body[f] !== undefined)];
       const values = [id, ...requiredFields.map(f => req.body[f])];
       editableFields.filter(f => req.body[f] !== undefined).forEach(f => values.push(req.body[f]));
+      if (!fields.includes('item_type')) { fields.push('item_type'); values.push('item'); }
       if (!fields.includes('default_price')) { fields.push('default_price'); values.push(0); }
       if (!fields.includes('unit')) { fields.push('unit'); values.push('次'); }
       if (!fields.includes('category')) { fields.push('category'); values.push('其他'); }
@@ -512,7 +549,14 @@ function makeCheckupItemCrud(routerRef) {
       if (!fields.includes('status')) { fields.push('status'); values.push(1); }
       const placeholders = fields.map(() => '?').join(',');
       await conn.query(`INSERT INTO ${table} (${fields.join(',')}) VALUES (${placeholders})`, values);
+      // 保存子项目关联
+      if (req.body.item_type === 'combo' && Array.isArray(req.body.sub_item_ids)) {
+        await saveSubItems(conn, id, req.body.sub_item_ids);
+      }
       const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      if (rows[0].item_type === 'combo') {
+        rows[0].sub_items = await getSubItems(conn, id);
+      }
       await logOperation(req.user.id, id, table, 'create', req.body, req);
       res.json({ ok: true, data: rows[0] });
     } catch (e) {
@@ -545,7 +589,14 @@ function makeCheckupItemCrud(routerRef) {
           [req.body.name, id]
         );
       }
+      // 更新子项目关联
+      if (Array.isArray(req.body.sub_item_ids)) {
+        await saveSubItems(conn, id, req.body.sub_item_ids);
+      }
       const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+      if (rows[0].item_type === 'combo') {
+        rows[0].sub_items = await getSubItems(conn, id);
+      }
       await logOperation(req.user.id, id, table, 'update', req.body, req);
       res.json({ ok: true, data: rows[0] });
     } catch (e) {

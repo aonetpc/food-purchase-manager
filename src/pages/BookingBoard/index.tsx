@@ -213,6 +213,15 @@ function itemDetail(item: BookingItem): string {
     const src = item.extra.source;
     if (src) return `派生(体检${src.checkup || 0}/住宿${src.lodging || 0})`;
   }
+  if (item.itemType === 'carpickup') {
+    const sess = item.extra?.carpickup;
+    if (!sess) return '—';
+    const parts: string[] = [`${sess.customers?.length || 1}位客户`];
+    if (sess.shareRide) parts.push('拼车');
+    if (sess.pricePerCustomer) parts.push(`¥${sess.pricePerCustomer}/人`);
+    if (sess.remark) parts.push(sess.remark);
+    return parts.join(' · ');
+  }
   return '';
 }
 

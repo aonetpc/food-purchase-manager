@@ -198,12 +198,23 @@ export interface CheckupItemRow {
   id: string;
   code: string;
   name: string;
+  item_type?: 'item' | 'combo';
   category: string;
   description: string;
   default_price: number;
   unit: string;
   status: number;
   sort_order: number;
+  sub_items?: Array<{
+    sub_item_id: string;
+    name: string;
+    code: string;
+    default_price: number;
+    category: string;
+    unit: string;
+    sort_order: number;
+  }>;
+  sub_item_ids?: string[];
 }
 
 export interface RoomTypeRow {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { X, Plus, Trash2, Save, Settings, ChevronDown, Search, ClipboardPaste, AlertCircle, CheckCircle } from 'lucide-react';
 import { bookingApi, type PackageRow, type PackageItemRow, type CheckupItemRow, type RoomTypeRow, type MeetingHallRow, type WellnessTypeRow } from '../../lib/api';
 
@@ -27,7 +27,7 @@ const DEFAULT_PKG: Partial<PackageRow> = { code: '', name: '', price: 0, status:
 const DEFAULT_ROOM: Partial<RoomTypeRow> = { code: '', name: '', price: 0, status: 1, sort_order: 100 };
 const DEFAULT_HALL: Partial<MeetingHallRow> = { code: '', name: '', capacity: 20, half_price: 0, full_price: 0, status: 1, sort_order: 100 };
 const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, price: 0, is_free: 0, status: 1, sort_order: 100 };
-const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', category: '其他', description: '', default_price: 0, unit: '次', status: 1, sort_order: 100 };
+const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', item_type: 'item', category: '其他', description: '', default_price: 0, unit: '次', status: 1, sort_order: 100, sub_item_ids: [] };
 
 // ================================================
 // 编码自动生成（按类型前缀 + 3位序号）
@@ -379,7 +379,7 @@ export default function BizConfigModal({
               editing={editing?.mode ? editing : null}
               bumpEditing={bumpEditing}
               onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_CHECKUP, code: generateCode('checkupItems', checkupItems) } })}
-              onEdit={(r) => setEditing({ mode: 'update', data: { ...r } })}
+              onEdit={(r) => setEditing({ mode: 'update', data: { ...r, sub_item_ids: (r.sub_items || []).map(si => si.sub_item_id) } })}
               onCancel={() => setEditing(null)}
               onSave={(d) => {
                 const data = d as Partial<CheckupItemRow>;
@@ -1306,10 +1306,73 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
     }
   };
 
+  // 可选的子项目列表（普通项目，排除自身）
+  const availableSubItems = rows.filter(r => r.item_type !== 'combo' && r.status === 1);
+  const currentEditingId = editing?.data?.id;
+
+  // 切换子项目选中
+  const toggleSubItem = (subId: string) => {
+    if (!editing) return;
+    const current = editing.data.sub_item_ids || [];
+    if (current.includes(subId)) {
+      setField('sub_item_ids', current.filter((id: string) => id !== subId));
+    } else {
+      setField('sub_item_ids', [...current, subId]);
+    }
+  };
+
+  // 渲染子项目选择器（组合项目编辑时）
+  function renderSubItemPicker() {
+    if (!editing) return null;
+    const isCombo = editing.data.item_type === 'combo';
+    if (!isCombo) return null;
+    const selected = editing.data.sub_item_ids || [];
+    return (
+      <div className="px-3 py-2 bg-amber-50/60 border-t border-amber-100">
+        <div className="text-[11px] text-gray-500 mb-1.5">子项目（勾选包含的普通项目）</div>
+        <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+          {availableSubItems.filter(r => r.id !== currentEditingId).map(r => {
+            const checked = selected.includes(r.id);
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => toggleSubItem(r.id)}
+                className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
+                  checked
+                    ? 'bg-cyan-500 text-white border-cyan-500'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-cyan-300'
+                }`}
+              >
+                {r.name} ¥{Number(r.default_price || 0)}
+              </button>
+            );
+          })}
+          {availableSubItems.length === 0 && (
+            <span className="text-[11px] text-gray-400">暂无可选的普通项目</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 渲染类型标签
+  function typeLabel(r: CheckupItemRow) {
+    if (r.item_type === 'combo') {
+      return <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-1">组合</span>;
+    }
+    return null;
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">共 {rows.length} 条配置，其中 <span className="text-cyan-600 font-medium">{rows.filter(r => r.status === 1).length}</span> 条启用</div>
+        <div className="text-sm text-gray-600">
+          共 {rows.length} 条配置，其中 <span className="text-cyan-600 font-medium">{rows.filter(r => r.status === 1).length}</span> 条启用
+          {rows.some(r => r.item_type === 'combo') && (
+            <span className="ml-2 text-amber-600">（含 {rows.filter(r => r.item_type === 'combo').length} 个组合项目）</span>
+          )}
+        </div>
         {!editing && <button onClick={onNew} className={btnGold}><Plus size={12}/> 新增体检项目</button>}
       </div>
       <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -1318,6 +1381,7 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
             <tr>
               <th className="px-3 py-2 text-left font-medium w-20">编码</th>
               <th className="px-3 py-2 text-left font-medium">名称</th>
+              <th className="px-3 py-2 text-left font-medium w-20">类型</th>
               <th className="px-3 py-2 text-left font-medium w-20">分类</th>
               <th className="px-3 py-2 text-right font-medium w-24">默认单价(¥)</th>
               <th className="px-3 py-2 text-center font-medium w-16">单位</th>
@@ -1328,80 +1392,135 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
           </thead>
           <tbody>
             {isCreating && (
-              <tr className="bg-cyan-50/50 border-b border-gray-100">
-                <td className="px-2 py-1.5"><Upd value={editing.data.code} onChange={(v) => setField('code', v)} /></td>
-                <td className="px-2 py-1.5"><Upd value={editing.data.name} onChange={(v) => setField('name', v)} /></td>
-                <td className="px-2 py-1.5">
-                  <select
-                    value={editing.data.category || '其他'}
-                    onChange={(e) => setField('category', e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="其他">其他</option>
-                    <option value="检验科">检验科</option>
-                    <option value="放射科">放射科</option>
-                    <option value="功能检查">功能检查</option>
-                    <option value="内科">内科</option>
-                    <option value="外科">外科</option>
-                    <option value="妇科">妇科</option>
-                    <option value="五官科">五官科</option>
-                  </select>
-                </td>
-                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing.data.default_price} onChange={(v) => setField('default_price', v)} /></td>
-                <td className="px-2 py-1.5"><Upd value={editing.data.unit} onChange={(v) => setField('unit', v)} /></td>
-                <td className="px-2 py-1.5"><Upd type="number" value={editing.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
-                <td className="px-2 py-1.5 text-center"><Checkbox value={editing.data.status} onChange={(v) => setField('status', v)} /></td>
-                <td className="px-2 py-1.5 text-center space-x-1">
-                  <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
-                  <RowBtn onClick={onCancel}>取消</RowBtn>
-                </td>
-              </tr>
+              <>
+                <tr className="bg-cyan-50/50 border-b border-gray-100">
+                  <td className="px-2 py-1.5"><Upd value={editing.data.code} onChange={(v) => setField('code', v)} /></td>
+                  <td className="px-2 py-1.5"><Upd value={editing.data.name} onChange={(v) => setField('name', v)} /></td>
+                  <td className="px-2 py-1.5">
+                    <select
+                      value={editing.data.item_type || 'item'}
+                      onChange={(e) => setField('item_type', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="item">普通项目</option>
+                      <option value="combo">组合项目</option>
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <select
+                      value={editing.data.category || '其他'}
+                      onChange={(e) => setField('category', e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="其他">其他</option>
+                      <option value="检验科">检验科</option>
+                      <option value="放射科">放射科</option>
+                      <option value="功能检查">功能检查</option>
+                      <option value="内科">内科</option>
+                      <option value="外科">外科</option>
+                      <option value="妇科">妇科</option>
+                      <option value="五官科">五官科</option>
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing.data.default_price} onChange={(v) => setField('default_price', v)} /></td>
+                  <td className="px-2 py-1.5"><Upd value={editing.data.unit} onChange={(v) => setField('unit', v)} /></td>
+                  <td className="px-2 py-1.5"><Upd type="number" value={editing.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
+                  <td className="px-2 py-1.5 text-center"><Checkbox value={editing.data.status} onChange={(v) => setField('status', v)} /></td>
+                  <td className="px-2 py-1.5 text-center space-x-1">
+                    <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
+                    <RowBtn onClick={onCancel}>取消</RowBtn>
+                  </td>
+                </tr>
+                {renderSubItemPicker()}
+              </>
             )}
             {rows.map(r => {
               const editRow = isEditingThis(r);
               return (
-                <tr key={r.id} className="border-t border-gray-100 hover:bg-gray-50/50">
-                  <td className="px-3 py-2 font-mono">{editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}</td>
-                  <td className="px-3 py-2">{editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : r.name}</td>
-                  <td className="px-3 py-2">
-                    {editRow ? (
-                      <select
-                        value={editing!.data.category || '其他'}
-                        onChange={(e) => setField('category', e.target.value)}
-                        className={inputCls}
-                      >
-                        <option value="其他">其他</option>
-                        <option value="检验科">检验科</option>
-                        <option value="放射科">放射科</option>
-                        <option value="功能检查">功能检查</option>
-                        <option value="内科">内科</option>
-                        <option value="外科">外科</option>
-                        <option value="妇科">妇科</option>
-                        <option value="五官科">五官科</option>
-                      </select>
-                    ) : r.category}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">{editRow ? <Upd type="number" step="0.01" value={editing!.data.default_price} onChange={(v) => setField('default_price', v)} /> : `¥${Number(r.default_price || 0).toLocaleString()}`}</td>
-                  <td className="px-3 py-2 text-center">{editRow ? <Upd value={editing!.data.unit} onChange={(v) => setField('unit', v)} /> : r.unit}</td>
-                  <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
-                  <td className="px-3 py-2 text-center">
-                    {editRow ? <Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} />
-                             : r.status === 1 ? <span className="text-green-600">● 启用</span> : <span className="text-gray-400">● 禁用</span>}
-                  </td>
-                  <td className="px-3 py-2 text-center space-x-1">
-                    {editRow ? (
-                      <>
-                        <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing!.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
-                        <RowBtn onClick={onCancel}>取消</RowBtn>
-                      </>
-                    ) : (
-                      <>
-                        <RowBtn onClick={() => onEdit(r)}>编辑</RowBtn>
-                        <RowBtn cls="!text-red-500 hover:!bg-red-50 !border-red-200" onClick={() => onDel(r)}><Trash2 size={10}/> 禁用</RowBtn>
-                      </>
-                    )}
-                  </td>
-                </tr>
+                <React.Fragment key={r.id}>
+                  <tr className="border-t border-gray-100 hover:bg-gray-50/50">
+                    <td className="px-3 py-2 font-mono">{editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}</td>
+                    <td className="px-3 py-2">
+                      {editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : (
+                        <span>
+                          {r.name}
+                          {typeLabel(r)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {editRow ? (
+                        <select
+                          value={editing!.data.item_type || 'item'}
+                          onChange={(e) => setField('item_type', e.target.value)}
+                          className={inputCls}
+                        >
+                          <option value="item">普通项目</option>
+                          <option value="combo">组合项目</option>
+                        </select>
+                      ) : r.item_type === 'combo' ? (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">组合</span>
+                      ) : (
+                        <span className="text-[10px] text-gray-400">普通</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {editRow ? (
+                        <select
+                          value={editing!.data.category || '其他'}
+                          onChange={(e) => setField('category', e.target.value)}
+                          className={inputCls}
+                        >
+                          <option value="其他">其他</option>
+                          <option value="检验科">检验科</option>
+                          <option value="放射科">放射科</option>
+                          <option value="功能检查">功能检查</option>
+                          <option value="内科">内科</option>
+                          <option value="外科">外科</option>
+                          <option value="妇科">妇科</option>
+                          <option value="五官科">五官科</option>
+                        </select>
+                      ) : r.category}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">{editRow ? <Upd type="number" step="0.01" value={editing!.data.default_price} onChange={(v) => setField('default_price', v)} /> : `¥${Number(r.default_price || 0).toLocaleString()}`}</td>
+                    <td className="px-3 py-2 text-center">{editRow ? <Upd value={editing!.data.unit} onChange={(v) => setField('unit', v)} /> : r.unit}</td>
+                    <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
+                    <td className="px-3 py-2 text-center">
+                      {editRow ? <Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} />
+                               : r.status === 1 ? <span className="text-green-600">● 启用</span> : <span className="text-gray-400">● 禁用</span>}
+                    </td>
+                    <td className="px-3 py-2 text-center space-x-1">
+                      {editRow ? (
+                        <>
+                          <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing!.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
+                          <RowBtn onClick={onCancel}>取消</RowBtn>
+                        </>
+                      ) : (
+                        <>
+                          <RowBtn onClick={() => onEdit(r)}>编辑</RowBtn>
+                          <RowBtn cls="!text-red-500 hover:!bg-red-50 !border-red-200" onClick={() => onDel(r)}><Trash2 size={10}/> 禁用</RowBtn>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                  {/* 编辑模式下的子项目选择器 */}
+                  {editRow && renderSubItemPicker()}
+                  {/* 非编辑模式：组合项目展示子项目列表 */}
+                  {!editRow && r.item_type === 'combo' && r.sub_items && r.sub_items.length > 0 && (
+                    <tr className="bg-amber-50/30 border-t-0">
+                      <td colSpan={9} className="px-3 py-1.5">
+                        <div className="flex flex-wrap gap-1">
+                          <span className="text-[10px] text-gray-400">包含：</span>
+                          {r.sub_items.map((si, i) => (
+                            <span key={i} className="text-[10px] bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
+                              {si.name} ¥{Number(si.default_price || 0)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
