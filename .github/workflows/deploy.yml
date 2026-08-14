@@ -728,13 +728,10 @@ jobs:
               mysql --force -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>&1 || echo "⚠️ $sql_file 有错误（已用 --force 跳过，非致命）"
             done
 
-            # 兜底2：PHP 逐条执行（绕过 migrate.js 的 ID 冲突 & mysql 的分号截断问题，专门保证 070 体检项目导入）
-            if command -v php >/dev/null 2>&1; then
-              echo "Running PHP reimport-checkup-items.php ..."
-              php /opt/food-purchase/backend/scripts/reimport-checkup-items.php 2>&1 || echo "⚠️ reimport-checkup-items.php 有错误（非致命）"
-            else
-              echo "⚠️ 服务器未安装 PHP，跳过 reimport-checkup-items.php"
-            fi
+            # 兜底2：Node.js 重导体检项目（绕过 migrate.js 冲突、mysql 中断、MySQL5.7 UPDATE+ORDER BY、code NOT NULL 等问题）
+            #         服务器一定装了 Node，这是真正保证导入成功的最后一道防线
+            echo "Running Node.js reimport-checkup-items.js ..."
+            cd /opt/food-purchase/backend && node scripts/reimport-checkup-items.js 2>&1 || echo "⚠️ reimport-checkup-items.js 有错误（非致命）"
 
             # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
