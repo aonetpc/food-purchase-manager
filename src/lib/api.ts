@@ -202,6 +202,7 @@ export interface CheckupItemRow {
   category: string;
   description: string;
   default_price: number;
+  insurance_price?: number;
   unit: string;
   status: number;
   sort_order: number;
@@ -210,6 +211,7 @@ export interface CheckupItemRow {
     name: string;
     code: string;
     default_price: number;
+    insurance_price?: number;
     category: string;
     unit: string;
     sort_order: number;

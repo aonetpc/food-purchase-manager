@@ -479,12 +479,12 @@ function makeCheckupItemCrud(routerRef) {
   const basePath = '/config/checkup-items';
   const table = 'booking_checkup_items';
   const requiredFields = ['code', 'name'];
-  const editableFields = ['item_type', 'category', 'description', 'default_price', 'unit', 'status', 'sort_order'];
+  const editableFields = ['item_type', 'category', 'description', 'default_price', 'insurance_price', 'unit', 'status', 'sort_order'];
 
   // 查询组合项目的子项目列表
   async function getSubItems(conn, comboItemId) {
     const [subs] = await conn.query(
-      `SELECT si.sub_item_id, si.sort_order, ci.name, ci.code, ci.default_price, ci.category, ci.unit
+      `SELECT si.sub_item_id, si.sort_order, ci.name, ci.code, ci.default_price, ci.insurance_price, ci.category, ci.unit
        FROM booking_item_sub_items si
        JOIN booking_checkup_items ci ON ci.id = si.sub_item_id
        WHERE si.combo_item_id = ? ORDER BY si.sort_order ASC`,
@@ -543,8 +543,9 @@ function makeCheckupItemCrud(routerRef) {
       editableFields.filter(f => req.body[f] !== undefined).forEach(f => values.push(req.body[f]));
       if (!fields.includes('item_type')) { fields.push('item_type'); values.push('item'); }
       if (!fields.includes('default_price')) { fields.push('default_price'); values.push(0); }
+      if (!fields.includes('insurance_price')) { fields.push('insurance_price'); values.push(0); }
       if (!fields.includes('unit')) { fields.push('unit'); values.push('次'); }
-      if (!fields.includes('category')) { fields.push('category'); values.push('其他'); }
+      if (!fields.includes('category')) { fields.push('category'); values.push('化验'); }
       if (!fields.includes('sort_order')) { fields.push('sort_order'); values.push(100); }
       if (!fields.includes('status')) { fields.push('status'); values.push(1); }
       const placeholders = fields.map(() => '?').join(',');

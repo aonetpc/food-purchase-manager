@@ -27,7 +27,8 @@ const DEFAULT_PKG: Partial<PackageRow> = { code: '', name: '', price: 0, status:
 const DEFAULT_ROOM: Partial<RoomTypeRow> = { code: '', name: '', price: 0, status: 1, sort_order: 100 };
 const DEFAULT_HALL: Partial<MeetingHallRow> = { code: '', name: '', capacity: 20, half_price: 0, full_price: 0, status: 1, sort_order: 100 };
 const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, price: 0, is_free: 0, status: 1, sort_order: 100 };
-const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', item_type: 'item', category: '其他', description: '', default_price: 0, unit: '次', status: 1, sort_order: 100, sub_item_ids: [] };
+const CATEGORY_OPTIONS = ['化验', '专科', '功能检查', '影像'] as const;
+const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', item_type: 'item', category: '化验', description: '', default_price: 0, insurance_price: 0, unit: '次', status: 1, sort_order: 100, sub_item_ids: [] };
 
 // ================================================
 // 编码自动生成（按类型前缀 + 3位序号）
@@ -804,7 +805,7 @@ function PackageBatchPasteModal({
             id: '',
             code: '',
             name: p.name,
-            category: '其他',
+            category: '化验',
             description: '',
             default_price: 0,
             unit: '次',
@@ -1383,7 +1384,8 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
               <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-left font-medium w-20">类型</th>
               <th className="px-3 py-2 text-left font-medium w-20">分类</th>
-              <th className="px-3 py-2 text-right font-medium w-24">默认单价(¥)</th>
+              <th className="px-3 py-2 text-right font-medium w-24">默认定价(¥)</th>
+              <th className="px-3 py-2 text-right font-medium w-24">医保价格(¥)</th>
               <th className="px-3 py-2 text-center font-medium w-16">单位</th>
               <th className="px-3 py-2 text-center font-medium w-16">排序</th>
               <th className="px-3 py-2 text-center font-medium w-16">状态</th>
@@ -1412,18 +1414,12 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
                       onChange={(e) => setField('category', e.target.value)}
                       className={inputCls}
                     >
-                      <option value="其他">其他</option>
-                      <option value="检验科">检验科</option>
-                      <option value="放射科">放射科</option>
-                      <option value="功能检查">功能检查</option>
-                      <option value="内科">内科</option>
-                      <option value="外科">外科</option>
-                      <option value="妇科">妇科</option>
-                      <option value="五官科">五官科</option>
+                      {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </td>
                   <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing.data.default_price} onChange={(v) => setField('default_price', v)} /></td>
-                  <td className="px-2 py-1.5"><Upd value={editing.data.unit} onChange={(v) => setField('unit', v)} /></td>
+                  <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing.data.insurance_price ?? 0} onChange={(v) => setField('insurance_price', v)} /></td>
+                  <td className="px-2 py-1.5"><Upd value={editing.data.unit} onChange={(v) => setField('unit', v)} /></td></td>
                   <td className="px-2 py-1.5"><Upd type="number" value={editing.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
                   <td className="px-2 py-1.5 text-center"><Checkbox value={editing.data.status} onChange={(v) => setField('status', v)} /></td>
                   <td className="px-2 py-1.5 text-center space-x-1">
@@ -1467,22 +1463,16 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
                     <td className="px-3 py-2">
                       {editRow ? (
                         <select
-                          value={editing!.data.category || '其他'}
+                          value={editing!.data.category || '化验'}
                           onChange={(e) => setField('category', e.target.value)}
                           className={inputCls}
                         >
-                          <option value="其他">其他</option>
-                          <option value="检验科">检验科</option>
-                          <option value="放射科">放射科</option>
-                          <option value="功能检查">功能检查</option>
-                          <option value="内科">内科</option>
-                          <option value="外科">外科</option>
-                          <option value="妇科">妇科</option>
-                          <option value="五官科">五官科</option>
+                          {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                       ) : r.category}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{editRow ? <Upd type="number" step="0.01" value={editing!.data.default_price} onChange={(v) => setField('default_price', v)} /> : `¥${Number(r.default_price || 0).toLocaleString()}`}</td>
+                    <td className="px-3 py-2 text-right font-mono text-indigo-600">{editRow ? <Upd type="number" step="0.01" value={editing!.data.insurance_price ?? 0} onChange={(v) => setField('insurance_price', v)} /> : `¥${Number(r.insurance_price || 0).toLocaleString()}`}</td>
                     <td className="px-3 py-2 text-center">{editRow ? <Upd value={editing!.data.unit} onChange={(v) => setField('unit', v)} /> : r.unit}</td>
                     <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
                     <td className="px-3 py-2 text-center">
