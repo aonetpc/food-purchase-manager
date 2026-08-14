@@ -190,32 +190,21 @@ export function calcMealAmount(
 // 早餐派生
 // ================================================
 export function deriveBreakfastSessions(group: BookingOrder): { date: string; startTime: string; pax: number; source: { checkup?: number; lodging?: number } }[] {
-  const dayMap: Record<string, { checkupPax?: number; lodgingPax?: number }> = {};
+  const dayMap: Record<string, { checkupPax?: number; lodging?: number }> = {};
 
-  // 体检当天
+  // 体检当天：早餐人数 = 体检人数
   group.items.filter(it => it.itemType === 'checkup').forEach(it => {
     const d = it.date;
     if (!dayMap[d]) dayMap[d] = {};
     dayMap[d].checkupPax = (dayMap[d].checkupPax || 0) + it.pax;
   });
 
-  // 住宿期间（入住次日 → 离店日）
-  group.items.filter(it => it.itemType === 'lodging').forEach(it => {
-    if (!it.extra.dateCheckIn || !it.extra.dateCheckOut) return;
-    const nights = it.extra.nights || daysBetween(it.extra.dateCheckIn, it.extra.dateCheckOut);
-    for (let i = 1; i <= nights; i++) {
-      const d = fmt(addDays(parseDate(it.extra.dateCheckIn), i));
-      if (!dayMap[d]) dayMap[d] = {};
-      dayMap[d].lodgingPax = (dayMap[d].lodgingPax || 0) + it.pax;
-    }
-  });
-
   return Object.entries(dayMap)
     .map(([date, v]) => ({
       date,
       startTime: '07:30',
-      pax: Math.max(v.checkupPax || 0, v.lodgingPax || 0),
-      source: { checkup: v.checkupPax, lodging: v.lodgingPax },
+      pax: v.checkupPax || 0,
+      source: { checkup: v.checkupPax },
     }))
     .filter(s => s.pax > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -286,6 +275,8 @@ export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, st
           expanded.push({ item, date: s.date });
         });
       } else if (item.itemType === 'checkup') {
+        expanded.push({ item, date: item.date });
+      } else if (item.itemType === 'carpickup') {
         expanded.push({ item, date: item.date });
       }
     }
