@@ -719,11 +719,22 @@ jobs:
               DEALLOCATE PREPARE alterIfNotExists;
             " 2>/dev/null || true
 
-            # 数据库迁移：执行所有迁移SQL文件（幂等，可重复执行）
+            # 数据库迁移：通过 Node.js migrate.js 执行（带错误日志输出）
+            cd /opt/food-purchase/backend && node migrations/migrate.js up 2>&1 || echo "⚠️ migrate.js 执行有错误，继续部署..."
+
+            # 兜底1：mysql --force 管道模式（--force 保证单条语句报错不中断后续语句，错误输出到 stdout）
             for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
-              echo "Running migration: $sql_file"
-              mysql -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>/dev/null || true
+              echo "Running migration (mysql --force): $sql_file"
+              mysql --force -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>&1 || echo "⚠️ $sql_file 有错误（已用 --force 跳过，非致命）"
             done
+
+            # 兜底2：PHP 逐条执行（绕过 migrate.js 的 ID 冲突 & mysql 的分号截断问题，专门保证 070 体检项目导入）
+            if command -v php >/dev/null 2>&1; then
+              echo "Running PHP reimport-checkup-items.php ..."
+              php /opt/food-purchase/backend/scripts/reimport-checkup-items.php 2>&1 || echo "⚠️ reimport-checkup-items.php 有错误（非致命）"
+            else
+              echo "⚠️ 服务器未安装 PHP，跳过 reimport-checkup-items.php"
+            fi
 
             # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
