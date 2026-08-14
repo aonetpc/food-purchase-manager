@@ -250,11 +250,27 @@ export interface WellnessTypeRow {
   sort_order: number;
 }
 
+export interface MealTypeRow {
+  id: string;
+  code: string;
+  name: string;
+  pricing_mode: 'per_table' | 'per_person';
+  unit_price: number;
+  default_time: string;
+  default_tables: number;
+  default_per_table: number;
+  default_pax: number;
+  description?: string;
+  status: number;
+  sort_order: number;
+}
+
 export interface BookingConfig {
   packages: PackageRow[];
   roomTypes: RoomTypeRow[];
   meetingHalls: MeetingHallRow[];
   wellnessTypes: WellnessTypeRow[];
+  mealTypes?: MealTypeRow[];
   checkupItems?: CheckupItemRow[];
   salesUsers?: BookingSalesUser[];
 }
@@ -378,6 +394,7 @@ export const bookingApi = {
       roomTypes: (res.data?.roomTypes || []).map(fromBackend),
       meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
       wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
+      mealTypes: (res.data?.mealTypes || []) as MealTypeRow[],
       // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
       checkupItems: (res.data?.checkupItems || []) as CheckupItemRow[],
       salesUsers: (res.data?.salesUsers || []).map(fromBackend),
@@ -509,5 +526,22 @@ export const bookingApi = {
   },
   async deleteWellnessType(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/wellness-types/${id}`);
+  },
+
+  // 用餐标准 CRUD（不走 fromBackend，保持 snake_case）
+  async listMealTypes(): Promise<MealTypeRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/meal-types');
+    return (res.data || []) as MealTypeRow[];
+  },
+  async createMealType(payload: Partial<MealTypeRow>): Promise<MealTypeRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/meal-types', payload);
+    return res.data as MealTypeRow;
+  },
+  async updateMealType(id: string, payload: Partial<MealTypeRow>): Promise<MealTypeRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/meal-types/${id}`, payload);
+    return res.data as MealTypeRow;
+  },
+  async deleteMealType(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/meal-types/${id}`);
   },
 };

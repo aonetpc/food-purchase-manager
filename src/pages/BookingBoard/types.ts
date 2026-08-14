@@ -145,11 +145,33 @@ export interface PaxEntry {
   customItems?: CustomPackageItem[] | null;
 }
 
+export type MealPricingMode = 'per_table' | 'per_person';
+
 export interface MealSession {
   date: string;
   time: string;
-  tables: number;
-  perTable: number;
+  mealType: string;            // 用餐标准 code
+  pricingMode: MealPricingMode;
+  unitPrice: number;           // 单价（可微调）
+  tables: number;              // 按桌：桌数
+  perTable: number;            // 按桌：每桌人数
+  pax: number;                 // 按人：总人数
+  remark: string;              // 特殊要求
+}
+
+export interface MealTypeRow {
+  id: number;
+  code: string;
+  name: string;
+  pricing_mode: MealPricingMode;
+  unit_price: number;
+  default_time: string;
+  default_tables: number;
+  default_per_table: number;
+  default_pax: number;
+  description?: string;
+  sort_order: number;
+  status: number;
 }
 
 export interface MeetingSession {

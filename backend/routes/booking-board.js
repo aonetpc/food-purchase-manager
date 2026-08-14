@@ -212,6 +212,7 @@ router.get('/config', requireAuth, async (_req, res) => {
     const [roomTypes] = await pool.query('SELECT * FROM booking_room_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [meetingHalls] = await pool.query('SELECT * FROM booking_meeting_halls WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [wellnessTypes] = await pool.query('SELECT * FROM booking_wellness_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    const [mealTypes] = await pool.query('SELECT * FROM booking_meal_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     // 体检项目主表（全部，含禁用，供前端管理面板使用）
     const [checkupItems] = await pool.query('SELECT * FROM booking_checkup_items ORDER BY category ASC, sort_order ASC, id ASC');
 
@@ -248,7 +249,7 @@ router.get('/config', requireAuth, async (_req, res) => {
 
     res.json({
       ok: true,
-      data: { packages, roomTypes, meetingHalls, wellnessTypes, checkupItems, salesUsers },
+      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, checkupItems, salesUsers },
     });
   } catch (e) {
     console.error('[booking config] error:', e);
@@ -795,6 +796,14 @@ makeBizConfigCrud({
   table: 'booking_wellness_types',
   requiredFields: ['code', 'name', 'min_hours', 'price', 'is_free'],
   editableFields: ['status', 'sort_order'],
+  sortDefault: 1,
+});
+
+makeBizConfigCrud({
+  basePath: '/config/meal-types',
+  table: 'booking_meal_types',
+  requiredFields: ['code', 'name', 'pricing_mode', 'unit_price'],
+  editableFields: ['default_time', 'default_tables', 'default_per_table', 'default_pax', 'description', 'status', 'sort_order'],
   sortDefault: 1,
 });
 

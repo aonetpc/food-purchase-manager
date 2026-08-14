@@ -26,6 +26,7 @@ import type {
   PackageCode,
   LodgingType,
   MealSession,
+  MealPricingMode,
   MeetingSession,
   WellnessSession,
   CarCustomer,
@@ -57,12 +58,13 @@ import {
   calcLodgingAmount,
   calcMeetingAmount,
   calcWellnessAmount,
+  calcMealAmount,
   parseCSV,
   toCSV,
   downloadFile,
   groupTotal,
 } from './utils';
-import { bookingApi, type BookingSalesUser, type BookingConfig } from '../../lib/api';
+import { bookingApi, type BookingSalesUser, type BookingConfig, type MealTypeRow } from '../../lib/api';
 import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, CheckupItemRow } from './types';
 
 // ================================================
@@ -92,23 +94,27 @@ function emptyPax(): PaxEntry {
   return { name: '', idCard: '', phone: '', gender: '男', married: false, package: 'A' };
 }
 
-// 根据日期范围生成用餐场次
-function genMealSessions(
-  dateStart: string,
-  dateEnd: string,
-  time: string,
-  tables: number,
-  perTable: number,
-): MealSession[] {
-  if (!dateStart || !dateEnd) return [];
-  const n = daysBetween(dateStart, dateEnd);
-  if (n < 0) return [];
-  return Array.from({ length: n + 1 }, (_, i) => ({
-    date: fmt(addDays(parseDateLocal(dateStart), i)),
-    time,
-    tables,
-    perTable,
-  }));
+// 获取用餐标准信息（从后端配置或兜底常量）
+function getMealTypeInfo(code: string, mealTypes?: any[]): { name: string; pricingMode: MealPricingMode; unitPrice: number; defaultTime: string; defaultTables: number; defaultPerTable: number; defaultPax: number } {
+  const row = (mealTypes || []).find((m: any) => m.code === code);
+  if (row) {
+    return {
+      name: row.name,
+      pricingMode: row.pricing_mode as MealPricingMode,
+      unitPrice: Number(row.unit_price || 0),
+      defaultTime: row.default_time || '12:00',
+      defaultTables: Number(row.default_tables || 1),
+      defaultPerTable: Number(row.default_per_table || 10),
+      defaultPax: Number(row.default_pax || 0),
+    };
+  }
+  const FALLBACK: Record<string, { name: string; pricingMode: MealPricingMode; unitPrice: number; defaultTime: string; defaultTables: number; defaultPerTable: number; defaultPax: number }> = {
+    work:     { name: '工作餐',     pricingMode: 'per_person', unitPrice: 30,  defaultTime: '12:00', defaultTables: 1, defaultPerTable: 10, defaultPax: 20 },
+    standard: { name: '标准桌餐',   pricingMode: 'per_table',  unitPrice: 500, defaultTime: '12:00', defaultTables: 2, defaultPerTable: 10, defaultPax: 0 },
+    premium:  { name: '豪华桌餐',   pricingMode: 'per_table',  unitPrice: 1200, defaultTime: '12:00', defaultTables: 2, defaultPerTable: 10, defaultPax: 0 },
+    buffet:   { name: '自助餐',     pricingMode: 'per_person', unitPrice: 128, defaultTime: '12:00', defaultTables: 1, defaultPerTable: 10, defaultPax: 20 },
+  };
+  return FALLBACK[code] || FALLBACK['work'];
 }
 
 // 第5期：从 finalItems 快照恢复 customItems（编辑/复制场景使用）
@@ -163,15 +169,14 @@ function copyItemsForCopy(src: BookingOrder): BookingItem[] {
         amount = 0;
       }
     } else if (it.itemType === 'lunch' || it.itemType === 'dinner') {
-      // 餐食：日期范围 + sessions 日期都偏移 7 天
-      extra.dateStart = extra.dateStart ? fmt(addDays(parseDateLocal(extra.dateStart), OFFSET)) : '';
-      extra.dateEnd = extra.dateEnd ? fmt(addDays(parseDateLocal(extra.dateEnd), OFFSET)) : '';
+      // 餐食：sessions 日期偏移 7 天，重新计算金额
       extra.sessions = (extra.sessions || []).map((s: any) => ({
         ...s,
         date: s.date ? fmt(addDays(parseDateLocal(s.date), OFFSET)) : '',
       }));
-      if (!date && extra.dateStart) date = extra.dateStart;
-      amount = 0;
+      if (!date && extra.sessions?.[0]?.date) date = extra.sessions[0].date;
+      amount = (extra.sessions || []).reduce((sum: number, s: any) =>
+        sum + calcMealAmount(s.pricingMode, s.unitPrice, s.tables, s.perTable, s.pax), 0);
     } else if (it.itemType === 'meeting') {
       extra.sessions = (extra.sessions || []).map((s: any) => ({
         ...s,
@@ -259,10 +264,13 @@ function makeItemSummary(
       item.extra.nights || 0
     }晚`;
   } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
-    main = `${item.extra.dateStart || '-'} → ${item.extra.dateEnd || '-'}`;
-    sub = `${(item.extra.sessions || []).length}场 · ${item.extra.defaultTables || 0}桌×${
-      item.extra.defaultPerTable || 0
-    }人`;
+    const ss = item.extra.sessions || [];
+    main = `${ss[0]?.date || item.date} · ${ss.length}场`;
+    sub = ss.map((s: any) => {
+      const info = getMealTypeInfo(s.mealType, (helpers as any).mealTypes);
+      const amt = calcMealAmount(s.pricingMode, s.unitPrice, s.tables, s.perTable, s.pax);
+      return `${info.name} ¥${amt.toLocaleString()}`;
+    }).join('、');
   } else if (item.itemType === 'meeting') {
     const ss = item.extra.sessions || [];
     main = `${ss[0]?.date || item.date} · ${ss.length}场`;
@@ -844,12 +852,7 @@ export default function BookingBoardCreate(props: {
   const [lgRooms, setLgRooms] = useState(1);
   const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
 
-  // 用餐表单
-  const [mlStart, setMlStart] = useState(todayStr());
-  const [mlEnd, setMlEnd] = useState(todayStr());
-  const [mlTime, setMlTime] = useState('12:00');
-  const [mlTables, setMlTables] = useState(1);
-  const [mlPerTable, setMlPerTable] = useState(10);
+  // 用餐表单（多场次，每场含用餐标准/计价模式/特殊要求）
   const [mlSessions, setMlSessions] = useState<MealSession[]>([]);
 
   // 会务表单
@@ -879,7 +882,7 @@ export default function BookingBoardCreate(props: {
   const [salesPickerOpen, setSalesPickerOpen] = useState(false);
   // 4 类业务动态配置（含启用的套餐/房型/会议厅/康乐 + 体检项目库）
   const [bizConfig, setBizConfig] = useState<BookingConfig>({
-    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], checkupItems: [], salesUsers: [],
+    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], mealTypes: [], checkupItems: [], salesUsers: [],
   });
   // 体检项目库（供「追加项目」选择器使用）
   const [checkupItemsLib, setCheckupItemsLib] = useState<CheckupItemRow[]>([]);
@@ -950,6 +953,7 @@ export default function BookingBoardCreate(props: {
   const roomOptions = useMemo(() => bizConfig.roomTypes.filter(p => p.status === 1), [bizConfig.roomTypes]);
   const hallOptions = useMemo(() => bizConfig.meetingHalls.filter(p => p.status === 1), [bizConfig.meetingHalls]);
   const wellnessOptions = useMemo(() => bizConfig.wellnessTypes.filter(p => p.status === 1), [bizConfig.wellnessTypes]);
+  const mealOptions = useMemo(() => (bizConfig.mealTypes || []).filter(p => p.status === 1), [bizConfig.mealTypes]);
 
   // 兜底：如果后端没返回数据（首次部署未执行迁移），用硬编码保证 UI 可用
   const finalPkgOptions = pkgOptions.length > 0
@@ -981,6 +985,12 @@ export default function BookingBoardCreate(props: {
     { id: 'fb_bl', code: 'billiards', name: '台球室', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 6 },
     { id: 'fb_tt', code: 'tabletennis', name: '乒乓房', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 7 },
   ] as WellnessTypeRow[]);
+  const finalMealOptions = mealOptions.length > 0 ? mealOptions : ([
+    { id: 'fb_work', code: 'work', name: '工作餐', pricing_mode: 'per_person', unit_price: 30, default_time: '12:00', default_tables: 1, default_per_table: 10, default_pax: 20, status: 1, sort_order: 1 },
+    { id: 'fb_std', code: 'standard', name: '标准桌餐', pricing_mode: 'per_table', unit_price: 500, default_time: '12:00', default_tables: 2, default_per_table: 10, default_pax: 0, status: 1, sort_order: 2 },
+    { id: 'fb_prem', code: 'premium', name: '豪华桌餐', pricing_mode: 'per_table', unit_price: 1200, default_time: '12:00', default_tables: 2, default_per_table: 10, default_pax: 0, status: 1, sort_order: 3 },
+    { id: 'fb_buf', code: 'buffet', name: '自助餐', pricing_mode: 'per_person', unit_price: 128, default_time: '12:00', default_tables: 1, default_per_table: 10, default_pax: 20, status: 1, sort_order: 4 },
+  ] as MealTypeRow[]);
 
   // 查找 code→显示信息（优先用动态配置，其次用 constants 的兜底常量）
   function getPackageInfo(code: string): { name: string; price: number; label: string; items?: any[]; autoTotal?: number } {
@@ -1023,33 +1033,6 @@ export default function BookingBoardCreate(props: {
     wellnessTypes: finalWellnessOptions,
   };
 
-  // 用餐场次自动生成（日期范围 / 默认值变化时）
-  useEffect(() => {
-    if (!drawer.open || (drawer.itemType !== 'lunch' && drawer.itemType !== 'dinner')) return;
-    if (!mlStart || !mlEnd) {
-      setMlSessions([]);
-      return;
-    }
-    const n = daysBetween(mlStart, mlEnd);
-    if (n < 0) {
-      setMlSessions([]);
-      return;
-    }
-    setMlSessions((prev) =>
-      Array.from({ length: n + 1 }, (_, i) => {
-        const d = fmt(addDays(parseDateLocal(mlStart), i));
-        const ex = prev.find((s) => s.date === d);
-        return {
-          date: d,
-          time: ex?.time ?? mlTime,
-          tables: ex?.tables ?? mlTables,
-          perTable: ex?.perTable ?? mlPerTable,
-        };
-      }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mlStart, mlEnd, mlTime, mlTables, mlPerTable, drawer.open, drawer.itemType]);
-
   // 住宿：入住日期变化时，保证离店日期 >= 入住日期 + 1 天
   useEffect(() => {
     if (!drawer.open || drawer.itemType !== 'lodging') return;
@@ -1074,7 +1057,8 @@ export default function BookingBoardCreate(props: {
         const n = Math.max(0, daysBetween(x.dateCheckIn, x.dateCheckOut));
         return s + calcLodgingAmount(x.lodgingType, x.rooms, n, finalBizConfigForCalc);
       }, 0);
-    if (t === 'lunch' || t === 'dinner') return 0;
+    if (t === 'lunch' || t === 'dinner')
+      return mlSessions.reduce((s, x) => s + calcMealAmount(x.pricingMode, x.unitPrice, x.tables, x.perTable, x.pax), 0);
     if (t === 'meeting')
       return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
     if (t === 'wellness')
@@ -1086,7 +1070,7 @@ export default function BookingBoardCreate(props: {
         : Math.max(0, carSession.customers.length * Number(carSession.pricePerCustomer || 0));
     }
     return 0;
-  }, [drawer.itemType, chkPax, lgSessions, mtSessions, wlSessions, carSession, finalBizConfigForCalc]);
+  }, [drawer.itemType, chkPax, lgSessions, mlSessions, mtSessions, wlSessions, carSession, finalBizConfigForCalc]);
 
   // ================================================
   // 抽屉操作
@@ -1108,13 +1092,7 @@ export default function BookingBoardCreate(props: {
       setLgRooms(1);
       setLgSessions([]);
     } else if (type === 'lunch' || type === 'dinner') {
-      const t = type === 'lunch' ? '12:00' : '18:00';
-      setMlStart(todayStr());
-      setMlEnd(todayStr());
-      setMlTime(t);
-      setMlTables(1);
-      setMlPerTable(10);
-      setMlSessions(genMealSessions(todayStr(), todayStr(), t, 1, 10));
+      setMlSessions([]);
     } else if (type === 'meeting') {
       setMtSessions([
         { date: todayStr(), startTime: '09:00', hall: 'siji', slotType: 'full', pax: 20 },
@@ -1168,12 +1146,17 @@ export default function BookingBoardCreate(props: {
         rooms: item.pax || 1,
       }]);
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
-      setMlStart(item.extra.dateStart || todayStr());
-      setMlEnd(item.extra.dateEnd || todayStr());
-      setMlTime(item.extra.defaultTime || (item.itemType === 'lunch' ? '12:00' : '18:00'));
-      setMlTables(item.extra.defaultTables ?? 1);
-      setMlPerTable(item.extra.defaultPerTable ?? 10);
-      setMlSessions((item.extra.sessions as MealSession[] || []).map((s) => ({ ...s })));
+      setMlSessions((item.extra.sessions as MealSession[] || []).map((s) => ({
+        date: s.date || todayStr(),
+        time: s.time || '12:00',
+        mealType: s.mealType || 'work',
+        pricingMode: (s as any).pricingMode || 'per_table',
+        unitPrice: (s as any).unitPrice ?? 0,
+        tables: s.tables ?? 1,
+        perTable: s.perTable ?? 10,
+        pax: (s as any).pax ?? 0,
+        remark: (s as any).remark || '',
+      })));
     } else if (item.itemType === 'meeting') {
       setMtSessions((item.extra.sessions as MeetingSession[] || []).map((s) => ({ ...s })));
     } else if (item.itemType === 'wellness') {
@@ -1468,21 +1451,19 @@ export default function BookingBoardCreate(props: {
       return;
     } else if (itemType === 'lunch' || itemType === 'dinner') {
       const sessions = mlSessions.filter((s) => s.date);
+      if (sessions.length === 0) {
+        setErr('请至少添加一场用餐');
+        return;
+      }
+      const amount = sessions.reduce((s, x) => s + calcMealAmount(x.pricingMode, x.unitPrice, x.tables, x.perTable, x.pax), 0);
       item = {
         id: keepId,
         itemType,
-        date: mlStart,
-        startTime: mlTime,
-        pax: sessions.reduce((s, x) => s + x.tables, 0),
-        extra: {
-          dateStart: mlStart,
-          dateEnd: mlEnd,
-          defaultTime: mlTime,
-          defaultTables: mlTables,
-          defaultPerTable: mlPerTable,
-          sessions,
-        },
-        amount: 0,
+        date: sessions[0].date,
+        startTime: sessions[0].time,
+        pax: sessions.reduce((s, x) => s + (x.pricingMode === 'per_person' ? x.pax : x.tables * x.perTable), 0),
+        extra: { sessions: sessions as any },
+        amount,
       };
     } else if (itemType === 'meeting') {
       const sessions = mtSessions.filter((s) => s.date);
@@ -1721,14 +1702,26 @@ export default function BookingBoardCreate(props: {
           const defaultTime = get('默认时间') || (itemType === 'lunch' ? '12:00' : '18:00');
           const defaultTables = parseInt(get('桌数')) || 1;
           const defaultPerTable = parseInt(get('每桌人数')) || 10;
-          const sessions = genMealSessions(dateStart, dateEnd, defaultTime, defaultTables, defaultPerTable);
+          // 生成每日 sessions（兼容旧格式：默认按桌计价，无单价）
+          const n = dateStart && dateEnd ? Math.max(0, daysBetween(dateStart, dateEnd)) : 0;
+          const sessions: MealSession[] = Array.from({ length: n + 1 }, (_, i) => ({
+            date: fmt(addDays(parseDateLocal(dateStart), i)),
+            time: defaultTime,
+            mealType: 'standard',
+            pricingMode: 'per_table' as MealPricingMode,
+            unitPrice: 0,
+            tables: defaultTables,
+            perTable: defaultPerTable,
+            pax: 0,
+            remark: '',
+          }));
           newItems.push({
             id: genItemId(),
             itemType,
             date: dateStart,
             startTime: defaultTime,
-            pax: sessions.reduce((s, x) => s + x.tables, 0),
-            extra: { dateStart, dateEnd, defaultTime, defaultTables, defaultPerTable, sessions },
+            pax: sessions.reduce((s, x) => s + x.tables * x.perTable, 0),
+            extra: { sessions },
             amount: 0,
           });
         }
@@ -2732,160 +2725,240 @@ export default function BookingBoardCreate(props: {
                 </div>
               ) : drawer.itemType === 'lunch' || drawer.itemType === 'dinner' ? (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>开始日期</label>
-                      <input
-                        type="date"
-                        value={mlStart}
-                        onChange={(e) => setMlStart(e.target.value)}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>结束日期</label>
-                      <input
-                        type="date"
-                        value={mlEnd}
-                        onChange={(e) => setMlEnd(e.target.value)}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>默认时间</label>
-                      <input
-                        type="time"
-                        value={mlTime}
-                        onChange={(e) => setMlTime(e.target.value)}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>默认桌数</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={mlTables}
-                        onChange={(e) => setMlTables(Math.max(1, parseInt(e.target.value) || 1))}
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>每桌人数</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={mlPerTable}
-                        onChange={(e) =>
-                          setMlPerTable(Math.max(1, parseInt(e.target.value) || 1))
-                        }
-                        className={`${inputCls} font-mono`}
-                      />
-                    </div>
-                  </div>
-
-                  {/* 日期范围可视化 */}
-                  {mlSessions.length > 0 && (
-                    <div className="flex gap-0.5 h-6">
-                      {mlSessions.map((s, i) => {
-                        const isFirst = i === 0;
-                        const isLast = i === mlSessions.length - 1;
-                        const cls = isFirst
-                          ? 'bg-green-500'
-                          : isLast
-                            ? 'bg-emerald-500'
-                            : 'bg-purple-500';
+                  <div>
+                    <label className={labelCls}>用餐标准（点击添加场次）</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {finalMealOptions.map((m) => {
+                        const count = mlSessions.filter(s => s.mealType === m.code).length;
                         return (
-                          <div
-                            key={s.date}
-                            className={`flex-1 rounded text-[10px] flex items-center justify-center text-white font-medium ${cls}`}
-                            title={s.date}
+                          <button
+                            key={m.code}
+                            onClick={() => {
+                              const info = getMealTypeInfo(m.code, bizConfig.mealTypes);
+                              setMlSessions((prev) => [
+                                ...prev,
+                                {
+                                  date: todayStr(),
+                                  time: drawer.itemType === 'dinner' ? '18:00' : info.defaultTime,
+                                  mealType: m.code,
+                                  pricingMode: info.pricingMode,
+                                  unitPrice: info.unitPrice,
+                                  tables: info.defaultTables,
+                                  perTable: info.defaultPerTable,
+                                  pax: info.defaultPax,
+                                  remark: '',
+                                },
+                              ]);
+                            }}
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors text-left relative ${
+                              count > 0
+                                ? 'bg-green-500/15 border-green-500 text-green-600'
+                                : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
+                            }`}
                           >
-                            {s.date.slice(5)}
-                          </div>
+                            {count > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
+                                {count}
+                              </span>
+                            )}
+                            <div className="font-medium truncate">{m.name}</div>
+                            <div className="text-[10px] opacity-70 font-mono">
+                              {m.pricing_mode === 'per_person' ? `¥${Number(m.unit_price).toLocaleString()}/人` : `¥${Number(m.unit_price).toLocaleString()}/桌`}
+                            </div>
+                          </button>
                         );
                       })}
                     </div>
-                  )}
+                  </div>
 
-                  <div>
-                    <div className="text-sm text-gray-700 mb-2">
-                      场次明细（{mlSessions.length} 场）
-                    </div>
+                  {mlSessions.length > 0 ? (
                     <div className="overflow-x-auto rounded-lg border border-gray-200">
                       <table className="w-full text-xs">
                         <thead className="bg-gray-50 text-gray-500">
                           <tr>
                             <th className="px-2 py-2 text-left font-medium">日期</th>
                             <th className="px-2 py-2 text-left font-medium">时间</th>
-                            <th className="px-2 py-2 text-left font-medium">桌数</th>
-                            <th className="px-2 py-2 text-left font-medium">每桌</th>
+                            <th className="px-2 py-2 text-left font-medium">标准</th>
+                            <th className="px-2 py-2 text-left font-medium">计价</th>
+                            <th className="px-2 py-2 text-left font-medium">单价</th>
+                            <th className="px-2 py-2 text-left font-medium">数量</th>
+                            <th className="px-2 py-2 text-left font-medium">小计</th>
+                            <th className="px-2 py-2 text-left font-medium">特殊要求</th>
+                            <th className="px-2 py-2"></th>
                           </tr>
                         </thead>
                         <tbody>
-                          {mlSessions.map((s, idx) => (
-                            <tr key={s.date + idx} className="border-t border-gray-100">
-                              <td className="px-1.5 py-1 font-mono text-gray-700">{s.date}</td>
-                              <td className="px-1.5 py-1">
-                                <input
-                                  type="time"
-                                  value={s.time}
-                                  onChange={(e) =>
-                                    setMlSessions((prev) =>
-                                      prev.map((x, i) =>
+                          {mlSessions.map((s, idx) => {
+                            const amt = calcMealAmount(s.pricingMode, s.unitPrice, s.tables, s.perTable, s.pax);
+                            return (
+                              <tr key={idx} className="border-t border-gray-100">
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="date"
+                                    value={s.date}
+                                    onChange={(e) =>
+                                      setMlSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, date: e.target.value } : x,
+                                      ))
+                                    }
+                                    className={`${cellInput} w-36 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="time"
+                                    value={s.time}
+                                    onChange={(e) =>
+                                      setMlSessions((prev) => prev.map((x, i) =>
                                         i === idx ? { ...x, time: e.target.value } : x,
-                                      ),
-                                    )
-                                  }
-                                  className={`${cellInput} w-24 font-mono`}
-                                />
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={s.tables}
-                                  onChange={(e) =>
-                                    setMlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx
-                                          ? { ...x, tables: Math.max(1, parseInt(e.target.value) || 1) }
-                                          : x,
-                                      ),
-                                    )
-                                  }
-                                  className={`${cellInput} w-16 font-mono`}
-                                />
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={s.perTable}
-                                  onChange={(e) =>
-                                    setMlSessions((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx
-                                          ? {
+                                      ))
+                                    }
+                                    className={`${cellInput} w-20 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                    {finalMealOptions.map((m) => (
+                                      <button
+                                        key={m.code}
+                                        onClick={() => {
+                                          const info = getMealTypeInfo(m.code, bizConfig.mealTypes);
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? {
                                               ...x,
-                                              perTable: Math.max(1, parseInt(e.target.value) || 1),
-                                            }
-                                          : x,
-                                      ),
-                                    )
-                                  }
-                                  className={`${cellInput} w-16 font-mono`}
-                                />
-                              </td>
-                            </tr>
-                          ))}
+                                              mealType: m.code,
+                                              pricingMode: info.pricingMode,
+                                              unitPrice: info.unitPrice,
+                                            } : x,
+                                          ));
+                                        }}
+                                        className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                                          s.mealType === m.code
+                                            ? 'bg-green-500/15 border-green-500 text-green-600'
+                                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                        }`}
+                                      >
+                                        {m.name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <div className="flex gap-1">
+                                    {(['per_table', 'per_person'] as const).map((v) => (
+                                      <button
+                                        key={v}
+                                        onClick={() =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, pricingMode: v } : x,
+                                          ))
+                                        }
+                                        className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                                          s.pricingMode === v
+                                            ? 'bg-green-500/15 border-green-500 text-green-600'
+                                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                                        }`}
+                                      >
+                                        {v === 'per_table' ? '按桌' : '按人'}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={s.unitPrice}
+                                    onChange={(e) =>
+                                      setMlSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, unitPrice: parseFloat(e.target.value) || 0 } : x,
+                                      ))
+                                    }
+                                    className={`${cellInput} w-20 font-mono`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  {s.pricingMode === 'per_table' ? (
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={s.tables}
+                                        onChange={(e) =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, tables: Math.max(1, parseInt(e.target.value) || 1) } : x,
+                                          ))
+                                        }
+                                        className={`${cellInput} w-14 font-mono`}
+                                        title="桌数"
+                                      />
+                                      <span className="text-gray-400 text-[10px]">桌</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={s.perTable}
+                                        onChange={(e) =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, perTable: Math.max(1, parseInt(e.target.value) || 1) } : x,
+                                          ))
+                                        }
+                                        className={`${cellInput} w-14 font-mono`}
+                                        title="每桌人数"
+                                      />
+                                      <span className="text-gray-400 text-[10px]">人/桌</span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={s.pax}
+                                        onChange={(e) =>
+                                          setMlSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, pax: Math.max(0, parseInt(e.target.value) || 0) } : x,
+                                          ))
+                                        }
+                                        className={`${cellInput} w-16 font-mono`}
+                                      />
+                                      <span className="text-gray-400 text-[10px]">人</span>
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-1.5 py-1 font-mono text-green-600">
+                                  ¥{amt.toLocaleString()}
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <input
+                                    type="text"
+                                    value={s.remark}
+                                    placeholder="如：素食/清真..."
+                                    onChange={(e) =>
+                                      setMlSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, remark: e.target.value } : x,
+                                      ))
+                                    }
+                                    className={`${cellInput} w-32`}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <button
+                                    onClick={() => setMlSessions((prev) => prev.filter((_, i) => i !== idx))}
+                                    className="text-red-400 hover:text-red-600"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                  <div className="text-right text-xs text-gray-400">
-                    用餐金额现场结算，不计入订单总额
-                  </div>
+                  ) : (
+                    <div className="rounded-lg border-2 border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
+                      👆 请点击上方用餐标准胶囊块，添加用餐场次
+                    </div>
+                  )}
                 </div>
               ) : drawer.itemType === 'meeting' ? (
                 <div className="space-y-3">

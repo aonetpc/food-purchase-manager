@@ -1,4 +1,4 @@
-import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem } from './types';
+import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, MealPricingMode } from './types';
 import { BIZ_MAP } from './constants';
 
 // 为兼容旧调用保留硬编码兜底常量（仅后端无数据时使用）
@@ -26,6 +26,13 @@ const FALLBACK_WELLNESS: Record<string, { name: string; minHours: number; price:
   gym:         { name: '健身房',   minHours: 0, price: 0,   free: true },
   billiards:   { name: '台球室',   minHours: 0, price: 0,   free: true },
   tabletennis: { name: '乒乓房',   minHours: 0, price: 0,   free: true },
+};
+
+const FALLBACK_MEALS: Record<string, { name: string; pricingMode: MealPricingMode; unitPrice: number; defaultTime: string }> = {
+  work:     { name: '工作餐',     pricingMode: 'per_person', unitPrice: 30,  defaultTime: '12:00' },
+  standard: { name: '标准桌餐',   pricingMode: 'per_table',  unitPrice: 500, defaultTime: '12:00' },
+  premium:  { name: '豪华桌餐',   pricingMode: 'per_table',  unitPrice: 1200, defaultTime: '12:00' },
+  buffet:   { name: '自助餐',     pricingMode: 'per_person', unitPrice: 128, defaultTime: '12:00' },
 };
 
 // ================================================
@@ -162,6 +169,21 @@ export function calcWellnessAmount(type: string, hours: number, config?: BizConf
   }
   if (free) return 0;
   return price * Math.max(hours, minHours);
+}
+
+export function calcMealAmount(
+  pricingMode: MealPricingMode,
+  unitPrice: number,
+  tables: number,
+  perTable: number,
+  pax: number,
+): number {
+  if (pricingMode === 'per_table') {
+    return (Number(unitPrice) || 0) * Math.max(0, Number(tables) || 0);
+  }
+  // per_person
+  const actualPax = Number(pax) || (Number(tables) || 0) * (Number(perTable) || 0);
+  return (Number(unitPrice) || 0) * Math.max(0, actualPax);
 }
 
 // ================================================
