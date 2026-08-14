@@ -1419,7 +1419,7 @@ function CheckupItemsTable(props: TableProps<CheckupItemRow>) {
                   </td>
                   <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing.data.default_price} onChange={(v) => setField('default_price', v)} /></td>
                   <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing.data.insurance_price ?? 0} onChange={(v) => setField('insurance_price', v)} /></td>
-                  <td className="px-2 py-1.5"><Upd value={editing.data.unit} onChange={(v) => setField('unit', v)} /></td></td>
+                  <td className="px-2 py-1.5"><Upd value={editing.data.unit} onChange={(v) => setField('unit', v)} /></td>
                   <td className="px-2 py-1.5"><Upd type="number" value={editing.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
                   <td className="px-2 py-1.5 text-center"><Checkbox value={editing.data.status} onChange={(v) => setField('status', v)} /></td>
                   <td className="px-2 py-1.5 text-center space-x-1">
