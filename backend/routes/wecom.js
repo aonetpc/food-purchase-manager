@@ -146,6 +146,27 @@ async function sendWecomMessage(config, content) {
   return data.msgid || 'sent';
 }
 
+// 通过自建应用发送群聊 Markdown 消息（支持 <@userid> 实现@提醒）
+async function sendMarkdownToGroupChat(config, content) {
+  if (!config.chat_id) {
+    throw new Error('未配置群聊 chat_id');
+  }
+  const accessToken = await getAccessToken(config);
+  const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${accessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chatid: config.chat_id,
+      msgtype: 'markdown',
+      markdown: { content },
+      safe: 0
+    })
+  });
+  const data = await res.json();
+  if (data.errcode !== 0) throw new Error(data.errmsg || '发送群聊Markdown消息失败');
+  return data.msgid || 'sent';
+}
+
 // 通过自建应用发送个人消息（文本）
 async function sendTextToUser(config, userid, content) {
   const accessToken = await getAccessToken(config);
@@ -2559,6 +2580,7 @@ module.exports = router;
 module.exports.getWecomConfig = getWecomConfig;
 module.exports.getAccessToken = getAccessToken;
 module.exports.sendWecomMessage = sendWecomMessage;
+module.exports.sendMarkdownToGroupChat = sendMarkdownToGroupChat;
 module.exports.sendMarkdownViaWebhook = sendMarkdownViaWebhook;
 module.exports.sendViaWebhook = sendViaWebhook;
 module.exports.getApprovalTemplateDetail = getApprovalTemplateDetail;

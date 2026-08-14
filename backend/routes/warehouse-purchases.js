@@ -15,6 +15,7 @@ const { requireRole } = require('../middleware/roleAuth');
 const {
   getWecomConfig,
   sendMarkdownViaWebhook,
+  sendMarkdownToGroupChat,
   sendTemplateCardToUser,
   updateTemplateCardButton,
   getWecomUserName,
@@ -2709,6 +2710,24 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
           console.error(`发送个人模板卡片消息失败 ${userid}:`, sendErr.message);
           failedUsers.push({ userid, error: sendErr.message });
         }
+    }
+
+    // 发送群聊 Markdown 消息（@相关人员，提醒前往应用内核对确认）
+    // 使用自建应用 appchat/send，markdown 格式支持 <@userid> 实现真正@提醒
+    // 发送失败不影响主流程，仅记录日志
+    if (config.chat_id && mentionedUsers.length > 0) {
+      try {
+        let groupMd = `**📋 仓库采购确认通知**\n\n`;
+        groupMd += `> **采购单号**：${purchaseNo || '未生成'}\n`;
+        groupMd += `> **涉及仓库**：${warehouseNames.length > 0 ? warehouseNames.join('、') : '未指定'}\n\n`;
+        const atTags = mentionedUsers.map(uid => `<@${uid}>`).join('');
+        groupMd += `${atTags} 请尽快前往应用内核对入库清单并确认。`;
+
+        await sendMarkdownToGroupChat(config, groupMd);
+        console.log('[send-confirm] 群聊@提醒消息发送成功');
+      } catch (groupErr) {
+        console.error('[send-confirm] 群聊@提醒消息发送失败（不影响主流程）:', groupErr.message);
+      }
     }
 
     // 构建 user_departments 存库（按仓库维度组织，记录该仓库的确认人列表）

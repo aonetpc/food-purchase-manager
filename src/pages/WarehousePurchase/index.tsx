@@ -242,6 +242,11 @@ export default function WarehousePurchaseList() {
   const [prepayAttachments, setPrepayAttachments] = useState<Array<{ filename: string; base64: string; mimeType: string }>>([]);
   const [prepaySubmitting, setPrepaySubmitting] = useState(false);
 
+  // 发送确认通知弹窗
+  const [showSendConfirmModal, setShowSendConfirmModal] = useState(false);
+  const [sendConfirmTarget, setSendConfirmTarget] = useState<WarehousePurchase | null>(null);
+  const [sendConfirmLoading, setSendConfirmLoading] = useState(false);
+
   // ===== 加载列表 =====
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -383,17 +388,26 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  // ===== 发送确认通知 =====
-  const handleSendConfirm = async (id: string) => {
-    if (!window.confirm('确定发送确认通知吗？')) return;
-    setActioningId(id);
+  // ===== 发送确认通知（打开弹窗） =====
+  const handleSendConfirm = (p: WarehousePurchase) => {
+    setSendConfirmTarget(p);
+    setShowSendConfirmModal(true);
+  };
+
+  // ===== 确认发送确认通知（弹窗内点击确认） =====
+  const handleSendConfirmSubmit = async () => {
+    if (!sendConfirmTarget) return;
+    setSendConfirmLoading(true);
+    setError('');
     try {
-      await api.post(`/warehouse-purchases/${id}/send-confirm`);
+      await api.post(`/warehouse-purchases/${sendConfirmTarget.id}/send-confirm`);
+      setShowSendConfirmModal(false);
+      setSendConfirmTarget(null);
       await fetchList();
     } catch (err: any) {
       setError(err.message || '发送确认通知失败');
     } finally {
-      setActioningId(null);
+      setSendConfirmLoading(false);
     }
   };
 
@@ -1093,7 +1107,7 @@ export default function WarehousePurchaseList() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleSendConfirm(p.id);
+                                handleSendConfirm(p);
                               }}
                               disabled={actioningId === p.id}
                               className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
@@ -1666,6 +1680,93 @@ export default function WarehousePurchaseList() {
               >
                 <Send size={16} />
                 {prepaySubmitting ? '提交中...' : '发起审批'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 发送确认通知弹窗 */}
+      {showSendConfirmModal && sendConfirmTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => !sendConfirmLoading && setShowSendConfirmModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 弹窗头部 */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
+                <Bell size={20} className="text-blue-500" />
+              </div>
+              <h3 className="text-base font-medium text-gray-800">发送确认通知</h3>
+            </div>
+
+            {/* 弹窗内容 */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-gray-600">
+                确认向企业微信相关人员发送入库确认通知？
+              </p>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1.5 text-xs text-gray-600">
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">采购单号</span>
+                  <span className="font-medium text-gray-800">
+                    {sendConfirmTarget.purchase_no || `采购单 ${sendConfirmTarget.id.substring(0, 8)}`}
+                  </span>
+                </div>
+                {(() => {
+                  const whNames = (sendConfirmTarget.items || [])
+                    .map(i => i.warehouse_name)
+                    .filter(Boolean);
+                  const names = whNames.length > 0
+                    ? Array.from(new Set(whNames))
+                    : (sendConfirmTarget.warehouse_name ? [sendConfirmTarget.warehouse_name] : []);
+                  if (names.length > 0) {
+                    return (
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400">涉及仓库</span>
+                        <span className="font-medium text-gray-800">{names.join('、')}</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+              <p className="text-xs text-gray-400">
+                相关人员将收到企微通知与群聊@提醒，请前往应用内核对入库清单并确认。
+              </p>
+            </div>
+
+            {/* 弹窗按钮 */}
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button
+                onClick={() => {
+                  setShowSendConfirmModal(false);
+                  setSendConfirmTarget(null);
+                }}
+                disabled={sendConfirmLoading}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSendConfirmSubmit}
+                disabled={sendConfirmLoading}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                {sendConfirmLoading ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    发送中...
+                  </>
+                ) : (
+                  <>
+                    <Send size={16} />
+                    确认发送
+                  </>
+                )}
               </button>
             </div>
           </div>
