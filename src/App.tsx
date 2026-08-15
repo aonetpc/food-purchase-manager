@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import PageLoading from '@/components/PageLoading';
+import { ToastProvider } from '@/components/Toast';
 
 const DailyPurchase = lazy(() => import('@/pages/DailyPurchase'));
 const MonthlyAnalysis = lazy(() => import('@/pages/MonthlyAnalysis'));
@@ -57,6 +58,7 @@ const pageLoad = <PageLoading />;
 
 export default function App() {
   return (
+    <ToastProvider>
     <Router>
       <Suspense fallback={pageLoad}>
         <Routes>
@@ -232,5 +234,6 @@ export default function App() {
         </Routes>
       </Suspense>
     </Router>
+    </ToastProvider>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { X, Plus, Trash2, Save, Settings, ChevronDown, Search, ClipboardPaste, AlertCircle, CheckCircle } from 'lucide-react';
 import { bookingApi, type PackageRow, type PackageItemRow, type CheckupItemRow, type RoomTypeRow, type MeetingHallRow, type WellnessTypeRow, type MealTypeRow } from '../../lib/api';
+import { useToast } from '@/components/Toast';
 
 // ================================================
 // 样式常量（与 Create.tsx 一致）
@@ -107,6 +108,7 @@ export default function BizConfigModal({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<TabKey>('packages');
+  const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState<Record<TabKey, boolean>>({
     packages: false, checkupItems: false, roomTypes: false, meetingHalls: false, wellnessTypes: false, mealTypes: false,
@@ -190,7 +192,7 @@ export default function BizConfigModal({
       const results = await Promise.all(promises);
       results.forEach(({ k, data }) => setStateAndCache(k, data || []));
     } catch (e) {
-      alert('加载业务常量失败：' + (e as Error).message);
+      toast.error('加载业务常量失败：' + (e as Error).message);
     } finally {
       setLoading(prev => {
         const next = { ...prev };
@@ -251,7 +253,7 @@ export default function BizConfigModal({
       setEditing(null);
       onSuccess();
     } catch (e) {
-      alert('保存失败：' + (e as Error).message);
+      toast.error('保存失败：' + (e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -275,7 +277,7 @@ export default function BizConfigModal({
           clearCache();
           await loadTabGroup(Array.from(new Set([...affectedTabs, ...TAB_LOADERS[tab]])), true);
         } catch (e) {
-          alert('删除失败：' + (e as Error).message);
+          toast.error('删除失败：' + (e as Error).message);
         }
       },
     });
@@ -347,7 +349,7 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as any;
                 if (data.code && !checkCodeUnique('packages', data.code, data.id)) {
-                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
                   return;
                 }
                 const itemsData = data.items || [];
@@ -395,7 +397,7 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<CheckupItemRow>;
                 if (data.code && !checkCodeUnique('checkupItems', data.code, data.id)) {
-                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
                   return;
                 }
                 if ((editing as any)?.mode === 'update' && data.id) {
@@ -424,7 +426,7 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<RoomTypeRow>;
                 if (data.code && !checkCodeUnique('roomTypes', data.code, data.id)) {
-                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
                   return;
                 }
                 if ((editing as any)?.mode === 'update' && data.id) {
@@ -453,7 +455,7 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<MeetingHallRow>;
                 if (data.code && !checkCodeUnique('meetingHalls', data.code, data.id)) {
-                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
                   return;
                 }
                 if ((editing as any)?.mode === 'update' && data.id) {
@@ -482,7 +484,7 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<WellnessTypeRow>;
                 if (data.code && !checkCodeUnique('wellnessTypes', data.code, data.id)) {
-                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
                   return;
                 }
                 if ((editing as any)?.mode === 'update' && data.id) {
@@ -511,7 +513,7 @@ export default function BizConfigModal({
               onSave={(d) => {
                 const data = d as Partial<MealTypeRow>;
                 if (data.code && !checkCodeUnique('mealTypes', data.code, data.id)) {
-                  alert(`编码「${data.code}」已存在，请使用其他编码`);
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
                   return;
                 }
                 if ((editing as any)?.mode === 'update' && data.id) {

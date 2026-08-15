@@ -25,6 +25,7 @@ import {
 } from './utils';
 import { bookingApi, type BookingApiOrder } from '../../lib/api';
 import { useAuthStore } from '@/store/authStore';
+import { useToast } from '@/components/Toast';
 import CreateFormRaw from './Create';
 import BizConfigModal from './BizConfigModal';
 
@@ -778,6 +779,7 @@ function DetailModal({
 // 主页面
 // ================================================
 export default function BookingBoard() {
+  const toast = useToast();
   const [orders, setOrders] = useState<BookingOrder[]>([]);
   const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
   const [bizFilter, setBizFilter] = useState<Set<BizType>>(() => new Set(ALL_BIZ));
@@ -929,7 +931,7 @@ export default function BookingBoard() {
           // 直接进入编辑模式
           setCreateDrawer({ mode: 'edit', order: adapted });
         } catch (e) {
-          alert('创建失败: ' + (e as Error).message);
+          toast.error('创建失败: ' + (e as Error).message);
         }
       },
     });
@@ -939,15 +941,15 @@ export default function BookingBoard() {
   const handleConfirmSetTemplate = async () => {
     const orderId = showSetTemplate;
     const name = templateNameInput.trim();
-    if (!orderId || !name) { alert('请输入模板名称'); return; }
+    if (!orderId || !name) { toast.error('请输入模板名称'); return; }
     try {
       await bookingApi.setTemplate(orderUuidMap.current[orderId] || orderId, name);
-      alert('✅ 已生成模板副本，原订单仍保留在订单列表中');
+      toast.success('已生成模板副本，原订单仍保留在订单列表中');
       setShowSetTemplate(null);
       setTemplateNameInput('');
       await loadTemplates(); // 仅刷新模板列表（订单还在，不需要刷新订单列表）
     } catch (e) {
-      alert('设置失败: ' + (e as Error).message);
+      toast.error('设置失败: ' + (e as Error).message);
     }
   };
 
@@ -963,10 +965,10 @@ export default function BookingBoard() {
       onConfirm: async () => {
         try {
           await bookingApi.unsetTemplate(tplId);
-          alert('模板已删除');
+          toast.success('模板已删除');
           await loadTemplates();
         } catch (e) {
-          alert('操作失败: ' + (e as Error).message);
+          toast.error('操作失败: ' + (e as Error).message);
         }
       },
     });
@@ -1053,7 +1055,7 @@ export default function BookingBoard() {
       // 成功后由 Create.tsx 调用 onClose 关闭抽屉
     } catch (e) {
       console.error('[BookingBoard] 保存失败:', e);
-      alert('保存失败: ' + (e as Error).message);
+      toast.error('保存失败: ' + (e as Error).message);
       throw e;
     } finally {
       setSaving(false);
@@ -1211,7 +1213,7 @@ export default function BookingBoard() {
                                   await bookingApi.deleteOrder(uuid);
                                   setOrders(prev => prev.filter(x => x.id !== orderId));
                                 } catch (err) {
-                                  alert('删除失败: ' + (err as Error).message);
+                                  toast.error('删除失败: ' + (err as Error).message);
                                 }
                               },
                             });
@@ -1932,7 +1934,7 @@ export default function BookingBoard() {
       setImportPreview(result);
     } catch (e) {
       console.error('Excel 解析失败:', e);
-      alert('Excel 解析失败，请检查文件格式是否正确');
+      toast.error('Excel 解析失败，请检查文件格式是否正确');
       setShowImport(false);
     } finally {
       setImportParsing(false);
@@ -1959,10 +1961,10 @@ export default function BookingBoard() {
       setShowImport(false);
       setImportPreview(null);
       setImportFile(null);
-      alert('订单导入成功！');
+      toast.success('订单导入成功！');
     } catch (e) {
       console.error('导入保存失败:', e);
-      alert('订单导入失败: ' + (e as Error).message);
+      toast.error('订单导入失败: ' + (e as Error).message);
     } finally {
       setSaving(false);
     }

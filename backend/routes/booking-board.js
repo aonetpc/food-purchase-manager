@@ -262,7 +262,7 @@ router.get('/config', requireAuth, async (_req, res) => {
 // 公用读写权限：写 requireBookingWrite  读 requireAuth
 // ============================================================
 
-function makeBizConfigCrud({ basePath, table, requiredFields, editableFields, sortDefault }) {
+function makeBizConfigCrud({ basePath, table, requiredFields, editableFields, sortDefault, autoIncrementId }) {
   // list（含禁用，按 sort_order+id 排）
   router.get(`${basePath}`, requireAuth, async (req, res) => {
     try {
@@ -285,16 +285,25 @@ function makeBizConfigCrud({ basePath, table, requiredFields, editableFields, so
           return res.status(400).json({ ok: false, error: `缺少必要字段：${f}` });
         }
       }
-      const id = uuidv4();
-      const fields = ['id', ...requiredFields, ...editableFields.filter(f => req.body[f] !== undefined)];
-      const values = [id, ...requiredFields.map(f => req.body[f])];
+      let id;
+      const fields = [...requiredFields, ...editableFields.filter(f => req.body[f] !== undefined)];
+      const values = [...requiredFields.map(f => req.body[f])];
       editableFields.filter(f => req.body[f] !== undefined).forEach(f => values.push(req.body[f]));
       if (!fields.includes('sort_order')) { fields.push('sort_order'); values.push(sortDefault != null ? sortDefault : 0); }
       if (!fields.includes('status')) { fields.push('status'); values.push(1); }
+      if (!autoIncrementId) {
+        id = uuidv4();
+        fields.unshift('id');
+        values.unshift(id);
+      }
       const placeholders = fields.map(() => '?').join(',');
       await conn.query(`INSERT INTO ${table} (${fields.join(',')}) VALUES (${placeholders})`, values);
+      if (autoIncrementId) {
+        const [idRes] = await conn.query('SELECT LAST_INSERT_ID() AS newId');
+        id = idRes[0].newId;
+      }
       const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
-      await logOperation(req.user.id, id, table, 'create', req.body, req);
+      await logOperation(req.user.id, String(id), table, 'create', req.body, req);
       res.json({ ok: true, data: rows[0] });
     } catch (e) {
       console.error(`[${basePath} create] error:`, e);
@@ -805,6 +814,7 @@ makeBizConfigCrud({
   requiredFields: ['code', 'name', 'pricing_mode', 'unit_price'],
   editableFields: ['default_time', 'default_tables', 'default_per_table', 'default_pax', 'description', 'status', 'sort_order'],
   sortDefault: 1,
+  autoIncrementId: true,
 });
 
 // ============================================================
