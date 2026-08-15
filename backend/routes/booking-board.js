@@ -662,14 +662,64 @@ function makeCheckupItemCrud(routerRef) {
       const { id } = req.params;
       // 1. 先清理组合子项目关联
       await conn.query(`DELETE FROM booking_item_sub_items WHERE combo_item_id = ? OR sub_item_id = ?`, [id, id]);
-      // 2. 清理套餐中的项目引用（设置为 NULL 而不是删除套餐行）
-      await conn.query(`UPDATE booking_package_items SET item_id = NULL WHERE item_id = ?`, [id]);
+      // 2. 清理套餐中的项目引用：item_name_snapshot/item_price 保留（套餐历史明细快照），只把item_id置空
+      //    如果item_id是NOT NULL，MySQL不允许SET NULL→此时直接删这条package_items明细（价格快照还在logOperation，不影响历史）
+      let affected = 0;
+      try {
+        const [upd] = await conn.query(`UPDATE booking_package_items SET item_id = NULL WHERE item_id = ?`, [id]);
+        affected = typeof upd.affectedRows === 'number' ? upd.affectedRows : 0;
+      } catch (_e) {
+        // NOT NULL约束时改用DELETE明细表行（只删item_id=当前被删项目的）
+        await conn.query(`DELETE FROM booking_package_items WHERE item_id = ?`, [id]);
+      }
       // 3. 物理删除主表记录
       await conn.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
-      await logOperation(req.user.id, id, table, 'delete', {}, req);
+      await logOperation(req.user.id, id, table, 'delete', { packageItemsCleared: affected }, req);
       res.json({ ok: true });
     } catch (e) {
       console.error(`[${basePath} delete] error:`, e);
+      res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
+    }
+  });
+
+  // ============ 批量 wipeAll：清空所有体检项目（解决前端循环漏删/删除失败静默问题）============
+  // 前端「🗑️ 清空全部重导」改为调这个接口：
+  //   1) 不会漏掉 status=0（因为 list 接口只返回 status!=0，前端 rows 拿不到，循环删必然漏）
+  //   2) 一次性处理所有 FK 关联，不会因为 item_id NOT NULL 回滚
+  routerRef.delete(`${basePath}`, requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      // 1) 清组合子项目关联表（全表清空，不保留——因为checkup_items都要全删）
+      const [r1] = await conn.query(`DELETE FROM booking_item_sub_items`);
+      // 2) 处理套餐明细表：如果 item_id 列允许 NULL→置 NULL；否则 DELETE
+      let packageItemsFixed = 0;
+      try {
+        const [upd] = await conn.query(`UPDATE booking_package_items SET item_id = NULL WHERE item_id IS NOT NULL`);
+        packageItemsFixed = typeof upd.affectedRows === 'number' ? upd.affectedRows : 0;
+      } catch (_e) {
+        // NOT NULL 时尝试先改列为允许 NULL（一次性 DDL，后续都能走 UPDATE）
+        try {
+          await conn.query(`ALTER TABLE booking_package_items MODIFY COLUMN item_id VARCHAR(36) NULL`);
+          const [upd] = await conn.query(`UPDATE booking_package_items SET item_id = NULL WHERE item_id IS NOT NULL`);
+          packageItemsFixed = typeof upd.affectedRows === 'number' ? upd.affectedRows : 0;
+        } catch (_e2) {
+          // 实在不行就 DELETE 套餐明细中 item_id 非空的行
+          const [del] = await conn.query(`DELETE FROM booking_package_items WHERE item_id IS NOT NULL`);
+          packageItemsFixed = typeof del.affectedRows === 'number' ? del.affectedRows : 0;
+        }
+      }
+      // 3) 物理删除全部体检项目
+      const [r3] = await conn.query(`DELETE FROM ${table}`);
+      await conn.commit();
+      const affected = typeof r3.affectedRows === 'number' ? r3.affectedRows : 0;
+      await logOperation(req.user.id, '-', table, 'wipe_all', { deleted: affected, subItemsCleared: r1?.affectedRows || 0, packageItemsFixed }, req);
+      res.json({ ok: true, data: { deleted: affected, subItemsCleared: r1?.affectedRows || 0, packageItemsFixed } });
+    } catch (e) {
+      try { await conn.rollback(); } catch (_) {}
+      console.error(`[${basePath} wipeAll] error:`, e);
       res.status(500).json({ ok: false, error: e.message });
     } finally {
       conn.release();

@@ -467,6 +467,12 @@ export const bookingApi = {
     const res = await api.delete<{ ok: boolean; error?: string }>(`/booking/config/checkup-items/${id}`);
     if (!res.ok) throw new Error(res.error || '删除体检项目失败');
   },
+  // 批量清空所有体检项目（含 status=0 的漏删项），事务中会自动处理 FK 关联
+  async wipeAllCheckupItems(): Promise<{ deleted: number; subItemsCleared: number; packageItemsFixed: number }> {
+    const res = await api.delete<{ ok: boolean; error?: string; data: any }>('/booking/config/checkup-items');
+    if (!res.ok) throw new Error(res.error || '批量清空体检项目失败');
+    return (res.data || { deleted: 0, subItemsCleared: 0, packageItemsFixed: 0 }) as any;
+  },
 
   // ===== 套餐项目（子资源）CRUD =====
   async listPackageItems(pkgId: string): Promise<PackageItemRow[]> {

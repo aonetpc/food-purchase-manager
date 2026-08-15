@@ -446,25 +446,29 @@ export default function CheckupItemsTab() {
           <>
             <button
               onClick={async () => {
-                if (!rows.length) { toast.warning('当前没有可清除的体检项目'); return; }
-                const tip1 = window.prompt(`⚠️ 将删除全部 ${rows.length} 条体检项目（含组合子项目引用），编码将自动从 T00001 重置。\n请输入 "确定清空体检项目" 以继续：`);
+                // 【修复删除失败】直接走后端 wipeAllCheckupItems 事务接口：
+                // 1) 不会漏掉 status=0（之前 list 接口只返回 status!=0，rows 里拿不到，循环删必然漏）
+                // 2) 自动 booking_package_items.item_id NOT NULL 兜底（ALTER MODIFY→DELETE），不会因FK静默失败
+                // 3) 一次性事务，进度简单、返回明确的affected数量
+                let total = rows.length || 0;
+                if (total === 0) total = 999;  // 可能还有status=0的，但rows里看不到，就用大数占位
+                const tip1 = window.prompt(`⚠️ 将删除全部体检项目（含禁用项、组合子项目引用），编码将自动从 T00001 重置。\n请输入 "确定清空体检项目" 以继续：`);
                 if (tip1 !== '确定清空体检项目') { toast.info('已取消'); return; }
-                if (!window.confirm(`删除后无法恢复！再次确认？（当前共 ${rows.length} 条）`)) return;
-                const toDel = rows.slice().reverse();
-                let ok = 0, fail = 0;
-                for (let i = 0; i < toDel.length; i++) {
-                  try {
-                    if (toDel[i].id) await bookingApi.deleteCheckupItem(toDel[i].id);
-                    ok++;
-                  } catch (e: any) { fail++; console.error(toDel[i].name, '删除失败：', e.message || e); }
-                  if (i % 10 === 0) setSyncProgress({ done: i + 1, total: toDel.length, msg: `已删除 ${i + 1}/${toDel.length}` });
+                if (!window.confirm(`删除后无法恢复！再次确认？`)) return;
+                setSyncProgress({ done: 0, total: 1, msg: '正在批量清空...' });
+                try {
+                  const info = await bookingApi.wipeAllCheckupItems();
+                  setSyncProgress({ done: 1, total: 1, msg: '清空完成' });
+                  toast.success(`清空完成：删除体检项目 ${info.deleted} 条，清理组合引用 ${info.subItemsCleared} 条，解除套餐引用 ${info.packageItemsFixed} 条`);
+                } catch (e: any) {
+                  toast.error(e.message || '批量清空失败');
+                } finally {
+                  setSyncProgress(null);
+                  await loadRows();
                 }
-                setSyncProgress(null);
-                toast.success(`清空完成：删除 ${ok} 条，失败 ${fail} 条`);
-                await loadRows();
               }}
               className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white shadow-sm border border-rose-700"
-              title="删除所有体检项目并将编码从T00001重新开始"
+              title="删除所有体检项目（含禁用项）并将编码从T00001重新开始"
             >
               🗑️ 清空全部重导
             </button>
