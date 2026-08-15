@@ -259,6 +259,9 @@ export default function CheckupItemsTab() {
   // P5 价格对拍（A1 + A2 manualBindMap 叠加：若 manualBindMap 设置了则改写 diff 匹配结果）
   const compare = useMemo<PriceCompareResult & {
     diffsWithManual: (DiffRow & { diffKey: string })[];
+    // Dx: 经 manualBind 修正后的 pdfUnmatched / collisions 视图（UI展示直接用这个）
+    pdfUnmatchedView: PriceCompareResult['pdfUnmatched'];
+    collisionsView: PriceCompareResult['collisions'];
   }>(() => {
     const base = priceCompare(rows, pdfText) as PriceCompareResult;
     const idMap = new Map<string, CheckupItemRow>();
@@ -289,7 +292,49 @@ export default function CheckupItemsTab() {
         diffKey: `${idx}:${key}`,
       };
     });
-    return { ...base, diffsWithManual };
+
+    // === D1: 重新计算 pdfUnmatchedView：把 manualBindMap 已绑定的那些从红块里拿掉 ===
+    const pdfUnmatchedView = base.pdfUnmatched.filter(r => {
+      const key = normalize(r.name);
+      const bindId = manualBindMap[key];
+      if (!bindId) return true;
+      return !idMap.has(bindId);  // 只有"手动绑定也指向不存在 DB id"的才继续显示
+    });
+
+    // === D2: 重新聚合 collisionsView（同时考虑自动命中 + 手动绑定）===
+    const dbToHits = new Map<string, Array<{ pdfName: string; pdfPrice: number | null; pdfInsured: number | null; kind: any; score: number }>>();
+    function pushHit(dbId: string, h: any) {
+      if (!dbId) return;
+      if (!dbToHits.has(dbId)) dbToHits.set(dbId, []);
+      dbToHits.get(dbId)!.push(h);
+    }
+    // 自动匹配的冲突（来自 base.collisions 里的 pdfHits，我们改用更权威的来源：base.diffs + diffsWithManual 最终匹配情况）
+    diffsWithManual.forEach(d => {
+      if (!d.dbId) return;
+      pushHit(d.dbId, { pdfName: d.name, pdfPrice: d.pdfPrice ?? null, pdfInsured: d.pdfInsured ?? null, kind: d.matchKind, score: d.matchScore ?? 0 });
+    });
+    // 另外 base 中已匹配+无差异的（matchedCount 那些，不在 diffsWithManual 里）也要计入冲突
+    //   这些没有 diff，但 base.collisions 已反映过它们与自动命中 pdfHits 的共享关系
+    base.collisions.forEach(c => {
+      c.pdfHits.forEach(h => {
+        // 只加那些未出现在 diffsWithManual 的（即 matchedCount 的部分，已经是自动匹配且价格完全一致）
+        const alreadyInDiff = diffsWithManual.some(d => d.dbId === c.dbId && normalize(d.name) === normalize(h.pdfName));
+        if (!alreadyInDiff) pushHit(c.dbId, h);
+      });
+    });
+    // 生成 collisionsView（同一条 DB 被 ≥2 条同名不同 PDF 行命中时，记为冲突）
+    const collisionsView: PriceCompareResult['collisions'] = [];
+    for (const [dbId, arr] of dbToHits.entries()) {
+      if (arr.length < 2) continue;
+      const uniqueNames = new Set(arr.map(h => normalize(h.pdfName)));
+      if (uniqueNames.size < 2) continue;
+      const dbRow = idMap.get(dbId);
+      if (!dbRow) continue;
+      collisionsView.push({ dbId, dbRow, pdfHits: arr });
+    }
+    collisionsView.sort((a, b) => b.pdfHits.length - a.pdfHits.length);
+
+    return { ...base, diffsWithManual, pdfUnmatchedView, collisionsView };
   }, [rows, pdfText, manualBindMap]);
 
   // A4/B2 同步执行：把选中的 diffs 回写到 DB（scope 支持 name 覆盖）
@@ -427,25 +472,25 @@ export default function CheckupItemsTab() {
                     <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-mono">❌ 跳过 {compare.skipped.length}（展开详情）</span>
                   )}
                   <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-mono">DB {compare.dbNameMap.size} 条</span>
-                  {compare.pdfUnmatched.length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-rose-200 text-rose-800 font-mono border border-rose-400">🔴 DB缺 {compare.pdfUnmatched.length} 条（见下方红块）</span>
+                  {compare.pdfUnmatchedView.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-rose-200 text-rose-800 font-mono border border-rose-400">🔴 DB缺 {compare.pdfUnmatchedView.length} 条（见下方红块）</span>
                   )}
-                  {compare.collisions.length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 font-mono border border-amber-400">🟠 多对一冲突 {compare.collisions.length} 处</span>
+                  {compare.collisionsView.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 font-mono border border-amber-400">🟠 多对一冲突 {compare.collisionsView.length} 处</span>
                   )}
                 </div>
                 <span className="text-sky-700 font-semibold">差异 {compare.diffsWithManual.length}</span>
               </div>
 
               {/* C4: PDF 里有但 DB 完全没找到（最最醒目的红色块，避免"少了1条但看不到"） */}
-              {pdfText && compare.pdfUnmatched.length > 0 && (
+              {pdfText && compare.pdfUnmatchedView.length > 0 && (
                 <div className="mt-2 border border-rose-300 bg-rose-50 rounded-lg overflow-hidden p-2">
                   <div className="px-1 py-1 text-[12px] font-bold text-rose-800 mb-1 flex items-center justify-between">
-                    <span>🔴 PDF 里有，但 DB 里完全找不到的项目（{compare.pdfUnmatched.length} 条）——这就是你说的"DB里缺了"的！</span>
+                    <span>🔴 PDF 里有，但 DB 里完全找不到的项目（{compare.pdfUnmatchedView.length} 条）——这就是你说的"DB里缺了"的！</span>
                     <button
                       onClick={() => {
-                        const names = compare.pdfUnmatched.map(r => r.name).join('，');
-                        toast.info(`已复制 ${compare.pdfUnmatched.length} 个缺失项名称到剪贴板（可手动新建后再同步）`);
+                        const names = compare.pdfUnmatchedView.map(r => r.name).join('，');
+                        toast.info(`已复制 ${compare.pdfUnmatchedView.length} 个缺失项名称到剪贴板（可手动新建后再同步）`);
                         navigator.clipboard?.writeText(names);
                       }}
                       className="px-2 py-0.5 rounded bg-white border border-rose-300 text-[11px] text-rose-700 hover:bg-rose-100"
@@ -462,7 +507,7 @@ export default function CheckupItemsTab() {
                         </tr>
                       </thead>
                       <tbody>
-                        {compare.pdfUnmatched.map((r, i) => (
+                        {compare.pdfUnmatchedView.map((r, i) => (
                           <tr key={i} className="border-t border-rose-100">
                             <td className="px-2 py-1 text-rose-500 font-mono">{i + 1}</td>
                             <td className="px-2 py-1 text-rose-900 font-mono break-all">{r.name}</td>
@@ -477,13 +522,13 @@ export default function CheckupItemsTab() {
               )}
 
               {/* C4: 多对一冲突（多条不同PDF名共享同一DB行，DB可能少存1条） */}
-              {pdfText && compare.collisions.length > 0 && (
+              {pdfText && compare.collisionsView.length > 0 && (
                 <div className="mt-2 border border-amber-300 bg-amber-50 rounded-lg overflow-hidden p-2">
                   <div className="px-1 py-1 text-[12px] font-bold text-amber-800 mb-1">
-                    🟠 多条 PDF 行共享同一条 DB 项目（{compare.collisions.length} 处冲突）——"总数对但好像少了"的典型表现：PDF 2 条项目被合并匹配到 DB 1 条上，说明 DB 里缺存了其中 1 条的独立项目
+                    🟠 多条 PDF 行共享同一条 DB 项目（{compare.collisionsView.length} 处冲突）——"总数对但好像少了"的典型表现：PDF 2 条项目被合并匹配到 DB 1 条上，说明 DB 里缺存了其中 1 条的独立项目
                   </div>
                   <div className="space-y-2 max-h-72 overflow-auto">
-                    {compare.collisions.map(c => (
+                    {compare.collisionsView.map(c => (
                       <div key={c.dbId} className="border border-amber-200 rounded bg-white p-2">
                         <div className="text-[11px] font-semibold text-slate-800 mb-1">
                           DB 项目：<span className="font-mono">{c.dbRow.name}</span>
