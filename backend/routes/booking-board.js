@@ -555,8 +555,9 @@ function makeCheckupItemCrud(routerRef) {
 
   routerRef.get(`${basePath}`, requireAuth, async (req, res) => {
     try {
+      // 只查询启用的项目（status != 0），禁用的项目不显示
       const [rows] = await pool.query(
-        `SELECT * FROM ${table} ORDER BY category ASC, sort_order ASC, id ASC`
+        `SELECT * FROM ${table} WHERE status != 0 ORDER BY category ASC, sort_order ASC, id ASC`
       );
       // 为组合项目附加子项目列表
       const conn = await pool.getConnection();
@@ -656,14 +657,22 @@ function makeCheckupItemCrud(routerRef) {
   });
 
   routerRef.delete(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+    const conn = await pool.getConnection();
     try {
       const { id } = req.params;
-      await pool.query(`UPDATE ${table} SET status = 0 WHERE id = ?`, [id]);
+      // 1. 先清理组合子项目关联
+      await conn.query(`DELETE FROM booking_item_sub_items WHERE combo_item_id = ? OR sub_item_id = ?`, [id, id]);
+      // 2. 清理套餐中的项目引用（设置为 NULL 而不是删除套餐行）
+      await conn.query(`UPDATE booking_package_items SET item_id = NULL WHERE item_id = ?`, [id]);
+      // 3. 物理删除主表记录
+      await conn.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
       await logOperation(req.user.id, id, table, 'delete', {}, req);
       res.json({ ok: true });
     } catch (e) {
       console.error(`[${basePath} delete] error:`, e);
       res.status(500).json({ ok: false, error: e.message });
+    } finally {
+      conn.release();
     }
   });
 }
