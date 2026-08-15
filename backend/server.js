@@ -34,7 +34,7 @@ const tempAssessmentsRouter = require('./routes/temp-assessments');
 const tempStatsRouter = require('./routes/temp-stats');
 const tempWorkersRouter = require('./routes/temp-workers');
 const bookingBoardRouter = require('./routes/booking-board');
-
+const checkupTemplatesRouter = require('./routes/checkup-templates');
 const { requireAuth, getUserPermissions, getRoles, getPermissions, getModules, requireRole } = require('./middleware/rbac');
 const rolesRouter = require('./routes/roles');
 
@@ -102,6 +102,12 @@ app.use('/api/reports', requireAuth, reportsRouter);
 
 // 预订调度接口（需登录）
 app.use('/api/booking', requireAuth, bookingBoardRouter);
+
+// 体检销售套餐模板（需登录）
+app.use('/api/booking/checkup-templates', requireAuth, checkupTemplatesRouter);
+
+// 体检套餐分享链接（免登录公开访问：查看详情 + PDF下载）
+app.use('/api/booking/checkup-share', checkupTemplatesRouter.sharePublicRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
