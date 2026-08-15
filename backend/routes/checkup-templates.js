@@ -280,17 +280,36 @@ router.post('/', async (req, res) => {
     const [exist] = await pool.query('SELECT id FROM booking_packages WHERE code = ? LIMIT 1', [finalCode]);
     if (exist.length > 0) finalCode += '_' + Math.floor(Math.random() * 9999);
 
+    // 双保险：先检查 description 列是否存在（历史数据库 080 迁移未执行时兜底）
+    let hasDescCol = true;
+    try {
+      const [crows] = await pool.query(
+        `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='booking_packages' AND COLUMN_NAME='description'`
+      );
+      hasDescCol = (crows && crows[0] && Number(crows[0].c) > 0);
+    } catch (e) {
+      hasDescCol = true; // 失败按有列处理，随后 SQL 报错被 catch
+    }
+
+    const columns = ['id', 'code', 'name'];
+    if (hasDescCol) columns.push('description');
+    columns.push('owner_sales_id', 'is_public', 'base_template_id', 'applicable_roles', 'status', 'sort_order', 'price', 'discount_rate', 'created_at', 'updated_at');
+
+    const placeholders = new Array(columns.length).fill('?').join(',');
+    const args = [id, finalCode, String(name).trim()];
+    if (hasDescCol) args.push(description || null);
+    args.push(
+      pubFlag === 1 ? null : user.id,
+      pubFlag,
+      base_template_id || null,
+      JSON.stringify(roleArr),
+      1, 100, 0, 100
+    );
+
     const [ins] = await pool.query(
-      `INSERT INTO booking_packages
-        (id, code, name, description, owner_sales_id, is_public, base_template_id, applicable_roles, status, sort_order, price, discount_rate, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 100, 0, 100, NOW(), NOW())`,
-      [
-        id, finalCode, String(name).trim(), description,
-        pubFlag === 1 ? null : user.id,  // 公共模板 owner=NULL
-        pubFlag,
-        base_template_id || null,
-        JSON.stringify(roleArr),
-      ]
+      `INSERT INTO booking_packages (${columns.join(',')}) VALUES (${placeholders})`,
+      args
     );
 
     // 初始化三条 role_plans
@@ -344,11 +363,22 @@ router.put('/:id', async (req, res) => {
     const {
       name, code, description, status, applicable_roles, sort_order,
     } = req.body || {};
+
+    // 双保险：description 列不存在则跳过
+    let hasDescCol = true;
+    try {
+      const [crows] = await pool.query(
+        `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='booking_packages' AND COLUMN_NAME='description'`
+      );
+      hasDescCol = (crows && crows[0] && Number(crows[0].c) > 0);
+    } catch (e) { hasDescCol = true; }
+
     const sets = [];
     const args = [];
     if (name !== undefined && String(name).trim()) { sets.push('name=?'); args.push(String(name).trim()); }
     if (code !== undefined && String(code).trim()) { sets.push('code=?'); args.push(String(code).trim()); }
-    if (description !== undefined) { sets.push('description=?'); args.push(description || null); }
+    if (description !== undefined && hasDescCol) { sets.push('description=?'); args.push(description || null); }
     if (status !== undefined) { sets.push('status=?'); args.push(status ? 1 : 0); }
     if (sort_order !== undefined) { sets.push('sort_order=?'); args.push(Number(sort_order) || 100); }
     if (applicable_roles !== undefined && Array.isArray(applicable_roles)) {

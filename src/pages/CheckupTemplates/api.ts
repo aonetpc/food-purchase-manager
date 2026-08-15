@@ -117,18 +117,23 @@ export const checkupApi = {
     api.put<any>(`/booking/checkup-templates/${id}/items-batch`, body),
   share: (id: string, body?: any) =>
     api.post<any>(`/booking/checkup-templates/${id}/share`, body || {}),
-  pdfUrl: (id: string, role?: string) => {
+  pdfUrl: (id: string, role?: string, shareToken?: string) => {
+    // 如果传入 shareToken（分享场景免登录下载），则走 share 专属免登录 PDF 端点
+    if (shareToken) {
+      const qs = [role ? `role=${role}` : ''].filter(Boolean).join('&');
+      return `/api/booking/checkup-share/${encodeURIComponent(shareToken)}/pdf${qs ? '?' + qs : ''}`;
+    }
     const token = (api as any).getToken ? (api as any).getToken() : '';
     const qs = [role ? `role=${role}` : '', token ? `access_token=${encodeURIComponent(token)}` : ''].filter(Boolean).join('&');
-    return `${(api as any).getBaseUrl()}/booking/checkup-templates/${id}/pdf${qs ? '?' + qs : ''}`;
+    return `/api/booking/checkup-templates/${id}/pdf${qs ? '?' + qs : ''}`;
   },
   listSalesCapsules: (salesId: string) =>
     api.get<any>(`/booking/checkup-templates/sales/${salesId}/capsules`),
   listItems: (params?: any) =>
     api.get<any>('/booking/config/checkup-items', { params }),
   sharePublic: (token: string) =>
-    fetch(`${(api as any).getBaseUrl()}/booking/checkup-share/${token}`, { method: 'GET', headers: { 'Content-Type': 'application/json' } })
+    fetch(`/api/booking/checkup-share/${encodeURIComponent(token)}`, { method: 'GET', headers: { 'Accept': 'application/json' } })
       .then(async r => { if (!r.ok) { const e = await r.json().catch(() => ({ error: '请求失败' })); throw new Error(e.error || 'HTTP ' + r.status); } return r.json(); }),
   sharePublicPdfUrl: (token: string, role?: string) =>
-    `${(api as any).getBaseUrl()}/booking/checkup-share/${token}/pdf${role ? `?role=${role}` : ''}`,
+    `/api/booking/checkup-share/${encodeURIComponent(token)}/pdf${role ? `?role=${role}` : ''}`,
 };
