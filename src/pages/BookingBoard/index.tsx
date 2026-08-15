@@ -155,6 +155,12 @@ function cardSummary(item: BookingItem, days: number): string {
   } else if (item.itemType === 'breakfast') {
     parts.push('早餐', `${item.pax}人`);
     if (days > 1) parts.push(`${days}天`);
+  } else if (item.itemType === 'carpickup') {
+    parts.push(BIZ_MAP.carpickup.label, `${item.pax}人`);
+    const sess = item.extra?.carpickup;
+    if (sess?.customers?.length) parts.push(`${sess.customers.length}位客户`);
+    if (sess?.shareRide) parts.push('拼车');
+    if (item.amount) parts.push(`¥${item.amount}`);
   } else {
     parts.push(BIZ_MAP[item.itemType].label, `${item.pax}${BIZ_MAP[item.itemType].unit}`);
   }
@@ -217,8 +223,9 @@ function itemDetail(item: BookingItem): string {
     const sess = item.extra?.carpickup;
     if (!sess) return '—';
     const parts: string[] = [`${sess.customers?.length || 1}位客户`];
+    if (item.pax) parts.push(`共${item.pax}人`);
     if (sess.shareRide) parts.push('拼车');
-    if (sess.pricePerCustomer) parts.push(`¥${sess.pricePerCustomer}/人`);
+    if (sess.pricePerCustomer) parts.push(`¥${sess.pricePerCustomer}/客户`);
     if (sess.remark) parts.push(sess.remark);
     return parts.join(' · ');
   }

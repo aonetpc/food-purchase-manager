@@ -2190,7 +2190,9 @@ export default function BookingBoardCreate(props: {
                         ¥{(item.amount || 0).toLocaleString()}
                       </div>
                       <div className="text-[10px] text-gray-500">
-                        {biz.unit}×{item.pax}
+                        {item.itemType === 'carpickup'
+                          ? `${item.extra?.carpickup?.customers?.length || 0}位客户 · ${item.pax}人`
+                          : `${biz.unit}×${item.pax}`}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
