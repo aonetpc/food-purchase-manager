@@ -53,6 +53,9 @@ const ManagementReport = lazy(() => import('@/pages/ManagementReport'));
 const StockTakeOperate = lazy(() => import('@/pages/StockTakeOperate'));
 const PermissionManager = lazy(() => import('@/pages/PermissionManager'));
 const BookingBoard = lazy(() => import('@/pages/BookingBoard'));
+const CheckupApp = lazy(() => import('@/pages/CheckupTemplates/H5App'));
+const CheckupSharePage = lazy(() => import('@/pages/CheckupTemplates/SharePage'));
+const CheckupTemplatesPage = lazy(() => import('@/pages/CheckupTemplates/DesktopRedirect'));
 
 const pageLoad = <PageLoading />;
 
@@ -80,6 +83,13 @@ export default function App() {
 
           {/* 月末盘点 H5 - 企微卡片链接进入，token免登录 */}
           <Route path="/stock-take-operate" element={<StockTakeOperate />} />
+
+          {/* ============== 体检配单 H5（登录态：销售/管理员手机操作）============== */}
+          <Route path="/h/checkup-templates/*" element={<ProtectedRoute><CheckupApp /></ProtectedRoute>} />
+
+          {/* ============== 体检套餐分享落地页（免登录：客户微信打开）============== */}
+          <Route path="/h/checkup-share/:token" element={<CheckupSharePage />} />
+          <Route path="/h/checkup-share/:token/pdf" element={<CheckupSharePage />} />
 
           {/* 企微端审核管理路由 - 内部人员使用 */}
           <Route path="/m/temp-audit" element={<MobileTempAudit />} />
@@ -230,6 +240,7 @@ export default function App() {
               </ProtectedRoute>
             } />
             <Route path="booking-board" element={<BookingBoard />} />
+            <Route path="checkup-templates" element={<CheckupTemplatesPage />} />
           </Route>
         </Routes>
       </Suspense>
