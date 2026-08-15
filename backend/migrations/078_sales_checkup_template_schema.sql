@@ -38,11 +38,14 @@ WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='booking_packages' AND COLUMN_NAME=
 PREPARE stmt FROM @c; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @c = (SELECT IF(COUNT(*)=0,
-  "ALTER TABLE booking_packages ADD COLUMN applicable_roles JSON NOT NULL DEFAULT '[\"male\",\"female_married\",\"female_single\"]' COMMENT '适用角色 JSON 数组'",
+  "ALTER TABLE booking_packages ADD COLUMN applicable_roles JSON NULL COMMENT '适用角色 JSON 数组'",
   'SELECT 1')
 FROM information_schema.COLUMNS
 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='booking_packages' AND COLUMN_NAME='applicable_roles');
 PREPARE stmt FROM @c; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- MySQL 5.7 不允许 JSON 列有 DEFAULT，改为添加后 UPDATE 设置默认值
+UPDATE booking_packages SET applicable_roles = JSON_ARRAY('male','female_married','female_single') WHERE applicable_roles IS NULL;
 
 SET @c = (SELECT IF(COUNT(*)=0,
   "ALTER TABLE booking_packages ADD COLUMN share_token VARCHAR(64) NULL COMMENT '分享链接token（H5无登录访问）'",
