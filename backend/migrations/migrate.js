@@ -33,7 +33,7 @@ const MIGRATIONS_DIR = __dirname;
 function getMigrationFiles() {
   return fs
     .readdirSync(MIGRATIONS_DIR)
-    .filter((f) => /^\d{3}_.*\.sql$/.test(f))
+    .filter((f) => /^\d{3}_.*\.sql$/.test(f) && !f.endsWith('_DONE.sql'))
     .sort();
 }
 
