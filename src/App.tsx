@@ -56,6 +56,7 @@ const BookingBoard = lazy(() => import('@/pages/BookingBoard'));
 const CheckupApp = lazy(() => import('@/pages/CheckupTemplates/H5App'));
 const CheckupSharePage = lazy(() => import('@/pages/CheckupTemplates/SharePage'));
 const CheckupTemplatesPage = lazy(() => import('@/pages/CheckupTemplates/DesktopRedirect'));
+const CheckupCenter = lazy(() => import('@/pages/CheckupCenter'));
 
 const pageLoad = <PageLoading />;
 
@@ -241,6 +242,7 @@ export default function App() {
             } />
             <Route path="booking-board" element={<BookingBoard />} />
             <Route path="checkup-templates" element={<CheckupTemplatesPage />} />
+            <Route path="checkup-center" element={<CheckupCenter />} />
           </Route>
         </Routes>
       </Suspense>

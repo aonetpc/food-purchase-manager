@@ -75,7 +75,7 @@ const menuGroups = [
   { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit'] },
   { name: '统计', paths: ['/monthly', '/management-report', '/yearly', '/ingredients', '/temp-stats'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
-  { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/booking-board', '/checkup-templates', '/wecom', '/wecom-test'] },
+  { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/booking-board', '/checkup-center', '/checkup-templates', '/wecom', '/wecom-test'] },
 ];
 
 // 多角色展示优先级 + 中文名映射（越前面优先级越高）

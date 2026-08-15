@@ -267,8 +267,17 @@ export const useAuthStore = create<AuthStore>()(
             icon: 'Stethoscope',
           });
         }
+        // 体检中心：独立管理页面（体检项目库 + 体检套餐管理），仅管理员级用户可见
+        if (!mergedMenus.some(m => m.path === '/checkup-center') && isManagerUser) {
+          mergedMenus.push({
+            code: 'menu:checkup-center',
+            name: '体检中心',
+            path: '/checkup-center',
+            icon: 'ClipboardList',
+          });
+        }
 
-        const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/wecom', '/wecom-test'];
+        const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/checkup-center', '/checkup-templates', '/wecom', '/wecom-test'];
         return mergedMenus.sort((a, b) => {
           const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
           const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
