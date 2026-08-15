@@ -393,7 +393,7 @@ export const bookingApi = {
       packages: (res.data?.packages || []).map(fromBackend),
       roomTypes: (res.data?.roomTypes || []).map(fromBackend),
       meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
-      wellnessTypes: (res.data?.wellnessTypes || []).map(fromBackend),
+      wellnessTypes: (res.data?.wellnessTypes || []) as WellnessTypeRow[],
       mealTypes: (res.data?.mealTypes || []) as MealTypeRow[],
       // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
       checkupItems: (res.data?.checkupItems || []) as CheckupItemRow[],
@@ -512,17 +512,18 @@ export const bookingApi = {
     await api.delete<{ ok: boolean }>(`/booking/config/meeting-halls/${id}`);
   },
 
+  // 康乐项目 CRUD（不走 fromBackend，保持 snake_case，与 mealTypes 一致）
   async listWellnessTypes(): Promise<WellnessTypeRow[]> {
     const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/wellness-types');
-    return (res.data || []).map(fromBackend) as WellnessTypeRow[];
+    return (res.data || []) as WellnessTypeRow[];
   },
   async createWellnessType(payload: Partial<WellnessTypeRow>): Promise<WellnessTypeRow> {
     const res = await api.post<{ ok: boolean; data: any }>('/booking/config/wellness-types', payload);
-    return fromBackend(res.data) as WellnessTypeRow;
+    return res.data as WellnessTypeRow;
   },
   async updateWellnessType(id: string, payload: Partial<WellnessTypeRow>): Promise<WellnessTypeRow> {
     const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/wellness-types/${id}`, payload);
-    return fromBackend(res.data) as WellnessTypeRow;
+    return res.data as WellnessTypeRow;
   },
   async deleteWellnessType(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/wellness-types/${id}`);
