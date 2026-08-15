@@ -198,11 +198,19 @@ router.get('/config', requireAuth, async (_req, res) => {
   try {
     // 套餐（包含 items）
     const [packagesRaw] = await pool.query('SELECT * FROM booking_packages WHERE status = 1 ORDER BY sort_order ASC, id ASC');
-    // 批量加载每个套餐的项目
+    // 批量加载每个套餐的项目：item_price=0 或 name 空时自动回填 checkup_items.default_price/name
     const packages = [];
     for (const p of packagesRaw) {
       const [items] = await pool.query(
-        `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+        `SELECT pi.id, pi.package_id, pi.item_id,
+                CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
+                CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0)     THEN ci.default_price ELSE pi.item_price END AS item_price,
+                CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
+                pi.quantity, pi.remark, pi.sort_order
+         FROM booking_package_items AS pi
+         LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
+         WHERE pi.package_id = ?
+         ORDER BY pi.sort_order ASC`,
         [p.id]
       );
       const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
@@ -365,10 +373,20 @@ function enhancePackageList(routerRef) {
         `SELECT * FROM booking_packages ORDER BY sort_order ASC, id ASC`
       );
       // 批量加载每个套餐的项目
+      // 注意：item_price / item_name_snapshot 若被历史重导清空（item_price=0 或 name 空串），
+      //       这里会自动从 booking_checkup_items 回填 default_price/name，保证原价和名称能正确显示
       const result = [];
       for (const p of packages) {
         const [items] = await pool.query(
-          `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+          `SELECT pi.id, pi.package_id, pi.item_id,
+                  CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
+                  CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0)     THEN ci.default_price ELSE pi.item_price END AS item_price,
+                  CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
+                  pi.quantity, pi.remark, pi.sort_order
+           FROM booking_package_items AS pi
+           LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
+           WHERE pi.package_id = ?
+           ORDER BY pi.sort_order ASC`,
           [p.id]
         );
         const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
@@ -431,7 +449,18 @@ function enhancePackageList(routerRef) {
         [id]
       );
       const [rows] = await conn.query(`SELECT * FROM booking_packages WHERE id = ?`, [id]);
-      const [items] = await conn.query(`SELECT * FROM booking_package_items WHERE package_id = ?`, [id]);
+      const [items] = await conn.query(
+        `SELECT pi.id, pi.package_id, pi.item_id,
+                CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
+                CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0)     THEN ci.default_price ELSE pi.item_price END AS item_price,
+                CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
+                pi.quantity, pi.remark, pi.sort_order
+         FROM booking_package_items AS pi
+         LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
+         WHERE pi.package_id = ?
+         ORDER BY pi.sort_order ASC`,
+        [id]
+      );
       const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
       await logOperation(req.user.id, id, 'booking_packages', 'update', req.body, req);
       res.json({ ok: true, data: { ...rows[0], items, item_count: items.length, auto_total: autoTotal } });
@@ -450,7 +479,15 @@ function enhancePackageList(routerRef) {
       const [rows] = await pool.query(`SELECT * FROM booking_packages WHERE id = ?`, [id]);
       if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
       const [items] = await pool.query(
-        `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+        `SELECT pi.id, pi.package_id, pi.item_id,
+                CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
+                CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0)     THEN ci.default_price ELSE pi.item_price END AS item_price,
+                CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
+                pi.quantity, pi.remark, pi.sort_order
+         FROM booking_package_items AS pi
+         LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
+         WHERE pi.package_id = ?
+         ORDER BY pi.sort_order ASC`,
         [id]
       );
       const autoTotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
@@ -633,12 +670,20 @@ function makeCheckupItemCrud(routerRef) {
 
 // 套餐内项目 CRUD（子资源）
 function makePackageItemCrud(routerRef) {
-  // list package items
+  // list package items：item_price=0 或 name 空时自动回填 checkup_items 表
   routerRef.get('/config/packages/:pkgId/items', requireAuth, async (req, res) => {
     try {
       const { pkgId } = req.params;
       const [rows] = await pool.query(
-        `SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order ASC`,
+        `SELECT pi.id, pi.package_id, pi.item_id,
+                CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
+                CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0)     THEN ci.default_price ELSE pi.item_price END AS item_price,
+                CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
+                pi.quantity, pi.remark, pi.sort_order
+         FROM booking_package_items AS pi
+         LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
+         WHERE pi.package_id = ?
+         ORDER BY pi.sort_order ASC`,
         [pkgId]
       );
       res.json({ ok: true, data: rows });
@@ -768,7 +813,18 @@ function makePackageItemCrud(routerRef) {
         [pkgId, pkgId]
       );
 
-      const [rows] = await conn.query(`SELECT * FROM booking_package_items WHERE package_id = ? ORDER BY sort_order`, [pkgId]);
+      const [rows] = await conn.query(
+        `SELECT pi.id, pi.package_id, pi.item_id,
+                CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
+                CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0)     THEN ci.default_price ELSE pi.item_price END AS item_price,
+                CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
+                pi.quantity, pi.remark, pi.sort_order
+         FROM booking_package_items AS pi
+         LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
+         WHERE pi.package_id = ?
+         ORDER BY pi.sort_order ASC`,
+        [pkgId]
+      );
       res.json({ ok: true, data: rows });
     } catch (e) {
       console.error('[package-items batch] error:', e);

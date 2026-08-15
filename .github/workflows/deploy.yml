@@ -723,19 +723,19 @@ jobs:
             cd /opt/food-purchase/backend && node migrations/migrate.js up 2>&1 || echo "⚠️ migrate.js 执行有错误，继续部署..."
 
             # 兜底1：mysql --force 管道模式（--force 保证单条语句报错不中断后续语句，错误输出到 stdout）
+            # 重要：跳过 *_DONE.sql 后缀文件——这些是一次性迁移（删库+全量重插），
+            #       若每次部署都重复执行会清掉用户修改过的体检项目/套餐明细数据
             for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
+              fname="$(basename "$sql_file")"
+              case "$fname" in
+                *_DONE.sql)
+                  echo "Skip (already done): $fname"
+                  continue
+                  ;;
+              esac
               echo "Running migration (mysql --force): $sql_file"
               mysql --force -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>&1 || echo "⚠️ $sql_file 有错误（已用 --force 跳过，非致命）"
             done
-
-            # 兜底2：Node.js 重导体检项目（绕过 migrate.js 冲突、mysql 中断、MySQL5.7 UPDATE+ORDER BY、code NOT NULL 等问题）
-            #         服务器一定装了 Node，这是真正保证导入成功的最后一道防线
-            echo "Running Node.js reimport-checkup-items.js ..."
-            cd /opt/food-purchase/backend && node scripts/reimport-checkup-items.js 2>&1 || echo "⚠️ reimport-checkup-items.js 有错误（非致命）"
-
-            # 兜底3：修复体检项目价格/类型（按名称匹配 UPDATE，防止价格为0或类型全为普通的问题）
-            echo "Running Node.js fix-checkup-items-prices.js ..."
-            cd /opt/food-purchase/backend && node scripts/fix-checkup-items-prices.js 2>&1 || echo "⚠️ fix-checkup-items-prices.js 有错误（非致命）"
 
             # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
