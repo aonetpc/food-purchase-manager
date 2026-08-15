@@ -417,10 +417,106 @@ export default function CheckupItemsTab() {
                   {compare.skipped.length > 0 && (
                     <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-mono">❌ 跳过 {compare.skipped.length}（展开详情）</span>
                   )}
-                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-mono">数据库 {compare.dbNameMap.size} 条</span>
+                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-mono">DB {compare.dbNameMap.size} 条</span>
+                  {compare.pdfUnmatched.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-rose-200 text-rose-800 font-mono border border-rose-400">🔴 DB缺 {compare.pdfUnmatched.length} 条（见下方红块）</span>
+                  )}
+                  {compare.collisions.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-800 font-mono border border-amber-400">🟠 多对一冲突 {compare.collisions.length} 处</span>
+                  )}
                 </div>
                 <span className="text-sky-700 font-semibold">差异 {compare.diffsWithManual.length}</span>
               </div>
+
+              {/* C4: PDF 里有但 DB 完全没找到（最最醒目的红色块，避免"少了1条但看不到"） */}
+              {pdfText && compare.pdfUnmatched.length > 0 && (
+                <div className="mt-2 border border-rose-300 bg-rose-50 rounded-lg overflow-hidden p-2">
+                  <div className="px-1 py-1 text-[12px] font-bold text-rose-800 mb-1 flex items-center justify-between">
+                    <span>🔴 PDF 里有，但 DB 里完全找不到的项目（{compare.pdfUnmatched.length} 条）——这就是你说的"DB里缺了"的！</span>
+                    <button
+                      onClick={() => {
+                        const names = compare.pdfUnmatched.map(r => r.name).join('，');
+                        toast.info(`已复制 ${compare.pdfUnmatched.length} 个缺失项名称到剪贴板（可手动新建后再同步）`);
+                        navigator.clipboard?.writeText(names);
+                      }}
+                      className="px-2 py-0.5 rounded bg-white border border-rose-300 text-[11px] text-rose-700 hover:bg-rose-100"
+                    >📋 复制缺失名称</button>
+                  </div>
+                  <div className="max-h-48 overflow-auto bg-white rounded border border-rose-200">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-rose-100 text-rose-900 sticky top-0">
+                        <tr>
+                          <th className="px-2 py-1 text-left w-10">#</th>
+                          <th className="px-2 py-1 text-left">PDF 项目名（DB里找不到）</th>
+                          <th className="px-2 py-1 text-right w-24">PDF 医保价</th>
+                          <th className="px-2 py-1 text-right w-24">PDF 定价</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compare.pdfUnmatched.map((r, i) => (
+                          <tr key={i} className="border-t border-rose-100">
+                            <td className="px-2 py-1 text-rose-500 font-mono">{i + 1}</td>
+                            <td className="px-2 py-1 text-rose-900 font-mono break-all">{r.name}</td>
+                            <td className="px-2 py-1 text-right text-slate-700 font-mono">¥{r.pdfInsured ?? '—'}</td>
+                            <td className="px-2 py-1 text-right text-slate-700 font-mono">¥{r.pdfPrice ?? '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* C4: 多对一冲突（多条不同PDF名共享同一DB行，DB可能少存1条） */}
+              {pdfText && compare.collisions.length > 0 && (
+                <div className="mt-2 border border-amber-300 bg-amber-50 rounded-lg overflow-hidden p-2">
+                  <div className="px-1 py-1 text-[12px] font-bold text-amber-800 mb-1">
+                    🟠 多条 PDF 行共享同一条 DB 项目（{compare.collisions.length} 处冲突）——"总数对但好像少了"的典型表现：PDF 2 条项目被合并匹配到 DB 1 条上，说明 DB 里缺存了其中 1 条的独立项目
+                  </div>
+                  <div className="space-y-2 max-h-72 overflow-auto">
+                    {compare.collisions.map(c => (
+                      <div key={c.dbId} className="border border-amber-200 rounded bg-white p-2">
+                        <div className="text-[11px] font-semibold text-slate-800 mb-1">
+                          DB 项目：<span className="font-mono">{c.dbRow.name}</span>
+                          <span className="ml-2 text-slate-500 font-mono">医保¥{c.dbRow.insurance_price ?? 0} / 定价¥{c.dbRow.default_price ?? 0}</span>
+                        </div>
+                        <table className="w-full text-[10.5px]">
+                          <thead className="bg-amber-100 text-amber-900">
+                            <tr>
+                              <th className="px-2 py-0.5 text-left w-20">匹配类型/分</th>
+                              <th className="px-2 py-0.5 text-left">PDF 中的行名</th>
+                              <th className="px-2 py-0.5 text-right w-24">PDF 医保</th>
+                              <th className="px-2 py-0.5 text-right w-24">PDF 定价</th>
+                              <th className="px-2 py-0.5 text-left w-14">判断</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {c.pdfHits.map((h, i) => {
+                              const same = normalize(h.pdfName) === normalize(c.dbRow.name);
+                              return (
+                                <tr key={i} className={`border-t border-amber-100 ${same ? '' : 'bg-rose-50/50'}`}>
+                                  <td className="px-2 py-0.5">
+                                    <span className="text-sky-700 font-mono">{h.kind ?? '-'}</span>
+                                    <span className="ml-1 text-slate-500">{h.score}</span>
+                                  </td>
+                                  <td className="px-2 py-0.5 font-mono break-all">{h.pdfName}</td>
+                                  <td className="px-2 py-0.5 text-right font-mono">¥{h.pdfInsured ?? '—'}</td>
+                                  <td className="px-2 py-0.5 text-right font-mono">¥{h.pdfPrice ?? '—'}</td>
+                                  <td className="px-2 py-0.5">
+                                    {same
+                                      ? <span className="text-emerald-700">自身</span>
+                                      : <span className="text-rose-700 font-semibold">⚠️ 可能缺</span>}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* A4: 批量同步工具栏 */}
               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -942,6 +1038,14 @@ interface PriceCompareResult {
   dbUnmatched: CheckupItemRow[];
   // A1 已被 PDF 命中过的 db id 集合，用于计算 dbUnmatched
   hitDbIds: Set<string>;
+  // C4: 多对一冲突 —— 1 条 DB 行被 ≥2 条不同 PDF 行同时命中
+  collisions: Array<{
+    dbId: string;
+    dbRow: CheckupItemRow;
+    pdfHits: Array<{ pdfName: string; pdfPrice: number|null; pdfInsured: number|null; kind: any; score: number }>;
+  }>;
+  // C4: PDF 侧完全没匹配到任何 DB 行的明细（比 unknownNames 更详细，含价格）
+  pdfUnmatched: Array<{ name: string; pdfPrice: number|null; pdfInsured: number|null }>;
 }
 
 // 常见别名（等价词）：PDF里的写法 ↔ DB里的写法。命中任意一个别名即视为相同主体
@@ -1137,6 +1241,7 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
   let matchedCount = 0;
   const unknownNames: string[] = [];
   const skipped: PriceCompareResult['skipped'] = [];
+  const pdfUnmatched: PriceCompareResult['pdfUnmatched'] = [];
   const dbNameMap = new Map<string, CheckupItemRow>();
   rows.forEach(r => {
     const k = normalize(r.name);
@@ -1154,6 +1259,11 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
     if (!dbKeyMap.has(key)) dbKeyMap.set(key, r);
     if (dec.main && !dbShortMap.has(dec.main)) dbShortMap.set(dec.main, r);
   });
+
+  // C4 多对一冲突检测 Map：dbId -> [pdf命中明细]
+  const dbToPdfHits = new Map<string, PriceCompareResult['collisions'][number]['pdfHits']>();
+  const dbIdToRow = new Map<string, CheckupItemRow>();
+  rows.forEach(r => { if (r.id) dbIdToRow.set(r.id, r); });
 
   const hitDbIds = new Set<string>();
   const rawLines = text.split(/\r?\n/);
@@ -1191,11 +1301,17 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
 
     if (!db) {
       unknownNames.push(name);
+      pdfUnmatched.push({ name, pdfPrice, pdfInsured });
       diffs.push({ name, pdfPrice, dbPrice: null, pdfInsured, dbInsured: null, reason: '缺', matchKind: null, matchScore: 0 });
       continue;
     }
     // 命中 DB
-    if (db.id) hitDbIds.add(db.id);
+    if (db.id) {
+      hitDbIds.add(db.id);
+      // C4: 记入多对一冲突 map
+      if (!dbToPdfHits.has(db.id)) dbToPdfHits.set(db.id, []);
+      dbToPdfHits.get(db.id)!.push({ pdfName: name, pdfPrice, pdfInsured, kind, score });
+    }
     const dbPrice = Math.round((Number(db.default_price) || 0) * 100) / 100;
     const dbInsured = Math.round((Number(db.insurance_price) || 0) * 100) / 100;
     const priceDiff = Math.abs(dbPrice - pdfPrice);
@@ -1215,6 +1331,18 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
       matchKind: kind, matchScore: score,
     });
   }
+
+  // C4: 多对一冲突（同1条DB被≥2条PDF行命中，且PDF行名称不是完全相同——相同是重复行，不报警）
+  const collisions: PriceCompareResult['collisions'] = [];
+  for (const [dbId, pdfHits] of dbToPdfHits.entries()) {
+    if (pdfHits.length < 2) continue;
+    const uniqueNames = new Set(pdfHits.map(h => normalize(h.pdfName)));
+    if (uniqueNames.size < 2) continue;  // 重复粘贴的同名行忽略（不是冲突）
+    const dbRow = dbIdToRow.get(dbId);
+    if (dbRow) collisions.push({ dbId, dbRow, pdfHits });
+  }
+  // 按命中条数倒序排（问题大的在前）
+  collisions.sort((a, b) => b.pdfHits.length - a.pdfHits.length);
 
   const order = (r: DiffRow) => ({
     '缺': 0, '定价差+医保': 1, '定价差': 2, '医保价差': 3, '其他': 4,
@@ -1237,7 +1365,7 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
       return Number(b.status || 0) - Number(a.status || 0);
     });
 
-  return { parsedCount, totalLines, diffs, matchedCount, unknownNames, skipped, dbNameMap, dbRows: rows, dbUnmatched, hitDbIds };
+  return { parsedCount, totalLines, diffs, matchedCount, unknownNames, skipped, dbNameMap, dbRows: rows, dbUnmatched, hitDbIds, collisions, pdfUnmatched };
 }
 
 function parsePrice(s: string): number | null {
