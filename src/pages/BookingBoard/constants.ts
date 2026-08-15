@@ -82,9 +82,10 @@ export const MEETING_HALLS: Record<MeetingHall, { name: string; capacity: number
 
 // 康乐项目
 export const WELLNESS_TYPES: Record<WellnessType, { name: string; minHours: number; price: number; free: boolean }> = {
-  mahjong:     { name: '棋牌室',   minHours: 4, price: 80,  free: false },
-  fishing:     { name: '钓鱼',     minHours: 2, price: 60,  free: false },
-  ktv:         { name: 'KTV',      minHours: 2, price: 120, free: false },
+  mahjong:     { name: '棋牌室',   minHours: 4, price: 200,  free: false },
+  fishing:     { name: '钓鱼',     minHours: 12, price: 200,  free: false },
+  ktv:         { name: 'KTV大包',  minHours: 3, price: 688, free: false },
+  ktv_small:   { name: 'KTV小包',  minHours: 3, price: 488, free: false },
   swimming:    { name: '游泳池',   minHours: 0, price: 0,   free: true },
   gym:         { name: '健身房',   minHours: 0, price: 0,   free: true },
   billiards:   { name: '台球室',   minHours: 0, price: 0,   free: true },

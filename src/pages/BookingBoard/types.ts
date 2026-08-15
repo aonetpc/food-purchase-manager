@@ -78,7 +78,12 @@ export interface WellnessTypeRow {
   code: string;
   name: string;
   min_hours: number;
+  package_hours: number;
   price: number;
+  price_guest: number;
+  price_external: number;
+  time_window?: string | null;
+  pricing_mode: 'per_hour' | 'package';
   is_free: number;
   status: number;
   sort_order: number;

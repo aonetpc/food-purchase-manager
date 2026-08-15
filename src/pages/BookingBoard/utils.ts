@@ -18,10 +18,11 @@ const FALLBACK_HALLS: Record<string, { name: string; capacity: number; halfPrice
   qingquan: { name: '清泉厅', capacity: 20,  halfPrice: 600,  fullPrice: 1100 },
   wanghu:   { name: '望湖厅', capacity: 120, halfPrice: 3000, fullPrice: 5800 },
 };
-const FALLBACK_WELLNESS: Record<string, { name: string; minHours: number; price: number; free: boolean }> = {
-  mahjong:     { name: '棋牌室',   minHours: 4, price: 80,  free: false },
-  fishing:     { name: '钓鱼',     minHours: 2, price: 60,  free: false },
-  ktv:         { name: 'KTV',      minHours: 2, price: 120, free: false },
+const FALLBACK_WELLNESS: Record<string, { name: string; minHours: number; price: number; free: boolean; pricingMode?: 'per_hour' | 'package'; packageHours?: number; priceGuest?: number; priceExternal?: number }> = {
+  mahjong:     { name: '棋牌室',   minHours: 4, price: 80,  free: false, pricingMode: 'package', packageHours: 4, priceGuest: 200, priceExternal: 250 },
+  fishing:     { name: '钓鱼',     minHours: 2, price: 60,  free: false, pricingMode: 'package', packageHours: 12, priceGuest: 200, priceExternal: 250 },
+  ktv:         { name: 'KTV大包',  minHours: 2, price: 120, free: false, pricingMode: 'package', packageHours: 3, priceGuest: 688, priceExternal: 688 },
+  ktv_small:   { name: 'KTV小包',  minHours: 2, price: 120, free: false, pricingMode: 'package', packageHours: 3, priceGuest: 488, priceExternal: 488 },
   swimming:    { name: '游泳池',   minHours: 0, price: 0,   free: true },
   gym:         { name: '健身房',   minHours: 0, price: 0,   free: true },
   billiards:   { name: '台球室',   minHours: 0, price: 0,   free: true },
@@ -156,19 +157,54 @@ export function calcMeetingAmount(hall: string, slotType: 'half' | 'full', confi
   return slotType === 'half' ? f.halfPrice : f.fullPrice;
 }
 
-export function calcWellnessAmount(type: string, hours: number, config?: BizConfigInput): number {
+export function calcWellnessAmount(type: string, hours: number, config?: BizConfigInput, isGuest?: boolean): number {
   const row = buildMap(config?.wellnessTypes)[type];
   let minHours = 0; let price = 0; let free = false;
+  let pricingMode: 'per_hour' | 'package' = 'per_hour';
+  let priceGuest = 0; let priceExternal = 0;
   if (row) {
     minHours = Number(row.min_hours || 0);
     price = Number(row.price || 0);
     free = Number(row.is_free) === 1;
+    pricingMode = (row.pricing_mode as 'per_hour' | 'package') || 'per_hour';
+    priceGuest = Number(row.price_guest || 0);
+    priceExternal = Number(row.price_external || 0);
   } else {
     const f = FALLBACK_WELLNESS[type];
-    if (f) { minHours = f.minHours; price = f.price; free = f.free; }
+    if (f) {
+      minHours = f.minHours; price = f.price; free = f.free;
+      pricingMode = f.pricingMode || 'per_hour';
+      priceGuest = f.priceGuest || 0;
+      priceExternal = f.priceExternal || 0;
+    }
   }
   if (free) return 0;
+  // 套餐模式：每个 session 按一口价（入住/不住宿）
+  if (pricingMode === 'package') {
+    const unitPrice = isGuest ? priceGuest : priceExternal;
+    // 多小时套餐以一次session计价（与 hours 无关），保留对小时数为0兜底
+    return unitPrice;
+  }
+  // 按小时模式：保留原逻辑 price × max(hours, min_hours)
+  // 若配置了双档价且非0，优先用双档价
+  if (priceGuest > 0 || priceExternal > 0) {
+    const unitPrice = isGuest ? (priceGuest || price) : (priceExternal || price);
+    return unitPrice * Math.max(hours, minHours);
+  }
   return price * Math.max(hours, minHours);
+}
+
+// 计算单个康乐session在套餐模式下的展示用时长（package 模式取 package_hours）
+export function getWellnessDisplayHours(type: string, hours: number, config?: BizConfigInput): number {
+  const row = buildMap(config?.wellnessTypes)[type];
+  if (row && row.pricing_mode === 'package') {
+    return Number(row.package_hours || hours || 0);
+  }
+  const f = FALLBACK_WELLNESS[type];
+  if (f && f.pricingMode === 'package') {
+    return f.packageHours || hours || 0;
+  }
+  return hours;
 }
 
 export function calcMealAmount(

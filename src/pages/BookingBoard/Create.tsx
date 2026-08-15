@@ -143,6 +143,8 @@ function restoreCustomItemsFromSnapshot<T extends { package: string; customItems
 // 复制为新单：日期偏移 +7 天，保留所有业务配置和明细信息
 function copyItemsForCopy(src: BookingOrder): BookingItem[] {
   const OFFSET = 7; // 向后偏移一周
+  // 复制时按源订单的住宿状态判定入住/不住宿价
+  const isGuestCopy = src.items.some((it) => it.itemType === 'lodging');
   return src.items.map((it) => {
     const extra = JSON.parse(JSON.stringify(it.extra || {}));
     let date = it.date ? fmt(addDays(parseDateLocal(it.date), OFFSET)) : '';
@@ -192,7 +194,7 @@ function copyItemsForCopy(src: BookingOrder): BookingItem[] {
       }));
       const sessions = extra.sessions as WellnessSession[] || [];
       if (!date && sessions[0]?.date) date = sessions[0].date;
-      amount = sessions.reduce((sum, s) => sum + calcWellnessAmount(s.wellnessType, s.hours), 0);
+      amount = sessions.reduce((sum, s) => sum + calcWellnessAmount(s.wellnessType, s.hours, undefined, isGuestCopy), 0);
     } else {
       amount = Number(it.amount) || 0;
     }
@@ -979,13 +981,14 @@ export default function BookingBoardCreate(props: {
     { id: 'fb_wh', code: 'wanghu', name: '望湖厅', capacity: 120, half_price: 3000, full_price: 5800, status: 1, sort_order: 4 },
   ] as MeetingHallRow[]);
   const finalWellnessOptions = wellnessOptions.length > 0 ? wellnessOptions : ([
-    { id: 'fb_mj', code: 'mahjong', name: '棋牌室', min_hours: 4, price: 80, is_free: 0, status: 1, sort_order: 1 },
-    { id: 'fb_fish', code: 'fishing', name: '钓鱼', min_hours: 2, price: 60, is_free: 0, status: 1, sort_order: 2 },
-    { id: 'fb_ktv', code: 'ktv', name: 'KTV', min_hours: 2, price: 120, is_free: 0, status: 1, sort_order: 3 },
-    { id: 'fb_swim', code: 'swimming', name: '游泳池', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 4 },
-    { id: 'fb_gym', code: 'gym', name: '健身房', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 5 },
-    { id: 'fb_bl', code: 'billiards', name: '台球室', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 6 },
-    { id: 'fb_tt', code: 'tabletennis', name: '乒乓房', min_hours: 0, price: 0, is_free: 1, status: 1, sort_order: 7 },
+    { id: 'fb_mj', code: 'mahjong', name: '棋牌室', min_hours: 4, package_hours: 4, price: 200, price_guest: 200, price_external: 250, time_window: null, pricing_mode: 'package' as const, is_free: 0, status: 1, sort_order: 1 },
+    { id: 'fb_fish', code: 'fishing', name: '钓鱼', min_hours: 0, package_hours: 12, price: 200, price_guest: 200, price_external: 250, time_window: '06:00-18:00', pricing_mode: 'package' as const, is_free: 0, status: 1, sort_order: 2 },
+    { id: 'fb_ktv', code: 'ktv', name: 'KTV大包', min_hours: 0, package_hours: 3, price: 688, price_guest: 688, price_external: 688, time_window: null, pricing_mode: 'package' as const, is_free: 0, status: 1, sort_order: 3 },
+    { id: 'fb_ks', code: 'ktv_small', name: 'KTV小包', min_hours: 0, package_hours: 3, price: 488, price_guest: 488, price_external: 488, time_window: null, pricing_mode: 'package' as const, is_free: 0, status: 1, sort_order: 4 },
+    { id: 'fb_swim', code: 'swimming', name: '游泳池', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: null, pricing_mode: 'per_hour' as const, is_free: 1, status: 1, sort_order: 5 },
+    { id: 'fb_gym', code: 'gym', name: '健身房', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: null, pricing_mode: 'per_hour' as const, is_free: 1, status: 1, sort_order: 6 },
+    { id: 'fb_bl', code: 'billiards', name: '台球室', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: null, pricing_mode: 'per_hour' as const, is_free: 1, status: 1, sort_order: 7 },
+    { id: 'fb_tt', code: 'tabletennis', name: '乒乓房', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: null, pricing_mode: 'per_hour' as const, is_free: 1, status: 1, sort_order: 8 },
   ] as WellnessTypeRow[]);
   const finalMealOptions = mealOptions.length > 0 ? mealOptions : ([
     { id: 'fb_work', code: 'work', name: '工作餐', pricing_mode: 'per_person', unit_price: 30, default_time: '12:00', default_tables: 1, default_per_table: 10, default_pax: 20, status: 1, sort_order: 1 },
@@ -1046,6 +1049,34 @@ export default function BookingBoardCreate(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lgIn, drawer.open, drawer.itemType]);
 
+  // 派生：订单内是否含住宿项（任意 lodging 项 = 入住客人）
+  const isGuest = useMemo(
+    () => draftGroup.items.some((it) => it.itemType === 'lodging'),
+    [draftGroup.items],
+  );
+
+  // 方案1：实时重算所有康乐项金额（含住宿状态变化时自动按入住/不住宿切换单价）
+  useEffect(() => {
+    setDraftGroup((g) => {
+      let changed = false;
+      const newItems = g.items.map((it) => {
+        if (it.itemType !== 'wellness') return it;
+        const sessions = (it.extra?.sessions as WellnessSession[] | undefined) || [];
+        if (sessions.length === 0) return it;
+        const newAmount = sessions.reduce(
+          (s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest),
+          0,
+        );
+        if (newAmount !== (it.amount || 0)) {
+          changed = true;
+          return { ...it, amount: newAmount };
+        }
+        return it;
+      });
+      return changed ? { ...g, items: newItems } : g;
+    });
+  }, [isGuest, finalBizConfigForCalc]);
+
   // 总金额
   const totalAmount = useMemo(() => groupTotal(draftGroup), [draftGroup]);
 
@@ -1064,7 +1095,7 @@ export default function BookingBoardCreate(props: {
     if (t === 'meeting')
       return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
     if (t === 'wellness')
-      return wlSessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0);
+      return wlSessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest), 0);
     if (t === 'carpickup') {
       if (!carSession.customers?.length) return 0;
       return carSession.customAmount !== undefined && carSession.customAmount !== null
@@ -1490,7 +1521,7 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一场康乐');
         return;
       }
-      const amount = sessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0);
+      const amount = sessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest), 0);
       item = {
         id: keepId,
         itemType,
@@ -1782,7 +1813,7 @@ export default function BookingBoardCreate(props: {
             startTime: wlSess[0].startTime,
             pax: wlSess.reduce((s, x) => s + x.pax, 0),
             extra: { sessions: wlSess as any },
-            amount: wlSess.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc), 0),
+            amount: wlSess.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest), 0),
           });
         }
 
@@ -3229,6 +3260,13 @@ export default function BookingBoardCreate(props: {
                       {finalWellnessOptions.map((w) => {
                         const count = wlSessions.filter(s => s.wellnessType === w.code).length;
                         const free = Number(w.is_free) === 1;
+                        const isPkg = w.pricing_mode === 'package';
+                        // 套餐时长取 package_hours，按小时项目取 min_hours
+                        const initHours = isPkg ? Number(w.package_hours) || 0 : (Number(w.min_hours) || 1);
+                        // 入住/不住宿双档价（套餐模式直接显示一口价，按小时模式显示单价）
+                        const pg = Number(w.price_guest || 0);
+                        const pe = Number(w.price_external || 0);
+                        const samePrice = pg === pe;
                         return (
                           <button
                             key={w.code}
@@ -3239,7 +3277,7 @@ export default function BookingBoardCreate(props: {
                                   date: todayStr(),
                                   startTime: '15:00',
                                   wellnessType: w.code,
-                                  hours: Number(w.min_hours) || 1,
+                                  hours: initHours,
                                   pax: 2,
                                 },
                               ])
@@ -3258,6 +3296,11 @@ export default function BookingBoardCreate(props: {
                                     免费
                                   </span>
                                 )}
+                                {isPkg && !free && (
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-600 font-medium shrink-0">
+                                    套餐
+                                  </span>
+                                )}
                               </span>
                               {count > 0 && (
                                 <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-green-500 text-white font-medium">
@@ -3266,7 +3309,15 @@ export default function BookingBoardCreate(props: {
                               )}
                             </div>
                             <div className="text-[10px] opacity-70 font-mono">
-                              {free ? '免费使用' : `至少${w.min_hours || 0}h · ¥${Number(w.price || 0).toLocaleString()}/h`}
+                              {free ? '免费使用' : isPkg ? (
+                                <>
+                                  {w.package_hours ? `${w.package_hours}h · ` : ''}
+                                  {samePrice
+                                    ? `¥${pg.toLocaleString()}`
+                                    : `¥${pg.toLocaleString()}/¥${pe.toLocaleString()}`}
+                                  {w.time_window ? ` · ${w.time_window}` : ''}
+                                </>
+                              ) : `至少${w.min_hours || 0}h · ¥${Number(w.price || 0).toLocaleString()}/h`}
                             </div>
                           </button>
                         );
@@ -3380,7 +3431,7 @@ export default function BookingBoardCreate(props: {
                                   {w.free ? (
                                     <span className="text-emerald-500">免费</span>
                                   ) : (
-                                    `¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc).toLocaleString()}`
+                                    `¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc, isGuest).toLocaleString()}`
                                   )}
                                 </td>
                                 <td className="px-1.5 py-1">

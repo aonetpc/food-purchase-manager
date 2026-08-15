@@ -803,8 +803,8 @@ makeBizConfigCrud({
 makeBizConfigCrud({
   basePath: '/config/wellness-types',
   table: 'booking_wellness_types',
-  requiredFields: ['code', 'name', 'min_hours', 'price', 'is_free'],
-  editableFields: ['status', 'sort_order'],
+  requiredFields: ['code', 'name', 'min_hours', 'price', 'is_free', 'pricing_mode'],
+  editableFields: ['package_hours', 'price_guest', 'price_external', 'time_window', 'status', 'sort_order'],
   sortDefault: 1,
 });
 

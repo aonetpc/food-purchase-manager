@@ -28,7 +28,7 @@ const TABS: { key: TabKey; label: string; color: string }[] = [
 const DEFAULT_PKG: Partial<PackageRow> = { code: '', name: '', price: 0, status: 1, sort_order: 100 };
 const DEFAULT_ROOM: Partial<RoomTypeRow> = { code: '', name: '', price: 0, status: 1, sort_order: 100 };
 const DEFAULT_HALL: Partial<MeetingHallRow> = { code: '', name: '', capacity: 20, half_price: 0, full_price: 0, status: 1, sort_order: 100 };
-const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, price: 0, is_free: 0, status: 1, sort_order: 100 };
+const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: '', pricing_mode: 'per_hour', is_free: 0, status: 1, sort_order: 100 };
 const DEFAULT_MEAL: Partial<MealTypeRow> = { code: '', name: '', pricing_mode: 'per_table', unit_price: 0, default_time: '12:00', default_tables: 1, default_per_table: 10, default_pax: 0, status: 1, sort_order: 100 };
 const CATEGORY_OPTIONS = ['化验', '专科', '功能检查', '影像'] as const;
 const DEFAULT_CHECKUP: Partial<CheckupItemRow> = { code: '', name: '', item_type: 'item', category: '化验', description: '', default_price: 0, insurance_price: 0, unit: '次', status: 1, sort_order: 100, sub_item_ids: [] };
@@ -1743,6 +1743,17 @@ function WellnessTypesTable(props: TableProps<WellnessTypeRow>) {
     }
   };
 
+  const PricingModeSelect = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <select
+      value={value || 'per_hour'}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full bg-white border border-gray-300 rounded px-1.5 py-1 text-gray-900 text-xs focus:outline-none focus:border-green-500"
+    >
+      <option value="per_hour">按小时</option>
+      <option value="package">套餐一口价</option>
+    </select>
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -1753,14 +1764,18 @@ function WellnessTypesTable(props: TableProps<WellnessTypeRow>) {
         <table className="w-full text-xs">
           <thead className="bg-gray-50 text-gray-500">
             <tr>
-              <th className="px-3 py-2 text-left font-medium w-28">编码</th>
-              <th className="px-3 py-2 text-left font-medium">名称</th>
-              <th className="px-3 py-2 text-center font-medium w-20">最少小时</th>
-              <th className="px-3 py-2 text-right font-medium w-24">单价(¥/小时)</th>
-              <th className="px-3 py-2 text-center font-medium w-16">免费</th>
-              <th className="px-3 py-2 text-center font-medium w-16">排序</th>
-              <th className="px-3 py-2 text-center font-medium w-16">状态</th>
-              <th className="px-3 py-2 text-center font-medium w-36">操作</th>
+              <th className="px-2 py-2 text-left font-medium w-24">编码</th>
+              <th className="px-2 py-2 text-left font-medium">名称</th>
+              <th className="px-2 py-2 text-center font-medium w-20">计费模式</th>
+              <th className="px-2 py-2 text-center font-medium w-16">时长</th>
+              <th className="px-2 py-2 text-center font-medium w-20">最少h</th>
+              <th className="px-2 py-2 text-right font-medium w-20">入住价¥</th>
+              <th className="px-2 py-2 text-right font-medium w-20">不住宿¥</th>
+              <th className="px-2 py-2 text-center font-medium w-24">时段</th>
+              <th className="px-2 py-2 text-center font-medium w-14">免费</th>
+              <th className="px-2 py-2 text-center font-medium w-14">排序</th>
+              <th className="px-2 py-2 text-center font-medium w-14">状态</th>
+              <th className="px-2 py-2 text-center font-medium w-32">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -1768,8 +1783,12 @@ function WellnessTypesTable(props: TableProps<WellnessTypeRow>) {
               <tr className="bg-amber-50/50 border-b border-gray-100">
                 <td className="px-2 py-1.5"><Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /></td>
                 <td className="px-2 py-1.5"><Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /></td>
+                <td className="px-2 py-1.5"><PricingModeSelect value={editing!.data.pricing_mode || 'per_hour'} onChange={(v) => setField('pricing_mode', v)} /></td>
+                <td className="px-2 py-1.5 text-center"><Upd type="number" placeholder="套餐h" value={editing!.data.package_hours} onChange={(v) => setField('package_hours', v)} /></td>
                 <td className="px-2 py-1.5 text-center"><Upd type="number" value={editing!.data.min_hours} onChange={(v) => setField('min_hours', v)} /></td>
-                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing!.data.price} onChange={(v) => setField('price', v)} /></td>
+                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing!.data.price_guest} onChange={(v) => setField('price_guest', v)} /></td>
+                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing!.data.price_external} onChange={(v) => setField('price_external', v)} /></td>
+                <td className="px-2 py-1.5"><Upd placeholder="如06:00-18:00" value={editing!.data.time_window || ''} onChange={(v) => setField('time_window', v)} /></td>
                 <td className="px-2 py-1.5 text-center"><Checkbox value={editing!.data.is_free} onChange={(v) => setField('is_free', v)} /></td>
                 <td className="px-2 py-1.5"><Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
                 <td className="px-2 py-1.5 text-center"><Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} /></td>
@@ -1781,22 +1800,40 @@ function WellnessTypesTable(props: TableProps<WellnessTypeRow>) {
             )}
             {rows.map(r => {
               const editRow = isEditingThis(r);
+              const isPkg = (r.pricing_mode || 'per_hour') === 'package';
               return (
                 <tr key={r.id} className="border-t border-gray-100 hover:bg-gray-50/50">
-                  <td className="px-3 py-2 font-mono">{editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}</td>
-                  <td className="px-3 py-2">{editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : r.name}</td>
-                  <td className="px-3 py-2 text-center font-mono">{editRow ? <Upd type="number" value={editing!.data.min_hours} onChange={(v) => setField('min_hours', v)} /> : r.min_hours || 0}</td>
-                  <td className="px-3 py-2 text-right font-mono">{editRow ? <Upd type="number" step="0.01" value={editing!.data.price} onChange={(v) => setField('price', v)} /> : `¥${Number(r.price).toLocaleString()}`}</td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-2 font-mono">{editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}</td>
+                  <td className="px-2 py-2">{editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : r.name}</td>
+                  <td className="px-2 py-2 text-center">{editRow
+                    ? <PricingModeSelect value={editing!.data.pricing_mode || 'per_hour'} onChange={(v) => setField('pricing_mode', v)} />
+                    : isPkg ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-600 font-medium">套餐</span> : <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-100 text-sky-600 font-medium">按小时</span>}
+                  </td>
+                  <td className="px-2 py-2 text-center font-mono">{editRow
+                    ? <Upd type="number" value={editing!.data.package_hours} onChange={(v) => setField('package_hours', v)} />
+                    : (isPkg && r.package_hours) ? `${r.package_hours}h` : '—'}</td>
+                  <td className="px-2 py-2 text-center font-mono">{editRow
+                    ? <Upd type="number" value={editing!.data.min_hours} onChange={(v) => setField('min_hours', v)} />
+                    : r.min_hours || 0}</td>
+                  <td className="px-2 py-2 text-right font-mono">{editRow
+                    ? <Upd type="number" step="0.01" value={editing!.data.price_guest} onChange={(v) => setField('price_guest', v)} />
+                    : `¥${Number(r.price_guest ?? r.price).toLocaleString()}`}</td>
+                  <td className="px-2 py-2 text-right font-mono">{editRow
+                    ? <Upd type="number" step="0.01" value={editing!.data.price_external} onChange={(v) => setField('price_external', v)} />
+                    : `¥${Number(r.price_external ?? r.price).toLocaleString()}`}</td>
+                  <td className="px-2 py-2 text-center font-mono text-gray-500">{editRow
+                    ? <Upd placeholder="如06:00-18:00" value={editing!.data.time_window || ''} onChange={(v) => setField('time_window', v)} />
+                    : r.time_window || '—'}</td>
+                  <td className="px-2 py-2 text-center">
                     {editRow ? <Checkbox value={editing!.data.is_free} onChange={(v) => setField('is_free', v)} />
                              : Number(r.is_free) === 1 ? <span className="text-emerald-600 font-medium">免费</span> : <span className="text-gray-500">收费</span>}
                   </td>
-                  <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
+                  <td className="px-2 py-2 text-center">
                     {editRow ? <Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} />
                              : r.status === 1 ? <span className="text-green-600">● 启用</span> : <span className="text-gray-400">● 禁用</span>}
                   </td>
-                  <td className="px-3 py-2 text-center space-x-1">
+                  <td className="px-2 py-2 text-center space-x-1">
                     {editRow ? (
                       <>
                         <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing!.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
