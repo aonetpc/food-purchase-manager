@@ -45,6 +45,37 @@ function RowBtn({ children, onClick, cls }: { children: React.ReactNode; onClick
   );
 }
 
+// ===== 体检项目分类+类型 自动推断（7大类 + combo/普通）=====
+// 匹配优先级从高到低，先命中先归类
+const CATEGORY_RULES: Array<{ cat: string; keywords: string[] }> = [
+  { cat: '体格检查', keywords: ['一般检查','内科','外科','眼科','耳鼻喉科','口腔科','妇科常规','裂隙灯','眼压','血压','人体成分','动脉硬化检测','骨密度','身高','体重','bmi','听诊','触诊','宫颈脱落细胞','白带常规','视力','辨色','口腔','牙周','眼压','裂隙灯','内诊','体检','全身一般情况','既往史','家族史','心率','心律','杂音','肺部','腹部','肝脏','脾脏','双肾','甲状腺','淋巴结','脊柱','四肢关节','皮肤','肛诊','外生殖器','前列腺','乳房','眼科常规'] },
+  { cat: '肿瘤筛查', keywords: ['肿瘤指标','蛋白芯片','肿瘤5项','肿瘤6项','肿瘤11项','肿瘤全套','前列腺肿瘤两项','肿瘤筛查','肿瘤组合','早筛','肿瘤组合','肿瘤（男）','肿瘤（女）'] },
+  { cat: '妇科专项', keywords: ['tct','液基','hpv','阴道镜','阴超','宫颈','白带','妇科','激素水平测定','抗缪勒管','β-hcg','β-hcg','人乳头瘤','女性激素','卵巢','乳腺彩超','妇科常规','电子阴道镜','激素水平'] },
+  { cat: '影像检查', keywords: ['彩超','dr','ct','磁共振','x线','摄片','出片费','拷片','超声','b超','彩色多普勒','钼靶','拍片','dr摄片','数字dr'] },
+  { cat: '功能检查', keywords: ['心电图','动态心电','动态血压','经颅多普勒','tcd','肺功能','c13','c14','呼气试验','电子直乙肠镜','肠镜','阴道镜（电子）','胃镜','胃镜肠镜','人体成分','动脉硬化','肺功能','经颅','脑血流图','脑电图','肌电图','诱发电位'] },
+  { cat: '特色加项', keywords: ['基因甲基化','shox2','rassf1a','ptger4','septin9','rnf180','reprimo','sdc2','tcf4','过敏原','过敏源','25-羟基维生素d（d2d3）','25-羟基维生素d（总）','抗缪勒管激素（外）','胸苷激酶','脂联素','lp-pla2','sdl-c','sdl','sdldl','外)'] },
+];
+// 实验室检查（没命中以上任何一条，但属于化验类的），默认兜底；最后按关键词二次匹配
+const LAB_KEYWORDS = ['血常规','血型','血沉','尿常规','尿沉渣','大便隐血','血流变','谷丙','谷草','肝功','肾功能','尿素氮','肌酐','尿酸','血糖','糖化','血脂','胆固醇','甘油三脂','甘油三酯','蛋白','胆红素','胆汁酸','转氨酶','淀粉酶','脂肪酶','心肌酶','肌酸激酶','乳酸脱氢酶','肌钙蛋白','肌红蛋白','bnp','pro-bnp','d-二聚体','凝血','c反应','crp','同型半胱氨酸','胱抑素','β2-微球蛋白','前白蛋白','胆碱酯酶','叶酸','维生素d','铁蛋白','转铁蛋白','甲胎蛋白','afp','cea','糖类抗原','ca199','ca724','ca153','ca125','ca211','ca50','ca242','he4','progrp','ost','骨钙素','hcg','ferr','c-肽','胃泌素','胃蛋白酶原','pg','免疫球蛋白','肝纤维化','电解质','微量元素',' eb病毒','ea-iga','vca-iga','vca-igm','丙肝','甲肝','梅毒','anti-tp','艾滋病','anti-hiv','促甲状腺','tsh','ft3','ft4','甲状腺素','三碘甲状原氨酸','tg','tg-ab','tpo-ab','tp-ab','载脂蛋白','apoa1','apob','脂联素','gr','谷胱甘肽还原酶','肌酸激酶同工酶','ck-mb','vegf','胃幽门螺杆菌抗体','血清肌红蛋白','nse','神经元特异性烯醇化酶','t-psa','f-psa','游离前列腺特异性抗原','总前列腺特异性抗原','tnt-hs','超敏肌钙蛋白','b型钠尿肽','malb','尿微量白蛋白','nag','n-β-葡萄糖苷酶','afu','α-l糖苷岩藻酶','高密度','低密度','脂蛋白a','lpa','出凝血','凝血','类风湿','aso','抗链球菌溶血素','超敏crp','感染四项','hcv','hav','igm','igg'] ;
+
+function inferCategory(name: string): string {
+  const n = (name || '').toLowerCase();
+  for (const rule of CATEGORY_RULES) {
+    if (rule.keywords.some(k => n.includes(k.toLowerCase()))) return rule.cat;
+  }
+  if (LAB_KEYWORDS.some(k => n.includes(k.toLowerCase()))) return '实验室检查';
+  // 最后兜底：其他都归为 特色加项（不对的后续手改）
+  return '实验室检查';
+}
+// 判断是否为"组合项目 combo"：含N项/全套/两项/三项/组合/筛选/芯片/指标 等
+function inferItemType(name: string): 'combo' | 'item' {
+  const n = (name || '');
+  if (/\d+项/.test(n)) return 'combo';
+  if (/(一|二|三|四|五|六|七|八|九|十|十一|十二|十五|十六|两)项/.test(n)) return 'combo';
+  if (/全套|两项|三项|筛选|芯片|肿瘤指标|蛋白芯片|甲状腺功能检查|肝功能\d|肝功能\d?项|肾功能|血脂|心肌酶谱|微量元素检测|电解质检测|过敏源检测|过敏原检测|胃蛋白酶原|肝纤维化四项|类风湿因子.*抗|组合|套餐/.test(n)) return 'combo';
+  return 'item';
+}
+
 // 编码生成：统一 T + 5 位数字（T00001、T00002…），与现有数据库编码保持一致
 // 兼容历史：同时扫描 T\d{5}（优先）和 CI\d{3}（旧格式），取最大序号
 function generateCode(existing: { code?: string }[]): string {
@@ -86,8 +117,8 @@ export default function CheckupItemsTab() {
   const [manualBindMap, setManualBindMap] = useState<Record<string, string>>({});
   // A4: 选中的diff行 key（用行index+name组合）
   const [selectedDiffKeys, setSelectedDiffKeys] = useState<Set<string>>(new Set());
-  // A5: 批量同步中进度
-  const [syncProgress, setSyncProgress] = useState<{ done: number; total: number; curr: string | null } | null>(null);
+  // A5: 批量同步/删除/导入进度（msg 是可选自定义文案，curr 用于同步场景的当前项目名）
+  const [syncProgress, setSyncProgress] = useState<{ done: number; total: number; curr?: string | null; msg?: string } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -401,6 +432,133 @@ export default function CheckupItemsTab() {
             <Plus size={12} /> 新增体检项目
           </button>
         )}
+        {isAdmin && !editing && (
+          <>
+            <button
+              onClick={async () => {
+                if (!rows.length) { toast.warning('当前没有可清除的体检项目'); return; }
+                const tip1 = window.prompt(`⚠️ 将删除全部 ${rows.length} 条体检项目（含组合子项目引用），编码将自动从 T00001 重置。\n请输入 "确定清空体检项目" 以继续：`);
+                if (tip1 !== '确定清空体检项目') { toast.info('已取消'); return; }
+                if (!window.confirm(`删除后无法恢复！再次确认？（当前共 ${rows.length} 条）`)) return;
+                const toDel = rows.slice().reverse();
+                let ok = 0, fail = 0;
+                for (let i = 0; i < toDel.length; i++) {
+                  try {
+                    if (toDel[i].id) await bookingApi.deleteCheckupItem(toDel[i].id);
+                    ok++;
+                  } catch (e: any) { fail++; console.error(toDel[i].name, '删除失败：', e.message || e); }
+                  if (i % 10 === 0) setSyncProgress({ done: i + 1, total: toDel.length, msg: `已删除 ${i + 1}/${toDel.length}` });
+                }
+                setSyncProgress(null);
+                toast.success(`清空完成：删除 ${ok} 条，失败 ${fail} 条`);
+                await loadRows();
+              }}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white shadow-sm border border-rose-700"
+              title="删除所有体检项目并将编码从T00001重新开始"
+            >
+              🗑️ 清空全部重导
+            </button>
+            <button
+              onClick={async () => {
+                if (!pdfText) { toast.error('请先在「PDF价格对拍」中粘贴PDF文本后再点此按钮'); return; }
+                // 用 priceCompare 解析出所有 parsed 行（不管是否 matched），然后对于 DB 里没有的（pdfUnmatchedView + 冲突中没对应的 + 差异里已绑定的跳过）
+                // 简单起见：调用 priceCompare 拿到所有已解析的 PDF 行（不区分 match 与否），然后对每一条：
+                //   若已在 DB 里存在（通过名称归一化完全相同 或 manualBindMap 绑定）则跳过创建
+                //   否则 createCheckupItem，编码按 rows 现有（同步过程中会逐渐增加）
+                if (!window.confirm('将对 PDF 中成功解析的项目逐一创建为 DB 体检项目（已存在同名的不重复创建）。确认？')) return;
+                // 1. 重新解析出所有 PDF name+insured+price（简单行解析）
+                const allPdfRows: Array<{ name: string; insurance_price: number; default_price: number }> = [];
+                const lines = pdfText.split(/\r?\n/);
+                for (const raw of lines) {
+                  const line = raw.replace(/^\s+|\s+$/g, '');
+                  if (!line) continue;
+                  if (/项目名称|医保价格|定价|2023最新定价/.test(line)) continue;
+                  const parts = line.split(/\t+|,|\u3001|\u0020{2,}|\s{2,}|，/).map(s => s.replace(/^\s+|\s+$/g, '')).filter(Boolean);
+                  if (parts.length < 2) continue;
+                  const digits = parts.map(p => parsePrice(p));
+                  let priceIdx = -1, insuredIdx = -1;
+                  for (let i = digits.length - 1; i >= 0; i--) {
+                    if (digits[i] !== null && priceIdx < 0) { priceIdx = i; continue; }
+                    if (digits[i] !== null && insuredIdx < 0) { insuredIdx = i; break; }
+                  }
+                  if (priceIdx < 0) continue;
+                  const nameParts = insuredIdx < 0 ? parts.slice(0, priceIdx) : parts.slice(0, insuredIdx);
+                  const name = nameParts.join(' ').trim();
+                  const pdfPrice = parsePrice(parts[priceIdx]);
+                  const pdfInsured = insuredIdx >= 0 ? parsePrice(parts[insuredIdx]) : null;
+                  if (!name || pdfPrice === null) continue;
+                  allPdfRows.push({ name, insurance_price: pdfInsured ?? 0, default_price: pdfPrice });
+                }
+                if (!allPdfRows.length) { toast.error('从PDF文本中未解析出有效行'); return; }
+                // 2. 取到当前 rows，归一化 name → row 做快速查重
+                const load = await bookingApi.listCheckupItems();
+                const createdNames = new Set(load.map(r => normalize(r.name)));
+                // 对于 manualBindMap 绑定了的（pdf name → dbId），也视为已存在，不重新建
+                for (const [k, v] of Object.entries(manualBindMap || {})) if (v) createdNames.add(k);
+                let created = 0, skipped = 0, fail = 0;
+                // 临时的 growing rows，生成编码用（每 create 一条往里面 push，保证编码递增连续）
+                const forCode: CheckupItemRow[] = load.slice();
+                for (let i = 0; i < allPdfRows.length; i++) {
+                  const r = allPdfRows[i];
+                  if (createdNames.has(normalize(r.name))) { skipped++; continue; }
+                  try {
+                    const code = generateCode(forCode);
+                    const category = inferCategory(r.name);
+                    const item_type = inferItemType(r.name);
+                    const row = await bookingApi.createCheckupItem({
+                      code, name: r.name.trim(),
+                      item_type,
+                      category,
+                      description: '',
+                      default_price: r.default_price,
+                      insurance_price: r.insurance_price ?? 0,
+                      unit: '次',
+                      status: 1,
+                      sort_order: 100 + i,
+                    });
+                    forCode.push(row);
+                    createdNames.add(normalize(row.name));
+                    created++;
+                  } catch (e: any) { fail++; console.error('创建失败', r.name, e.message || e); }
+                  if (i % 5 === 0) setSyncProgress({ done: i + 1, total: allPdfRows.length, msg: `创建中 ${created} 成功 / ${skipped} 跳过 / ${fail} 失败` });
+                }
+                setSyncProgress(null);
+                toast.success(`PDF 导入完成：成功新建 ${created} 条，已存在跳过 ${skipped} 条，失败 ${fail} 条`);
+                await loadRows();
+              }}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm border border-emerald-800"
+              title="将PDF价目表已解析的所有项目批量创建为DB条目（自动推断分类和类型）"
+            >
+              📥 从PDF批量导入
+            </button>
+            <button
+              onClick={async () => {
+                if (!rows.length) { toast.warning('当前没有体检项目可被修正'); return; }
+                if (!window.confirm(`将基于名称关键词推断并批量更新所有 ${rows.length} 条的 分类 + 类型(item/combo)，原有值将被覆盖。确认？`)) return;
+                let updated = 0, fail = 0;
+                for (let i = 0; i < rows.length; i++) {
+                  const r = rows[i];
+                  if (!r.id) continue;
+                  const category = inferCategory(r.name);
+                  const item_type = inferItemType(r.name);
+                  if (category === r.category && item_type === r.item_type) continue;
+                  try {
+                    await bookingApi.updateCheckupItem(r.id, { category, item_type });
+                    updated++;
+                  } catch (e: any) { fail++; console.error('分类修正失败', r.name, e.message || e); }
+                  if (i % 5 === 0) setSyncProgress({ done: i + 1, total: rows.length, msg: `已修正 ${updated}/${rows.length}` });
+                }
+                setSyncProgress(null);
+                toast.success(`分类&类型修正完成：成功更新 ${updated} 条，失败 ${fail} 条`);
+                await loadRows();
+              }}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm border border-indigo-700"
+              title="按名称关键词把全部项目重分到7大类 + 自动标记组合项目(combo)"
+            >
+              🔖 批量修正分类/类型
+            </button>
+          </>
+        )}
         <button onClick={() => setToolOpen(o => !o)} className={btnGhost}>
           <FileSpreadsheet size={12} />
           PDF 价格对拍 {toolOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -640,7 +798,7 @@ export default function CheckupItemsTab() {
                 <div className="text-[11px] space-y-1">
                   <div className="flex items-center justify-between text-gray-600">
                     <span>同步进度 {syncProgress.done}/{syncProgress.total}</span>
-                    <span className="text-gray-500 truncate max-w-[60%]">{syncProgress.curr}</span>
+                    <span className="text-gray-500 truncate max-w-[60%]">{syncProgress.msg || syncProgress.curr}</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-sky-100 overflow-hidden">
                     <div
