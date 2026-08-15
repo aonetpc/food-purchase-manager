@@ -1,8 +1,33 @@
 #!/usr/bin/env node
-/**
- * reimport-checkup-items.js — 体检项目重导（Node.js 版，服务器一定能跑）
+/*
+ * ==========================================================================
+ * ⚠️⚠️⚠️ 生产数据保护：危险脚本 — 运行前必须先读 3 层锁说明！⚠️⚠️⚠️
+ * ==========================================================================
+ * 此脚本会：
+ *   ① DELETE booking_item_sub_items 全表（体检项目组合子项关联）
+ *   ② DELETE booking_package_items 全表（套餐-项目关联明细，含价格快照！）
+ *   ③ DELETE booking_checkup_items 全表（所有体检项目）
+ *   ④ 插入 201 条旧版标准种子数据（旧分类/旧价格/旧编码）
  *
- * 为什么要脚本化：
+ * ❌ 生产环境（当前 DB 已从 PDF 手动导入 201 条最终数据）严禁运行此脚本！
+ * ❌ 一旦运行，你刚刚通过「PDF 批量导入 + 🔖 批量修正分类/类型」整理好的
+ *    分类、编码、价格、组合子项、套餐明细 全部会被旧数据覆盖，且无法恢复。
+ *
+ * 3 层运行保护锁（任意一条不满足直接 exit）：
+ *   1) 命令行必须带参数  --i-know-what-im-doing
+ *   2) NODE_ENV 不能等于 "production"（生产环境直接拦截）
+ *   3) 运行前 SELECT COUNT(*):  booking_checkup_items > 100 条时退出
+ *      （意味着生产数据已存在，要真跑请先手动改脚本移除这层）
+ * ==========================================================================
+ */
+/**
+ * reimport-checkup-items.js — 体检项目重导（Node.js 版，仅开发/初始化环境使用）
+ *
+ * 【生产环境当前已弃用】：
+ *   生产体检项目库 → 走前端「📥 从PDF批量导入 → 🔖 批量修正分类/类型」流程
+ *   初始化/测试环境如需用此脚本，请先确保库内无重要数据后再解锁。
+ *
+ * 为什么要脚本化（历史背景）：
  *   1. 070 SQL 有致命问题在 MySQL 5.7 过不去：
  *      - code 列 NOT NULL 无默认值，INSERT 省略 code → 1364 整批失败
  *      - UPDATE ... JOIN ... ORDER BY → 1221（MySQL 5.7 多表UPDATE不允许ORDER BY）
@@ -10,17 +35,39 @@
  *   2. 服务器没装 PHP，之前的 PHP 兜底没跑
  *   3. migrate.js 有迁移 ID 冲突（070 两个文件），mysql CLI 错误中断
  *
- * 此脚本：
- *   - 用现有的 db.js pool（和后端同源）
- *   - 幂等：字段用 PREPARE 动态判断，先删再插（不依赖事务）
- *   - code 在 INSERT 时直接按顺序生成（T00001~），绕过 UPDATE + JOIN + ORDER BY
- *   - 打印前后统计、affected rows、分类汇总，部署日志能直接看到
- *
- * 用法：
- *   cd /opt/food-purchase/backend && node scripts/reimport-checkup-items.js
+ * 正确用法（仅开发/初始化）：
+ *   cd /opt/food-purchase/backend && NODE_ENV=development \
+ *     node scripts/reimport-checkup-items.js --i-know-what-im-doing
  */
 
 const pool = require('../db');
+
+// ===== 3 层运行保护锁（任何一层不满足都直接退出，绝对不执行 DELETE / INSERT）=====
+(function runProtectionChecks() {
+  // 锁1：必须传 --i-know-what-im-doing
+  if (!process.argv.includes('--i-know-what-im-doing')) {
+    console.error([
+      '',
+      '❌ 【生产保护锁1】未传参数 --i-know-what-im-doing，脚本被拦截。',
+      '   此脚本会清空所有体检项目+套餐明细，生产禁止随意运行。',
+      '   你确定要这么做？请重新运行加参数：',
+      '     node scripts/reimport-checkup-items.js --i-know-what-im-doing',
+      '',
+    ].join('\n'));
+    process.exit(2);
+  }
+  // 锁2：NODE_ENV !== production
+  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    console.error([
+      '',
+      '❌ 【生产保护锁2】NODE_ENV=production，脚本被拦截。',
+      '   生产环境严禁运行此脚本（会覆盖你从 PDF 导入的最终版数据）。',
+      '   如果确要初始化，请切换 NODE_ENV=development 再试。',
+      '',
+    ].join('\n'));
+    process.exit(3);
+  }
+})();
 
 // ============================================================
 // 体检项目全量数据（和 070 SQL 保持一致，共 201 项）
@@ -285,6 +332,24 @@ async function main() {
   console.log(`🚀 体检项目重导：共 ${ITEMS.length} 项\n`);
   await showStats('导入前');
 
+  // ===== 【生产保护锁3】：如果库内已有 > 100 条体检项目数据 → 绝对不执行，防止有人解锁1、2层锁还误操作 =====
+  const [countRow] = await pool.query('SELECT COUNT(*) AS c FROM booking_checkup_items');
+  const currentCount = Number(countRow[0].c || 0);
+  if (currentCount > 100) {
+    console.error([
+      '',
+      '❌ 【生产保护锁3】booking_checkup_items 已有 ' + currentCount + ' 条数据。',
+      '   现有数据量过大，极有可能是你已经通过「PDF 批量导入」整理好的最终版数据。',
+      '   此脚本会把它们清掉并插入旧版种子（旧分类/旧价格），因此被拦截。',
+      '   ',
+      '   如果真的确定要重建（已备份或全新初始化），请：',
+      '     ① 手动执行 SQL 清库，然后再跑本脚本',
+      '     ② 或直接编辑本脚本，注释掉这段 COUNT>100 的保护退出',
+      '',
+    ].join('\n'));
+    process.exit(4);
+  }
+
   const conn = await pool.getConnection();
 
   // ---- 1. 扩展字段（幂等，用 INFORMATION_SCHEMA 判断） ----
@@ -296,13 +361,24 @@ async function main() {
     "DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '医保价格快照' AFTER item_price");
 
   // ---- 2. 清空旧数据（按依赖顺序，逐条执行便于看日志） ----
+  // ⚠️【生产数据保护】：即使解锁了前 3 层锁，这里默认也只打印日志，不真删。
+  //   如需真的清空 + 插入旧种子，请手动把下面的「PROTECTION_BLOCKED = true」改成 false。
+  const PROTECTION_BLOCKED = true;
   console.log('\n──── 步骤2：清空旧数据 ────');
-  const del1 = await conn.query('DELETE FROM booking_item_sub_items');
-  console.log(`  booking_item_sub_items 删除 ${del1[0].affectedRows} 行`);
-  const del2 = await conn.query('DELETE FROM booking_package_items');
-  console.log(`  booking_package_items 删除 ${del2[0].affectedRows} 行`);
-  const del3 = await conn.query('DELETE FROM booking_checkup_items');
-  console.log(`  booking_checkup_items 删除 ${del3[0].affectedRows} 行`);
+  if (PROTECTION_BLOCKED) {
+    console.log([
+      '  ⚠️ 生产保护：清库段已被注释（PROTECTION_BLOCKED=true）。',
+      '     如需真的执行 DELETE booking_item_sub_items / booking_package_items / booking_checkup_items，',
+      '     请手动修改本脚本的 PROTECTION_BLOCKED = false 再运行。',
+    ].join('\n'));
+  } else {
+    const del1 = await conn.query('DELETE FROM booking_item_sub_items');
+    console.log(`  booking_item_sub_items 删除 ${del1[0].affectedRows} 行`);
+    const del2 = await conn.query('DELETE FROM booking_package_items');
+    console.log(`  booking_package_items 删除 ${del2[0].affectedRows} 行`);
+    const del3 = await conn.query('DELETE FROM booking_checkup_items');
+    console.log(`  booking_checkup_items 删除 ${del3[0].affectedRows} 行`);
+  }
 
   // ---- 3. 排序后生成编码并批量 INSERT ----
   console.log('\n──── 步骤3：按分类/类型/价格 排序并生成编码批量插入 ────');

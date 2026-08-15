@@ -684,10 +684,21 @@ function makeCheckupItemCrud(routerRef) {
     }
   });
 
-  // ============ 批量 wipeAll：清空所有体检项目（解决前端循环漏删/删除失败静默问题）============
-  // 前端「🗑️ 清空全部重导」改为调这个接口：
-  //   1) 不会漏掉 status=0（因为 list 接口只返回 status!=0，前端 rows 拿不到，循环删必然漏）
-  //   2) 一次性处理所有 FK 关联，不会因为 item_id NOT NULL 回滚
+  // ==========================================================================
+  // ⚠️⚠️⚠️ 【生产数据保护】：批量 wipeAll 接口（前端「🗑️ 清空全部重导」按钮调用）
+  // ==========================================================================
+  // 此接口会：
+  //   ① DELETE booking_item_sub_items 全表
+  //   ② UPDATE booking_package_items.item_id = NULL（或 NOT NULL 时 ALTER MODIFY / DELETE）
+  //   ③ DELETE booking_checkup_items 全表 → 编码下次从 T00001 开始重置
+  //
+  // 🔒 已内置多层权限/确认保护：
+  //   - requireAuth + requireBookingWrite：非采购/管理员无权调
+  //   - 前端要求两次确认：prompt 输入「确定清空体检项目」+ confirm
+  //   - 操作会写 logOperation 并 console.warn（详见下面），后端日志永久留痕
+  //
+  // ❌ 正常使用场景（只改单个/几个项目）严禁调此接口！请使用 DELETE /:id 行内删除
+  // ==========================================================================
   routerRef.delete(`${basePath}`, requireAuth, requireBookingWrite, async (req, res) => {
     const conn = await pool.getConnection();
     try {
@@ -715,8 +726,16 @@ function makeCheckupItemCrud(routerRef) {
       const [r3] = await conn.query(`DELETE FROM ${table}`);
       await conn.commit();
       const affected = typeof r3.affectedRows === 'number' ? r3.affectedRows : 0;
-      await logOperation(req.user.id, '-', table, 'wipe_all', { deleted: affected, subItemsCleared: r1?.affectedRows || 0, packageItemsFixed }, req);
-      res.json({ ok: true, data: { deleted: affected, subItemsCleared: r1?.affectedRows || 0, packageItemsFixed } });
+      const subCleared = r1?.affectedRows || 0;
+      // ===== ⚠️ 审计日志：后端日志永久留痕（谁、什么时候、删了多少条），方便以后出问题回溯 =====
+      console.warn(
+        `[⚠️ CHECKUP_ITEMS_WIPE_ALL] user_id=${req.user?.id || '?'}` +
+        ` user_name=${req.user?.username || req.user?.name || '?'}  ` +
+        ` deleted=${affected}  subItemsCleared=${subCleared}  packageItemsFixed=${packageItemsFixed}  ` +
+        ` ip=${req.ip}  ua=${(req.get('user-agent') || '').slice(0, 120)}`
+      );
+      await logOperation(req.user.id, '-', table, 'wipe_all', { deleted: affected, subItemsCleared: subCleared, packageItemsFixed }, req);
+      res.json({ ok: true, data: { deleted: affected, subItemsCleared: subCleared, packageItemsFixed } });
     } catch (e) {
       try { await conn.rollback(); } catch (_) {}
       console.error(`[${basePath} wipeAll] error:`, e);

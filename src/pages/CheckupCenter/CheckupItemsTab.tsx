@@ -446,20 +446,22 @@ export default function CheckupItemsTab() {
           <>
             <button
               onClick={async () => {
-                // 【修复删除失败】直接走后端 wipeAllCheckupItems 事务接口：
+                // 【生产数据保护】走后端 wipeAllCheckupItems 事务接口：
                 // 1) 不会漏掉 status=0（之前 list 接口只返回 status!=0，rows 里拿不到，循环删必然漏）
                 // 2) 自动 booking_package_items.item_id NOT NULL 兜底（ALTER MODIFY→DELETE），不会因FK静默失败
-                // 3) 一次性事务，进度简单、返回明确的affected数量
+                // 3) 一次性事务，返回明确的 affected 数量；后端会 console.warn 留审计日志
+                // ⚠️ 注意：执行后体检项目库完全为空，编码将从 T00001 重置；
+                //        套餐本身不删除，只是 item_id 置空（套餐名/角色方案还在）
                 let total = rows.length || 0;
-                if (total === 0) total = 999;  // 可能还有status=0的，但rows里看不到，就用大数占位
-                const tip1 = window.prompt(`⚠️ 将删除全部体检项目（含禁用项、组合子项目引用），编码将自动从 T00001 重置。\n请输入 "确定清空体检项目" 以继续：`);
+                if (total === 0) total = 999;
+                const tip1 = window.prompt(`⚠️ ⚠️ ⚠️ 将删除全部体检项目（含禁用项、组合子项目引用），编码将从 T00001 重置。\n\n✅ 安全：不删套餐本身，只会解除"套餐-体检项目"关联。\n❌ 危险：体检项目库将完全为空，需要重新从PDF导入！\n\n请输入 "确定清空体检项目" 以继续：`);
                 if (tip1 !== '确定清空体检项目') { toast.info('已取消'); return; }
-                if (!window.confirm(`删除后无法恢复！再次确认？`)) return;
+                if (!window.confirm(`删除后无法恢复！再次确认？\n（清空后请立即：粘贴PDF→📥从PDF批量导入→🔖批量修正分类/类型）`)) return;
                 setSyncProgress({ done: 0, total: 1, msg: '正在批量清空...' });
                 try {
                   const info = await bookingApi.wipeAllCheckupItems();
                   setSyncProgress({ done: 1, total: 1, msg: '清空完成' });
-                  toast.success(`清空完成：删除体检项目 ${info.deleted} 条，清理组合引用 ${info.subItemsCleared} 条，解除套餐引用 ${info.packageItemsFixed} 条`);
+                  toast.success(`清空完成：删除体检项目 ${info.deleted} 条，清理组合引用 ${info.subItemsCleared} 条，解除套餐引用 ${info.packageItemsFixed} 条（后端审计日志已记录）`);
                 } catch (e: any) {
                   toast.error(e.message || '批量清空失败');
                 } finally {

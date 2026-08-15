@@ -727,22 +727,47 @@ jobs:
             #       若每次部署都重复执行会清掉用户修改过的体检项目/套餐明细数据
             # 二次保险：即使有人忘了改名 _DONE，只要 SQL 里含对 booking_checkup_items / booking_checkup_packages
             #          的 INSERT/UPDATE/DELETE，也自动跳过（这些是用户业务数据，不能被迁移脚本覆盖）
+            # ==========================================================================
+            # ⚠️⚠️⚠️ 生产数据保护：此 for 循环绝对禁止执行任何会改体检项目/套餐明细的 DML 脚本！
+            # 如看到部署日志打印 "Skip (contains DML on user data tables)" → 不是报错，是保护机制生效。
+            # 想真的执行这些一次性 DML 脚本？
+            #   → 手动跑一次（SSH 登录服务器执行 mysql < 081_xxx.sql），
+            #     然后立刻 mv 081_xxx.sql 081_xxx_DONE.sql 改名为 _DONE.sql 收尾！
+            # ==========================================================================
+            declare -a SKIPPED_FILES=()
             for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
               fname="$(basename "$sql_file")"
               case "$fname" in
                 *_DONE.sql)
                   echo "Skip (already done): $fname"
+                  SKIPPED_FILES+=("$fname  [标记_DONE.sql]")
                   continue
                   ;;
               esac
               # 保险：检测是否含用户业务数据表的 DML，若有则跳过
               if grep -Ei '(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_items`?|(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_packages`?|(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_package_items`?' "$sql_file" >/dev/null 2>&1; then
                 echo "Skip (contains DML on user data tables booking_checkup_items/packages/package_items): $fname → 如需执行请手动跑一次后改名 _DONE.sql"
+                SKIPPED_FILES+=("$fname  [含体检/套餐DML保护跳过]")
                 continue
               fi
               echo "Running migration (mysql --force): $sql_file"
               mysql --force -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>&1 || echo "⚠️ $sql_file 有错误（已用 --force 跳过，非致命）"
             done
+            # ====== 🔒 体检/套餐数据保护：打印本轮跳过的迁移文件清单，肉眼可见 = 保护生效 ======
+            if [ "${#SKIPPED_FILES[@]}" -gt 0 ]; then
+              echo ""
+              echo "=================================================="
+              echo "✅ 体检/套餐数据保护：本轮跳过的迁移文件共 ${#SKIPPED_FILES[@]} 个"
+              echo "（这些是一次性 DML 脚本，已手动跑过并改名 *_DONE.sql，"
+              echo "  或含 booking_checkup_items/packages 的 INSERT/UPDATE，"
+              echo "  每次部署若重复执行会覆盖当前生产数据 → 本轮自动跳过是正确行为）"
+              echo "--------------------------------------------------"
+              for s in "${SKIPPED_FILES[@]}"; do
+                echo "  - $s"
+              done
+              echo "=================================================="
+              echo ""
+            fi
 
             # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
             mysql -u food_purchase -p'food_purchase123' food_purchase -e "
