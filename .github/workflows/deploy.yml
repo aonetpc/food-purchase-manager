@@ -745,7 +745,7 @@ jobs:
                   ;;
               esac
               # 保险：检测是否含用户业务数据表的 DML，若有则跳过
-              if grep -Ei '(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_items`?|(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_packages`?|(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_package_items`?' "$sql_file" >/dev/null 2>&1; then
+              if grep -Ei '(INSERT.*INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_items`?|(INSERT.*INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_packages`?|(INSERT.*INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_package_items`?' "$sql_file" >/dev/null 2>&1; then
                 echo "Skip (contains DML on user data tables booking_checkup_items/packages/package_items): $fname → 如需执行请手动跑一次后改名 _DONE.sql"
                 SKIPPED_FILES+=("$fname  [含体检/套餐DML保护跳过]")
                 continue
