@@ -283,14 +283,25 @@ export default function CheckupItemsTab() {
     return { ...base, diffsWithManual };
   }, [rows, pdfText, manualBindMap]);
 
-  // A4 同步执行：把选中的 diffs（带 manualBindMap）回写到 DB
-  const applySelected = async (scope: 'price' | 'insured' | 'both') => {
+  // A4/B2 同步执行：把选中的 diffs 回写到 DB（scope 支持 name 覆盖）
+  const applySelected = async (scope: 'name' | 'price' | 'insured' | 'price+insured' | 'all') => {
     if (!isAdmin) { toast.error('仅管理员可同步'); return; }
     const picks = compare.diffsWithManual.filter(d => selectedDiffKeys.has(d.diffKey) && d.dbId != null);
     if (picks.length === 0) { toast.error('请先勾选需要同步的行（且该行已绑定到数据库项目）'); return; }
     const fuzzyCount = picks.filter(p => p.matchKind === 'fuzzy' && (p.matchScore || 0) < 85).length;
-    const scopeName = scope === 'price' ? '定价' : scope === 'insured' ? '医保价' : '定价+医保价';
-    const message = `确认将修改 ${picks.length} 条项目的${scopeName}？${fuzzyCount > 0 ? `其中 ${fuzzyCount} 条为模糊匹配（<85%），建议人工核对。` : ''}此操作会写入数据库，不可撤销。`;
+    const scopeMap: Record<string, string> = {
+      name: '项目名称',
+      price: '定价',
+      insured: '医保价',
+      'price+insured': '定价+医保价',
+      all: '项目名称+定价+医保价',
+    };
+    const nameDiffCount = picks.filter(p => p.dbName !== p.name).length;
+    const hasNameScope = scope === 'name' || scope === 'all';
+    let message = `确认将修改 ${picks.length} 条项目的${scopeMap[scope]}？`;
+    if (hasNameScope && nameDiffCount > 0) message += `\n\n⚠️ 其中有 ${nameDiffCount} 条将用 PDF 名称覆盖 DB 原名称！套餐里显示的项目名会同步变化，建议确认 PDF 名称是最终规范写法。`;
+    if (fuzzyCount > 0) message += `\n\n其中 ${fuzzyCount} 条为模糊匹配（<85%），建议人工核对。`;
+    message += `\n\n此操作会写入数据库，不可撤销。`;
     if (!confirm(message)) return;
     setSyncProgress({ done: 0, total: picks.length, curr: null });
     let failed = 0;
@@ -299,8 +310,12 @@ export default function CheckupItemsTab() {
       setSyncProgress(s => s ? { ...s, done: i, curr: d.dbName || d.name } : s);
       try {
         const body: any = {};
-        if (scope === 'price' || scope === 'both') body.default_price = d.pdfPrice;
-        if (scope === 'insured' || scope === 'both') body.insurance_price = d.pdfInsured;
+        if (scope === 'name' || scope === 'all') {
+          const newName = (d.name || '').trim();
+          if (newName) body.name = newName;
+        }
+        if (scope === 'price' || scope === 'price+insured' || scope === 'all') body.default_price = d.pdfPrice;
+        if (scope === 'insured' || scope === 'price+insured' || scope === 'all') body.insurance_price = d.pdfInsured;
         await bookingApi.updateCheckupItem(d.dbId!, body);
       } catch (e: any) {
         failed++;
@@ -425,6 +440,14 @@ export default function CheckupItemsTab() {
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
+                    onClick={() => applySelected('name')}
+                    disabled={!isAdmin || syncProgress !== null}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white font-semibold shadow-sm"
+                    title="只覆盖项目名称（不改价格）"
+                  >
+                    <Save size={11} /> 应用PDF名称
+                  </button>
+                  <button
                     onClick={() => applySelected('price')}
                     disabled={!isAdmin || syncProgress !== null}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold shadow-sm"
@@ -439,11 +462,18 @@ export default function CheckupItemsTab() {
                     <Save size={11} /> 应用PDF医保价
                   </button>
                   <button
-                    onClick={() => applySelected('both')}
+                    onClick={() => applySelected('price+insured')}
                     disabled={!isAdmin || syncProgress !== null}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold shadow-sm"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-semibold shadow-sm"
                   >
-                    <Save size={11} /> 全部同步
+                    <Save size={11} /> 同步价格
+                  </button>
+                  <button
+                    onClick={() => applySelected('all')}
+                    disabled={!isAdmin || syncProgress !== null}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-semibold shadow-sm"
+                  >
+                    <Save size={11} /> 全部同步（含名称）
                   </button>
                 </div>
               </div>
