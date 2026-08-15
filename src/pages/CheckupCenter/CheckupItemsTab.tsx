@@ -45,13 +45,22 @@ function RowBtn({ children, onClick, cls }: { children: React.ReactNode; onClick
   );
 }
 
+// 编码生成：统一 T + 5 位数字（T00001、T00002…），与现有数据库编码保持一致
+// 兼容历史：同时扫描 T\d{5}（优先）和 CI\d{3}（旧格式），取最大序号
 function generateCode(existing: { code?: string }[]): string {
   let maxNum = 0;
   existing.forEach(r => {
-    const m = (r.code || '').match(/^CI(\d+)$/);
-    if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    // 优先匹配现行规范：T00001
+    const m5 = (r.code || '').match(/^T(\d{5})$/);
+    if (m5) { maxNum = Math.max(maxNum, parseInt(m5[1], 10)); return; }
+    // 兼容旧格式：CI001
+    const m3 = (r.code || '').match(/^CI(\d{3})$/);
+    if (m3) maxNum = Math.max(maxNum, parseInt(m3[1], 10));
+    // 其他形如 [A-Za-z]+(\d+) 的非标准编码，也把数字部分纳入参考（别重号）
+    const fall = (r.code || '').match(/(\d+)$/);
+    if (fall) maxNum = Math.max(maxNum, Math.min(parseInt(fall[1], 10), 99999));
   });
-  return `CI${String(maxNum + 1).padStart(3, '0')}`;
+  return `T${String(maxNum + 1).padStart(5, '0')}`;
 }
 
 const DEFAULT_CATEGORY = CATEGORIES[0]; // '体格检查'
