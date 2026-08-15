@@ -1463,7 +1463,7 @@ export default function BookingBoardCreate(props: {
         itemType,
         date: sessions[0].date,
         startTime: sessions[0].time,
-        pax: sessions.reduce((s, x) => s + (x.pricingMode === 'per_person' ? x.pax : x.tables * x.perTable), 0),
+        pax: sessions.reduce((s, x) => s + (x.pricingMode === 'per_person' ? 0 : (x.tables || 0)), 0),
         extra: { sessions: sessions as any },
         amount,
       };
@@ -2192,6 +2192,8 @@ export default function BookingBoardCreate(props: {
                       <div className="text-[10px] text-gray-500">
                         {item.itemType === 'carpickup'
                           ? `${item.extra?.carpickup?.customers?.length || 0}位客户 · ${item.pax}人`
+                          : item.itemType === 'lunch' || item.itemType === 'dinner'
+                          ? `${item.pax}桌`
                           : `${biz.unit}×${item.pax}`}
                       </div>
                     </div>

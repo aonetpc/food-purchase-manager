@@ -137,7 +137,11 @@ function cardSummary(item: BookingItem, days: number): string {
     if (item.amount) parts.push(`¥${item.amount}`);
   } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
     parts.push(BIZ_MAP[item.itemType].label);
-    parts.push(`${item.extra.defaultTables || item.pax}桌`);
+    const mealSess = item.extra.sessions || [];
+    const tblCount = mealSess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? 0 : (x.tables || 0)), 0);
+    const paxCount = mealSess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? (x.pax || 0) : 0), 0);
+    if (tblCount > 0) parts.push(`${tblCount}桌`);
+    if (paxCount > 0) parts.push(`${paxCount}人`);
     if (days > 1) parts.push(`${days}天`);
   } else if (item.itemType === 'meeting') {
     const s = meetingSession(item);
@@ -205,7 +209,14 @@ function itemDetail(item: BookingItem): string {
   }
   if (item.itemType === 'lodging') return (LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间' }).name;
   if (item.itemType === 'lunch' || item.itemType === 'dinner') {
-    return `${item.extra.defaultTables || 0}桌 × ${item.extra.defaultPerTable || 0}人/桌`;
+    const mealSess = item.extra.sessions || [];
+    const tblCount = mealSess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? 0 : (x.tables || 0)), 0);
+    const perTable = mealSess.find((x: any) => x.pricingMode === 'per_table')?.perTable || 0;
+    const paxCount = mealSess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? (x.pax || 0) : 0), 0);
+    const parts: string[] = [];
+    if (tblCount > 0) parts.push(`${tblCount}桌 × ${perTable}人/桌`);
+    if (paxCount > 0) parts.push(`${paxCount}人`);
+    return parts.length > 0 ? parts.join(' · ') : '—';
   }
   if (item.itemType === 'meeting') {
     const s = meetingSession(item);
