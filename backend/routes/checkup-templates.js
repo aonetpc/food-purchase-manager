@@ -294,7 +294,7 @@ router.post('/', async (req, res) => {
 
     const columns = ['id', 'code', 'name'];
     if (hasDescCol) columns.push('description');
-    columns.push('owner_sales_id', 'is_public', 'base_template_id', 'applicable_roles', 'status', 'sort_order', 'price', 'discount_rate', 'created_at', 'updated_at');
+    columns.push('owner_sales_id', 'is_public', 'base_template_id', 'applicable_roles', 'status', 'sort_order', 'price', 'discount_rate');
 
     const placeholders = new Array(columns.length).fill('?').join(',');
     const args = [id, finalCode, String(name).trim()];
