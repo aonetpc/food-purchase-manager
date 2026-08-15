@@ -723,8 +723,10 @@ jobs:
             cd /opt/food-purchase/backend && node migrations/migrate.js up 2>&1 || echo "⚠️ migrate.js 执行有错误，继续部署..."
 
             # 兜底1：mysql --force 管道模式（--force 保证单条语句报错不中断后续语句，错误输出到 stdout）
-            # 重要：跳过 *_DONE.sql 后缀文件——这些是一次性迁移（删库+全量重插），
+            # 重要：跳过 *_DONE.sql 后缀文件——这些是一次性迁移（删库+全量重插/分类映射/数据纠正），
             #       若每次部署都重复执行会清掉用户修改过的体检项目/套餐明细数据
+            # 二次保险：即使有人忘了改名 _DONE，只要 SQL 里含对 booking_checkup_items / booking_checkup_packages
+            #          的 INSERT/UPDATE/DELETE，也自动跳过（这些是用户业务数据，不能被迁移脚本覆盖）
             for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
               fname="$(basename "$sql_file")"
               case "$fname" in
@@ -733,6 +735,11 @@ jobs:
                   continue
                   ;;
               esac
+              # 保险：检测是否含用户业务数据表的 DML，若有则跳过
+              if grep -Ei '(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_items`?|(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_packages`?|(INSERT INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_package_items`?' "$sql_file" >/dev/null 2>&1; then
+                echo "Skip (contains DML on user data tables booking_checkup_items/packages/package_items): $fname → 如需执行请手动跑一次后改名 _DONE.sql"
+                continue
+              fi
               echo "Running migration (mysql --force): $sql_file"
               mysql --force -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>&1 || echo "⚠️ $sql_file 有错误（已用 --force 跳过，非致命）"
             done
