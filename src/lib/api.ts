@@ -449,19 +449,27 @@ export const bookingApi = {
   // 注意：体检项目前端渲染代码（BizConfigModal.tsx）全部使用 snake_case
   //       因此这里不做 fromBackend 转换，保持与后端字段一致
   async listCheckupItems(): Promise<CheckupItemRow[]> {
-    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/checkup-items');
-    return (res.data || []) as CheckupItemRow[];
+    const res = await api.get<{ ok: boolean; data: any[]; error?: string }>('/booking/config/checkup-items');
+    const body = res.data || {};
+    if (!body.ok) throw new Error(body.error || '获取体检项目列表失败');
+    return (body.data || []) as CheckupItemRow[];
   },
   async createCheckupItem(payload: Partial<CheckupItemRow>): Promise<CheckupItemRow> {
-    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/checkup-items', payload);
-    return res.data as CheckupItemRow;
+    const res = await api.post<{ ok: boolean; data: any; error?: string }>('/booking/config/checkup-items', payload);
+    const body = res.data || {};
+    if (!body.ok) throw new Error(body.error || '创建体检项目失败');
+    return body.data as CheckupItemRow;
   },
   async updateCheckupItem(id: string, payload: Partial<CheckupItemRow>): Promise<CheckupItemRow> {
-    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/checkup-items/${id}`, payload);
-    return res.data as CheckupItemRow;
+    const res = await api.put<{ ok: boolean; data: any; error?: string }>(`/booking/config/checkup-items/${id}`, payload);
+    const body = res.data || {};
+    if (!body.ok) throw new Error(body.error || '更新体检项目失败');
+    return body.data as CheckupItemRow;
   },
   async deleteCheckupItem(id: string): Promise<void> {
-    await api.delete<{ ok: boolean }>(`/booking/config/checkup-items/${id}`);
+    const res = await api.delete<{ ok: boolean; error?: string }>(`/booking/config/checkup-items/${id}`);
+    const body = res.data || {};
+    if (!body.ok) throw new Error(body.error || '删除体检项目失败');
   },
 
   // ===== 套餐项目（子资源）CRUD =====

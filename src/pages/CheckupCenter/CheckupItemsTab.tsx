@@ -410,7 +410,15 @@ export default function CheckupItemsTab() {
             </div>
             <div className="space-y-2">
               <div className="text-[11px] text-sky-800 flex items-center justify-between flex-wrap gap-2">
-                <span>对拍结果（{compare.parsedCount} 条 PDF / {compare.dbNameMap.size} 条数据库）</span>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span>对拍结果</span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono">文本 {compare.totalLines} 行</span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-mono">✅ 已解析 {compare.parsedCount}</span>
+                  {compare.skipped.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-mono">❌ 跳过 {compare.skipped.length}（展开详情）</span>
+                  )}
+                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-mono">数据库 {compare.dbNameMap.size} 条</span>
+                </div>
                 <span className="text-sky-700 font-semibold">差异 {compare.diffsWithManual.length}</span>
               </div>
 
@@ -636,6 +644,35 @@ export default function CheckupItemsTab() {
                 <span className="mx-1 px-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">手绑</span>
                 。<span className="text-rose-600">模糊 &lt;85% 的行默认不勾选</span>，请人工核对后再勾选同步。
               </div>
+
+              {/* 解析跳过明细（skipped） + 反向未匹配表 */}
+              {pdfText && compare.skipped.length > 0 && (
+                <details className="mt-2 border border-rose-200 rounded-lg overflow-hidden">
+                  <summary className="px-3 py-1.5 bg-rose-50 text-[11px] text-rose-800 cursor-pointer font-medium">
+                    ⚠️ 解析失败/跳过的 {compare.skipped.length} 行（含行号 + 原始内容 + 跳过原因，方便你修正粘贴文本）
+                  </summary>
+                  <div className="max-h-40 overflow-auto bg-white">
+                    <table className="w-full text-[10.5px]">
+                      <thead className="bg-gray-50 text-gray-600 sticky top-0">
+                        <tr>
+                          <th className="px-2 py-1 w-14 text-center">行号</th>
+                          <th className="px-2 py-1 text-left">原始内容</th>
+                          <th className="px-2 py-1 text-left">跳过原因</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compare.skipped.slice(0, 100).map(s => (
+                          <tr key={s.lineNo} className="border-t border-gray-100">
+                            <td className="px-2 py-1 text-center text-gray-500 font-mono">{s.lineNo}</td>
+                            <td className="px-2 py-1 text-gray-800 break-all font-mono">{s.raw}</td>
+                            <td className="px-2 py-1 text-rose-700">{s.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
 
               {/* A3 反向未匹配表：DB有但PDF未提及 */}
               {pdfText && compare.dbUnmatched.length > 0 && (
@@ -894,9 +931,11 @@ interface DiffRow {
 }
 interface PriceCompareResult {
   parsedCount: number;
+  totalLines: number; // 文本非空行数
   diffs: DiffRow[];
   matchedCount: number;
   unknownNames: string[];
+  skipped: Array<{ lineNo: number; raw: string; reason: string; parts?: string[]; digits?: (number|null)[] }>;
   dbNameMap: Map<string, CheckupItemRow>;
   dbRows: CheckupItemRow[];
   // A3: DB侧未被PDF引用的项目
@@ -1097,6 +1136,7 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
   const diffs: DiffRow[] = [];
   let matchedCount = 0;
   const unknownNames: string[] = [];
+  const skipped: PriceCompareResult['skipped'] = [];
   const dbNameMap = new Map<string, CheckupItemRow>();
   rows.forEach(r => {
     const k = normalize(r.name);
@@ -1116,15 +1156,19 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
   });
 
   const hitDbIds = new Set<string>();
-  const lines = text.split(/\r?\n/);
+  const rawLines = text.split(/\r?\n/);
   let parsedCount = 0;
+  let totalLines = 0;
 
-  for (const raw of lines) {
+  for (let li = 0; li < rawLines.length; li++) {
+    const raw = rawLines[li];
     const line = raw.replace(/^\s+|\s+$/g, '');
     if (!line) continue;
-    if (/项目名称|医保价格|定价|2023最新定价/.test(line)) continue;
+    totalLines++;
+    const lineNo = li + 1;
+    if (/项目名称|医保价格|定价|2023最新定价/.test(line)) { skipped.push({lineNo, raw:line, reason:'表头行'}); continue; }
     const parts = line.split(/\t+|,|\u3001|\u0020{2,}|\s{2,}|，/).map(s => s.replace(/^\s+|\s+$/g, '')).filter(Boolean);
-    if (parts.length < 2) continue;
+    if (parts.length < 2) { skipped.push({lineNo, raw:line, reason:`切分后列数<2（只有${parts.length}列，可能没按 tab/逗号/多空格隔开）`, parts}); continue; }
     const digits = parts.map(p => parsePrice(p));
     let priceIdx = -1;
     let insuredIdx = -1;
@@ -1132,15 +1176,15 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
       if (digits[i] !== null && priceIdx < 0) { priceIdx = i; continue; }
       if (digits[i] !== null && insuredIdx < 0) { insuredIdx = i; break; }
     }
-    if (priceIdx < 0) continue;
+    if (priceIdx < 0) { skipped.push({lineNo, raw:line, reason:'没找到定价数字（可能价格被写在名称里，或价格列包含符号如：~、元）', parts, digits}); continue; }
     let nameParts: string[];
     if (insuredIdx < 0) { nameParts = parts.slice(0, priceIdx); }
     else { nameParts = parts.slice(0, insuredIdx); }
     const name = nameParts.join(' ').replace(/^\s+|\s+$/g, '');
-    if (!name) continue;
+    if (!name) { skipped.push({lineNo, raw:line, reason:'名称为空', parts}); continue; }
     const pdfPrice = parsePrice(parts[priceIdx]);
     const pdfInsured = insuredIdx >= 0 ? parsePrice(parts[insuredIdx]) : null;
-    if (pdfPrice === null) continue;
+    if (pdfPrice === null) { skipped.push({lineNo, raw:line, reason:'定价列解析为空', parts}); continue; }
     parsedCount++;
 
     const { db, kind, score } = matchDbRow(name, dbKeyMap, dbShortMap, rows, dbDecomposed);
@@ -1193,7 +1237,7 @@ function priceCompare(rows: CheckupItemRow[], text: string): PriceCompareResult 
       return Number(b.status || 0) - Number(a.status || 0);
     });
 
-  return { parsedCount, diffs, matchedCount, unknownNames, dbNameMap, dbRows: rows, dbUnmatched, hitDbIds };
+  return { parsedCount, totalLines, diffs, matchedCount, unknownNames, skipped, dbNameMap, dbRows: rows, dbUnmatched, hitDbIds };
 }
 
 function parsePrice(s: string): number | null {
