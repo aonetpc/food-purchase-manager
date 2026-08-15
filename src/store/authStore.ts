@@ -236,25 +236,32 @@ export const useAuthStore = create<AuthStore>()(
           if (idxToRemove >= 0) mergedMenus.splice(idxToRemove, 1);
         }
 
-        // 兼容兜底：确保 menu:booking-board 至少在管理员能看到时被注入
-        // - 如果后端已返回 /booking-board，跳过
-        // - 如果用户角色是 admin 或后端返回了其他管理类菜单（permission/departments/wecom-test 等），判定其为管理用户，自动追加预订调度
-        if (!mergedMenus.some(m => m.path === '/booking-board')) {
-          const user = get().user;
-          const userRoles = user?.roles?.map((r: any) => typeof r === 'string' ? r : r.code) || [];
-          const isAdmin = userRoles.includes('admin') || userRoles.includes('ADMIN') ||
-                          userRoles.includes('超级管理员') || (user as any)?.isAdmin;
-          const hasAdminLevelMenu = mergedMenus.some(m =>
-            ['/permission', '/departments', '/wecom', '/wecom-test', '/ingredient-manager'].includes(m.path)
-          );
-          if (isAdmin || hasAdminLevelMenu) {
-            mergedMenus.push({
-              code: 'menu:booking-board',
-              name: '预订调度',
-              path: '/booking-board',
-              icon: 'Calendar',
-            });
-          }
+        // 兼容兜底：确保 menu:booking-board 和 menu:checkup-templates 至少在管理员能看到时被注入
+        const userRoles = user?.roles?.map((r: any) => typeof r === 'string' ? r : r.code) || [];
+        const isAdmin = userRoles.includes('admin') || userRoles.includes('ADMIN') ||
+                        userRoles.includes('超级管理员') || (user as any)?.isAdmin;
+        const hasAdminLevelMenu = mergedMenus.some(m =>
+          ['/permission', '/departments', '/wecom', '/wecom-test', '/ingredient-manager'].includes(m.path)
+        );
+        const isManagerUser = isAdmin || hasAdminLevelMenu;
+
+        // 预订调度：仅管理员或有管理级权限的用户可见
+        if (!mergedMenus.some(m => m.path === '/booking-board') && isManagerUser) {
+          mergedMenus.push({
+            code: 'menu:booking-board',
+            name: '预订调度',
+            path: '/booking-board',
+            icon: 'Calendar',
+          });
+        }
+        // 体检配单：所有已登录用户可见（用于 PC 端跳板跳转移动端）
+        if (!mergedMenus.some(m => m.path === '/checkup-templates') && user) {
+          mergedMenus.push({
+            code: 'menu:checkup-templates',
+            name: '体检配单',
+            path: '/checkup-templates',
+            icon: 'Stethoscope',
+          });
         }
 
         const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/wecom', '/wecom-test'];
