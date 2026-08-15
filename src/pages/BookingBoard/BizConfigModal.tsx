@@ -99,6 +99,14 @@ const TAB_LOADERS: Record<TabKey, TabKey[]> = {
   wellnessTypes:['wellnessTypes'],
   mealTypes:    ['mealTypes'],
 };
+const TAB_NAME_MAP: Record<TabKey, string> = {
+  packages: '体检套餐',
+  checkupItems: '体检项目',
+  roomTypes: '房型',
+  meetingHalls: '会议厅',
+  wellnessTypes: '康乐项目',
+  mealTypes: '用餐标准',
+};
 
 export default function BizConfigModal({
   open,
@@ -176,7 +184,7 @@ export default function BizConfigModal({
       return next;
     });
     try {
-      // 并行加载需要的 keys
+      // 并行加载需要的 keys（allSettled：单路失败不影响其他）
       const promises = needLoad.map(async k => {
         let data: any[];
         switch (k) {
@@ -189,8 +197,24 @@ export default function BizConfigModal({
         }
         return { k, data };
       });
-      const results = await Promise.all(promises);
-      results.forEach(({ k, data }) => setStateAndCache(k, data || []));
+      const results = await Promise.allSettled(promises);
+      const failed: string[] = [];
+      results.forEach((res, i) => {
+        if (res.status === 'fulfilled') {
+          const { k, data } = res.value;
+          // 仅 data 为数组时写入，防止异常响应覆盖 state
+          if (Array.isArray(data)) {
+            setStateAndCache(k, data);
+          } else {
+            failed.push(`${TAB_NAME_MAP[k]}（响应格式异常）`);
+          }
+        } else {
+          failed.push(TAB_NAME_MAP[needLoad[i]] + '（' + (res.reason?.message || '请求失败') + '）');
+        }
+      });
+      if (failed.length > 0) {
+        toast.error('部分配置加载失败：' + failed.join('；'));
+      }
     } catch (e) {
       toast.error('加载业务常量失败：' + (e as Error).message);
     } finally {
@@ -248,8 +272,10 @@ export default function BizConfigModal({
     setSaving(true);
     try {
       await apiFn();
-      clearCache(); // 保存后清除缓存，强制下次从服务器拉取
+      // 先 reload 强制从服务器拉；loadTabGroup 内部已会 setStateAndCache
       await loadTabGroup(Array.from(new Set([...affectedTabs, ...TAB_LOADERS[tab]])), true);
+      // reload 成功后再清全局缓存，避免中途失败导致缓存/state 双空白
+      clearCache();
       setEditing(null);
       onSuccess();
     } catch (e) {
@@ -274,8 +300,9 @@ export default function BizConfigModal({
       onConfirm: async () => {
         try {
           await apiFn();
-          clearCache();
+          // 先 reload 成功再清缓存，避免中途失败导致缓存/state 双空白
           await loadTabGroup(Array.from(new Set([...affectedTabs, ...TAB_LOADERS[tab]])), true);
+          clearCache();
         } catch (e) {
           toast.error('删除失败：' + (e as Error).message);
         }
@@ -681,7 +708,9 @@ function PackagesTable(props: TableProps<PackageRow> & { checkupItems: CheckupIt
               <th className="px-3 py-2 text-left font-medium w-20">编码</th>
               <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-center font-medium w-16">项目数</th>
-              <th className="px-3 py-2 text-right font-medium w-28">单价(¥)</th>
+              <th className="px-3 py-2 text-right font-medium w-24">原价(¥)</th>
+              <th className="px-3 py-2 text-right font-medium w-24">售价(¥)</th>
+              <th className="px-3 py-2 text-center font-medium w-20">折扣</th>
               <th className="px-3 py-2 text-center font-medium w-16">排序</th>
               <th className="px-3 py-2 text-center font-medium w-16">状态</th>
               <th className="px-3 py-2 text-center font-medium w-36">操作</th>
@@ -689,16 +718,26 @@ function PackagesTable(props: TableProps<PackageRow> & { checkupItems: CheckupIt
           </thead>
           <tbody>
             {rows.map(r => {
-              const dp = displayPrice(r);
+              const autoT = Number((r as any).auto_total ?? calcAutoTotal((r as any).items || []));
+              const price = Number(r.price || 0);
+              const discount = autoT > 0 && price > 0 ? ((price / autoT) * 100) : 0;
+              const discountColor =
+                autoT > 0 && price > 0
+                  ? discount < 85 ? 'text-amber-600'
+                  : discount < 100 ? 'text-green-600'
+                  : discount === 100 ? 'text-gray-600'
+                  : 'text-rose-600'
+                  : 'text-gray-300';
               const itemCount = (r as any).items?.length ?? (r as any).item_count ?? 0;
               return (
                 <tr key={r.id} className="border-t border-gray-100 hover:bg-gray-50/50">
                   <td className="px-3 py-2 font-mono"><span className="font-semibold">{r.code}</span></td>
                   <td className="px-3 py-2">{r.name}</td>
                   <td className="px-3 py-2 text-center">{itemCount}</td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {dp.text}
-                    {dp.tag && <span className={`ml-1 text-[10px] ${dp.tag === '自动' ? 'text-cyan-500' : 'text-amber-500'}`}>{dp.tag}</span>}
+                  <td className="px-3 py-2 text-right font-mono text-gray-500">¥{autoT.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold text-gray-900">¥{price.toLocaleString()}</td>
+                  <td className={`px-3 py-2 text-center font-mono font-semibold ${discountColor}`}>
+                    {autoT > 0 && price > 0 ? `${discount.toFixed(1)}%` : '—'}
                   </td>
                   <td className="px-3 py-2 text-center">{r.sort_order}</td>
                   <td className="px-3 py-2 text-center">
@@ -1051,13 +1090,22 @@ function PackageEditorModal({
     return groups;
   }, [checkupItems, pickerFilter]);
 
+  // 首次加项自动填售价：原价格为空/0 时按原价合计自动填入（用户已手动设置则不覆盖）
+  function autoFillPriceIfEmpty(nextItems: PackageItemRow[]): number | undefined | '' {
+    const curPrice = data.price;
+    if (nextItems.length > 0 && (curPrice === undefined || curPrice === null || curPrice === '' || Number(curPrice) === 0)) {
+      return nextItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+    }
+    return curPrice;
+  }
+
   function toggleItem(ci: CheckupItemRow) {
     if (selectedItemIds.has(ci.id)) {
       // 已选中 → 移除
-      setData(prev => ({
-        ...prev,
-        items: (prev.items || []).filter((it: PackageItemRow) => it.item_id !== ci.id),
-      }));
+      setData(prev => {
+        const nextItems = (prev.items || []).filter((it: PackageItemRow) => it.item_id !== ci.id);
+        return { ...prev, items: nextItems };
+      });
     } else {
       // 未选中 → 添加
       const newItem: PackageItemRow = {
@@ -1070,7 +1118,10 @@ function PackageEditorModal({
         remark: '',
         sort_order: items.length * 10 + 10,
       };
-      setData(prev => ({ ...prev, items: [...(prev.items || []), newItem] }));
+      setData(prev => {
+        const nextItems = [...(prev.items || []), newItem];
+        return { ...prev, items: nextItems, price: autoFillPriceIfEmpty(nextItems) };
+      });
     }
   }
 
@@ -1103,7 +1154,10 @@ function PackageEditorModal({
       remark: r.remark,
       sort_order: baseSort + i * 10,
     }));
-    setData(prev => ({ ...prev, items: [...(prev.items || []), ...newItems] }));
+    setData(prev => {
+      const nextItems = [...(prev.items || []), ...newItems];
+      return { ...prev, items: nextItems, price: autoFillPriceIfEmpty(nextItems) };
+    });
     setPasteOpen(false);
   }
 
@@ -1138,10 +1192,31 @@ function PackageEditorModal({
               <input value={data.name || ''} onChange={e => setField('name', e.target.value)} className={`${inputCls} !py-1 w-44`} />
             </label>
             <label className="flex items-center gap-1.5">
-              <span className="text-gray-500">单价(¥)</span>
-              <input type="number" step="0.01" value={data.price ?? 0} onChange={e => setField('price', e.target.value === '' ? '' : Number(e.target.value))} className={`${inputCls} !py-1 w-24`} />
+              <span className="text-gray-500">原价合计</span>
+              <span className={`font-mono font-semibold ${autoTotal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>¥{autoTotal.toLocaleString()}</span>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">售价(¥)</span>
+              <input type="number" step="0.01" value={data.price ?? 0} onChange={e => setField('price', e.target.value === '' ? '' : Number(e.target.value))} className={`${inputCls} !py-1 w-28`} />
               {autoTotal > 0 && Number(data.price || 0) === 0 && (
-                <span className="text-[10px] text-cyan-500 whitespace-nowrap">自动 ¥{autoTotal.toLocaleString()}</span>
+                <button type="button" onClick={() => setField('price', autoTotal)} className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500 text-white whitespace-nowrap hover:bg-cyan-600 transition-colors">
+                  自动填 ¥{autoTotal.toLocaleString()}
+                </button>
+              )}
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">折扣</span>
+              {autoTotal > 0 && Number(data.price || 0) > 0 ? (
+                <span className={`font-mono font-semibold ${
+                  (Number(data.price) / autoTotal) < 0.85 ? 'text-amber-600'
+                  : (Number(data.price) / autoTotal) < 1 ? 'text-green-600'
+                  : (Number(data.price) / autoTotal) === 1 ? 'text-gray-600'
+                  : 'text-rose-600'
+                }`}>
+                  {((Number(data.price) / autoTotal) * 100).toFixed(1)}%
+                </span>
+              ) : (
+                <span className="text-gray-300 font-mono">—</span>
               )}
             </label>
             <label className="flex items-center gap-1.5">
