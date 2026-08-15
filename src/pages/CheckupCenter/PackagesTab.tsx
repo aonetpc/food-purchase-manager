@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, Copy, Trash2, Users, Search, Download, Shield, Eye } from 'lucide-react';
-import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, type CheckupTemplate } from './api';
+import { Plus, Copy, Trash2, Users, Search, Download, Shield, Eye, AlertTriangle } from 'lucide-react';
+import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, type Role, type CheckupTemplate } from './api';
 import { useToast } from '@/components/Toast';
 import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
@@ -16,6 +16,32 @@ const btnDanger =
   'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] rounded-lg bg-white hover:bg-red-50 text-red-500 border border-red-200 transition-colors';
 
 interface SalesUser { id: string; name: string; username?: string; }
+
+// 计算价格偏差百分比（基数为0时按对方处理）
+function priceDeviation(savedOrig: number, realOrig: number): number {
+  const base = savedOrig;
+  if (base === 0 && realOrig === 0) return 0;
+  if (base === 0) return 100; // 有实际原价但没保存 → 100%偏差
+  return ((realOrig - base) / base) * 100;
+}
+// 按 items_by_role 快照回算各角色原价合计
+function computeRoleRealTotals(tpl: { items_by_role?: Record<string, any[]>; applicable_roles?: Role[] }) {
+  const result: Record<Role, number> = { male: 0, female_married: 0, female_single: 0 };
+  const src = tpl.items_by_role || {};
+  const applyRoles: Role[] = tpl.applicable_roles?.length ? tpl.applicable_roles : [...ROLES];
+  const roleKeys: ('common' | Role)[] = ['common', ...ROLES];
+  // 预处理公共项目
+  const common = Array.isArray(src.common) ? src.common : [];
+  const commonTotal = common.reduce((s, it) => s + (Number(it.item_price) || 0) * Math.max(1, Number(it.quantity) || 1), 0);
+  applyRoles.forEach(r => {
+    let total = commonTotal;
+    const roleItems = Array.isArray(src[r]) ? src[r] : [];
+    total += roleItems.reduce((s, it) => s + (Number(it.item_price) || 0) * Math.max(1, Number(it.quantity) || 1), 0);
+    result[r] = Math.round(total * 100) / 100;
+  });
+  return result;
+}
+
 
 export default function PackagesTab() {
   const toast = useToast();
@@ -284,6 +310,20 @@ function PackageCard({
   const canEdit = isAdmin || isOwner;
   const covers: string[] = Array.isArray((pkg as any).cover_sales_ids) ? (pkg as any).cover_sales_ids : [];
 
+  // 按快照回算每个角色的原价汇总（与套餐里保存的 original_total 做偏差比对）
+  const roleRealTotals = computeRoleRealTotals(pkg as any);
+
+  // 卡片整体有无偏差
+  const deviatedRoles: Role[] = [];
+  applicable.forEach((r: Role) => {
+    const diff = priceDeviation(
+      Number(((pkg as any).role_price_capsule || {})[r]?.original_total || 0),
+      roleRealTotals[r] || 0,
+    );
+    if (Math.abs(diff) > 5) deviatedRoles.push(r);
+  });
+  const pkgDriftWarning = deviatedRoles.length > 0;
+
   // 销售员名字映射
   const ownerName = (pkg as any).owner_sales_id
     ? salesUsers.find(s => s.id === (pkg as any).owner_sales_id)?.name || '销售员'
@@ -291,9 +331,11 @@ function PackageCard({
   const coverNames = covers.map(cid => salesUsers.find(s => s.id === cid)?.name).filter(Boolean) as string[];
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col">
+    <div className={`bg-white rounded-xl shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col ${
+      pkgDriftWarning ? 'border-2 border-rose-200 ring-1 ring-rose-100' : 'border border-gray-200'
+    }`}>
       {/* 卡片头：标签 + 标题 */}
-      <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+      <div className={`px-4 pt-4 pb-3 border-b ${pkgDriftWarning ? 'border-rose-100' : 'border-gray-100'}`}>
         <div className="flex items-start gap-2 mb-2 flex-wrap">
           {isPublic && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-medium">
@@ -316,6 +358,13 @@ function PackageCard({
               <Users size={11} /> {coverNames.length}人
             </span>
           )}
+          {pkgDriftWarning && (
+            <span title={`${deviatedRoles.map(r => ROLE_LABEL[r]).join('、')} 价格已偏离当前项目汇总，建议进入编辑后重新保存`}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-semibold">
+              <AlertTriangle size={11} />
+              {deviatedRoles.map(r => ROLE_EMOJI[r]).join('')} 价格需重新同步
+            </span>
+          )}
         </div>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
@@ -332,21 +381,33 @@ function PackageCard({
           const orig = Number(plan.original_total || 0);
           const disc = Number(plan.discount_price || 0);
           const rate = Number(plan.discount_rate || 100);
+          const realOrig = roleRealTotals[r as Role] || 0;
+          const diff = priceDeviation(orig, realOrig);
+          const drift = Math.abs(diff) > 5;
           return (
-            <div key={r} className={`flex items-center justify-between px-3 py-2 rounded-lg ${
-              r === 'male' ? 'bg-blue-50/50' : r === 'female_married' ? 'bg-pink-50/50' : 'bg-purple-50/50'
+            <div key={r} className={`flex items-center justify-between px-3 py-2 rounded-lg relative ${
+              drift
+                ? 'bg-rose-50/70 ring-1 ring-rose-200'
+                : r === 'male' ? 'bg-blue-50/50' : r === 'female_married' ? 'bg-pink-50/50' : 'bg-purple-50/50'
             }`}>
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xl">{ROLE_EMOJI[r as any] || '👤'}</span>
                 <div className="min-w-0">
                   <div className="text-[12px] font-medium text-gray-800">{ROLE_LABEL[r as any] || r}</div>
-                  <div className="text-[10px] text-gray-400 line-through">原价 ¥{orig.toFixed(0)}</div>
+                  <div className={`text-[10px] line-through ${drift ? 'text-rose-500' : 'text-gray-400'}`}>
+                    原价 ¥{orig.toFixed(0)}
+                    {drift && (
+                      <span className="not-italic ml-1" title={`项目按当前快照回算合计 ¥${realOrig.toFixed(0)}`}>
+                        (实际 ¥{realOrig.toFixed(0)}，偏差 {diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <div className="text-base font-bold text-emerald-800 leading-tight">¥{disc.toFixed(0)}</div>
+                <div className={`text-base font-bold leading-tight ${drift ? 'text-rose-700' : 'text-emerald-800'}`}>¥{disc.toFixed(0)}</div>
                 {rate < 100 && orig > 0 && (
-                  <div className="text-[10px] text-amber-600 font-medium">{rate.toFixed(0)}折</div>
+                  <div className={`text-[10px] font-medium ${drift ? 'text-rose-600' : 'text-amber-600'}`}>{rate.toFixed(0)}折</div>
                 )}
               </div>
             </div>
@@ -357,7 +418,7 @@ function PackageCard({
       {/* 卡片底：操作按钮 */}
       <div className="px-3 py-2.5 border-t border-gray-100 bg-gray-50/30 flex items-center flex-wrap gap-1.5">
         <button onClick={onEdit} className={btnGhost + ' !px-2.5 !py-1.5'}>
-          ✏️ 编辑
+          ✏️ {pkgDriftWarning ? '重新同步' : '编辑'}
         </button>
         <button onClick={onClone} className={btnGhost + ' !px-2.5 !py-1.5'}>
           <Copy size={12} /> 克隆

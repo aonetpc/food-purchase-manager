@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Plus, Search, Save, ChevronLeft, ChevronRight, Check, Sparkles } from 'lucide-react';
+import { X, Plus, Search, Save, ChevronLeft, ChevronRight, Check, Sparkles, AlertTriangle } from 'lucide-react';
 import {
   checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, ROLE_HINT, CATEGORIES,
   type Role, type CheckupTemplate, type CheckupItem, type CheckupItemRef, type RolePlan
@@ -236,6 +236,30 @@ export default function PackageDrawer({
     });
   };
 
+  // P4: 按当前选中项目重新生成三角色方案（原价 = 项目*数量汇总，优惠价 = 原价，折扣率 = 100）
+  // 如果之前已设置统一折扣率（比如 90），则沿用上次折扣率重算 discount_price
+  const recomputeRolePlansByItems = () => {
+    setRolePlans(prev => {
+      const next: any = { ...prev };
+      for (const r of applicable) {
+        const { total } = summaryForRole(r);
+        const previous = next[r] || {};
+        const keepRate = previous.discount_rate && Number(previous.discount_rate) > 0
+          ? Number(previous.discount_rate)
+          : 100;
+        const roundedTotal = Math.round(total * 100) / 100;
+        next[r] = {
+          ...previous,
+          original_total: roundedTotal,
+          discount_rate: keepRate,
+          discount_price: Math.round(roundedTotal * keepRate) / 100,
+        };
+      }
+      return next;
+    });
+    toast.success('已按当前项目重新生成三角色价格方案');
+  };
+
   // -------- 保存：基本信息 → （如需创建）→ items & plans --------
   const saveInfo = async () => {
     if (!form.name.trim()) { toast.error('请填写套餐名称'); return; }
@@ -402,6 +426,7 @@ export default function PackageDrawer({
               summaryForRole={summaryForRole}
               setRolePlanField={setRolePlanField}
               applySameRate={applySameRate}
+              recomputeRolePlansByItems={recomputeRolePlansByItems}
             />
           )}
         </div>
@@ -770,7 +795,7 @@ function ItemCard({ item, selected, shadow, qty, onToggle, onQty }: {
 }
 
 // -------- 步骤3：定方案（价格折扣） --------
-function PlanStep({ applicable, rolePlans, summaryForRole, setRolePlanField, applySameRate }: any) {
+function PlanStep({ applicable, rolePlans, summaryForRole, setRolePlanField, applySameRate, recomputeRolePlansByItems }: any) {
   return (
     <div className="p-6 space-y-6">
       {/* 统一折扣快捷操作 */}
@@ -789,6 +814,12 @@ function PlanStep({ applicable, rolePlans, summaryForRole, setRolePlanField, app
             </button>
           ))}
         </div>
+        {typeof recomputeRolePlansByItems === 'function' && (
+          <button onClick={recomputeRolePlansByItems}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm">
+            <Sparkles size={12} /> 按当前项目重新生成方案
+          </button>
+        )}
         <span className="text-[11px] text-amber-700 ml-auto">对所有角色同时生效</span>
       </div>
 
@@ -801,16 +832,28 @@ function PlanStep({ applicable, rolePlans, summaryForRole, setRolePlanField, app
           const dp = Number(p.discount_price || 0);
           const rate = Number(p.discount_rate || 100);
           const saved = orig - dp;
+          const driftPct = auto.total > 0 || orig > 0
+            ? (orig === 0 ? 100 : ((orig - auto.total) / orig) * 100)
+            : 0;
+          const drift = Math.abs(driftPct) > 5;
           const color = r === 'male' ? 'blue' : r === 'female_married' ? 'pink' : 'purple';
           const headerCls: any = {
-            blue: 'from-blue-500 to-blue-600',
-            pink: 'from-pink-500 to-rose-600',
-            purple: 'from-purple-500 to-violet-600',
+            blue: drift ? 'from-rose-500 to-rose-600' : 'from-blue-500 to-blue-600',
+            pink: drift ? 'from-rose-500 to-rose-600' : 'from-pink-500 to-rose-600',
+            purple: drift ? 'from-rose-500 to-rose-600' : 'from-purple-500 to-violet-600',
           };
           return (
-            <div key={r} className="bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col">
+            <div key={r} className={`bg-white rounded-2xl overflow-hidden flex flex-col border-2 transition-colors ${
+              drift ? 'border-rose-300 ring-1 ring-rose-100' : 'border border-gray-200'
+            }`}>
               {/* 头：角色 + 汇总 */}
               <div className={`bg-gradient-to-br ${headerCls[color]} text-white px-5 py-4`}>
+                {drift && (
+                  <div className="mb-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/20 text-[11px] font-semibold">
+                    <AlertTriangle size={11} />
+                    原价已偏离项目汇总 {driftPct > 0 ? '+' : ''}{driftPct.toFixed(1)}%
+                  </div>
+                )}
                 <div className="flex items-center gap-2.5 mb-2">
                   <span className="text-3xl leading-none">{ROLE_EMOJI[r]}</span>
                   <div>
@@ -820,11 +863,16 @@ function PlanStep({ applicable, rolePlans, summaryForRole, setRolePlanField, app
                   <div className="ml-auto text-right">
                     <div className="text-[11px] opacity-80">共 {auto.count} 项</div>
                     <div className="text-xs opacity-90">医保合计 ¥{auto.insurance.toFixed(0)}</div>
+                    {drift && (
+                      <div className="text-[11px] mt-0.5 opacity-95">
+                        项目合计 ¥{Number(auto.total).toFixed(0)}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-end justify-between">
                   <div>
-                    <div className="text-[11px] opacity-80">原价（自动计算）</div>
+                    <div className="text-[11px] opacity-80">原价</div>
                     <div className="text-lg font-bold line-through opacity-90">¥{orig.toFixed(2)}</div>
                   </div>
                   <div className="text-right">
@@ -842,6 +890,23 @@ function PlanStep({ applicable, rolePlans, summaryForRole, setRolePlanField, app
               </div>
               {/* 中：手动调整 */}
               <div className="px-5 py-4 space-y-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                    原价合计
+                    {drift && <span className="text-rose-600 font-medium">⚠ 与项目汇总不一致，建议"按当前项目重新生成"</span>}
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={orig || ''}
+                    onChange={e => setRolePlanField(r, 'original_total', e.target.value === '' ? 0 : Number(e.target.value))}
+                    className={`w-full border rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none focus:border-green-500 ${
+                      drift
+                        ? 'bg-rose-50 border-rose-200 text-rose-700'
+                        : 'bg-gray-50 border-gray-200 text-gray-700'
+                    }`}
+                  />
+                </div>
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">优惠价（元）</label>
                   <input
