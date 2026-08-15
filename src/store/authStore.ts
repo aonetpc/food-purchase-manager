@@ -181,8 +181,12 @@ export const useAuthStore = create<AuthStore>()(
         if (!user || !user.permissions) return [];
 
         const rawMenus: MenuItem[] = [];
+        const seenPaths = new Set<string>();  // ← Phase F3：按 path 去重，防重复菜单（比如月底考核）
         user.permissions.modules.forEach(mod => {
           mod.menus.forEach(menu => {
+            if (!menu || !menu.path) return;
+            if (seenPaths.has(menu.path)) return;  // 同路径只保留第一个
+            seenPaths.add(menu.path);
             rawMenus.push(menu);
           });
         });

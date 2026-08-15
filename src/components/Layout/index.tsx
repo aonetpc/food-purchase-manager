@@ -78,6 +78,42 @@ const menuGroups = [
   { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/booking-board', '/checkup-templates', '/wecom', '/wecom-test'] },
 ];
 
+// 多角色展示优先级 + 中文名映射（越前面优先级越高）
+const ROLE_ORDER: Array<{ code: string; label: string }> = [
+  { code: 'admin', label: '管理员' },
+  { code: 'boss', label: '董事长' },
+  { code: 'finance', label: '财务' },
+  { code: 'warehouse', label: '仓库管理员' },
+  { code: 'booker', label: '预订员' },
+  { code: 'sales', label: '销售员' },
+  { code: 'purchaser', label: '采购员' },
+  { code: 'temp_auditor', label: '外请审核员' },
+  { code: 'temp_chairman', label: '外请董事长' },
+  { code: 'viewer', label: '普通员工' },
+];
+
+// 从 user.role + user.roles 合并去重，并按优先级返回最多 2 个角色名(拼接)
+function getUserRoleText(user: any): string {
+  if (!user) return '';
+  const rawRoles = new Set<string>();
+  if (user.role) rawRoles.add(typeof user.role === 'string' ? user.role : '');
+  if (Array.isArray(user.roles)) {
+    user.roles.forEach((r: any) => {
+      const code = typeof r === 'string' ? r : (r?.code ?? r?.name ?? '');
+      if (code) rawRoles.add(code);
+    });
+  }
+  const labels: string[] = [];
+  for (const r of ROLE_ORDER) {
+    if (rawRoles.has(r.code)) {
+      labels.push(r.label);
+      if (labels.length >= 2) break; // 最多展示 2 个，避免拥挤
+    }
+  }
+  if (labels.length === 0) return '普通员工';
+  return labels.join(' / ');
+}
+
 export default function Layout() {
   const navigate = useNavigate();
   const { user, isAdmin, canViewMonthly, logout, getUserMenus } = useAuthStore();
@@ -314,14 +350,7 @@ export default function Layout() {
                   </div>
                   <div className="hidden sm:block text-left">
                     <p className="text-sm font-medium text-gray-800">{user.name}</p>
-                    <p className="text-xs text-gray-500">
-                    {user.role === 'admin' ? '管理员' :
-                     user.role === 'finance' ? '财务' :
-                     user.role === 'boss' ? '董事长' :
-                     user.role === 'temp_auditor' ? '外请审核员' :
-                     user.role === 'temp_chairman' ? '外请董事长' :
-                     user.role === 'purchaser' ? '采购员' : '普通员工'}
-                  </p>
+                    <p className="text-xs text-gray-500">{getUserRoleText(user) || '普通员工'}</p>
                   </div>
                   <ChevronDown size={16} className="text-gray-400 hidden sm:block" />
                 </button>

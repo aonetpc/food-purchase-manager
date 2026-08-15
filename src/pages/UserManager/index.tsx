@@ -33,7 +33,7 @@ const ROLE_LABELS: Record<string, { label: string; color: string }> = {
 
 export default function UserManager(props: { embedded?: boolean }) {
   const { embedded = false } = props || {};
-  const { user } = useAuthStore();
+  const { user, isAdmin } = useAuthStore();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -267,8 +267,8 @@ export default function UserManager(props: { embedded?: boolean }) {
   };
 
   const canManage = (targetUser: UserItem) => {
-    if (user?.role !== 'admin') return false;
-    if (targetUser.id === user.id) return false;
+    if (!isAdmin()) return false;
+    if (targetUser.id === user?.id) return false;
     return true;
   };
 
