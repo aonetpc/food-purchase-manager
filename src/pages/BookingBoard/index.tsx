@@ -328,9 +328,19 @@ function GanttCard({
         </div>
         <div className="text-xs font-bold text-gray-900 truncate mt-0.5">{group.customerName}</div>
         <div className="text-[11px] text-gray-700 truncate">
-          {item.pax}
-          {BIZ_MAP[item.itemType].unit}
-          {item.amount ? ` · ¥${item.amount}` : ''}
+          {item.itemType === 'lunch' || item.itemType === 'dinner' ? (() => {
+            const sess = item.extra.sessions || [];
+            const tbl = sess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? 0 : (x.tables || 0)), 0);
+            const paxPp = sess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? (x.pax || 0) : 0), 0);
+            const qty = tbl > 0 ? `${tbl}桌` : (paxPp > 0 ? `${paxPp}人` : `${item.pax}${BIZ_MAP[item.itemType].unit}`);
+            return `${qty}${item.amount ? ` · ¥${item.amount}` : ''}`;
+          })() : (
+            <>
+              {item.pax}
+              {BIZ_MAP[item.itemType].unit}
+              {item.amount ? ` · ¥${item.amount}` : ''}
+            </>
+          )}
         </div>
         <div className="text-[10px] text-gray-500 truncate">{group.remark?.trim() || '—'}</div>
       </div>
@@ -605,8 +615,19 @@ function DetailModal({
                             {it.endTime ? `-${it.endTime}` : ''}
                           </td>
                           <td className="px-2 py-1.5 text-right text-gray-700">
-                            {it.pax}
-                            {biz.unit}
+                            {it.itemType === 'lunch' || it.itemType === 'dinner' ? (() => {
+                              const sess = it.extra.sessions || [];
+                              const tbl = sess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? 0 : (x.tables || 0)), 0);
+                              const paxPp = sess.reduce((s: number, x: any) => s + (x.pricingMode === 'per_person' ? (x.pax || 0) : 0), 0);
+                              if (tbl > 0) return `${tbl}桌`;
+                              if (paxPp > 0) return `${paxPp}人`;
+                              return `${it.pax}${biz.unit}`;
+                            })() : (
+                              <>
+                                {it.pax}
+                                {biz.unit}
+                              </>
+                            )}
                           </td>
                           <td className="px-2 py-1.5 text-right font-mono text-gray-700">
                             {displayAmount ? `¥${displayAmount.toLocaleString()}` : '-'}
