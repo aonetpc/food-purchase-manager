@@ -65,6 +65,7 @@ import {
   groupTotal,
 } from './utils';
 import { bookingApi, type BookingSalesUser, type BookingConfig, type MealTypeRow } from '../../lib/api';
+import { checkupApi, type Role } from '@/pages/CheckupTemplates/api';
 import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, CheckupItemRow } from './types';
 
 // ================================================
@@ -91,7 +92,13 @@ function parseDateLocal(s: string): Date {
 }
 
 function emptyPax(): PaxEntry {
-  return { name: '', idCard: '', phone: '', gender: '男', married: false, package: 'A' };
+  return { name: '', idCard: '', phone: '', gender: '男', married: false, package: '' };
+}
+
+// 人员性别+婚否 → 套餐角色映射
+function paxToRole(gender: '男' | '女', married: boolean): Role {
+  if (gender === '男') return 'male';
+  return married ? 'female_married' : 'female_single';
 }
 
 // 获取用餐标准信息（从后端配置或兜底常量）
@@ -915,7 +922,43 @@ export default function BookingBoardCreate(props: {
     return () => { mounted = false; };
   }, []);
 
-  // 动态映射（code -> 完整记录；name -> code）
+  // 销售员名下套餐胶囊（Phase 4：选完销售员后自动加载）
+  const [salesCapsules, setSalesCapsules] = useState<any[]>([]);
+  const [capsulesLoading, setCapsulesLoading] = useState(false);
+
+  useEffect(() => {
+    const sid = draftGroup.salesPersonId;
+    if (!sid) { setSalesCapsules([]); return; }
+    let mounted = true;
+    setCapsulesLoading(true);
+    (async () => {
+      try {
+        const res = await checkupApi.listSalesCapsules(sid);
+        if (!mounted) return;
+        if (res?.ok) setSalesCapsules(res.data || []);
+        else setSalesCapsules([]);
+      } catch { if (mounted) setSalesCapsules([]); }
+      finally { if (mounted) setCapsulesLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, [draftGroup.salesPersonId]);
+
+  // 胶囊查找：按 capsule.id 查找
+  const capsuleMap = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const c of salesCapsules) m[c.id] = c;
+    return m;
+  }, [salesCapsules]);
+
+  // 获取某 pax 的套餐折后价（基于胶囊 + 性别角色匹配）
+  function getCapsulePriceForPax(p: PaxEntry): number {
+    if (!p.package) return 0;
+    const cap = capsuleMap[p.package];
+    if (!cap) return 0;
+    const role = paxToRole(p.gender, p.married);
+    const plan = cap.prices?.[role];
+    return Number(plan?.discount_price || 0);
+  }
   const pkgMap = useMemo<Record<string, PackageRow & { label: string }>>(
     () => bizConfig.packages.reduce((acc, p) => {
       acc[p.code] = { ...p, label: `${p.name} · ¥${Number(p.price || 0).toLocaleString()}` };
@@ -1303,7 +1346,7 @@ export default function BookingBoardCreate(props: {
   }
 
   // 【有效解析】获取一个 pax 的最终金额
-  // customItems 或 sharedEdits 存在时按 items 累加；否则用套餐单价
+  // 优先级：customItems > sharedEdits > 销售胶囊(按性别角色匹配) > 传统套餐单价
   function calcSinglePaxEffective(p: PaxEntry): number {
     if (p.customItems && p.customItems.length > 0) {
       return p.customItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
@@ -1312,6 +1355,9 @@ export default function BookingBoardCreate(props: {
     if (shared) {
       return shared.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
     }
+    // Phase 4：如果该套餐是销售胶囊中的套餐，按性别角色匹配折后价
+    const capPrice = getCapsulePriceForPax(p);
+    if (capPrice > 0) return capPrice;
     return calcSinglePaxAmount(p, finalBizConfigForCalc);
   }
 
@@ -2427,18 +2473,31 @@ export default function BookingBoardCreate(props: {
                                 <select
                                   value={p.package}
                                   onChange={(e) => {
-                                    // 切换套餐时：若该人是"标准状态"，保持标准；若已定制，询问是否重置？
-                                    // 简化处理：切换套餐时自动清除 customItems（避免旧套餐的项目残留在新套餐里）
                                     updChkPax(idx, { package: e.target.value as PackageCode, customItems: null });
                                   }}
                                   className={cellInput}
                                 >
-                                  {finalPkgOptions.map((pkg) => (
-                                    <option key={pkg.code} value={pkg.code}>
-                                      {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
-                                    </option>
-                                  ))}
+                                  <option value="">— 选套餐 —</option>
+                                  {salesCapsules.length > 0
+                                    ? salesCapsules.map((cap) => {
+                                        const role = paxToRole(p.gender, p.married);
+                                        const price = cap.prices?.[role]?.discount_price || 0;
+                                        return (
+                                          <option key={cap.id} value={cap.id}>
+                                            {cap.name} · ¥{Number(price).toLocaleString()}
+                                          </option>
+                                        );
+                                      })
+                                    : finalPkgOptions.map((pkg) => (
+                                        <option key={pkg.code} value={pkg.code}>
+                                          {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
+                                        </option>
+                                      ))
+                                  }
                                 </select>
+                                {salesCapsules.length === 0 && !capsulesLoading && draftGroup.salesPersonId && (
+                                  <span className="text-[10px] text-amber-500 block mt-0.5">该销售员暂无套餐</span>
+                                )}
                               </td>
                               <td className="px-1.5 py-1 text-center">
                                 {p.name.trim() ? (
