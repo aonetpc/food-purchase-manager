@@ -104,6 +104,39 @@ export default function SharePage() {
   const applicable: Role[] = useMemo(() => (pkg?.applicable_roles as any) || ROLES, [pkg]);
   const primaryColor = company?.primary_color || '#0f5132';
 
+  // ✅ 所有 useMemo / hook 派生值必须在条件 return 之前，否则 React 会因 hooks 数量不一致报错
+  const highlights = useMemo(() => {
+    const hs: string[] = [];
+    if (!pkg) return hs;
+    const totalItems = applicable.reduce((sum, r) => {
+      return sum + ((pkg.role_items as any)?.[r]?.items?.length || 0);
+    }, 0);
+    if (totalItems > 0) hs.push(`🧪 ${totalItems}项深度检查`);
+    let hasCT = false, hasTumor = false, hasImaging = false;
+    applicable.forEach(r => {
+      const items: CheckupItemRef[] = (pkg.role_items as any)?.[r]?.items || [];
+      items.forEach(it => {
+        const n = (it.item_name_snapshot || '').toLowerCase();
+        if (/ct|磁共振|钼靶|dr|摄片|拍片/.test(n)) hasImaging = true;
+        if (/肿瘤|癌胚|甲胎|afp|cea|tct|hpv/.test(n)) hasTumor = true;
+        if (n.includes('ct')) hasCT = true;
+      });
+    });
+    if (hasCT) hs.push('🩻 含CT影像检查');
+    else if (hasImaging) hs.push('🩻 含彩超/DR影像检查');
+    if (hasTumor) hs.push('🔬 含肿瘤标志物筛查');
+    else if (applicable.length > 1) hs.push(`👥 覆盖${applicable.length}类人群方案`);
+    if (hs.length < 3) hs.push('📋 三工作日出报告 · 专家解读');
+    if (hs.length < 3) hs.push('💬 专属客户经理一对一服务');
+    return hs.slice(0, 3);
+  }, [pkg, applicable]);
+
+  // 派生变量（非hook，可放在条件return之后也可之前，但统一前置更安全）
+  const ownerName = sales?.name || '';
+  const ownerPhone = sales?.phone || '';
+  const ownerAvatar = sales?.avatar_url || null;
+  const ownerLetter = ownerName ? ownerName.slice(0, 1) : 'U';
+
   const groupByCategory = (items: CheckupItemRef[]) => {
     const groups: Record<string, CheckupItemRef[]> = {};
     for (const it of items) {
@@ -141,11 +174,6 @@ export default function SharePage() {
   if (loading) return <div className="p-12 text-center text-gray-400 text-sm">加载中...</div>;
   if (!pkg) return null;
 
-  const ownerName = sales?.name || '';
-  const ownerPhone = sales?.phone || '';
-  const ownerAvatar = sales?.avatar_url || null;
-  const ownerLetter = ownerName ? ownerName.slice(0, 1) : 'U';
-
   const tel = (p: string) => { if (p) window.location.href = 'tel:' + p; };
   const copyText = async (text: string, label = '已复制') => {
     try {
@@ -162,33 +190,6 @@ export default function SharePage() {
     if (!addr) return;
     window.open('https://uri.amap.com/marker?position=&name=' + encodeURIComponent(addr) + '&src=hycheckup&coordinate=gaode&callnative=1', '_blank');
   };
-
-  // 计算方案亮点摘要（从明细中提取关键词）
-  const highlights = useMemo(() => {
-    const hs: string[] = [];
-    const totalItems = applicable.reduce((sum, r) => {
-      return sum + ((pkg.role_items as any)?.[r]?.items?.length || 0);
-    }, 0);
-    if (totalItems > 0) hs.push(`🧪 ${totalItems}项深度检查`);
-    let hasCT = false, hasTumor = false, hasImaging = false;
-    applicable.forEach(r => {
-      const items: CheckupItemRef[] = (pkg.role_items as any)?.[r]?.items || [];
-      items.forEach(it => {
-        const n = (it.item_name_snapshot || '').toLowerCase();
-        if (/ct|磁共振|钼靶|dr|摄片|拍片/.test(n)) hasImaging = true;
-        if (/肿瘤|癌胚|甲胎|afp|cea|tct|hpv/.test(n)) hasTumor = true;
-        if (n.includes('ct')) hasCT = true;
-      });
-    });
-    if (hasCT) hs.push('🩻 含CT影像检查');
-    else if (hasImaging) hs.push('🩻 含彩超/DR影像检查');
-    if (hasTumor) hs.push('🔬 含肿瘤标志物筛查');
-    else if (applicable.length > 1) hs.push(`👥 覆盖${applicable.length}类人群方案`);
-    // 凑3个亮点，不足补通用说明
-    if (hs.length < 3) hs.push('📋 三工作日出报告 · 专家解读');
-    if (hs.length < 3) hs.push('💬 专属客户经理一对一服务');
-    return hs.slice(0, 3);
-  }, [pkg, applicable]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 via-[#f5f2e8] to-[#eee9db] pb-36">
