@@ -104,6 +104,18 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
   return result;
 }
 
+// 归一化：原价为0但折扣价有值时，用折扣价当原价（老套餐未写original_total的兜底）
+function normalizePlanOrig(plan) {
+  const ot = round2(plan.original_total);
+  const dp = round2(plan.discount_price);
+  return {
+    original_total: ot === 0 && dp > 0 ? dp : ot,
+    discount_price: dp,
+    discount_rate: round2(plan.discount_rate),
+    remark: plan.remark ?? null,
+  };
+}
+
 // 读取单个套餐 + role_plans + 明细聚合
 async function readPackageFull(packageId) {
   const [rows] = await pool.query('SELECT * FROM booking_packages WHERE id = ?', [packageId]);
@@ -113,12 +125,7 @@ async function readPackageFull(packageId) {
   pkg.cover_sales_ids = parseMaybeJson(pkg.cover_sales_ids) || null;
   const [plans] = await pool.query('SELECT * FROM booking_package_role_plans WHERE package_id = ?', [packageId]);
   pkg.role_plans = plans.reduce((m, r) => {
-    m[r.role] = {
-      original_total: round2(r.original_total),
-      discount_price: round2(r.discount_price),
-      discount_rate: round2(r.discount_rate),
-      remark: r.remark || null,
-    };
+    m[r.role] = normalizePlanOrig(r);
     return m;
   }, {});
   // 缺失的角色补默认（空套餐）
@@ -214,11 +221,7 @@ router.get('/', async (req, res) => {
       );
       for (const pl of plans) {
         if (!plansMap.has(pl.package_id)) plansMap.set(pl.package_id, {});
-        plansMap.get(pl.package_id)[pl.role] = {
-          original_total: round2(pl.original_total),
-          discount_price: round2(pl.discount_price),
-          discount_rate: round2(pl.discount_rate),
-        };
+        plansMap.get(pl.package_id)[pl.role] = normalizePlanOrig(pl);
       }
     }
     const list = rows.map(p => {

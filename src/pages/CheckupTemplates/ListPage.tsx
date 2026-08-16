@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, type CheckupTemplate } from './api';
 import { useToast } from '@/components/Toast';
+import { useAuthStore } from '@/store/authStore';
 
 type ScopeTab = 'mine' | 'public' | 'shared';
 
 export default function ListPage() {
  const navigate = useNavigate();
  const toast = useToast();
+ const user = useAuthStore(s => s.user);
  const [scope, setScope] = useState<ScopeTab>('mine');
  const [keyword, setKeyword] = useState('');
  const [loading, setLoading] = useState(false);
@@ -43,8 +45,17 @@ export default function ListPage() {
          <div className="flex items-center gap-2">
            <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-[#1f6b3e] to-green-800 text-white flex items-center justify-center text-lg">🏥</div>
            <div>
-             <div className="text-base font-bold text-gray-900 leading-tight">体检配单</div>
+             <div className="text-base font-bold text-gray-900 leading-tight">画一体检配单</div>
              <div className="text-[10px] text-gray-500">为客户快速定制方案</div>
+           </div>
+         </div>
+         <div className="flex items-center gap-2">
+           <div className="text-right">
+             <div className="text-xs text-gray-900 font-semibold leading-tight">{user?.name || '未登录'}</div>
+             {user?.username && <div className="text-[10px] text-gray-400">{user.username}</div>}
+           </div>
+           <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-white flex items-center justify-center text-sm font-bold shadow-sm">
+             {(user?.name || 'U').slice(0, 1)}
            </div>
          </div>
        </div>

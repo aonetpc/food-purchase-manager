@@ -378,8 +378,9 @@ function PackageCard({
       <div className="px-4 py-3 bg-gradient-to-b from-gray-50/50 to-white space-y-1.5">
         {applicable.map((r: any) => {
           const plan: any = ((pkg as any).role_price_capsule || {})[r] || {};
-          const orig = Number(plan.original_total || 0);
+          let orig = Number(plan.original_total || 0);
           const disc = Number(plan.discount_price || 0);
+          if (orig === 0 && disc > 0) orig = disc;
           const rate = Number(plan.discount_rate || 100);
           const realOrig = roleRealTotals[r as Role] || 0;
           const diff = priceDeviation(orig, realOrig);
