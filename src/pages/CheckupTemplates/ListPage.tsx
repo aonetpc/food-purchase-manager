@@ -10,6 +10,7 @@ export default function ListPage() {
  const navigate = useNavigate();
  const toast = useToast();
  const user = useAuthStore(s => s.user);
+ const isAdmin = useAuthStore(s => s.isAdmin());
  const [scope, setScope] = useState<ScopeTab>('mine');
  const [keyword, setKeyword] = useState('');
  const [loading, setLoading] = useState(false);
@@ -31,6 +32,29 @@ export default function ListPage() {
  useEffect(() => { load(); }, [scope]);
 
  const onSearch = () => { load(); };
+
+ const onDelete = async (pkg: CheckupTemplate) => {
+   if (!window.confirm(`确定删除套餐「${pkg.name}」？此操作不可恢复。`)) return;
+   try {
+     const res = await checkupApi.remove(pkg.id);
+     if (res?.ok) {
+       toast.success('已删除');
+       setList(l => l.filter(x => x.id !== pkg.id));
+     } else {
+       toast.error(res?.error || '删除失败');
+     }
+   } catch (e: any) {
+     toast.error(e.message || '删除失败');
+   }
+ };
+
+ // 手机端删除权限：管理员 或 自己创建（非公共）
+ const canDeletePkg = (pkg: CheckupTemplate) => {
+   const isPublic = !!(pkg as any).is_public;
+   const isOwner = !!(user?.id && (pkg as any).owner_sales_id === user.id);
+   if (isAdmin) return true;
+   return !isPublic && isOwner;
+ };
 
  const tabs: { key: ScopeTab; name: string; emoji: string }[] = [
    { key: 'mine', name: '我的套餐', emoji: '💼' },
@@ -89,7 +113,10 @@ export default function ListPage() {
            <div className="text-sm text-gray-500">暂无套餐，点击底部按钮新建吧</div>
          </div>
        ) : (
-         list.map(pkg => <PackageCard key={pkg.id} pkg={pkg} onClick={() => navigate('/h/checkup-templates/' + pkg.id + '/finish')} />)
+         list.map(pkg => <PackageCard key={pkg.id} pkg={pkg}
+           onClick={() => navigate('/h/checkup-templates/' + pkg.id + '/finish')}
+           onDelete={() => onDelete(pkg)}
+           canDelete={canDeletePkg(pkg)} />)
        )}
      </main>
 
@@ -105,12 +132,12 @@ export default function ListPage() {
  );
 }
 
-function PackageCard({ pkg, onClick }: { pkg: CheckupTemplate; onClick: () => void }) {
+function PackageCard({ pkg, onClick, onDelete, canDelete }: { pkg: CheckupTemplate; onClick: () => void; onDelete?: () => void; canDelete?: boolean }) {
  const applicable: any[] = (pkg as any).applicable_roles || ROLES;
  return (
-   <div onClick={onClick} className="bg-white rounded-3xl p-4 shadow-sm active:scale-[0.99] transition">
+   <div className="bg-white rounded-3xl p-4 shadow-sm active:scale-[0.99] transition">
      <div className="flex items-start justify-between">
-       <div className="flex items-start gap-3 min-w-0 flex-1">
+       <div onClick={onClick} className="flex items-start gap-3 min-w-0 flex-1">
          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 text-emerald-800 flex items-center justify-center text-2xl shrink-0">
            📋
          </div>
@@ -124,7 +151,18 @@ function PackageCard({ pkg, onClick }: { pkg: CheckupTemplate; onClick: () => vo
            </div>
          </div>
        </div>
-       <svg className="ml-2 shrink-0 mt-1" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2"><path d="M9 6l6 6-6 6"/></svg>
+       <div className="flex items-center gap-2 shrink-0">
+         {canDelete && onDelete && (
+           <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+             className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100 active:bg-rose-100 transition">
+             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/>
+               <path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+             </svg>
+           </button>
+         )}
+         <svg onClick={onClick} className="shrink-0 mt-1 cursor-pointer" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2"><path d="M9 6l6 6-6 6"/></svg>
+       </div>
      </div>
      <div className="mt-3 flex flex-wrap gap-1.5">
        {applicable.map((r: any) => {

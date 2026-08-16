@@ -781,8 +781,16 @@ router.post('/:id/share', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM booking_packages WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
     const pkg = rows[0];
-    if (!canUserViewPackage(req.user, pkg) || (!isAdminOrManager(req.user) && pkg.owner_sales_id !== req.user.id)) {
+    // 分享权限：能看 + （管理员/自己创建/公共模板/分配给我）
+    if (!canUserViewPackage(req.user, pkg)) {
       return res.status(403).json({ ok: false, error: '无权生成分享链接' });
+    }
+    if (!isAdminOrManager(req.user) && pkg.owner_sales_id !== req.user.id) {
+      const covers = parseMaybeJson(pkg.cover_sales_ids);
+      const isAssigned = Array.isArray(covers) && covers.includes(req.user.id);
+      if (!pkg.is_public && !isAssigned) {
+        return res.status(403).json({ ok: false, error: '无权生成分享链接' });
+      }
     }
     const { expire_days } = req.body || {};
     const days = Math.min(365, Math.max(1, toNum(expire_days) || 7));  // 默认7天（用户已确认）

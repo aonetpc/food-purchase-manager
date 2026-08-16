@@ -117,6 +117,8 @@ export const checkupApi = {
     api.put<any>(`/booking/checkup-templates/${id}/items-batch`, body),
   share: (id: string, body?: any) =>
     api.post<any>(`/booking/checkup-templates/${id}/share`, body || {}),
+  remove: (id: string) =>
+    api.delete<any>(`/booking/checkup-templates/${id}`),
   pdfUrl: (id: string, role?: string, shareToken?: string) => {
     // 如果传入 shareToken（分享场景免登录下载），则走 share 专属免登录 PDF 端点
     if (shareToken) {

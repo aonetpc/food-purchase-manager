@@ -316,10 +316,16 @@ function PackageCard({
 
   // 按快照回算每个角色的原价汇总（与套餐里保存的 original_total 做偏差比对）
   const roleRealTotals = computeRoleRealTotals(pkg as any);
+  const itemsSnapshot = (pkg as any).items_by_role || {};
+  const hasItemsSnapshot = Object.keys(itemsSnapshot).some(k =>
+    Array.isArray((itemsSnapshot as any)[k]) && (itemsSnapshot as any)[k].length > 0
+  );
 
   // 卡片整体有无偏差
   const deviatedRoles: Role[] = [];
   applicable.forEach((r: Role) => {
+    // 没有明细快照的老套餐不做偏差检测（roleRealTotals=0会误报）
+    if (!hasItemsSnapshot) return;
     const diff = priceDeviation(
       Number(((pkg as any).role_price_capsule || {})[r]?.original_total || 0),
       roleRealTotals[r] || 0,
