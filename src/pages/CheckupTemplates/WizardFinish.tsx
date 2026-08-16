@@ -21,7 +21,6 @@ const [localPrice, setLocalPrice] = useState<Record<Role, number>>({ male: 0, fe
 const [localRate, setLocalRate] = useState<Record<Role, number>>({ male: 100, female_married: 100, female_single: 100 });
 const [shareResult, setShareResult] = useState<ShareResult | null>(null);
 const [shareExpireDays, setShareExpireDays] = useState<number>(7);
-const [showShareGuide, setShowShareGuide] = useState(false);
 
 const load = async () => {
   if (!id) return;
@@ -130,8 +129,7 @@ const onShare = async () => {
     const res = await checkupApi.share(id, { expire_days: shareExpireDays });
     if (!res?.ok) throw new Error(res?.error || '生成失败');
     setShareResult(res.data as ShareResult);
-    setShowShareGuide(true);
-    toast.success('分享链接已生成（有效期' + shareExpireDays + '天），点击右上角分享给客户');
+    toast.success('分享链接已生成（有效期' + shareExpireDays + '天），请先点「先预览后分享」打开客户视角页面，再发送给客户');
   } catch (e: any) {
     toast.error(e.message || '生成分享链接失败');
   }
@@ -313,19 +311,14 @@ return (
               </div>
               <button onClick={copyLink} className="h-9 px-3 rounded-xl bg-emerald-600 text-white text-xs font-medium">复制</button>
             </div>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
-              <button
-                onClick={() => window.open(shareResult.share_path, '_blank', 'noopener')}
-                className="h-10 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-emerald-50"
-              >
-                👁 预览客户视角
-              </button>
-              <button
-                onClick={() => { setShowShareGuide(true); }}
-                className="h-10 rounded-xl bg-emerald-600 text-white text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-emerald-700"
-              >
-                📤 微信分享指引
-              </button>
+            <button
+              onClick={() => window.open(shareResult.share_path, '_blank', 'noopener')}
+              className="w-full h-12 mt-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 hover:bg-emerald-700 shadow-sm"
+            >
+              📤 先预览后分享
+            </button>
+            <div className="mt-2 text-[11px] text-gray-500 leading-relaxed">
+              💡 分享流程：① 点上面按钮打开客户视角 → ② 在新页面点右上角「···」→ ③ 选择「发送给朋友」/「分享到朋友圈」
             </div>
           </div>
         ) : (
@@ -346,26 +339,6 @@ return (
         </button>
       </div>
     </div>
-
-    {showShareGuide && (
-      <div onClick={() => setShowShareGuide(false)}
-        className="fixed inset-0 z-50 bg-black/70 p-6 text-white">
-        <div className="text-right">
-          <div className="inline-flex items-center gap-2 text-sm">
-            <span className="animate-bounce">👆</span>
-            点击右上角「...」分享
-          </div>
-        </div>
-        <div className="mt-6 text-right text-sm leading-7 text-white/90">
-          1. 右上角「发送给朋友」或「转发」<br/>
-          2. 直接发给客户微信 / 微信群 <br/>
-          3. 客户点开即可查看方案并下载PDF<br/>
-        </div>
-        <div className="absolute left-0 right-0 bottom-10 text-center text-xs text-white/70">
-          点击任意位置关闭提示
-        </div>
-      </div>
-    )}
 
     {editRole && (
       <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setEditRole(null)}>

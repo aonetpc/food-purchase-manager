@@ -620,31 +620,14 @@ router.post('/:id/clone', async (req, res) => {
         [batch]
       );
     }
-    // 克隆 role_plans
-    const [srcPlans] = await conn.query(
-      `SELECT role, original_total, discount_price, discount_rate, remark FROM booking_package_role_plans WHERE package_id = ?`,
-      [srcPkg.id]
-    );
-    if (srcPlans.length > 0) {
-      const batch = srcPlans.map(p => [
-        uuidv4(), newId, p.role,
-        round2(p.original_total), round2(p.discount_price), round2(p.discount_rate), p.remark,
-      ]);
+    // 克隆 role_plans：价格不继承原模板（original_total/discount_price 清零，discount_rate=100），
+    // 后续 items-batch 保存时会按克隆出的项目明细重算 original_total
+    for (const r of ROLES) {
       await conn.query(
-        `INSERT INTO booking_package_role_plans
-          (id, package_id, role, original_total, discount_price, discount_rate, remark)
-         VALUES ?`,
-        [batch]
+        `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
+         VALUES (?, ?, ?, 0, 0, 100)`,
+        [uuidv4(), newId, r]
       );
-    } else {
-      // 兜底三条
-      for (const r of ROLES) {
-        await conn.query(
-          `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
-           VALUES (?, ?, ?, 0, 0, 100)`,
-          [uuidv4(), newId, r]
-        );
-      }
     }
     await conn.commit();
     const cloned = await readPackageFull(newId);

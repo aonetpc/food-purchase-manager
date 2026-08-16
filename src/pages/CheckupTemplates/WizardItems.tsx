@@ -53,15 +53,21 @@ const loadAll = async () => {
       setPkg(tplRes.data);
       // 回填已选（items_by_role）
       const src: any = tplRes.data?.items_by_role || {};
+      // 项目库最新价格表（按 item_id 查），避免沿用旧模板快照导致原价错误
+      const itemLib: Record<string, CheckupItem> = {};
+      if (itemsRes?.ok && Array.isArray(itemsRes.data)) {
+        for (const ci of itemsRes.data) itemLib[ci.id] = ci;
+      }
       const next: SelectedState = { common: {}, male: {}, female_married: {}, female_single: {} };
       (['common', ...ROLES] as Scope[]).forEach(s => {
         const arr: CheckupItemRef[] = Array.isArray(src[s]) ? src[s] : [];
         for (const it of arr) {
+          const ci = itemLib[it.item_id];
           next[s][it.item_id] = {
             item_id: it.item_id,
-            name_snapshot: it.item_name_snapshot || '',
-            price_snapshot: Number(it.item_price) || 0,
-            insurance_snapshot: Number(it.insurance_price_snapshot) || 0,
+            name_snapshot: (ci?.name || it.item_name_snapshot || '') as string,
+            price_snapshot: ci ? Number(ci.default_price) || 0 : (Number(it.item_price) || 0),
+            insurance_snapshot: ci ? Number(ci.insurance_price) || 0 : (Number(it.insurance_price_snapshot) || 0),
             quantity: Math.max(1, Number(it.quantity) || 1),
           };
         }
@@ -131,18 +137,23 @@ const setQty = (itemId: string, qty: number) => {
 // 保存并进入下一步
 const onSaveAndNext = async () => {
   if (!pkg || !id) return;
+  // 项目库最新价格表（按 item_id 查），保存时用最新 default_price 而非旧快照，
+  // 确保后端按真实项目库价格重算 original_total
+  const itemLib: Record<string, CheckupItem> = {};
+  for (const ci of items) itemLib[ci.id] = ci;
   // 构造 items list：把 selected 的四个 scope 展平
   const flatItems: any[] = [];
   let so = 1;
   (['common', ...ROLES] as Scope[]).forEach(s => {
     Object.values(selected[s]).forEach(si => {
+      const ci = itemLib[si.item_id];
       flatItems.push({
         item_id: si.item_id,
         role: s,
         quantity: si.quantity,
-        item_name_snapshot: si.name_snapshot,
-        item_price: si.price_snapshot,
-        insurance_price_snapshot: si.insurance_snapshot,
+        item_name_snapshot: ci?.name || si.name_snapshot,
+        item_price: ci ? Number(ci.default_price) || 0 : si.price_snapshot,
+        insurance_price_snapshot: ci ? Number(ci.insurance_price) || 0 : si.insurance_snapshot,
         sort_order: so++,
         remark: null,
       });
