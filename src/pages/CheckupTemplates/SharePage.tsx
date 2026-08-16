@@ -35,7 +35,7 @@ export default function SharePage() {
   const [sales, setSales] = useState<SalesProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [expireAt, setExpireAt] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: true, female_single: true });
+  const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
 
   useEffect(() => {
     if (!token) return;
@@ -192,7 +192,7 @@ export default function SharePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-[#f5f2e8] to-[#eee9db] pb-36">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-[#f5f2e8] to-[#eee9db] pb-48">
       {/* ===================== 品牌头 ===================== */}
       <header className="relative text-white overflow-hidden">
         <div
@@ -327,13 +327,20 @@ export default function SharePage() {
                     </div>
                   </div>
 
-                  {/* 明细分类 */}
-                  {groups.map(g => (
+                  {/* 明细分类 —— 分类标题用主色背景条 + 小计，单项用小圆点弱化 */}
+                  {groups.map(g => {
+                    const catSubtotal = g.items.reduce((sum, it) => {
+                      const qty = Math.max(1, Number(it.quantity) || 1);
+                      return sum + Number(it.item_price) * qty;
+                    }, 0);
+                    return (
                     <div key={g.category} className="mb-3 last:mb-0">
-                      <div className="flex items-center gap-2 text-[12px] font-semibold text-gray-700 mb-1.5 px-1">
+                      <div className="flex items-center gap-2 mb-1.5 px-2.5 py-1.5 rounded-lg"
+                        style={{ background: primaryColor + '0d' }}>
                         <span className="inline-block w-1 h-3.5 rounded-sm shrink-0" style={{ background: primaryColor }} />
-                        <span>{g.category}</span>
+                        <span className="text-[12px] font-bold text-gray-800">{g.category}</span>
                         <span className="text-[10px] text-gray-400 font-normal">{g.items.length}项</span>
+                        <span className="ml-auto text-[11px] font-semibold tabular-nums" style={{ color: primaryColor }}>小计 ¥{catSubtotal.toFixed(0)}</span>
                       </div>
                       <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50 overflow-hidden">
                         {g.items.map((it, idx) => {
@@ -341,15 +348,17 @@ export default function SharePage() {
                           const line = Number(it.item_price) * qty;
                           return (
                             <div key={it.id || idx} className="flex items-center gap-2 px-3 py-2 last:border-b-0">
-                              <span className="text-[13px] text-gray-800 flex-1 min-w-0 truncate">{it.item_name_snapshot}</span>
+                              <span className="w-1 h-1 rounded-full bg-gray-300 shrink-0 ml-1.5" />
+                              <span className="text-[13px] text-gray-600 flex-1 min-w-0 truncate">{it.item_name_snapshot}</span>
                               {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
-                              <span className="text-[13px] font-medium text-gray-700 shrink-0 w-14 text-right tabular-nums">¥{line.toFixed(0)}</span>
+                              <span className="text-[12px] text-gray-500 shrink-0 w-14 text-right tabular-nums">¥{line.toFixed(0)}</span>
                             </div>
                           );
                         })}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
