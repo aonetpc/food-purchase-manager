@@ -1,271 +1,496 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
-type Role, type CheckupTemplate, type CheckupItemRef, type ShareResult
+  ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
+  type Role, type CheckupTemplate, type CheckupItemRef
 } from './api';
 import { useToast } from '@/components/Toast';
 
 // 分享落地页 —— 免登录。后端由 /api/booking/checkup-share/:token 提供
-// 但我们统一用 axios/backendApi 鉴权（此处不用登录 token），所以先做一个匿名 fetch
-function anonymousShareGet(token: string): Promise<any> {
-return fetch('/api/booking/checkup-share/' + encodeURIComponent(token), {
-  method: 'GET', headers: { 'Accept': 'application/json' }
-}).then(r => r.json().catch(() => ({})));
+function anonymousFetch(url: string): Promise<any> {
+  return fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } })
+    .then(r => r.json().catch(() => ({})));
 }
+
+type BrandInfo = {
+  name: string;
+  logo: string | null;
+  slogan: string | null;
+  address: string | null;
+  phone: string | null;
+  primary_color: string;
+};
+type SalesProfile = {
+  user_id: string;
+  name: string;
+  phone: string | null;
+  avatar_url: string | null;
+};
 
 export default function SharePage() {
-const { token } = useParams();
-const toast = useToast();
-const [shareResult, setShareResult] = useState<ShareResult | null>(null);
-const [pkg, setPkg] = useState<CheckupTemplate | null>(null);
-const [loading, setLoading] = useState(true);
-const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
+  const { token } = useParams();
+  const toast = useToast();
+  const [pkg, setPkg] = useState<CheckupTemplate | null>(null);
+  const [company, setCompany] = useState<BrandInfo | null>(null);
+  const [sales, setSales] = useState<SalesProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expireAt, setExpireAt] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
 
-useEffect(() => {
-  if (!token) return;
-  anonymousShareGet(token).then(r => {
-    if (r?.ok) {
-      // r.data 是新格式：直接扁平（template 不再嵌一层）
-      const d = r.data || {};
-      const tpl: CheckupTemplate = {
-        id: d.id, code: d.code, name: d.name, description: d.description,
-        applicable_roles: d.applicable_roles,
-        created_at: d.created_at,
-        role_plans: d.role_plans,
-        role_items: d.role_items,
-        role_price_capsule: d.role_price_capsule,
-        status: 1,
-        item_count: 0,
-      } as any;
-      setShareResult({
-        share_url: '',
-        token: d.share_token || token,
-        expire_at: d.expire_at,
-        template: tpl,
-        created_by: d.created_by,
-        company: d.company,
-      } as any);
-      setPkg(tpl);
-    } else {
-      toast.error(r?.error || '链接已失效或不存在');
+  useEffect(() => {
+    if (!token) return;
+    // 并行拉取：分享套餐数据 + 品牌配置（品牌也可以从套餐接口里company拿，这里优先用独立接口兜底）
+    Promise.all([
+      anonymousFetch('/api/booking/checkup-share/' + encodeURIComponent(token)),
+      anonymousFetch('/api/booking/checkup-share/brand-config'),
+    ]).then(([r, brandR]) => {
+      if (r?.ok) {
+        const d = r.data || {};
+        const tpl: CheckupTemplate = {
+          id: d.id, code: d.code, name: d.name, description: d.description,
+          applicable_roles: d.applicable_roles,
+          created_at: d.created_at,
+          role_plans: d.role_plans,
+          role_items: d.role_items,
+          role_price_capsule: d.role_price_capsule,
+          status: 1,
+          item_count: 0,
+        } as any;
+        setPkg(tpl);
+        setExpireAt(d.expire_at || null);
+
+        // 品牌：套餐接口返回的优先（已读配置表），没有再用独立接口
+        const c1 = d.company;
+        const c2 = brandR?.ok ? brandR.data : null;
+        const companyData = c1 || c2 || { name: '上海画一健康管理有限公司', logo: null, slogan: '专注高端体检 · 为您定制专属方案', address: null, phone: null, primary_color: '#0f5132' };
+        setCompany({
+          name: companyData.name || '上海画一健康管理有限公司',
+          logo: companyData.logo || null,
+          slogan: companyData.slogan || '专注高端体检 · 为您定制专属方案',
+          address: companyData.address || null,
+          phone: companyData.phone || null,
+          primary_color: companyData.primary_color || '#0f5132',
+        });
+
+        // 客户经理名片：sales_profile 优先（带avatar），没有就用 created_by（兼容老数据）
+        const sp = d.sales_profile;
+        const cb = d.created_by;
+        if (sp?.name || cb?.name) {
+          setSales({
+            user_id: sp?.user_id || cb?.id || '',
+            name: sp?.name || cb?.name || '',
+            phone: sp?.phone || cb?.phone || null,
+            avatar_url: sp?.avatar_url || null,
+          });
+        } else {
+          setSales(null);
+        }
+      } else {
+        toast.error(r?.error || '链接已失效或不存在');
+      }
+      setLoading(false);
+    }).catch((e: any) => {
+      toast.error(e?.message || '加载失败');
+      setLoading(false);
+    });
+  }, [token]);
+
+  const applicable: Role[] = useMemo(() => (pkg?.applicable_roles as any) || ROLES, [pkg]);
+  const primaryColor = company?.primary_color || '#0f5132';
+
+  const groupByCategory = (items: CheckupItemRef[]) => {
+    const groups: Record<string, CheckupItemRef[]> = {};
+    for (const it of items) {
+      const c = it.category || '其他';
+      if (!groups[c]) groups[c] = [];
+      groups[c].push(it);
     }
-    setLoading(false);
-  }).catch((e: any) => {
-    toast.error(e?.message || '加载失败');
-    setLoading(false);
-  });
-}, [token]);
+    const order = [...CATEGORIES];
+    const keys = Object.keys(groups).sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
+    });
+    return keys.map(k => ({ category: k, items: groups[k] }));
+  };
 
-const applicable: Role[] = useMemo(() => (pkg?.applicable_roles as any) || ROLES, [pkg]);
+  const downloadPDF = (role?: string) => {
+    if (!pkg) return;
+    const u = role
+      ? `/api/booking/checkup-share/${encodeURIComponent(token || '')}/pdf?role=${role}`
+      : `/api/booking/checkup-share/${encodeURIComponent(token || '')}/pdf`;
+    window.open(u, '_blank', 'noopener');
+  };
 
-const groupByCategory = (items: CheckupItemRef[]) => {
-  const groups: Record<string, CheckupItemRef[]> = {};
-  for (const it of items) {
-    const c = it.category || '其他';
-    if (!groups[c]) groups[c] = [];
-    groups[c].push(it);
+  // 失效态
+  if (!loading && !pkg) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 via-[#faf7ee] to-[#f2efe3] flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-20 h-20 rounded-full bg-red-100 text-red-500 text-4xl flex items-center justify-center mb-4">🔗</div>
+        <div className="text-xl font-bold text-gray-800 mb-2">链接已失效</div>
+        <div className="text-sm text-gray-500 max-w-xs">该分享链接不存在，或已超过有效期，请联系销售重新生成。</div>
+      </div>
+    );
   }
-  const order = [...CATEGORIES];
-  const keys = Object.keys(groups).sort((a, b) => {
-    const ia = order.indexOf(a), ib = order.indexOf(b);
-    return (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
-  });
-  return keys.map(k => ({ category: k, items: groups[k] }));
-};
 
-const downloadPDF = (role?: string) => {
-  if (!pkg) return;
-  // PDF 接口用 URL 直接下载（由浏览器直接发起 GET，不会被前端 axios 拦截）
-  const u = role
-    ? `/api/booking/checkup-templates/${pkg.id}/pdf?role=${role}&share_token=${encodeURIComponent(token || '')}`
-    : `/api/booking/checkup-templates/${pkg.id}/pdf?share_token=${encodeURIComponent(token || '')}`;
-  window.open(u, '_blank', 'noopener');
-};
+  if (loading) return <div className="p-12 text-center text-gray-400 text-sm">加载中...</div>;
+  if (!pkg) return null;
 
-// 失效态
-if (!loading && !pkg) {
+  const ownerName = sales?.name || '';
+  const ownerPhone = sales?.phone || '';
+  const ownerAvatar = sales?.avatar_url || null;
+  const ownerLetter = ownerName ? ownerName.slice(0, 1) : 'U';
+
+  const tel = (p: string) => { if (p) window.location.href = 'tel:' + p; };
+  const copyText = async (text: string, label = '已复制') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(label);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast.success(label); } catch { toast.error('复制失败，请长按复制'); }
+      document.body.removeChild(ta);
+    }
+  };
+  const openMap = (addr: string) => {
+    if (!addr) return;
+    window.open('https://uri.amap.com/marker?position=&name=' + encodeURIComponent(addr) + '&src=hycheckup&coordinate=gaode&callnative=1', '_blank');
+  };
+
+  // 计算方案亮点摘要（从明细中提取关键词）
+  const highlights = useMemo(() => {
+    const hs: string[] = [];
+    const totalItems = applicable.reduce((sum, r) => {
+      return sum + ((pkg.role_items as any)?.[r]?.items?.length || 0);
+    }, 0);
+    if (totalItems > 0) hs.push(`🧪 ${totalItems}项深度检查`);
+    let hasCT = false, hasTumor = false, hasImaging = false;
+    applicable.forEach(r => {
+      const items: CheckupItemRef[] = (pkg.role_items as any)?.[r]?.items || [];
+      items.forEach(it => {
+        const n = (it.item_name_snapshot || '').toLowerCase();
+        if (/ct|磁共振|钼靶|dr|摄片|拍片/.test(n)) hasImaging = true;
+        if (/肿瘤|癌胚|甲胎|afp|cea|tct|hpv/.test(n)) hasTumor = true;
+        if (n.includes('ct')) hasCT = true;
+      });
+    });
+    if (hasCT) hs.push('🩻 含CT影像检查');
+    else if (hasImaging) hs.push('🩻 含彩超/DR影像检查');
+    if (hasTumor) hs.push('🔬 含肿瘤标志物筛查');
+    else if (applicable.length > 1) hs.push(`👥 覆盖${applicable.length}类人群方案`);
+    // 凑3个亮点，不足补通用说明
+    if (hs.length < 3) hs.push('📋 三工作日出报告 · 专家解读');
+    if (hs.length < 3) hs.push('💬 专属客户经理一对一服务');
+    return hs.slice(0, 3);
+  }, [pkg, applicable]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-[#faf7ee] to-[#f2efe3] flex flex-col items-center justify-center p-8 text-center">
-      <div className="w-20 h-20 rounded-full bg-red-100 text-red-500 text-4xl flex items-center justify-center mb-4">🔗</div>
-      <div className="text-xl font-bold text-gray-800 mb-2">链接已失效</div>
-      <div className="text-sm text-gray-500 max-w-xs">该分享链接不存在，或已超过有效期，请联系销售重新生成。</div>
-    </div>
-  );
-}
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-[#f5f2e8] to-[#eee9db] pb-36">
+      {/* ===================== 品牌头 ===================== */}
+      <header className="relative text-white overflow-hidden">
+        <div
+          className="absolute inset-x-0 top-0 h-64 rounded-b-[36px]"
+          style={{ background: `linear-gradient(135deg, ${primaryColor} 0%, ${shade(primaryColor, -8)} 60%, ${shade(primaryColor, -16)} 100%)` }}
+        />
+        {/* 装饰光斑 */}
+        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-white/8 blur-2xl" />
+        <div className="absolute top-28 -left-20 w-56 h-56 rounded-full bg-white/5 blur-2xl" />
 
-if (loading) return <div className="p-12 text-center text-gray-400 text-sm">加载中...</div>;
-if (!pkg) return null;
-
-const createdBy = (shareResult as any)?.created_by || null;
-const company = (shareResult as any)?.company || null;
-const ownerName = createdBy?.name || (shareResult as any)?.template?.created_by_name || '';
-const ownerPhone = createdBy?.phone || '';
-const ownerLetter = createdBy?.avatar_letter || (ownerName || 'U').slice(0, 1);
-
-// 打开拨号
-const tel = (p: string) => { if (p) window.location.href = 'tel:' + p; };
-const openMap = (addr: string) => {
-  if (!addr) return;
-  window.open('https://uri.amap.com/marker?position=&name=' + encodeURIComponent(addr) + '&src=hycheckup&coordinate=gaode&callnative=1', '_blank');
-};
-
-return (
-  <div className="min-h-screen bg-gradient-to-b from-green-50 via-[#faf7ee] to-[#f2efe3] pb-40">
-    {/* 品牌头 */}
-    <header className="relative text-white">
-      <div className="absolute inset-x-0 top-0 h-52 bg-gradient-to-br from-[#0f5132] via-emerald-800 to-green-900 rounded-b-[32px]" />
-      <div className="relative px-5 pt-12 pb-40">
-        <div className="text-center">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shadow-lg text-3xl">🏥</div>
-          <div className="mt-2 text-[11px] text-white/80 font-medium">{company?.name || '画一体检'} · 为您定制专属方案</div>
-          <h1 className="mt-1 text-2xl font-bold">{pkg.name}</h1>
-          {ownerName && <div className="mt-1 text-sm text-white/90">客户经理：{ownerName}</div>}
-          <div className="mt-3 inline-flex items-center gap-2 text-[11px] bg-white/15 px-3 py-1.5 rounded-full">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
-            有效期至：{shareResult ? new Date(shareResult.expire_at).toLocaleDateString('zh-CN') : '-'}
+        <div className="relative px-5 pt-11 pb-48">
+          {/* 品牌条 */}
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-11 h-11 rounded-xl bg-white/18 backdrop-blur flex items-center justify-center overflow-hidden shadow-sm shrink-0 border border-white/20">
+              {company?.logo ? (
+                <img src={company.logo} alt="" className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget.style.display = 'none'); const p = e.currentTarget.parentElement; if (p) p.innerHTML = '🏥'; }} />
+              ) : (
+                <span className="text-xl">🏥</span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold leading-tight">{company?.name || '画一体检'}</div>
+              {company?.slogan && <div className="text-[11px] text-white/80 leading-tight mt-0.5 truncate">{company.slogan}</div>}
+            </div>
           </div>
-        </div>
-      </div>
-    </header>
 
-    <main className="px-4 -mt-32 relative">
-      <div className="bg-white rounded-3xl shadow-lg p-4 mb-4">
-        <div className="text-sm text-gray-500">方案包含角色</div>
-        <div className="flex flex-wrap gap-2 mt-2">
-          {applicable.map(r => (
-            <span key={r} className={r === 'male'
-              ? 'px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-emerald-800'
-              : 'px-3 py-1 rounded-full text-xs font-medium bg-pink-100 text-pink-700'}>
-              {ROLE_EMOJI[r]} {ROLE_LABEL[r]}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {applicable.map(r => {
-        const plan: any = pkg.role_plans?.[r] || {};
-        const roleItems = (pkg.role_items as any)?.[r]?.items || [];
-        const total = Number(plan.original_total) || 0;
-        const disc = Number(plan.discount_price) || 0;
-        const rate = Number(plan.discount_rate) || 100;
-        const isOpen = expanded[r];
-        const groups = groupByCategory(roleItems);
-        return (
-          <div key={r} className="bg-white rounded-3xl shadow-sm mb-3 overflow-hidden">
-            <button onClick={() => setExpanded(s => ({ ...s, [r]: !isOpen }))}
-              className="w-full p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-11 h-11 rounded-2xl bg-blue-50 flex items-center justify-center text-2xl">{ROLE_EMOJI[r]}</div>
-                <div className="text-left">
-                  <div className="font-semibold text-gray-900">{ROLE_LABEL[r]}方案</div>
-                  <div className="text-[11px] text-gray-500">{roleItems.length}项 · 折扣率 {rate.toFixed(2)}%</div>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-xl font-bold text-[#0f5132]">¥{disc.toFixed(0)}</div>
-                {total > disc && <div className="text-[10px] text-orange-500 line-through">原价 ¥{total.toFixed(0)}</div>}
-              </div>
-            </button>
-            {isOpen && (
-              <div className="px-4 pb-4 border-t border-gray-50 pt-3">
-                {groups.map(g => (
-                  <div key={g.category} className="mb-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-2">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
-                      <span>{g.category}</span>
-                      <span className="text-[10px] text-gray-400">{g.items.length}个</span>
-                    </div>
-                    <div className="space-y-1">
-                      {g.items.map(it => {
-                        const qty = Math.max(1, Number(it.quantity) || 1);
-                        return (
-                          <div key={it.id} className="flex items-center gap-2 py-2 border-b border-dashed border-gray-100 last:border-b-0">
-                            <span className="text-sm text-gray-800 flex-1 min-w-0 truncate">{it.item_name_snapshot}</span>
-                            <span className="text-[11px] text-gray-400 shrink-0">x{qty}</span>
-                            <span className="text-sm font-semibold text-gray-700 shrink-0 w-14 text-right">¥{(Number(it.item_price) * qty).toFixed(0)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+          {/* 套餐标题卡 */}
+          <div className="text-center">
+            <h1 className="text-[26px] font-bold leading-tight tracking-wide">{pkg.name}</h1>
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
+              {applicable.map(r => (
+                <span key={r} className="px-3 py-1 rounded-full text-[12px] font-medium bg-white/16 backdrop-blur border border-white/20">
+                  {ROLE_EMOJI[r]} {ROLE_LABEL[r]}
+                </span>
+              ))}
+            </div>
+            {expireAt && (
+              <div className="mt-4 inline-flex items-center gap-1.5 text-[11px] bg-white/12 border border-white/15 px-3 py-1.5 rounded-full backdrop-blur">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+                有效期至 {new Date(expireAt).toLocaleDateString('zh-CN')}
               </div>
             )}
           </div>
-        );
-      })}
+        </div>
+      </header>
 
-      <div className="bg-white rounded-3xl p-4 shadow-sm mb-4">
-        <div className="font-semibold text-gray-900">📄 下载 PDF 方案</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">保存到本地，打印或转发都方便</div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button onClick={() => downloadPDF()}
-            className="h-11 rounded-2xl bg-[#0f5132] text-white text-sm font-medium shadow-sm shadow-emerald-700/20">
-            下载全部PDF
-          </button>
+      {/* ===================== 方案亮点 ===================== */}
+      <main className="px-4 -mt-40 relative space-y-3">
+        <div className="bg-white rounded-[24px] shadow-md shadow-gray-900/5 p-4 border border-white">
+          <div className="text-[11px] font-medium text-gray-400 mb-2.5 tracking-wider">✨ 本方案亮点</div>
+          <div className="grid grid-cols-1 gap-2">
+            {highlights.map((h, i) => (
+              <div key={i} className="flex items-center gap-2 text-[13px] text-gray-700 leading-tight py-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0" style={{ background: primaryColor }} />
+                <span className="flex-1">{h}</span>
+              </div>
+            ))}
+          </div>
+          {pkg.description && (
+            <div className="mt-3 pt-3 border-t border-gray-100 text-[12px] text-gray-500 leading-relaxed">{pkg.description}</div>
+          )}
+        </div>
+
+        {/* ===================== 角色方案卡片 ===================== */}
+        {applicable.map(r => {
+          const plan: any = pkg.role_plans?.[r] || {};
+          const roleItems = (pkg.role_items as any)?.[r]?.items || [];
+          const total = Number(plan.original_total) || 0;
+          const disc = Number(plan.discount_price) || 0;
+          const rate = Number(plan.discount_rate) || 100;
+          const saved = total - disc;
+          const isOpen = expanded[r];
+          const groups = groupByCategory(roleItems);
+          return (
+            <div key={r} className="bg-white rounded-[22px] shadow-sm overflow-hidden border border-gray-100">
+              <button
+                onClick={() => setExpanded(s => ({ ...s, [r]: !isOpen }))}
+                className="w-full p-4 flex items-center justify-between"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0"
+                    style={{ background: r === 'male' ? '#eff6ff' : '#fdf2f8' }}>
+                    {ROLE_EMOJI[r]}
+                  </div>
+                  <div className="text-left min-w-0 flex-1">
+                    <div className="font-semibold text-gray-900 text-[15px]">{ROLE_LABEL[r]}方案</div>
+                    <div className="text-[11px] text-gray-500 mt-0.5">{roleItems.length}项检查</div>
+                  </div>
+                </div>
+                <div className="text-right shrink-0 ml-2">
+                  <div className="text-lg font-bold" style={{ color: primaryColor }}>¥{disc.toFixed(0)}</div>
+                  {total > 0 && total !== disc ? (
+                    <div className="text-[10px] text-orange-500 mt-0.5">原价 ¥{total.toFixed(0)}</div>
+                  ) : (
+                    <div className="text-[10px] text-gray-400 mt-0.5">{rate >= 100 ? '无折扣' : `${rate.toFixed(1)}折`}</div>
+                  )}
+                </div>
+                <svg className={`ml-2 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.2">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </button>
+
+              {isOpen && (
+                <div className="px-4 pb-4 border-t border-gray-50 pt-3 bg-gray-50/40">
+                  {/* 价格概览 */}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div className="bg-white rounded-xl px-3 py-2 border border-gray-100">
+                      <div className="text-[10px] text-gray-400">原价</div>
+                      <div className="text-[13px] font-semibold text-gray-700">¥{total.toFixed(0)}</div>
+                    </div>
+                    <div className="rounded-xl px-3 py-2 border"
+                      style={{ background: 'rgba(249,115,22,0.06)', borderColor: 'rgba(249,115,22,0.12)' }}>
+                      <div className="text-[10px] text-orange-600/80">折扣 {rate.toFixed(1)}%</div>
+                      <div className="text-[13px] font-semibold text-orange-600">立省 ¥{saved.toFixed(0)}</div>
+                    </div>
+                  </div>
+
+                  {/* 明细分类 */}
+                  {groups.map(g => (
+                    <div key={g.category} className="mb-3 last:mb-0">
+                      <div className="flex items-center gap-2 text-[12px] font-semibold text-gray-700 mb-1.5 px-1">
+                        <span className="inline-block w-1 h-3.5 rounded-sm shrink-0" style={{ background: primaryColor }} />
+                        <span>{g.category}</span>
+                        <span className="text-[10px] text-gray-400 font-normal">{g.items.length}项</span>
+                      </div>
+                      <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50 overflow-hidden">
+                        {g.items.map((it, idx) => {
+                          const qty = Math.max(1, Number(it.quantity) || 1);
+                          const line = Number(it.item_price) * qty;
+                          return (
+                            <div key={it.id || idx} className="flex items-center gap-2 px-3 py-2 last:border-b-0">
+                              <span className="text-[13px] text-gray-800 flex-1 min-w-0 truncate">{it.item_name_snapshot}</span>
+                              {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
+                              <span className="text-[13px] font-medium text-gray-700 shrink-0 w-14 text-right tabular-nums">¥{line.toFixed(0)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* ===================== 下载 PDF ===================== */}
+        <div className="bg-white rounded-[22px] shadow-sm p-4 border border-gray-100">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base" style={{ background: primaryColor + '15', color: primaryColor }}>📄</div>
+            <div>
+              <div className="font-semibold text-gray-900 text-[14px]">下载 PDF 方案</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">保存到本地，打印或转发都方便</div>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-2">
-            {applicable.slice(0, 2).map(r => (
+            <button
+              onClick={() => downloadPDF()}
+              className="col-span-2 h-11 rounded-xl text-white text-sm font-medium shadow-sm"
+              style={{ background: `linear-gradient(90deg, ${primaryColor}, ${shade(primaryColor, -12)})` }}
+            >
+              ⬇️ 下载完整方案 PDF
+            </button>
+            {applicable.map(r => (
               <button key={r} onClick={() => downloadPDF(r)}
-                className="h-11 rounded-2xl border border-gray-200 bg-white text-gray-700 text-xs font-medium flex items-center justify-center gap-1">
-                <span>{ROLE_EMOJI[r]}</span>PDF
+                className="h-10 rounded-xl border border-gray-200 bg-white text-gray-700 text-[12px] font-medium flex items-center justify-center gap-1.5 hover:bg-gray-50 transition-colors">
+                <span className="text-base">{ROLE_EMOJI[r]}</span>
+                {ROLE_LABEL[r]} PDF
               </button>
             ))}
           </div>
         </div>
-      </div>
 
-      {/* 客户经理卡片 */}
-      <div className="bg-white rounded-3xl p-4 shadow-sm mb-3">
-        <div className="text-[11px] text-gray-400 font-medium mb-2.5">您的专属客户经理</div>
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-white flex items-center justify-center text-lg font-bold shadow-sm shrink-0">
-            {ownerLetter}
+        {/* ===================== 客户经理卡片 ===================== */}
+        {(ownerName || ownerPhone) && (
+          <div className="bg-white rounded-[22px] shadow-sm overflow-hidden border border-gray-100">
+            <div className="px-4 pt-4 pb-2">
+              <div className="text-[11px] font-medium text-gray-400 tracking-wider mb-2.5">💼 您的专属客户经理</div>
+            </div>
+            <div className="px-4 pb-4">
+              <div className="flex items-center gap-3.5">
+                {ownerAvatar ? (
+                  <img
+                    src={ownerAvatar} alt=""
+                    className="w-14 h-14 rounded-2xl object-cover shrink-0 shadow-sm border border-gray-100"
+                    onError={(e) => { (e.currentTarget.style.display = 'none'); const sib = e.currentTarget.nextElementSibling as HTMLElement | null; if (sib) sib.style.display = 'flex'; }}
+                  />
+                ) : null}
+                <div
+                  className="w-14 h-14 rounded-2xl shrink-0 items-center justify-center text-xl font-bold text-white shadow-sm"
+                  style={{
+                    display: ownerAvatar ? 'none' : 'flex',
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                  }}
+                >{ownerLetter}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[16px] font-bold text-gray-900 truncate">{ownerName || '销售顾问'}</div>
+                  <div className="text-[12px] text-gray-500 mt-0.5 truncate">{ownerPhone ? '📱 ' + ownerPhone : '欢迎联系咨询'}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-4">
+                {ownerPhone ? (
+                  <>
+                    <button
+                      onClick={() => tel(ownerPhone)}
+                      className="h-11 rounded-xl text-white text-[13px] font-semibold shadow-sm flex items-center justify-center gap-1.5"
+                      style={{ background: `linear-gradient(90deg, ${primaryColor}, ${shade(primaryColor, -12)})` }}
+                    >
+                      📞 立即致电
+                    </button>
+                    <button
+                      onClick={() => copyText(ownerPhone, '手机号已复制')}
+                      className="h-11 rounded-xl border border-gray-200 bg-white text-gray-700 text-[13px] font-medium hover:bg-gray-50 transition-colors"
+                    >
+                      📋 复制号码
+                    </button>
+                  </>
+                ) : (
+                  <div className="col-span-2 h-11 rounded-xl bg-gray-50 text-gray-400 text-[12px] flex items-center justify-center">
+                    该顾问暂未留电话，欢迎到店咨询
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-base font-bold text-gray-900 truncate">{ownerName || '销售顾问'}</div>
-            <div className="text-[11px] text-gray-500 truncate">{ownerPhone ? '📱 ' + ownerPhone : '欢迎联系咨询'}</div>
+        )}
+
+        {/* ===================== 企业信息 ===================== */}
+        {(company?.name || company?.address || company?.phone) && (
+          <div className="bg-white rounded-[22px] shadow-sm p-4 border border-gray-100">
+            <div className="text-[11px] font-medium text-gray-400 tracking-wider mb-3">🏢 {company?.name || '公司信息'}</div>
+            <div className="space-y-3">
+              {company?.address && (
+                <button onClick={() => openMap(company.address!)} className="flex items-start gap-2.5 w-full text-left group">
+                  <span className="text-gray-400 shrink-0 mt-0.5">📍</span>
+                  <span className="text-[13px] text-gray-700 flex-1 leading-relaxed">{company.address}</span>
+                  <span className="text-[11px] font-medium shrink-0 mt-0.5" style={{ color: primaryColor }}>导航 ›</span>
+                </button>
+              )}
+              {company?.phone && (
+                <button onClick={() => tel(company.phone!)} className="flex items-start gap-2.5 w-full text-left group">
+                  <span className="text-gray-400 shrink-0 mt-0.5">☎️</span>
+                  <span className="text-[13px] text-gray-700 flex-1 leading-relaxed">{company.phone}</span>
+                  <span className="text-[11px] font-medium shrink-0 mt-0.5" style={{ color: primaryColor }}>拨打 ›</span>
+                </button>
+              )}
+              {!company?.address && !company?.phone && company?.name && (
+                <div className="text-[12px] text-gray-500">感谢您的关注与信任</div>
+              )}
+            </div>
           </div>
-          {ownerPhone && (
-            <button onClick={() => tel(ownerPhone)}
-              className="h-11 px-4 rounded-2xl bg-gradient-to-br from-[#1f6b3e] to-green-800 text-white text-sm font-semibold shadow-sm shadow-emerald-700/20 shrink-0 flex items-center gap-1.5">
-              📞 致电
+        )}
+
+        {/* 底部位距 */}
+        <div className="h-4" />
+      </main>
+
+      {/* ===================== 底部固定 CTA ===================== */}
+      <div className="fixed bottom-0 left-0 right-0 px-3 pt-4 pb-5 bg-gradient-to-t from-[#f5f2e8] via-[#f5f2e8]/95 to-transparent z-30">
+        <div className="grid grid-cols-2 gap-2 max-w-[600px] mx-auto">
+          {ownerPhone ? (
+            <button
+              onClick={() => tel(ownerPhone)}
+              className="h-12 rounded-2xl border-2 text-sm font-semibold bg-white flex items-center justify-center gap-1.5 shadow-sm"
+              style={{ borderColor: primaryColor + '40', color: primaryColor }}
+            >
+              📞 联系顾问
+            </button>
+          ) : (
+            <button
+              onClick={() => company?.phone && tel(company.phone)}
+              className="h-12 rounded-2xl border-2 text-sm font-semibold bg-white flex items-center justify-center gap-1.5 shadow-sm text-gray-600 border-gray-200"
+            >
+              📞 客服咨询
             </button>
           )}
+          <button
+            onClick={() => downloadPDF('all')}
+            className="h-12 rounded-2xl text-white text-sm font-bold shadow-lg flex items-center justify-center gap-1.5"
+            style={{
+              background: `linear-gradient(90deg, ${primaryColor}, ${shade(primaryColor, -10)})`,
+              boxShadow: `0 10px 24px -10px ${primaryColor}90`
+            }}
+          >
+            ⬇️ 下载方案 PDF
+          </button>
         </div>
       </div>
-
-      {/* 公司信息卡片 */}
-      {(company?.name || company?.address || company?.phone) && (
-        <div className="bg-white rounded-3xl p-4 shadow-sm mb-4">
-          <div className="text-[11px] text-gray-400 font-medium mb-2.5">公司信息</div>
-          <div className="space-y-2.5">
-            {company?.name && <div className="flex items-start gap-2"><span className="text-gray-400 shrink-0">🏢</span><span className="text-sm text-gray-800 font-medium">{company.name}</span></div>}
-            {company?.address && (
-              <button onClick={() => openMap(company.address!)} className="flex items-start gap-2 w-full text-left">
-                <span className="text-gray-400 shrink-0">📍</span>
-                <span className="text-sm text-gray-800 flex-1">{company.address}</span>
-                <span className="text-[11px] text-emerald-700 font-medium shrink-0">地图</span>
-              </button>
-            )}
-            {company?.phone && (
-              <button onClick={() => tel(company.phone!)} className="flex items-start gap-2 w-full text-left">
-                <span className="text-gray-400 shrink-0">☎️</span>
-                <span className="text-sm text-gray-800 flex-1">{company.phone}</span>
-                <span className="text-[11px] text-emerald-700 font-medium shrink-0">拨打</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </main>
-
-    <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
-      <button onClick={() => downloadPDF('all')}
-        className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#1f6b3e] to-green-800 text-white font-semibold shadow-lg shadow-emerald-700/30 flex items-center justify-center gap-2">
-        📥 下载完整方案PDF
-      </button>
     </div>
-  </div>
-);
+  );
+}
+
+// 颜色加深/变浅辅助（hex color，percent -100 ~ +100）
+function shade(hex: string, percent: number): string {
+  try {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const num = parseInt(h, 16);
+    let r = (num >> 16) + percent * 2.55;
+    let g = ((num >> 8) & 0xff) + percent * 2.55;
+    let b = (num & 0xff) + percent * 2.55;
+    r = Math.max(0, Math.min(255, Math.round(r)));
+    g = Math.max(0, Math.min(255, Math.round(g)));
+    b = Math.max(0, Math.min(255, Math.round(b)));
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  } catch { return hex; }
 }

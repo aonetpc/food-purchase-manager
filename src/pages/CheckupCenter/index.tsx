@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Stethoscope, ClipboardList } from 'lucide-react';
+import { Stethoscope, ClipboardList, Palette } from 'lucide-react';
 import CheckupItemsTab from './CheckupItemsTab';
 import PackagesTab from './PackagesTab';
+import BrandConfigTab from './BrandConfigTab';
 
-type MainTab = 'items' | 'packages';
+type MainTab = 'items' | 'packages' | 'brand';
 
 export default function CheckupCenter() {
   const [tab, setTab] = useState<MainTab>('packages');
@@ -11,6 +12,7 @@ export default function CheckupCenter() {
   const tabs: { key: MainTab; name: string; icon: React.ComponentType<any>; desc: string }[] = [
     { key: 'packages', name: '体检套餐管理', icon: ClipboardList, desc: '基础套餐管理 / 我的套餐 / 三角色价格方案' },
     { key: 'items', name: '体检项目库', icon: Stethoscope, desc: '7大分类 / 组合项目 / 新增编辑禁用' },
+    { key: 'brand', name: '品牌与名片设置', icon: Palette, desc: '企业品牌信息 / 客户经理分享头像 · 展示在分享页' },
   ];
 
   return (
@@ -61,6 +63,7 @@ export default function CheckupCenter() {
       <div className="px-6 pb-10 pt-4">
         {tab === 'packages' && <PackagesTab />}
         {tab === 'items' && <CheckupItemsTab />}
+        {tab === 'brand' && <BrandConfigTab />}
       </div>
     </div>
   );

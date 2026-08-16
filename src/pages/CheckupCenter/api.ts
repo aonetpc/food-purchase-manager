@@ -85,7 +85,38 @@ export interface CheckupItem {
   sort_order: number;
 }
 
+export interface BrandConfig {
+  name: string;
+  logo: string | null;
+  slogan: string | null;
+  address: string | null;
+  phone: string | null;
+  service_hours: string | null;
+  qualification: string | null;
+  wechat_qrcode: string | null;
+  primary_color: string;
+}
+
+export interface SalesProfile {
+  user_id: string;
+  name: string;
+  phone: string | null;
+  avatar_url: string | null;
+  title: string | null;
+  wechat_qrcode: string | null;
+  bio: string | null;
+  email: string | null;
+}
+
 export const checkupApi = {
+  getBrandConfig: () =>
+    api.get<any>('/booking/checkup-templates/brand-config'),
+  saveBrandConfig: (body: Partial<BrandConfig>) =>
+    api.put<any>('/booking/checkup-templates/brand-config', body),
+  getSalesProfile: (userId: string) =>
+    api.get<any>(`/booking/checkup-templates/sales-profile/${userId}`),
+  saveSalesProfile: (body: Partial<SalesProfile>) =>
+    api.put<any>('/booking/checkup-templates/sales-profile', body),
   list: (params?: { scope?: string; keyword?: string }) =>
     api.get<any>('/booking/checkup-templates', { params }),
   create: (body: any) =>

@@ -853,17 +853,39 @@ router.get('/share-public/:token', async (req, res) => {
         };
       }
     }
-    const company = {
-      name: process.env.COMPANY_NAME || '上海画一健康管理有限公司',
-      address: process.env.COMPANY_ADDRESS || null,
-      phone: process.env.COMPANY_PHONE || null,
-    };
+    const cfg = await getBrandConfigMap();
+    const company = buildCompanyFromCfg(cfg);
+    // 客户经理名片
+    let sales_profile = null;
+    if (pkg.owner_sales_id) {
+      const [spRows] = await pool.query(
+        `SELECT sp.*, u.name, u.phone
+         FROM checkup_sales_profiles sp
+         RIGHT JOIN users u ON u.id = sp.user_id
+         WHERE u.id = ? LIMIT 1`,
+        [pkg.owner_sales_id]
+      );
+      if (spRows.length > 0) {
+        const s = spRows[0];
+        sales_profile = {
+          user_id: s.user_id || pkg.owner_sales_id,
+          name: s.name || createdBy?.name || '',
+          phone: s.phone || createdBy?.phone || null,
+          avatar_url: s.avatar_url || null,
+          title: s.title || null,
+          wechat_qrcode: s.wechat_qrcode || null,
+          bio: s.bio || null,
+          email: s.email || null,
+        };
+      }
+    }
     const safe = {
       id: full.id, code: full.code, name: full.name, description: full.description,
       applicable_roles: full.applicable_roles,
       created_at: full.created_at,
       created_by: createdBy,
       company,
+      sales_profile,
       role_price_capsule: ROLES.reduce((m, r) => {
         m[r] = {
           original_total: round2(full.role_plans[r].original_total),
@@ -1051,17 +1073,39 @@ sharePublicRouter.get('/:token', async (req, res) => {
         };
       }
     }
-    const company = {
-      name: process.env.COMPANY_NAME || '上海画一健康管理有限公司',
-      address: process.env.COMPANY_ADDRESS || null,
-      phone: process.env.COMPANY_PHONE || null,
-    };
+    const cfg = await getBrandConfigMap();
+    const company = buildCompanyFromCfg(cfg);
+    // 客户经理名片
+    let sales_profile = null;
+    if (pkg.owner_sales_id) {
+      const [spRows] = await pool.query(
+        `SELECT sp.*, u.name, u.phone
+         FROM checkup_sales_profiles sp
+         RIGHT JOIN users u ON u.id = sp.user_id
+         WHERE u.id = ? LIMIT 1`,
+        [pkg.owner_sales_id]
+      );
+      if (spRows.length > 0) {
+        const s = spRows[0];
+        sales_profile = {
+          user_id: s.user_id || pkg.owner_sales_id,
+          name: s.name || createdBy?.name || '',
+          phone: s.phone || createdBy?.phone || null,
+          avatar_url: s.avatar_url || null,
+          title: s.title || null,
+          wechat_qrcode: s.wechat_qrcode || null,
+          bio: s.bio || null,
+          email: s.email || null,
+        };
+      }
+    }
     const safe = {
       id: full.id, code: full.code, name: full.name, description: full.description,
       applicable_roles: full.applicable_roles,
       created_at: full.created_at,
       created_by: createdBy,
       company,
+      sales_profile,
       role_price_capsule: ROLES.reduce((m, r) => {
         m[r] = {
           original_total: round2(full.role_plans[r].original_total),
@@ -1174,6 +1218,168 @@ sharePublicRouter.get('/:token/pdf', async (req, res) => {
   } catch (e) {
     console.error('[checkup-share public pdf] error:', e);
     if (!res.headersSent) res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================
+// PHASE 2-8: 品牌配置 & 客户经理名片
+// ============================================================
+
+async function getBrandConfigMap() {
+  try {
+    const [rows] = await pool.query('SELECT config_key, config_value FROM checkup_brand_config');
+    const map = {};
+    for (const r of rows) map[r.config_key] = r.config_value;
+    return map;
+  } catch (e) {
+    // 表未创建时兜底
+    console.warn('[brand-config] 读取失败，使用兜底值：', e.message);
+    return {};
+  }
+}
+function buildCompanyFromCfg(cfg) {
+  return {
+    name: cfg.company_name || process.env.COMPANY_NAME || '上海画一健康管理有限公司',
+    logo: cfg.company_logo || null,
+    slogan: cfg.company_slogan || '专注高端体检 · 为您定制专属方案',
+    address: cfg.company_address || process.env.COMPANY_ADDRESS || null,
+    phone: cfg.company_phone || process.env.COMPANY_PHONE || null,
+    // 以下占位（目前不显示，但数据链路打通）
+    service_hours: cfg.service_hours || null,
+    qualification: cfg.qualification || null,
+    wechat_qrcode: cfg.wechat_qrcode || null,
+    primary_color: cfg.primary_color || '#0f5132',
+  };
+}
+
+// ---- 品牌配置：读（免登录也可用，分享页/免登录PDF需要） ----
+router.get('/brand-config', async (req, res) => {
+  try {
+    const cfg = await getBrandConfigMap();
+    res.json({ ok: true, data: buildCompanyFromCfg(cfg) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---- 品牌配置：写（管理员） ----
+router.put('/brand-config', async (req, res) => {
+  try {
+    if (!isAdminOrManager(req.user)) return res.status(403).json({ ok: false, error: '仅管理员可设置品牌信息' });
+    const b = req.body || {};
+    const fields = [
+      ['company_name', b.company_name],
+      ['company_logo', b.company_logo],
+      ['company_slogan', b.company_slogan],
+      ['company_address', b.company_address],
+      ['company_phone', b.company_phone],
+      ['service_hours', b.service_hours],
+      ['qualification', b.qualification],
+      ['wechat_qrcode', b.wechat_qrcode],
+      ['primary_color', b.primary_color],
+    ];
+    for (const [k, v] of fields) {
+      const val = (v === undefined) ? null : String(v == null ? '' : v).trim() || null;
+      await pool.query(
+        `INSERT INTO checkup_brand_config (config_key, config_value) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
+        [k, val]
+      );
+    }
+    const cfg = await getBrandConfigMap();
+    res.json({ ok: true, data: buildCompanyFromCfg(cfg) });
+  } catch (e) {
+    console.error('[brand-config put] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---- 客户经理名片：读（登录用户可查任意用户的，免登录场景由分享接口一并返回） ----
+router.get('/sales-profile/:userId', async (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    if (!userId) return res.status(400).json({ ok: false, error: 'userId必填' });
+    const [rows] = await pool.query(
+      `SELECT sp.*, u.name, u.phone
+       FROM checkup_sales_profiles sp
+       LEFT JOIN users u ON u.id = sp.user_id
+       WHERE sp.user_id = ? LIMIT 1`,
+      [userId]
+    );
+    let data = null;
+    if (rows.length > 0) {
+      const r = rows[0];
+      data = {
+        user_id: r.user_id,
+        name: r.name,
+        phone: r.phone,
+        avatar_url: r.avatar_url,
+        title: r.title,
+        wechat_qrcode: r.wechat_qrcode,
+        bio: r.bio,
+        email: r.email,
+      };
+    } else {
+      // 即使没有名片，也返回user基本信息（phone直接读取users表）
+      const [uRows] = await pool.query('SELECT id, name, phone FROM users WHERE id = ? LIMIT 1', [userId]);
+      if (uRows.length > 0) {
+        const u = uRows[0];
+        data = {
+          user_id: u.id, name: u.name, phone: u.phone || null,
+          avatar_url: null, title: null, wechat_qrcode: null, bio: null, email: null,
+        };
+      }
+    }
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[sales-profile get] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---- 客户经理名片：保存（登录用户保存自己的） ----
+router.put('/sales-profile', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ ok: false, error: '请先登录' });
+    const b = req.body || {};
+    const avatar_url = b.avatar_url ? String(b.avatar_url).trim().slice(0, 512) : null;
+    const title = b.title ? String(b.title).trim().slice(0, 64) : null;
+    const wechat_qrcode = b.wechat_qrcode ? String(b.wechat_qrcode).trim().slice(0, 512) : null;
+    const bio = b.bio ? String(b.bio).trim().slice(0, 255) : null;
+    const email = b.email ? String(b.email).trim().slice(0, 128) : null;
+    await pool.query(
+      `INSERT INTO checkup_sales_profiles (user_id, avatar_url, title, wechat_qrcode, bio, email)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE avatar_url = VALUES(avatar_url), title = VALUES(title),
+         wechat_qrcode = VALUES(wechat_qrcode), bio = VALUES(bio), email = VALUES(email)`,
+      [userId, avatar_url, title, wechat_qrcode, bio, email]
+    );
+    // 返回带 user 基本信息的结果
+    const [uRows] = await pool.query('SELECT id, name, phone FROM users WHERE id = ? LIMIT 1', [userId]);
+    const u = uRows[0] || { id: userId, name: '', phone: null };
+    res.json({
+      ok: true,
+      data: {
+        user_id: userId,
+        name: u.name,
+        phone: u.phone,
+        avatar_url, title, wechat_qrcode, bio, email,
+      }
+    });
+  } catch (e) {
+    console.error('[sales-profile put] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---- 免登录分享公开读取：独立router上也加一个 /brand-config 端点（SharePage免登录直接拉品牌） ----
+sharePublicRouter.get('/brand-config', async (req, res) => {
+  try {
+    const cfg = await getBrandConfigMap();
+    res.json({ ok: true, data: buildCompanyFromCfg(cfg) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
