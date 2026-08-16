@@ -352,12 +352,17 @@ router.put('/brand-config', async (req, res) => {
   try {
     if (!isAdminOrManager(req.user)) return res.status(403).json({ ok: false, error: '仅管理员可设置品牌信息' });
     const b = req.body || {};
+    // 字段映射：同时兼容前端短名(phone/address)和DB长名(company_phone/company_address)
+    const pick = (keys) => {
+      for (const k of keys) if (b[k] !== undefined && b[k] !== null) return b[k];
+      return undefined;
+    };
     const fields = [
-      ['company_name', b.company_name],
-      ['company_logo', b.company_logo],
-      ['company_slogan', b.company_slogan],
-      ['company_address', b.company_address],
-      ['company_phone', b.company_phone],
+      ['company_name', pick(['company_name', 'name'])],
+      ['company_logo', pick(['company_logo', 'logo'])],
+      ['company_slogan', pick(['company_slogan', 'slogan'])],
+      ['company_address', pick(['company_address', 'address'])],
+      ['company_phone', pick(['company_phone', 'phone'])],
       ['service_hours', b.service_hours],
       ['qualification', b.qualification],
       ['wechat_qrcode', b.wechat_qrcode],
@@ -372,7 +377,9 @@ router.put('/brand-config', async (req, res) => {
       );
     }
     const cfg = await getBrandConfigMap();
-    res.json({ ok: true, data: buildCompanyFromCfg(cfg) });
+    // 同时返回长名和短名字段，前端无论哪种命名都能拿到
+    const c = buildCompanyFromCfg(cfg);
+    res.json({ ok: true, data: { ...c, phone: c.phone, address: c.address } });
   } catch (e) {
     console.error('[brand-config put] error:', e);
     res.status(500).json({ ok: false, error: e.message });

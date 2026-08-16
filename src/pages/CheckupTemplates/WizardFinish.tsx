@@ -313,6 +313,20 @@ return (
               </div>
               <button onClick={copyLink} className="h-9 px-3 rounded-xl bg-emerald-600 text-white text-xs font-medium">复制</button>
             </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => window.open(shareResult.share_path, '_blank', 'noopener')}
+                className="h-10 rounded-xl bg-white border border-emerald-200 text-emerald-700 text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-emerald-50"
+              >
+                👁 预览客户视角
+              </button>
+              <button
+                onClick={() => { setShowShareGuide(true); }}
+                className="h-10 rounded-xl bg-emerald-600 text-white text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-emerald-700"
+              >
+                📤 微信分享指引
+              </button>
+            </div>
           </div>
         ) : (
           <button onClick={onShare} className="w-full h-11 mt-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium flex items-center justify-center gap-2 shadow-md shadow-emerald-800/20">

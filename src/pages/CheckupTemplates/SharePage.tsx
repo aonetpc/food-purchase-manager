@@ -35,7 +35,7 @@ export default function SharePage() {
   const [sales, setSales] = useState<SalesProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [expireAt, setExpireAt] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
+  const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: true, female_single: true });
 
   useEffect(() => {
     if (!token) return;
@@ -267,24 +267,40 @@ export default function SharePage() {
                 className="w-full p-4 flex items-center justify-between"
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0"
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shrink-0 shadow-sm"
                     style={{ background: r === 'male' ? '#eff6ff' : '#fdf2f8' }}>
                     {ROLE_EMOJI[r]}
                   </div>
                   <div className="text-left min-w-0 flex-1">
-                    <div className="font-semibold text-gray-900 text-[15px]">{ROLE_LABEL[r]}方案</div>
-                    <div className="text-[11px] text-gray-500 mt-0.5">{roleItems.length}项检查</div>
+                    <div className="font-bold text-gray-900 text-[16px] flex items-center gap-2 flex-wrap">
+                      {ROLE_LABEL[r]}方案
+                      {saved > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full shrink-0">
+                          💰 立省¥{saved.toFixed(0)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[12px] text-gray-500 mt-0.5 flex items-center gap-3 flex-wrap">
+                      <span>🧪 {roleItems.length}项检查</span>
+                      {total > 0 && total !== disc ? (
+                        <span className="text-gray-400 line-through">原价 ¥{total.toFixed(0)}</span>
+                      ) : (
+                        rate < 100 && <span className="text-gray-400">{rate.toFixed(1)}折</span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="text-right shrink-0 ml-2">
-                  <div className="text-lg font-bold" style={{ color: primaryColor }}>¥{disc.toFixed(0)}</div>
+                  <div className="text-2xl font-extrabold tabular-nums" style={{ color: primaryColor }}>
+                    ¥{disc.toFixed(0)}
+                  </div>
                   {total > 0 && total !== disc ? (
-                    <div className="text-[10px] text-orange-500 mt-0.5">原价 ¥{total.toFixed(0)}</div>
+                    <div className="text-[11px] text-orange-500 font-medium mt-0.5">🎁 折扣 {rate.toFixed(1)}%</div>
                   ) : (
-                    <div className="text-[10px] text-gray-400 mt-0.5">{rate >= 100 ? '无折扣' : `${rate.toFixed(1)}折`}</div>
+                    rate < 100 && <div className="text-[11px] text-orange-500 font-medium mt-0.5">🎁 {rate.toFixed(1)}折</div>
                   )}
                 </div>
-                <svg className={`ml-2 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.2">
+                <svg className={`ml-2 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2.5">
                   <path d="m6 9 6 6 6-6"/>
                 </svg>
               </button>
@@ -363,50 +379,70 @@ export default function SharePage() {
         {/* ===================== 客户经理卡片 ===================== */}
         {(ownerName || ownerPhone) && (
           <div className="bg-white rounded-[22px] shadow-sm overflow-hidden border border-gray-100">
-            <div className="px-4 pt-4 pb-2">
-              <div className="text-[11px] font-medium text-gray-400 tracking-wider mb-2.5">💼 您的专属客户经理</div>
+            <div className="px-5 pt-4 pb-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-bold tracking-[0.14em]" style={{ color: primaryColor }}>
+                  💼 您的专属客户经理
+                </div>
+                <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-full">
+                  一对一服务
+                </span>
+              </div>
             </div>
-            <div className="px-4 pb-4">
-              <div className="flex items-center gap-3.5">
+            <div className="px-5 pb-5">
+              <div className="flex items-center gap-4 p-3 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100/50">
                 {ownerAvatar ? (
                   <img
                     src={ownerAvatar} alt=""
-                    className="w-14 h-14 rounded-2xl object-cover shrink-0 shadow-sm border border-gray-100"
+                    className="w-16 h-16 rounded-2xl object-cover shrink-0 shadow-md border-2 border-white"
                     onError={(e) => { (e.currentTarget.style.display = 'none'); const sib = e.currentTarget.nextElementSibling as HTMLElement | null; if (sib) sib.style.display = 'flex'; }}
                   />
                 ) : null}
                 <div
-                  className="w-14 h-14 rounded-2xl shrink-0 items-center justify-center text-xl font-bold text-white shadow-sm"
+                  className="w-16 h-16 rounded-2xl shrink-0 items-center justify-center text-2xl font-extrabold text-white shadow-md border-2 border-white"
                   style={{
                     display: ownerAvatar ? 'none' : 'flex',
-                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)'
                   }}
                 >{ownerLetter}</div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[16px] font-bold text-gray-900 truncate">{ownerName || '销售顾问'}</div>
-                  <div className="text-[12px] text-gray-500 mt-0.5 truncate">{ownerPhone ? '📱 ' + ownerPhone : '欢迎联系咨询'}</div>
+                  <div className="text-[18px] font-extrabold text-gray-900 truncate">{ownerName || '销售顾问'}</div>
+                  {ownerPhone ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-[13px] font-semibold text-gray-700 tracking-wide">{ownerPhone}</span>
+                      <span className="inline-flex items-center gap-0.5 text-[9px] text-green-700 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded-md font-semibold">
+                        🟢 在线
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-[13px] text-gray-500 mt-1">欢迎咨询</div>
+                  )}
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 mt-4">
+              <div className="grid grid-cols-2 gap-2.5 mt-4">
                 {ownerPhone ? (
                   <>
                     <button
                       onClick={() => tel(ownerPhone)}
-                      className="h-11 rounded-xl text-white text-[13px] font-semibold shadow-sm flex items-center justify-center gap-1.5"
-                      style={{ background: `linear-gradient(90deg, ${primaryColor}, ${shade(primaryColor, -12)})` }}
+                      className="h-12 rounded-2xl text-white text-[14px] font-bold shadow-md flex items-center justify-center gap-1.5 active:scale-[0.97] transition-transform"
+                      style={{
+                        background: `linear-gradient(135deg, ${shade(primaryColor, 5)}, ${shade(primaryColor, -15)})`,
+                        boxShadow: `0 8px 18px -10px ${primaryColor}aa`
+                      }}
                     >
-                      📞 立即致电
+                      📞 一键致电
                     </button>
                     <button
-                      onClick={() => copyText(ownerPhone, '手机号已复制')}
-                      className="h-11 rounded-xl border border-gray-200 bg-white text-gray-700 text-[13px] font-medium hover:bg-gray-50 transition-colors"
+                      onClick={() => copyText(ownerPhone, '手机号已复制，快去微信添加吧')}
+                      className="h-12 rounded-2xl border-2 text-[14px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.97] transition-colors transition-transform bg-white hover:bg-gray-50"
+                      style={{ borderColor: primaryColor + '50', color: primaryColor }}
                     >
                       📋 复制号码
                     </button>
                   </>
                 ) : (
-                  <div className="col-span-2 h-11 rounded-xl bg-gray-50 text-gray-400 text-[12px] flex items-center justify-center">
-                    该顾问暂未留电话，欢迎到店咨询
+                  <div className="col-span-2 h-12 rounded-2xl bg-gray-50 text-gray-400 text-[13px] flex items-center justify-center">
+                    该顾问暂未留电话，欢迎到店或拨打客服热线
                   </div>
                 )}
               </div>
@@ -445,34 +481,44 @@ export default function SharePage() {
       </main>
 
       {/* ===================== 底部固定 CTA ===================== */}
-      <div className="fixed bottom-0 left-0 right-0 px-3 pt-4 pb-5 bg-gradient-to-t from-[#f5f2e8] via-[#f5f2e8]/95 to-transparent z-30">
-        <div className="grid grid-cols-2 gap-2 max-w-[600px] mx-auto">
-          {ownerPhone ? (
+      <div className="fixed bottom-0 left-0 right-0 z-30">
+        {/* 安全遮罩 */}
+        <div className="absolute inset-x-0 top-0 h-6 -translate-y-full" style={{ background: 'linear-gradient(to top, rgba(245,242,232,0.98), rgba(245,242,232,0))' }} />
+        <div className="relative px-4 pt-3 pb-4" style={{ background: 'rgba(245,242,232,0.98)', backdropFilter: 'blur(12px)' }}>
+          <div className="grid grid-cols-5 gap-2 max-w-[620px] mx-auto">
+            {/* 左：2个快捷联系按钮 */}
             <button
-              onClick={() => tel(ownerPhone)}
-              className="h-12 rounded-2xl border-2 text-sm font-semibold bg-white flex items-center justify-center gap-1.5 shadow-sm"
-              style={{ borderColor: primaryColor + '40', color: primaryColor }}
+              onClick={() => (ownerPhone && tel(ownerPhone)) || (company?.phone && tel(company.phone))}
+              disabled={!ownerPhone && !company?.phone}
+              className="col-span-1 h-[52px] rounded-2xl bg-white border border-gray-200 text-gray-700 shadow-sm flex flex-col items-center justify-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-transform"
             >
-              📞 联系顾问
+              <span className="text-xl leading-none">📞</span>
+              <span className="text-[10px] font-medium">联系咨询</span>
             </button>
-          ) : (
             <button
-              onClick={() => company?.phone && tel(company.phone)}
-              className="h-12 rounded-2xl border-2 text-sm font-semibold bg-white flex items-center justify-center gap-1.5 shadow-sm text-gray-600 border-gray-200"
+              onClick={() => (ownerPhone && copyText(ownerPhone, '手机号已复制')) || (company?.phone && copyText(company.phone, '电话已复制'))}
+              disabled={!ownerPhone && !company?.phone}
+              className="col-span-1 h-[52px] rounded-2xl bg-white border border-gray-200 text-gray-700 shadow-sm flex flex-col items-center justify-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-transform"
             >
-              📞 客服咨询
+              <span className="text-xl leading-none">📋</span>
+              <span className="text-[10px] font-medium">复制号码</span>
             </button>
-          )}
-          <button
-            onClick={() => downloadPDF('all')}
-            className="h-12 rounded-2xl text-white text-sm font-bold shadow-lg flex items-center justify-center gap-1.5"
-            style={{
-              background: `linear-gradient(90deg, ${primaryColor}, ${shade(primaryColor, -10)})`,
-              boxShadow: `0 10px 24px -10px ${primaryColor}90`
-            }}
-          >
-            ⬇️ 下载方案 PDF
-          </button>
+            {/* 右：3格 —— 大按钮下载PDF */}
+            <button
+              onClick={() => downloadPDF('all')}
+              className="col-span-3 h-[52px] rounded-2xl text-white font-bold text-[15px] shadow-lg flex items-center justify-center gap-1.5 active:scale-[0.97] transition-transform"
+              style={{
+                background: `linear-gradient(135deg, ${shade(primaryColor, 5)}, ${shade(primaryColor, -15)} 60%, ${shade(primaryColor, -25)})`,
+                boxShadow: `0 14px 30px -14px ${primaryColor}cc, inset 0 1px 0 rgba(255,255,255,0.25)`
+              }}
+            >
+              <span className="text-xl leading-none">⬇️</span>
+              <div className="flex flex-col items-start leading-none">
+                <span>下载完整 PDF</span>
+                <span className="text-[10px] font-medium opacity-80 mt-0.5">{applicable.length}个人群 · 含价格明细</span>
+              </div>
+            </button>
+          </div>
         </div>
       </div>
     </div>
