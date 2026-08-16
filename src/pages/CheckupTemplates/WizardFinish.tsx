@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
 checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
 type Role, type CheckupTemplate, type CheckupItemRef, type RolePlan, type ShareResult
@@ -9,6 +9,8 @@ import { useToast } from '@/components/Toast';
 export default function WizardFinish() {
 const { id } = useParams();
 const navigate = useNavigate();
+const location = useLocation();
+const justCreated = !!(location.state as any)?.justCreated;
 const toast = useToast();
 const [pkg, setPkg] = useState<CheckupTemplate | null>(null);
 const [loading, setLoading] = useState(true);
@@ -162,30 +164,58 @@ if (!pkg) return <div className="p-12 text-center text-gray-400 text-sm">套餐�
 return (
   <div className="min-h-screen bg-gradient-to-b from-[#f3f7ec] via-[#faf7ee] to-[#f2efe3] pb-36">
     <header className="relative text-white">
-      <div className="absolute inset-x-0 top-0 h-48 bg-gradient-to-br from-[#1f6b3e] via-emerald-800 to-green-900 rounded-b-[32px]" />
-      <div className="relative px-5 pt-10 pb-44 text-center">
-        <div className="w-16 h-16 mx-auto rounded-full bg-white/25 backdrop-blur flex items-center justify-center shadow-lg">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M5 12l5 5L20 7"/></svg>
-        </div>
-        <h1 className="mt-3 text-2xl font-bold">套餐方案已生成！</h1>
-        <p className="mt-1 text-sm text-white/90">共 {applicable.length} 个角色方案</p>
+      <div className={`absolute inset-x-0 top-0 ${justCreated ? 'h-48' : 'h-36'} bg-gradient-to-br from-[#1f6b3e] via-emerald-800 to-green-900 rounded-b-[32px]`} />
+      <div className={`relative px-5 ${justCreated ? 'pt-10 pb-44' : 'pt-10 pb-28'} ${justCreated ? 'text-center' : 'text-left'}`}>
+        {justCreated ? (
+          <>
+            <div className="w-16 h-16 mx-auto rounded-full bg-white/25 backdrop-blur flex items-center justify-center shadow-lg">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M5 12l5 5L20 7"/></svg>
+            </div>
+            <h1 className="mt-3 text-2xl font-bold">套餐方案已生成！</h1>
+            <p className="mt-1 text-sm text-white/90">共 {applicable.length} 个角色方案</p>
+          </>
+        ) : (
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center text-2xl shadow-sm shrink-0">
+                🏥
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] text-white/80 font-medium">画一体检 · 方案详情</div>
+                <h1 className="mt-0.5 text-xl font-bold truncate">{pkg.name}</h1>
+                <div className="mt-1 inline-flex flex-wrap gap-1.5">
+                  {applicable.map(r => (
+                    <span key={r} className={r === 'male'
+                      ? 'px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/20 text-white'
+                      : 'px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/20 text-white'}>
+                      {ROLE_EMOJI[r]} {ROLE_LABEL[r]}
+                    </span>
+                  ))}
+                </div>
+                {pkg.description && <div className="mt-2 text-[11px] text-white/80 line-clamp-2">{pkg.description}</div>}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </header>
 
-    <main className="px-4 -mt-32 relative">
-      <div className="bg-white rounded-3xl shadow-lg p-4 mb-4">
-        <div className="text-sm text-gray-500">套餐名称</div>
-        <div className="text-xl font-bold text-gray-900 mt-1">{pkg.name}</div>
-        <div className="flex flex-wrap gap-2 mt-3">
-          {applicable.map(r => (
-            <span key={r} className={r === 'male'
-              ? 'px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-emerald-800'
-              : 'px-3 py-1 rounded-full text-xs font-medium bg-pink-100 text-pink-700'}>
-              {ROLE_EMOJI[r]} {ROLE_LABEL[r]}
-            </span>
-          ))}
+    <main className={`px-4 ${justCreated ? '-mt-32' : '-mt-16'} relative`}>
+      {justCreated && (
+        <div className="bg-white rounded-3xl shadow-lg p-4 mb-4">
+          <div className="text-sm text-gray-500">套餐名称</div>
+          <div className="text-xl font-bold text-gray-900 mt-1">{pkg.name}</div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {applicable.map(r => (
+              <span key={r} className={r === 'male'
+                ? 'px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-emerald-800'
+                : 'px-3 py-1 rounded-full text-xs font-medium bg-pink-100 text-pink-700'}>
+                {ROLE_EMOJI[r]} {ROLE_LABEL[r]}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {applicable.map(r => {
         const plan: any = pkg.role_plans?.[r] || {};

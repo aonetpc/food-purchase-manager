@@ -830,10 +830,32 @@ router.get('/share-public/:token', async (req, res) => {
     if (pkg.status !== 1) return res.status(410).json({ ok: false, error: '套餐已停用' });
 
     const full = await readPackageFull(pkg.id);
+    // 客户经理信息
+    let createdBy = null;
+    if (pkg.owner_sales_id) {
+      const [uRows] = await pool.query(
+        'SELECT id, name, username, phone FROM users WHERE id = ? LIMIT 1',
+        [pkg.owner_sales_id]
+      );
+      if (uRows.length > 0) {
+        const u = uRows[0];
+        createdBy = {
+          id: u.id, name: u.name, username: u.username, phone: u.phone || null,
+          avatar_letter: (u.name || 'U').slice(0, 1),
+        };
+      }
+    }
+    const company = {
+      name: process.env.COMPANY_NAME || '上海画一健康管理有限公司',
+      address: process.env.COMPANY_ADDRESS || null,
+      phone: process.env.COMPANY_PHONE || null,
+    };
     const safe = {
       id: full.id, code: full.code, name: full.name, description: full.description,
       applicable_roles: full.applicable_roles,
       created_at: full.created_at,
+      created_by: createdBy,
+      company,
       role_price_capsule: ROLES.reduce((m, r) => {
         m[r] = {
           original_total: round2(full.role_plans[r].original_total),
@@ -854,9 +876,6 @@ router.get('/share-public/:token', async (req, res) => {
 
 // ============================================================
 // PHASE 2-7: 套餐方案 PDF 导出
-//   GET /api/booking/checkup-templates/:id/pdf?role=all|male|female_married|female_single
-//   复用 pdfkit + 中文字体，生成 A4 方案 PDF，浏览器直接下载
-// ============================================================
 function findChineseFont() {
   const paths = [
     path.join(__dirname, '..', 'fonts', 'SourceHanSansSC-Regular.otf'),
@@ -1009,10 +1028,32 @@ sharePublicRouter.get('/:token', async (req, res) => {
     if (pkg.status !== 1) return res.status(410).json({ ok: false, error: '套餐已停用' });
 
     const full = await readPackageFull(pkg.id);
+    // 客户经理信息
+    let createdBy = null;
+    if (pkg.owner_sales_id) {
+      const [uRows] = await pool.query(
+        'SELECT id, name, username, phone FROM users WHERE id = ? LIMIT 1',
+        [pkg.owner_sales_id]
+      );
+      if (uRows.length > 0) {
+        const u = uRows[0];
+        createdBy = {
+          id: u.id, name: u.name, username: u.username, phone: u.phone || null,
+          avatar_letter: (u.name || 'U').slice(0, 1),
+        };
+      }
+    }
+    const company = {
+      name: process.env.COMPANY_NAME || '上海画一健康管理有限公司',
+      address: process.env.COMPANY_ADDRESS || null,
+      phone: process.env.COMPANY_PHONE || null,
+    };
     const safe = {
       id: full.id, code: full.code, name: full.name, description: full.description,
       applicable_roles: full.applicable_roles,
       created_at: full.created_at,
+      created_by: createdBy,
+      company,
       role_price_capsule: ROLES.reduce((m, r) => {
         m[r] = {
           original_total: round2(full.role_plans[r].original_total),

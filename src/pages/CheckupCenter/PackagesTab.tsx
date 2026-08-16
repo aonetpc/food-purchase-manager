@@ -307,8 +307,12 @@ function PackageCard({
   const applicable: any[] = (pkg as any).applicable_roles || ROLES;
   const isPublic = !!(pkg as any).is_public;
   const isOwner = !!(currentUserId && (pkg as any).owner_sales_id === currentUserId);
-  const canEdit = isAdmin || isOwner;
   const covers: string[] = Array.isArray((pkg as any).cover_sales_ids) ? (pkg as any).cover_sales_ids : [];
+  const isAssignedToMe = !!(currentUserId && covers.includes(currentUserId));
+  // 编辑权限：管理员 或 自己创建的
+  const canEdit = isAdmin || isOwner;
+  // 删除权限：管理员（测试期保留） 或 销售自己创建（公共/分配给我的不允许删）
+  const canDelete = isAdmin || (!isPublic && isOwner && !isAssignedToMe);
 
   // 按快照回算每个角色的原价汇总（与套餐里保存的 original_total 做偏差比对）
   const roleRealTotals = computeRoleRealTotals(pkg as any);
@@ -434,7 +438,7 @@ function PackageCard({
         )}
         <div className="ml-auto flex items-center gap-1.5">
           {!canEdit && <Eye size={12} className="text-gray-300" />}
-          {canEdit && (
+          {canDelete && (
             <button onClick={onDelete} className={btnDanger}>
               <Trash2 size={11} /> 删除
             </button>

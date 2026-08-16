@@ -160,7 +160,7 @@ const onSaveAndNext = async () => {
     const res = await checkupApi.saveItems(id, { items: flatItems, role_plans });
     if (!res?.ok) throw new Error(res?.error || '保存失败');
     toast.success('保存成功，生成方案中...');
-    navigate(`/h/checkup-templates/${id}/finish`);
+    navigate(`/h/checkup-templates/${id}/finish`, { state: { justCreated: true } });
   } catch (e: any) {
     toast.error(e.message || '保存失败');
   } finally {
