@@ -86,11 +86,17 @@ export default function SharePage() {
           setSales(null);
         }
       } else {
-        toast.error(r?.error || '链接已失效或不存在');
+        // 分享页面面向未登录客户，不显示"未登录"等系统级错误提示；
+        // 真正的401一般是部署配置问题，统一展示"打开失败请在微信重试"的友好文案。
+        const isAuthErr = /未登录|请先登录|Unauthorized|401/i.test(String(r?.error || ''));
+        if (!isAuthErr) {
+          toast.error(r?.error || '链接已失效或不存在');
+        }
       }
       setLoading(false);
     }).catch((e: any) => {
-      toast.error(e?.message || '加载失败');
+      // 网络类错误（CORS / 超时 / 500）也静默，不在客户侧弹 Toast
+      console.warn('[SharePage] load error:', e);
       setLoading(false);
     });
   }, [token]);

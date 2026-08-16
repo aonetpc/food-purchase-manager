@@ -1170,91 +1170,50 @@ router.get('/:id/pdf', async (req, res) => {
   }
 });
 
-// 免登录分享公开读取（独立 router，在 server.js 单独挂在 /api/booking/checkup-share 不加 requireAuth）
-const sharePublicRouter = express.Router();
-sharePublicRouter.get('/:token', async (req, res) => {
-  try {
-    const token = String(req.params.token || '').trim();
-    if (!token) return res.status(400).json({ ok: false, error: 'token必填' });
-    const [rows] = await pool.query(
-      `SELECT * FROM booking_packages WHERE share_token = ? LIMIT 1`,
-      [token]
-    );
-    if (rows.length === 0) return res.status(404).json({ ok: false, error: '分享链接不存在或已失效' });
-    const pkg = rows[0];
-    if (pkg.share_expire_at && new Date(pkg.share_expire_at).getTime() < Date.now()) {
-      return res.status(410).json({ ok: false, error: '分享链接已过期' });
-    }
-    if (pkg.status !== 1) return res.status(410).json({ ok: false, error: '套餐已停用' });
+// ============================================================
+// PHASE 2-8: 品牌配置 & 客户经理名片（工具函数：必须在 sharePublicRouter 之前定义）
+// ============================================================
 
-    const full = await readPackageFull(pkg.id);
-    // 客户经理信息
-    let createdBy = null;
-    if (pkg.owner_sales_id) {
-      const [uRows] = await pool.query(
-        'SELECT id, name, username, phone FROM users WHERE id = ? LIMIT 1',
-        [pkg.owner_sales_id]
-      );
-      if (uRows.length > 0) {
-        const u = uRows[0];
-        createdBy = {
-          id: u.id, name: u.name, username: u.username, phone: u.phone || null,
-          avatar_letter: (u.name || 'U').slice(0, 1),
-        };
-      }
-    }
-    const cfg = await getBrandConfigMap();
-    const company = buildCompanyFromCfg(cfg);
-    // 客户经理名片
-    let sales_profile = null;
-    if (pkg.owner_sales_id) {
-      const [spRows] = await pool.query(
-        `SELECT sp.*, u.name, u.phone
-         FROM checkup_sales_profiles sp
-         RIGHT JOIN users u ON u.id = sp.user_id
-         WHERE u.id = ? LIMIT 1`,
-        [pkg.owner_sales_id]
-      );
-      if (spRows.length > 0) {
-        const s = spRows[0];
-        sales_profile = {
-          user_id: s.user_id || pkg.owner_sales_id,
-          name: s.name || createdBy?.name || '',
-          phone: s.phone || createdBy?.phone || null,
-          avatar_url: s.avatar_url || null,
-          title: s.title || null,
-          wechat_qrcode: s.wechat_qrcode || null,
-          bio: s.bio || null,
-          email: s.email || null,
-        };
-      }
-    }
-    const safe = {
-      id: full.id, code: full.code, name: full.name, description: full.description,
-      applicable_roles: full.applicable_roles,
-      created_at: full.created_at,
-      created_by: createdBy,
-      company,
-      sales_profile,
-      role_price_capsule: ROLES.reduce((m, r) => {
-        m[r] = {
-          original_total: round2(full.role_plans[r].original_total),
-          discount_price: round2(full.role_plans[r].discount_price),
-          discount_rate: round2(full.role_plans[r].discount_rate),
-        };
-        return m;
-      }, {}),
-      role_plans: full.role_plans,
-      role_items: full.role_items,  // 三类角色分别的 items 列表
-    };
-    res.json({ ok: true, data: safe });
+async function getBrandConfigMap() {
+  try {
+    const [rows] = await pool.query('SELECT config_key, config_value FROM checkup_brand_config');
+    const map = {};
+    for (const r of rows) map[r.config_key] = r.config_value;
+    return map;
   } catch (e) {
-    console.error('[checkup-share public] error:', e);
+    console.warn('[brand-config] 读取失败，使用兜底值：', e.message);
+    return {};
+  }
+}
+function buildCompanyFromCfg(cfg) {
+  return {
+    name: cfg.company_name || process.env.COMPANY_NAME || '上海画一健康管理有限公司',
+    logo: cfg.company_logo || null,
+    slogan: cfg.company_slogan || '专注高端体检 · 为您定制专属方案',
+    address: cfg.company_address || process.env.COMPANY_ADDRESS || null,
+    phone: cfg.company_phone || process.env.COMPANY_PHONE || null,
+    service_hours: cfg.service_hours || null,
+    qualification: cfg.qualification || null,
+    wechat_qrcode: cfg.wechat_qrcode || null,
+    primary_color: cfg.primary_color || '#0f5132',
+  };
+}
+
+// 免登录分享公开读取（独立 router，在 server.js 单独挂在 /api/booking/checkup-share 不加 requireAuth）
+// ⚠️ 路由顺序非常重要：固定路径必须放在参数路由 `/:token` 之前，否则会被吞掉！
+const sharePublicRouter = express.Router();
+
+// 1）固定路径 — 品牌配置（必须放第一，否则会被 /:token 当成 token=brand-config）
+sharePublicRouter.get('/brand-config', async (req, res) => {
+  try {
+    const cfg = await getBrandConfigMap();
+    res.json({ ok: true, data: buildCompanyFromCfg(cfg) });
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// PDF 也导出一个 sharePublic 子路由：GET /:token/pdf（免登录）
+// 2）固定路径 + 子参数 — PDF 下载
 sharePublicRouter.get('/:token/pdf', async (req, res) => {
   try {
     const { role = 'all' } = req.query;
@@ -1351,41 +1310,86 @@ sharePublicRouter.get('/:token/pdf', async (req, res) => {
   }
 });
 
-// ============================================================
-// PHASE 2-8: 品牌配置 & 客户经理名片（工具函数；路由已前置到 /:id 之前）
-// ============================================================
-
-async function getBrandConfigMap() {
+// 3）参数路由放在最后 — 分享详情
+sharePublicRouter.get('/:token', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT config_key, config_value FROM checkup_brand_config');
-    const map = {};
-    for (const r of rows) map[r.config_key] = r.config_value;
-    return map;
-  } catch (e) {
-    console.warn('[brand-config] 读取失败，使用兜底值：', e.message);
-    return {};
-  }
-}
-function buildCompanyFromCfg(cfg) {
-  return {
-    name: cfg.company_name || process.env.COMPANY_NAME || '上海画一健康管理有限公司',
-    logo: cfg.company_logo || null,
-    slogan: cfg.company_slogan || '专注高端体检 · 为您定制专属方案',
-    address: cfg.company_address || process.env.COMPANY_ADDRESS || null,
-    phone: cfg.company_phone || process.env.COMPANY_PHONE || null,
-    service_hours: cfg.service_hours || null,
-    qualification: cfg.qualification || null,
-    wechat_qrcode: cfg.wechat_qrcode || null,
-    primary_color: cfg.primary_color || '#0f5132',
-  };
-}
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ ok: false, error: 'token必填' });
+    const [rows] = await pool.query(
+      `SELECT * FROM booking_packages WHERE share_token = ? LIMIT 1`,
+      [token]
+    );
+    if (rows.length === 0) return res.status(404).json({ ok: false, error: '分享链接不存在或已失效' });
+    const pkg = rows[0];
+    if (pkg.share_expire_at && new Date(pkg.share_expire_at).getTime() < Date.now()) {
+      return res.status(410).json({ ok: false, error: '分享链接已过期' });
+    }
+    if (pkg.status !== 1) return res.status(410).json({ ok: false, error: '套餐已停用' });
 
-// ---- 免登录分享公开读取：独立router上也加一个 /brand-config 端点 ----
-sharePublicRouter.get('/brand-config', async (req, res) => {
-  try {
+    const full = await readPackageFull(pkg.id);
+    // 客户经理信息
+    let createdBy = null;
+    if (pkg.owner_sales_id) {
+      const [uRows] = await pool.query(
+        'SELECT id, name, username, phone FROM users WHERE id = ? LIMIT 1',
+        [pkg.owner_sales_id]
+      );
+      if (uRows.length > 0) {
+        const u = uRows[0];
+        createdBy = {
+          id: u.id, name: u.name, username: u.username, phone: u.phone || null,
+          avatar_letter: (u.name || 'U').slice(0, 1),
+        };
+      }
+    }
     const cfg = await getBrandConfigMap();
-    res.json({ ok: true, data: buildCompanyFromCfg(cfg) });
+    const company = buildCompanyFromCfg(cfg);
+    // 客户经理名片
+    let sales_profile = null;
+    if (pkg.owner_sales_id) {
+      const [spRows] = await pool.query(
+        `SELECT sp.*, u.name, u.phone
+         FROM checkup_sales_profiles sp
+         RIGHT JOIN users u ON u.id = sp.user_id
+         WHERE u.id = ? LIMIT 1`,
+        [pkg.owner_sales_id]
+      );
+      if (spRows.length > 0) {
+        const s = spRows[0];
+        sales_profile = {
+          user_id: s.user_id || pkg.owner_sales_id,
+          name: s.name || createdBy?.name || '',
+          phone: s.phone || createdBy?.phone || null,
+          avatar_url: s.avatar_url || null,
+          title: s.title || null,
+          wechat_qrcode: s.wechat_qrcode || null,
+          bio: s.bio || null,
+          email: s.email || null,
+        };
+      }
+    }
+    const safe = {
+      id: full.id, code: full.code, name: full.name, description: full.description,
+      applicable_roles: full.applicable_roles,
+      created_at: full.created_at,
+      created_by: createdBy,
+      company,
+      sales_profile,
+      expire_at: pkg.share_expire_at || null,
+      role_price_capsule: ROLES.reduce((m, r) => {
+        m[r] = {
+          original_total: round2(full.role_plans[r].original_total),
+          discount_price: round2(full.role_plans[r].discount_price),
+          discount_rate: round2(full.role_plans[r].discount_rate),
+        };
+        return m;
+      }, {}),
+      role_plans: full.role_plans,
+      role_items: full.role_items,  // 三类角色分别的 items 列表
+    };
+    res.json({ ok: true, data: safe });
   } catch (e) {
+    console.error('[checkup-share public] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

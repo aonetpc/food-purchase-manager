@@ -100,14 +100,16 @@ app.use('/api/scan-requisition', scanRequisitionRouter);
 // 管理报表接口（需登录）
 app.use('/api/reports', requireAuth, reportsRouter);
 
+// 体检套餐分享链接（免登录公开访问：查看详情 + PDF下载）
+// ⚠️ 必须挂在 /api/booking requireAuth 之前！路径更长更具体的先注册，
+//    否则 /api/booking 下的 requireAuth 会先拦截，导致客户未登录打不开分享链接
+app.use('/api/booking/checkup-share', checkupTemplatesRouter.sharePublicRouter);
+
 // 预订调度接口（需登录）
 app.use('/api/booking', requireAuth, bookingBoardRouter);
 
 // 体检销售套餐模板（需登录）
 app.use('/api/booking/checkup-templates', requireAuth, checkupTemplatesRouter);
-
-// 体检套餐分享链接（免登录公开访问：查看详情 + PDF下载）
-app.use('/api/booking/checkup-share', checkupTemplatesRouter.sharePublicRouter);
 
 // 采购确认接口（部分接口不需要登录）
 app.use('/api/purchase-confirmations', purchaseConfirmationsRouter);
