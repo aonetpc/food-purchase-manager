@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, ROLE_HINT, type Role, type CheckupTemplate } from './api';
 import { useToast } from '@/components/Toast';
 
+const ROLE_STYLE: Record<Role, { border: string; bg: string; text: string; ring: string }> = {
+  male:             { border: 'border-blue-500',      bg: 'bg-blue-50',    text: 'text-blue-800',   ring: 'ring-blue-200' },
+  female_married:   { border: 'border-pink-500',      bg: 'bg-pink-50',    text: 'text-pink-800',   ring: 'ring-pink-200' },
+  female_single:    { border: 'border-purple-500',    bg: 'bg-purple-50',  text: 'text-purple-800', ring: 'ring-purple-200' },
+};
+
 export default function WizardNew() {
 const navigate = useNavigate();
 const toast = useToast();
@@ -99,18 +105,21 @@ return (
         <div className="grid grid-cols-3 gap-2">
           {ROLES.map(r => {
             const checked = roles.includes(r);
+            const st = ROLE_STYLE[r];
             return (
               <button key={r} onClick={() => toggleRole(r)}
-                className={`relative border-2 rounded-2xl px-2 py-4 text-center transition-all ${
-                  checked ? 'border-[#0f5132] bg-emerald-50' : 'border-gray-200 bg-white'
+                className={`relative border-2 rounded-2xl px-2 py-4 text-center transition-all shadow-sm ${
+                  checked ? `${st.border} ${st.bg}` : 'border-gray-200 bg-white hover:border-gray-300'
                 }`}>
                 {checked && (
-                  <span className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#0f5132] text-white flex items-center justify-center">
+                  <span className={`absolute top-2 right-2 w-5 h-5 rounded-full text-white flex items-center justify-center shadow-sm ${
+                    r === 'male' ? 'bg-blue-500' : r === 'female_married' ? 'bg-pink-500' : 'bg-purple-500'
+                  }`}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12l5 5L20 7"/></svg>
                   </span>
                 )}
                 <div className="text-3xl">{ROLE_EMOJI[r]}</div>
-                <div className={`text-sm mt-1 font-medium ${checked ? 'text-emerald-800' : 'text-gray-700'}`}>{ROLE_LABEL[r]}</div>
+                <div className={`text-sm mt-1 font-semibold ${checked ? st.text : 'text-gray-700'}`}>{ROLE_LABEL[r]}</div>
                 <div className="text-[10px] text-gray-500 mt-0.5 leading-snug px-1">{ROLE_HINT[r]}</div>
               </button>
             );

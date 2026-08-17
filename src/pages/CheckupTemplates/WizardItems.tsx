@@ -24,6 +24,30 @@ const EMPTY_SCOPE: SelectedState = {
 common: {}, male: {}, female_married: {}, female_single: {},
 };
 
+// 判断某项目是否对当前 scope 可见
+// 规则：
+//   scope === 'common'（公共项目区）→ 所有项目都可见（公共区不分男女）
+//   scope === 具体角色 → 通用项目（applicable_roles 为 null/空/undefined）OR applicable_roles 包含当前角色
+function scopeVisible(it: CheckupItem, s: Scope): boolean {
+  if (s === 'common') return true;
+  const roles = it.applicable_roles;
+  if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
+  return roles.includes(s);
+}
+
+// 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
+function getApplicableLabel(it: CheckupItem): string | null {
+  const roles = it.applicable_roles;
+  if (!roles || !Array.isArray(roles) || roles.length === 0) return null;
+  if (roles.length >= 3) return null;
+  if (roles.length === 1 && roles[0] === 'male') return '仅男性';
+  if (roles.includes('female_married') && roles.includes('female_single') && roles.length === 2) return '仅女性';
+  if (roles.length === 1 && roles[0] === 'female_married') return '仅已婚女';
+  if (roles.length === 1 && roles[0] === 'female_single') return '仅未婚女';
+  // 混合场景，用中文枚举拼接
+  return roles.map(r => ROLE_LABEL[r]).join('+');
+}
+
 export default function WizardItems() {
 const { id } = useParams();
 const navigate = useNavigate();
@@ -84,30 +108,6 @@ const loadAll = async () => {
   }
 };
 useEffect(() => { loadAll(); }, [id]);
-
-// 判断某项目是否对当前 scope 可见
-// 规则：
-//   scope === 'common'（公共项目区）→ 所有项目都可见（公共区不分男女）
-//   scope === 具体角色 → 通用项目（applicable_roles 为 null/空/undefined）OR applicable_roles 包含当前角色
-const scopeVisible = (it: CheckupItem, s: Scope): boolean => {
-  if (s === 'common') return true;
-  const roles = it.applicable_roles;
-  if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
-  return roles.includes(s);
-};
-
-// 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
-const getApplicableLabel = (it: CheckupItem): string | null => {
-  const roles = it.applicable_roles;
-  if (!roles || !Array.isArray(roles) || roles.length === 0) return null;
-  if (roles.length >= 3) return null;
-  if (roles.length === 1 && roles[0] === 'male') return '仅男性';
-  if (roles.includes('female_married') && roles.includes('female_single') && roles.length === 2) return '仅女性';
-  if (roles.length === 1 && roles[0] === 'female_married') return '仅已婚女';
-  if (roles.length === 1 && roles[0] === 'female_single') return '仅未婚女';
-  // 混合场景，用中文枚举拼接
-  return roles.map(r => ROLE_LABEL[r]).join('+');
-};
 
 // 过滤后的项目列表（分类 + 关键字 + 适用角色）
 const filteredItems = useMemo(() => {
