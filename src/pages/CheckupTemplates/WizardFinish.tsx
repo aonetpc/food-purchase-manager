@@ -66,21 +66,35 @@ const groupByCategory = (items: CheckupItemRef[]) => {
 };
 
 const openEdit = (r: Role) => {
-  const plan: any = pkg?.role_plans?.[r] || { original_total: 0 };
+  const plan: any = pkg?.role_plans?.[r] || { original_total: 0, discount_price: 0, discount_rate: 100 };
   const total = Number(plan.original_total) || 0;
-  setLocalPrice(prev => ({ ...prev, [r]: prev[r] || total }));
-  setLocalRate(prev => {
-    const rate = total > 0 ? Math.round((prev[r] || total) / total * 10000) / 100 : prev[r];
-    return { ...prev, [r]: rate };
-  });
+  // 折扣价：用后端最新 discount_price 初始化（销售谈判价），为 0 时退回到原价
+  const priceInit = Number(plan.discount_price) || total;
+  // 折扣率：永远按 price/total 计算一次，保证打开编辑弹窗时三角一定一致
+  const rateInit = total > 0 ? Math.round(priceInit / total * 10000) / 100 : 100;
+  const clampedRate = Math.max(1, Math.min(100, rateInit));
+  const clampedPrice = total > 0 ? Math.max(1, Math.min(total, priceInit)) : priceInit;
+  setLocalPrice(prev => ({ ...prev, [r]: clampedPrice }));
+  setLocalRate(prev => ({ ...prev, [r]: clampedRate }));
   setEditRole(r);
 };
 
 const onChangePrice = (r: Role, v: string) => {
-  const n = parseFloat(v) || 0;
+  const n = parseFloat(v);
+  const price = isNaN(n) ? 0 : Math.max(0, n);
   const total = Number((pkg?.role_plans as any)?.[r]?.original_total || 0);
-  const rate = total > 0 ? Math.round(n / total * 10000) / 100 : 100;
-  setLocalPrice(p => ({ ...p, [r]: n }));
+  // 原价为 0 的特殊场景（理论不应该，因为有项目就有原价）
+  if (total <= 0) {
+    setLocalPrice(p => ({ ...p, [r]: price }));
+    setLocalRate(p => ({ ...p, [r]: 100 }));
+    return;
+  }
+  // 价格不能高于原价（折扣不能超过原价往上涨，违反"折扣"语义）
+  const clampedPrice = Math.min(price, total);
+  // 扣率按 price/total 自动反算，永远对齐
+  let rate = Math.round(clampedPrice / total * 10000) / 100;
+  rate = Math.max(1, Math.min(100, rate));
+  setLocalPrice(p => ({ ...p, [r]: clampedPrice }));
   setLocalRate(p => ({ ...p, [r]: rate }));
 };
 const onChangeRate = (r: Role, v: string) => {
@@ -88,6 +102,7 @@ const onChangeRate = (r: Role, v: string) => {
   if (isNaN(n)) n = 100;
   if (n < 1) n = 1; if (n > 100) n = 100;
   const total = Number((pkg?.role_plans as any)?.[r]?.original_total || 0);
+  // 折扣价按 total × rate / 100 反推，永远对齐
   const price = Math.round(total * n) / 100;
   setLocalPrice(p => ({ ...p, [r]: price }));
   setLocalRate(p => ({ ...p, [r]: n }));
@@ -379,6 +394,12 @@ return (
 );
 }
 
+/**
+ * 把 items_by_role 展平为 items-batch 需要的数组。
+ * 注意：这里只传 item_id/role/quantity/sort_order/remark，不传 item_price / insurance_price_snapshot，
+ * 让后端 items-batch 强制通过 LEFT JOIN booking_checkup_items 回填项目库最新价 + 最新保险价，
+ * 保证 original_total 永远和项目库同步，避免"沿用历史套餐老快照"的问题。
+ */
 function flattenPkgItems(pkg: CheckupTemplate): any[] {
 const byRole: any = pkg.items_by_role || {};
 const out: any[] = [];
@@ -390,11 +411,10 @@ let so = 1;
       item_id: it.item_id,
       role: it.role || s,
       quantity: Math.max(1, Number(it.quantity) || 1),
-      item_name_snapshot: it.item_name_snapshot || '',
-      item_price: Number(it.item_price) || 0,
-      insurance_price_snapshot: Number(it.insurance_price_snapshot) || 0,
       sort_order: so++,
       remark: (it as any).remark || null,
+      // 故意不传 item_price / insurance_price_snapshot / item_name_snapshot
+      // → 后端会 LEFT JOIN 项目库，按最新 default_price + insurance_price + name 回填
     });
   }
 });

@@ -217,6 +217,8 @@ export interface CheckupItemRow {
     sort_order: number;
   }>;
   sub_item_ids?: string[];
+  /** 适用角色：null/空数组/undefined = 全通用；或 ['male'|'female_married'|'female_single'] 白名单 */
+  applicable_roles?: Array<'male' | 'female_married' | 'female_single'> | null;
 }
 
 export interface RoomTypeRow {

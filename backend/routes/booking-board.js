@@ -526,7 +526,7 @@ function makeCheckupItemCrud(routerRef) {
   const basePath = '/config/checkup-items';
   const table = 'booking_checkup_items';
   const requiredFields = ['code', 'name'];
-  const editableFields = ['item_type', 'category', 'description', 'default_price', 'insurance_price', 'unit', 'status', 'sort_order'];
+  const editableFields = ['item_type', 'category', 'description', 'default_price', 'insurance_price', 'unit', 'status', 'sort_order', 'applicable_roles'];
 
   // 查询组合项目的子项目列表
   async function getSubItems(conn, comboItemId) {
@@ -559,12 +559,15 @@ function makeCheckupItemCrud(routerRef) {
       const [rows] = await pool.query(
         `SELECT * FROM ${table} WHERE status != 0 ORDER BY category ASC, sort_order ASC, id ASC`
       );
-      // 为组合项目附加子项目列表
+      // 为组合项目附加子项目列表；applicable_roles 做 JSON 反序列化
       const conn = await pool.getConnection();
       try {
         for (const row of rows) {
           if (row.item_type === 'combo') {
             row.sub_items = await getSubItems(conn, row.id);
+          }
+          if (typeof row.applicable_roles === 'string') {
+            try { row.applicable_roles = JSON.parse(row.applicable_roles); } catch (_) { row.applicable_roles = null; }
           }
         }
       } finally {
@@ -586,9 +589,25 @@ function makeCheckupItemCrud(routerRef) {
         }
       }
       const id = uuidv4();
-      const fields = ['id', ...requiredFields, ...editableFields.filter(f => req.body[f] !== undefined)];
+      const fields = ['id', ...requiredFields];
       const values = [id, ...requiredFields.map(f => req.body[f])];
-      editableFields.filter(f => req.body[f] !== undefined).forEach(f => values.push(req.body[f]));
+      // editableFields 单独处理（applicable_roles 需要 stringify；其他字段直接 push）
+      for (const f of editableFields) {
+        if (req.body[f] === undefined) continue;
+        fields.push(f);
+        if (f === 'applicable_roles') {
+          if (req.body[f] == null || (Array.isArray(req.body[f]) && req.body[f].length === 0)) {
+            // NULL 或空数组 → DB 存 NULL（通用）
+            values.push(null);
+          } else if (Array.isArray(req.body[f])) {
+            values.push(JSON.stringify(req.body[f]));
+          } else {
+            values.push(null);
+          }
+        } else {
+          values.push(req.body[f]);
+        }
+      }
       if (!fields.includes('item_type')) { fields.push('item_type'); values.push('item'); }
       if (!fields.includes('default_price')) { fields.push('default_price'); values.push(0); }
       if (!fields.includes('insurance_price')) { fields.push('insurance_price'); values.push(0); }
@@ -596,6 +615,7 @@ function makeCheckupItemCrud(routerRef) {
       if (!fields.includes('category')) { fields.push('category'); values.push('化验'); }
       if (!fields.includes('sort_order')) { fields.push('sort_order'); values.push(100); }
       if (!fields.includes('status')) { fields.push('status'); values.push(1); }
+      if (!fields.includes('applicable_roles')) { fields.push('applicable_roles'); values.push(null); }
       const placeholders = fields.map(() => '?').join(',');
       await conn.query(`INSERT INTO ${table} (${fields.join(',')}) VALUES (${placeholders})`, values);
       // 保存子项目关联
@@ -605,6 +625,9 @@ function makeCheckupItemCrud(routerRef) {
       const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
       if (rows[0].item_type === 'combo') {
         rows[0].sub_items = await getSubItems(conn, id);
+      }
+      if (typeof rows[0].applicable_roles === 'string') {
+        try { rows[0].applicable_roles = JSON.parse(rows[0].applicable_roles); } catch (_) { rows[0].applicable_roles = null; }
       }
       await logOperation(req.user.id, id, table, 'create', req.body, req);
       res.json({ ok: true, data: rows[0] });
@@ -625,7 +648,19 @@ function makeCheckupItemCrud(routerRef) {
       const sets = [];
       const values = [];
       [...requiredFields, ...editableFields].forEach(f => {
-        if (req.body[f] !== undefined) { sets.push(`${f} = ?`); values.push(req.body[f]); }
+        if (req.body[f] === undefined) return;
+        sets.push(`${f} = ?`);
+        if (f === 'applicable_roles') {
+          if (req.body[f] == null || (Array.isArray(req.body[f]) && req.body[f].length === 0)) {
+            values.push(null);
+          } else if (Array.isArray(req.body[f])) {
+            values.push(JSON.stringify(req.body[f]));
+          } else {
+            values.push(null);
+          }
+        } else {
+          values.push(req.body[f]);
+        }
       });
       if (sets.length > 0) {
         values.push(id);
@@ -645,6 +680,9 @@ function makeCheckupItemCrud(routerRef) {
       const [rows] = await conn.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
       if (rows[0].item_type === 'combo') {
         rows[0].sub_items = await getSubItems(conn, id);
+      }
+      if (typeof rows[0].applicable_roles === 'string') {
+        try { rows[0].applicable_roles = JSON.parse(rows[0].applicable_roles); } catch (_) { rows[0].applicable_roles = null; }
       }
       await logOperation(req.user.id, id, table, 'update', req.body, req);
       res.json({ ok: true, data: rows[0] });

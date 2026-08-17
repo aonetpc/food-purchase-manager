@@ -85,15 +85,40 @@ const loadAll = async () => {
 };
 useEffect(() => { loadAll(); }, [id]);
 
-// 过滤后的项目列表
+// 判断某项目是否对当前 scope 可见
+// 规则：
+//   scope === 'common'（公共项目区）→ 所有项目都可见（公共区不分男女）
+//   scope === 具体角色 → 通用项目（applicable_roles 为 null/空/undefined）OR applicable_roles 包含当前角色
+const scopeVisible = (it: CheckupItem, s: Scope): boolean => {
+  if (s === 'common') return true;
+  const roles = it.applicable_roles;
+  if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
+  return roles.includes(s);
+};
+
+// 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
+const getApplicableLabel = (it: CheckupItem): string | null => {
+  const roles = it.applicable_roles;
+  if (!roles || !Array.isArray(roles) || roles.length === 0) return null;
+  if (roles.length >= 3) return null;
+  if (roles.length === 1 && roles[0] === 'male') return '仅男性';
+  if (roles.includes('female_married') && roles.includes('female_single') && roles.length === 2) return '仅女性';
+  if (roles.length === 1 && roles[0] === 'female_married') return '仅已婚女';
+  if (roles.length === 1 && roles[0] === 'female_single') return '仅未婚女';
+  // 混合场景，用中文枚举拼接
+  return roles.map(r => ROLE_LABEL[r]).join('+');
+};
+
+// 过滤后的项目列表（分类 + 关键字 + 适用角色）
 const filteredItems = useMemo(() => {
   const kw = keyword.trim().toLowerCase();
   return items.filter(it => {
     if (category !== '全部' && it.category !== category) return false;
     if (kw && !(it.name || '').toLowerCase().includes(kw) && !(it.code || '').toLowerCase().includes(kw)) return false;
+    if (!scopeVisible(it, scope)) return false;
     return true;
   });
-}, [items, category, keyword]);
+}, [items, category, keyword, scope]);
 
 // 每个 scope 下是否选中某 item（对于 role scope，还要算 common 里选过的"阴影"显示）
 const isSelectedInScope = (itemId: string, s: Scope) => !!selected[s]?.[itemId];
@@ -335,6 +360,10 @@ return (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-gray-900 leading-snug">{item.name}</span>
           {isCombo && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">组合</span>}
+          {(() => {
+            const label = getApplicableLabel(item);
+            return label ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{label}</span> : null;
+          })()}
         </div>
         <div className="text-[11px] text-gray-500 mt-0.5">
           {item.description || (isCombo ? '组合项目，点击查看明细' : '单项检查')}

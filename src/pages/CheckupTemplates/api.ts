@@ -82,6 +82,10 @@ export interface CheckupItem {
   unit: string;
   status: 0 | 1;
   sort_order: number;
+  /** 适用角色：null/空数组/undefined = 全通用；或 ['male'/'female_married'/'female_single'] 白名单 */
+  applicable_roles?: Role[] | null;
+  /** 组合项目的子项目（item_type=combo 时出现） */
+  sub_items?: CheckupItem[];
 }
 export interface ShareData {
   id: string;

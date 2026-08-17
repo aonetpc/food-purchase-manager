@@ -93,7 +93,10 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
     const merged = [...map.values()];
     let total = 0;
     for (const it of merged) {
-      total += toNum(it.item_price) * Math.max(1, toNum(it.quantity) || 1);
+      const qty = Math.max(1, toNum(it.quantity) || 1);
+      total += toNum(it.item_price) * qty;
+      // 原价包含体检价 + 保险价（人保价格），避免"截图显示人保价格但原价没加"的问题
+      total += toNum(it.insurance_price_snapshot) * qty;
     }
     result[role] = {
       total: round2(total),
@@ -183,21 +186,37 @@ router.get('/', async (req, res) => {
     const clauses = [];
     const args = [];
 
-    // 基础可见性过滤（管理员不过滤，销售按规则）
+    // 可见性 + scope 过滤（管理员 / 销售均按 Tab 切）
     if (!isAdminOrManager(user)) {
-      clauses.push(`(
-        is_public = 1
-        OR owner_sales_id = ?
-        OR JSON_CONTAINS(cover_sales_ids, ?)
-      )`);
-      args.push(user.id, JSON.stringify(user.id));
-    } else if (scope === 'mine') {
-      clauses.push(`owner_sales_id = ?`);
-      args.push(user.id);
-    } else if (scope === 'public') {
-      clauses.push(`is_public = 1`);
-    } else if (scope === 'shared') {
-      clauses.push(`(cover_sales_ids IS NOT NULL AND cover_sales_ids <> '[]')`);
+      // 销售：三Tab严格区分，避免"我的套餐"混入公共模板
+      if (scope === 'mine') {
+        clauses.push(`owner_sales_id = ?`);
+        args.push(user.id);
+      } else if (scope === 'public') {
+        clauses.push(`is_public = 1`);
+      } else if (scope === 'shared') {
+        clauses.push(`JSON_CONTAINS(cover_sales_ids, ?)`);
+        args.push(JSON.stringify(user.id));
+      } else {
+        // 兜底：scope 缺省时，返回"我能看到的全部"（同旧逻辑）
+        clauses.push(`(
+          is_public = 1
+          OR owner_sales_id = ?
+          OR JSON_CONTAINS(cover_sales_ids, ?)
+        )`);
+        args.push(user.id, JSON.stringify(user.id));
+      }
+    } else {
+      // 管理员：三Tab独立筛选；shared 通过 cover_sales_ids 过滤；缺省返回全部
+      if (scope === 'mine') {
+        clauses.push(`(owner_sales_id IS NULL OR owner_sales_id = ?)`);
+        args.push(user.id);
+      } else if (scope === 'public') {
+        clauses.push(`is_public = 1`);
+      } else if (scope === 'shared') {
+        clauses.push(`JSON_CONTAINS(cover_sales_ids, ?)`);
+        args.push(JSON.stringify(user.id));
+      }
     }
 
     if (keyword) {
@@ -719,28 +738,33 @@ router.put('/:id/items-batch', async (req, res) => {
     const allItems = await listPackageItems(pkg.id);
     const agg = aggregateRoleItems(allItems, applicable);
 
-    // 4. 写回 booking_package_role_plans（结合客户端传入的 discount_price 与自动计算的 original_total）
+    // 4. 写回 booking_package_role_plans（以 original_total 为基准，price/rate 永远三角一致）
+    //    规则：
+    //      - 前端传 discount_price → 以 price 为准（销售谈判价），rate = price / original_total × 100 自动重算
+    //      - 前端只传 discount_rate（没传 price）→ rate 为准，price = original_total × rate / 100 反推
+    //      - 两者都没传 → price=original_total，rate=100
     for (const role of ROLES) {
       const originalTotal = round2(agg[role].total);
       const input = rolePlansInput && rolePlansInput[role] ? rolePlansInput[role] : {};
-      // discount_price：
-      //   - 如果前端传了 discount_price 且 >=0，用前端（可能是销售谈判价）
-      //   - 否则默认 = originalTotal（即不打折）
-      let discountPrice = input.discount_price != null
-        ? round2(Math.max(0, input.discount_price))
-        : originalTotal;
-      // discount_rate：如果前端显式传了 rate 且合法，用前端；否则自动计算
+      let discountPrice = originalTotal;
       let discountRate = 100;
-      if (input.discount_rate != null) {
+      const hasPrice = input.discount_price != null;
+      const hasRate = input.discount_rate != null;
+      if (hasPrice && hasRate) {
+        // 同时传了 price 和 rate：以 price（销售谈判价）为准，rate 按 original_total 重新对齐，避免三角矛盾
+        discountPrice = round2(Math.max(0, input.discount_price));
+        discountRate = originalTotal > 0 ? round2(discountPrice / originalTotal * 100) : 100;
+      } else if (hasPrice) {
+        discountPrice = round2(Math.max(0, input.discount_price));
+        discountRate = originalTotal > 0 ? round2(discountPrice / originalTotal * 100) : 100;
+      } else if (hasRate) {
         const r = toNum(input.discount_rate);
-        if (r >= 1 && r <= 100) discountRate = round2(r);
-      } else if (originalTotal > 0) {
-        discountRate = round2(discountPrice / originalTotal * 100);
-      }
-      // 交叉校验：若 client 只传 rate 不传 price，允许 rate 反推 price
-      if (input.discount_rate != null && input.discount_price == null) {
+        discountRate = (r >= 1 && r <= 100) ? round2(r) : 100;
         discountPrice = round2(originalTotal * discountRate / 100);
       }
+      // 边界：rate 不能低于 1 或高于 100
+      if (discountRate < 1) { discountRate = 1; discountPrice = Math.max(discountPrice, round2(originalTotal * 0.01)); }
+      if (discountRate > 100) { discountRate = 100; discountPrice = originalTotal; }
       await conn.query(
         `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate, remark)
          VALUES (?, ?, ?, ?, ?, ?, ?)

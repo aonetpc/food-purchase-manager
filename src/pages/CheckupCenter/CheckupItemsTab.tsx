@@ -106,10 +106,26 @@ function generateCode(existing: { code?: string }[]): string {
 
 const DEFAULT_CATEGORY = CATEGORIES[0]; // '体格检查'
 
+type AppRole = 'male' | 'female_married' | 'female_single';
+const APPLICABLE_ROLES: Array<{ key: AppRole; label: string }> = [
+  { key: 'male', label: '👨 男性' },
+  { key: 'female_married', label: '👩 已婚女性' },
+  { key: 'female_single', label: '👧 未婚女性' },
+];
+function appRoleLabel(roles: AppRole[] | null | undefined): string | null {
+  if (!roles || roles.length === 0) return null;
+  if (roles.length === 3) return null; // 全选=通用
+  if (roles.length === 1 && roles[0] === 'male') return '仅男性';
+  if (roles.includes('female_married') && roles.includes('female_single') && roles.length === 2) return '仅女性';
+  if (roles.length === 1 && roles[0] === 'female_married') return '仅已婚女';
+  if (roles.length === 1 && roles[0] === 'female_single') return '仅未婚女';
+  return roles.map(r => APPLICABLE_ROLES.find(x => x.key === r)?.label || r).join('+');
+}
+
 const DEFAULT_CHECKUP: Partial<CheckupItemRow> = {
   code: '', name: '', item_type: 'item', category: DEFAULT_CATEGORY,
   description: '', default_price: 0, insurance_price: 0, unit: '次',
-  status: 1, sort_order: 100, sub_item_ids: [],
+  status: 1, sort_order: 100, sub_item_ids: [], applicable_roles: [],
 };
 
 export default function CheckupItemsTab() {
@@ -254,6 +270,47 @@ export default function CheckupItemsTab() {
       setField('sub_item_ids', [...current, subId]);
     }
   };
+
+  const toggleApplicableRole = (r: AppRole) => {
+    if (!editing) return;
+    const current: AppRole[] = Array.isArray(editing.data.applicable_roles) ? [...editing.data.applicable_roles] : [];
+    const idx = current.indexOf(r);
+    if (idx >= 0) current.splice(idx, 1); else current.push(r);
+    setField('applicable_roles', current);
+  };
+
+  function renderApplicablePicker() {
+    if (!editing) return null;
+    const current: AppRole[] = Array.isArray(editing.data.applicable_roles) ? editing.data.applicable_roles : [];
+    return (
+      <div className="px-3 py-2 bg-purple-50/60 border-t border-purple-100">
+        <div className="text-[11px] text-gray-500 mb-1.5">
+          适用角色（不勾选=全通用；勾选后仅被勾选的角色在配单页可见，公共项目区不过滤）
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {APPLICABLE_ROLES.map(r => {
+            const checked = current.includes(r.key);
+            return (
+              <button
+                key={r.key}
+                type="button"
+                onClick={() => toggleApplicableRole(r.key)}
+                className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
+                  checked
+                    ? 'bg-purple-500 text-white border-purple-500'
+                    : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-100'
+                }`}
+              >
+                {checked && '✓ '}{r.label}
+              </button>
+            );
+          })}
+          {current.length === 0 && <span className="text-[11px] text-purple-700 px-2 py-1 bg-purple-100 rounded-full">✨ 全角色通用</span>}
+          {current.length === 3 && <span className="text-[11px] text-purple-700 px-2 py-1 bg-purple-100 rounded-full">✨ 全选=通用</span>}
+        </div>
+      </div>
+    );
+  }
 
   function renderSubItemPicker() {
     if (!editing) return null;
@@ -1075,7 +1132,13 @@ export default function CheckupItemsTab() {
                 <>
                   <tr className="bg-cyan-50/50 border-b border-gray-100">
                     <td className="px-2 py-1.5"><Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /></td>
-                    <td className="px-2 py-1.5"><Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /></td>
+                    <td className="px-2 py-1.5">
+                      <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} />
+                      {(() => {
+                        const lb = appRoleLabel(editing!.data.applicable_roles as any);
+                        return lb ? <div className="mt-1"><span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{lb}</span></div> : null;
+                      })()}
+                    </td>
                     <td className="px-2 py-1.5">
                       <select
                         value={editing!.data.item_type || 'item'}
@@ -1114,6 +1177,7 @@ export default function CheckupItemsTab() {
                     </td>
                   </tr>
                   {renderSubItemPicker()}
+                  {renderApplicablePicker()}
                 </>
               )}
               {filteredRows.length === 0 && !isCreating && (
@@ -1133,12 +1197,26 @@ export default function CheckupItemsTab() {
                         {editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}
                       </td>
                       <td className="px-3 py-2">
-                        {editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : (
-                          <span className="inline-flex items-center">
-                            {insuranceMissing && <AlertTriangle size={12} className="text-amber-500 mr-1" aria-label="医保价未录入" />}
-                            <span>{r.name}</span>
-                            {typeLabel(r)}
-                          </span>
+                        {editRow ? (
+                          <div>
+                            <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} />
+                            {(() => {
+                              const lb = appRoleLabel(editing!.data.applicable_roles as any);
+                              return lb ? <div className="mt-1"><span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{lb}</span></div> : null;
+                            })()}
+                          </div>
+                        ) : (
+                          <div>
+                            <span className="inline-flex items-center">
+                              {insuranceMissing && <AlertTriangle size={12} className="text-amber-500 mr-1" aria-label="医保价未录入" />}
+                              <span>{r.name}</span>
+                              {typeLabel(r)}
+                            </span>
+                            {(() => {
+                              const lb = appRoleLabel(r.applicable_roles);
+                              return lb ? <div className="mt-0.5"><span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{lb}</span></div> : null;
+                            })()}
+                          </div>
                         )}
                       </td>
                       <td className="px-3 py-2">
@@ -1213,6 +1291,7 @@ export default function CheckupItemsTab() {
                       </td>
                     </tr>
                     {editRow && renderSubItemPicker()}
+                    {editRow && renderApplicablePicker()}
                     {!editRow && r.item_type === 'combo' && r.sub_items && r.sub_items.length > 0 && (
                       <tr className="bg-amber-50/30 border-t-0">
                         <td colSpan={10} className="px-3 py-1.5">
