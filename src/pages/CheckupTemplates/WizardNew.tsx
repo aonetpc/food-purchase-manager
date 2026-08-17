@@ -9,6 +9,13 @@ const ROLE_STYLE: Record<Role, { border: string; bg: string; text: string; ring:
   female_single:    { border: 'border-purple-500',    bg: 'bg-purple-50',  text: 'text-purple-800', ring: 'ring-purple-200' },
 };
 
+// 胶囊配色：模板卡片底部价格胶囊 / 角色价格徽章
+const ROLE_CAPSULE: Record<Role, string> = {
+  male:             'bg-blue-50   border-blue-100 text-blue-800',
+  female_married:   'bg-pink-50   border-pink-100 text-pink-700',
+  female_single:    'bg-purple-50 border-purple-100 text-purple-800',
+};
+
 export default function WizardNew() {
 const navigate = useNavigate();
 const toast = useToast();
@@ -161,7 +168,7 @@ return (
                     </div>
                     <div className="text-[11px] text-gray-500 mt-0.5 flex flex-wrap items-center gap-1">
                       {caps.filter(c => (tpl.applicable_roles || ROLES).includes(c.r)).map(c => (
-                        <span key={c.r} className="px-1.5 py-0.5 bg-white rounded-full border border-gray-100">
+                        <span key={c.r} className={`px-1.5 py-0.5 rounded-full border ${ROLE_CAPSULE[c.r]}`}>
                           {ROLE_EMOJI[c.r]}¥{Number(c.price ?? 0).toFixed(0)}
                         </span>
                       ))}

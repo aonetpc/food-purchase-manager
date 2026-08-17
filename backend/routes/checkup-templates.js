@@ -243,6 +243,51 @@ router.get('/', async (req, res) => {
         plansMap.get(pl.package_id)[pl.role] = normalizePlanOrig(pl);
       }
     }
+    // ========== 兜底：对 role_plans.price=0 的套餐，从 items 快照临算，避免 ListPage 显示 ¥0 ==========
+    // 场景：克隆生成的套餐用户中途退出没点「生成方案」时，DB 还没被 items-batch 重写过就会停留在 0
+    const fallbackPids = [];
+    for (const [pid, plans] of plansMap.entries()) {
+      for (const r of ROLES) {
+        const pl = plans[r];
+        if (!pl || Number(pl.discount_price) === 0) { fallbackPids.push(pid); break; }
+      }
+    }
+    // 兼容 plansMap 中没有 pid（三角色都没建 plans 行）的情况
+    for (const pid of pids) {
+      if (!plansMap.has(pid) && !fallbackPids.includes(pid)) fallbackPids.push(pid);
+    }
+    if (fallbackPids.length > 0) {
+      const [itemsRows] = await pool.query(
+        `SELECT package_id, role, item_price, insurance_price_snapshot, quantity
+         FROM booking_package_items
+         WHERE package_id IN (${fallbackPids.map(() => '?').join(',')})`,
+        fallbackPids
+      );
+      const byPkg = new Map();
+      for (const it of itemsRows) {
+        if (!byPkg.has(it.package_id)) byPkg.set(it.package_id, []);
+        byPkg.get(it.package_id).push(it);
+      }
+      for (const pid of fallbackPids) {
+        const plans = plansMap.get(pid) || {};
+        const arr = byPkg.get(pid) || [];
+        const totals = { male: 0, female_married: 0, female_single: 0 };
+        for (const it of arr) {
+          const amt = (toNum(it.item_price) + toNum(it.insurance_price_snapshot)) * Math.max(1, toNum(it.quantity) || 1);
+          if (it.role === 'common') { for (const r of ROLES) totals[r] += amt; }
+          else if (totals[it.role] !== undefined) totals[it.role] += amt;
+        }
+        for (const r of ROLES) {
+          if (!plans[r] || Number(plans[r].discount_price) === 0) {
+            const t = round2(totals[r]);
+            plans[r] = { original_total: t, discount_price: t, discount_rate: 100 };
+          }
+        }
+        plansMap.set(pid, plans);
+      }
+    }
+    // =====================================================================================
+
     const list = rows.map(p => {
       const plans = plansMap.get(p.id) || {};
       for (const r of ROLES) {
@@ -639,13 +684,23 @@ router.post('/:id/clone', async (req, res) => {
         [batch]
       );
     }
-    // 克隆 role_plans：价格不继承原模板（original_total/discount_price 清零，discount_rate=100），
-    // 后续 items-batch 保存时会按克隆出的项目明细重算 original_total
+    // 克隆 role_plans：按刚克隆出来的项目快照即时重算三角色价格（含保险价）
+    // 防止用户中途退出 WizardItems 未点「生成方案」时，ListPage 显示 ¥0
+    const roleTotals = { male: 0, female_married: 0, female_single: 0 };
+    for (const it of srcItems) {
+      const amt = (toNum(it.item_price) + toNum(it.insurance_price_snapshot)) * Math.max(1, toNum(it.quantity) || 1);
+      if (it.role === 'common') {
+        for (const r of ROLES) roleTotals[r] += amt;
+      } else if (roleTotals[it.role] !== undefined) {
+        roleTotals[it.role] += amt;
+      }
+    }
     for (const r of ROLES) {
+      const total = round2(roleTotals[r]);
       await conn.query(
         `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
-         VALUES (?, ?, ?, 0, 0, 100)`,
-        [uuidv4(), newId, r]
+         VALUES (?, ?, ?, ?, ?, 100)`,
+        [uuidv4(), newId, r, total, total]
       );
     }
     await conn.commit();

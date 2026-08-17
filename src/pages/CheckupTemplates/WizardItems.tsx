@@ -48,6 +48,25 @@ function getApplicableLabel(it: CheckupItem): string | null {
   return roles.map(r => ROLE_LABEL[r]).join('+');
 }
 
+// WizardItems 角色配色（Tab 选中态 + 底部价格胶囊）
+const TAB_ROLE_STYLE: Record<Role, {
+  active: { border: string; bg: string; text: string; price: string };
+  bottom: string;
+}> = {
+  male: {
+    active: { border: 'border-blue-500', bg: 'bg-blue-50', text: 'text-blue-800', price: 'text-blue-800' },
+    bottom: 'bg-blue-50   border-blue-100   text-blue-900',
+  },
+  female_married: {
+    active: { border: 'border-pink-500', bg: 'bg-pink-50', text: 'text-pink-800', price: 'text-pink-800' },
+    bottom: 'bg-pink-50   border-pink-100   text-pink-900',
+  },
+  female_single: {
+    active: { border: 'border-purple-500', bg: 'bg-purple-50', text: 'text-purple-800', price: 'text-purple-800' },
+    bottom: 'bg-purple-50 border-purple-100 text-purple-900',
+  },
+};
+
 export default function WizardItems() {
 const { id } = useParams();
 const navigate = useNavigate();
@@ -227,20 +246,21 @@ return (
         {applicable.map(r => {
           const smr = summaryForRole(r);
           const active = scope === r;
+          const st = TAB_ROLE_STYLE[r].active;
           return (
             <button key={r} onClick={() => setScope(r)}
               className={`shrink-0 relative flex flex-col items-start px-3 py-2 rounded-xl mx-1 my-1 mb-2 border-2 transition-all min-w-[104px] ${
-                active ? 'border-[#0f5132] bg-emerald-50' : 'border-gray-100 bg-white'
+                active ? `${st.border} ${st.bg}` : 'border-gray-100 bg-white hover:border-gray-200'
               }`}>
               <div className="flex items-center gap-2 w-full">
                 <div className="text-2xl leading-none">{ROLE_EMOJI[r]}</div>
                 <div className="flex-1 min-w-0">
-                  <div className={`text-sm font-semibold ${active ? 'text-emerald-800' : 'text-gray-800'}`}>{ROLE_LABEL[r]}</div>
+                  <div className={`text-sm font-semibold ${active ? st.text : 'text-gray-800'}`}>{ROLE_LABEL[r]}</div>
                   <div className="text-[10px] text-gray-500">{smr.count}项 · ¥{smr.total.toFixed(0)}</div>
                 </div>
                 <Badge n={Object.keys(selected[r]).length + Object.keys(selected.common).length} />
               </div>
-              <div className="mt-1 text-[10px] font-semibold text-[#0f5132]">¥{smr.total.toFixed(0)}</div>
+              <div className={`mt-1 text-[10px] font-semibold ${active ? st.price : 'text-[#0f5132]'}`}>¥{smr.total.toFixed(0)}</div>
             </button>
           );
         })}
@@ -299,10 +319,10 @@ return (
         {applicable.map(r => {
           const sm = summaryForRole(r);
           return (
-            <div key={r} className="shrink-0 px-2 py-1 rounded-full bg-gray-50 border border-gray-100 flex items-center gap-1.5 text-[11px]">
+            <div key={r} className={`shrink-0 px-2 py-1 rounded-full border flex items-center gap-1.5 text-[11px] ${TAB_ROLE_STYLE[r].bottom}`}>
               <span>{ROLE_EMOJI[r]}</span><span>{ROLE_LABEL[r]}</span>
-              <span className="font-semibold text-gray-800">{sm.count}项</span>
-              <span className="font-bold text-[#0f5132]">¥{sm.total.toFixed(0)}</span>
+              <span className="font-semibold">{sm.count}项</span>
+              <span className="font-bold">¥{sm.total.toFixed(0)}</span>
             </div>
           );
         })}
