@@ -197,16 +197,16 @@ export default function SharePage() {
       <header className="relative text-white overflow-hidden">
         <div
           className="absolute inset-x-0 top-0 h-64 rounded-b-[36px]"
-          style={{ background: `linear-gradient(135deg, ${primaryColor} 0%, ${shade(primaryColor, -8)} 60%, ${shade(primaryColor, -16)} 100%)` }}
+          style={{ background: `linear-gradient(135deg, ${shade(primaryColor, 18)} 0%, ${shade(primaryColor, 8)} 55%, ${primaryColor} 100%)` }}
         />
         {/* 装饰光斑 */}
-        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-white/8 blur-2xl" />
-        <div className="absolute top-28 -left-20 w-56 h-56 rounded-full bg-white/5 blur-2xl" />
+        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute top-28 -left-20 w-56 h-56 rounded-full bg-white/6 blur-3xl" />
 
-        <div className="relative px-5 pt-11 pb-48">
+        <div className="relative px-5 pt-8 pb-36">
           {/* 品牌条 */}
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-11 h-11 rounded-xl bg-white/18 backdrop-blur flex items-center justify-center overflow-hidden shadow-sm shrink-0 border border-white/20">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center overflow-hidden shadow-sm shrink-0 border border-white/25">
               {company?.logo ? (
                 <img src={company.logo} alt="" className="w-full h-full object-cover"
                   onError={(e) => { (e.currentTarget.style.display = 'none'); const p = e.currentTarget.parentElement; if (p) p.innerHTML = '🏥'; }} />
@@ -216,23 +216,23 @@ export default function SharePage() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold leading-tight">{company?.name || '画一体检'}</div>
-              {company?.slogan && <div className="text-[11px] text-white/80 leading-tight mt-0.5 truncate">{company.slogan}</div>}
+              {company?.slogan && <div className="text-[11px] text-white/85 leading-tight mt-0.5 truncate">{company.slogan}</div>}
             </div>
           </div>
 
           {/* 套餐标题卡 */}
           <div className="text-center">
-            <h1 className="text-[26px] font-bold leading-tight tracking-wide">{pkg.name}</h1>
-            <div className="mt-3 flex flex-wrap justify-center gap-2">
+            <h1 className="text-[22px] font-bold leading-tight tracking-wide">{pkg.name}</h1>
+            <div className="mt-2.5 flex flex-wrap justify-center gap-1.5">
               {applicable.map(r => (
-                <span key={r} className="px-3 py-1 rounded-full text-[12px] font-medium bg-white/16 backdrop-blur border border-white/20">
+                <span key={r} className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/18 backdrop-blur border border-white/25">
                   {ROLE_EMOJI[r]} {ROLE_LABEL[r]}
                 </span>
               ))}
             </div>
             {expireAt && (
-              <div className="mt-4 inline-flex items-center gap-1.5 text-[11px] bg-white/12 border border-white/15 px-3 py-1.5 rounded-full backdrop-blur">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+              <div className="mt-3 inline-flex items-center gap-1.5 text-[10px] bg-white/14 border border-white/20 px-2.5 py-1 rounded-full backdrop-blur">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
                 有效期至 {new Date(expireAt).toLocaleDateString('zh-CN')}
               </div>
             )}
@@ -241,7 +241,7 @@ export default function SharePage() {
       </header>
 
       {/* ===================== 方案亮点 ===================== */}
-      <main className="px-4 -mt-40 relative space-y-3">
+      <main className="px-4 -mt-28 relative space-y-3">
         <div className="bg-white rounded-[24px] shadow-md shadow-gray-900/5 p-4 border border-white">
           <div className="text-[11px] font-medium text-gray-400 mb-2.5 tracking-wider">✨ 本方案亮点</div>
           <div className="grid grid-cols-1 gap-2">
@@ -314,19 +314,6 @@ export default function SharePage() {
 
               {isOpen && (
                 <div className="px-4 pb-4 border-t border-gray-50 pt-3 bg-gray-50/40">
-                  {/* 价格概览 */}
-                  <div className="grid grid-cols-2 gap-2 mb-3">
-                    <div className="bg-white rounded-xl px-3 py-2 border border-gray-100">
-                      <div className="text-[10px] text-gray-400">原价</div>
-                      <div className="text-[13px] font-semibold text-gray-700">¥{total.toFixed(0)}</div>
-                    </div>
-                    <div className="rounded-xl px-3 py-2 border"
-                      style={{ background: 'rgba(249,115,22,0.06)', borderColor: 'rgba(249,115,22,0.12)' }}>
-                      <div className="text-[10px] text-orange-600/80">折扣 {rate.toFixed(1)}%</div>
-                      <div className="text-[13px] font-semibold text-orange-600">立省 ¥{saved.toFixed(0)}</div>
-                    </div>
-                  </div>
-
                   {/* 明细分类 —— 客户页不展示单价/小计，改为项目名 + 体检意义 */}
                   {groups.map(g => {
                     return (
@@ -380,7 +367,10 @@ export default function SharePage() {
             <button
               onClick={() => downloadPDF()}
               className="col-span-2 h-11 rounded-xl text-white text-sm font-medium shadow-sm"
-              style={{ background: `linear-gradient(90deg, ${primaryColor}, ${shade(primaryColor, -12)})` }}
+              style={{
+                background: `linear-gradient(135deg, ${shade(primaryColor, 8)}, ${primaryColor}, ${shade(primaryColor, -5)})`,
+                boxShadow: `0 8px 22px -16px ${primaryColor}aa`
+              }}
             >
               ⬇️ 下载完整方案 PDF
             </button>
@@ -526,8 +516,8 @@ export default function SharePage() {
               onClick={() => downloadPDF('all')}
               className="col-span-3 h-[52px] rounded-2xl text-white font-bold text-[15px] shadow-lg flex items-center justify-center gap-1.5 active:scale-[0.97] transition-transform"
               style={{
-                background: `linear-gradient(135deg, ${shade(primaryColor, 5)}, ${shade(primaryColor, -15)} 60%, ${shade(primaryColor, -25)})`,
-                boxShadow: `0 14px 30px -14px ${primaryColor}cc, inset 0 1px 0 rgba(255,255,255,0.25)`
+                background: `linear-gradient(135deg, ${shade(primaryColor, 8)}, ${primaryColor}, ${shade(primaryColor, -5)})`,
+                boxShadow: `0 8px 22px -16px ${primaryColor}aa, inset 0 1px 0 rgba(255,255,255,0.25)`
               }}
             >
               <span className="text-xl leading-none">⬇️</span>
