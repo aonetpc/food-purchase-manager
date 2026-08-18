@@ -118,7 +118,7 @@ export const checkupApi = {
     api.put<any>(`/booking/checkup-templates/${id}`, body),
   clone: (id: string, body?: any) =>
     api.post<any>(`/booking/checkup-templates/${id}/clone`, body),
-  saveItems: (id: string, body: { items: any[]; role_plans?: Record<string, Partial<RolePlan>> }) =>
+  saveItems: (id: string, body: { items?: any[]; role_plans?: Record<string, Partial<RolePlan>> }) =>
     api.put<any>(`/booking/checkup-templates/${id}/items-batch`, body),
   share: (id: string, body?: any) =>
     api.post<any>(`/booking/checkup-templates/${id}/share`, body || {}),

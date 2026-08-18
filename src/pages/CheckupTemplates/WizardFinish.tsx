@@ -164,7 +164,7 @@ return (
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 flex items-center justify-center text-2xl">{ROLE_EMOJI[r]}</div>
                 <div className="text-left">
                   <div className="font-semibold text-gray-900">{ROLE_LABEL[r]}</div>
-                  <div className="text-[11px] text-gray-500">{roleItems.length}项检查</div>
+                  <div className="text-[11px] text-gray-500">{(pkg as any)?.role_items?.[r]?.item_count || roleItems.length || 0}项检查</div>
                 </div>
               </div>
               <div className="text-right">

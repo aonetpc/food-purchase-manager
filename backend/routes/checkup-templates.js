@@ -749,57 +749,61 @@ router.put('/:id/items-batch', async (req, res) => {
     if (!canUserEditPackage(req.user, pkg)) {
       return res.status(403).json({ ok: false, error: '无权编辑此套餐' });
     }
-    const { items = [], role_plans: rolePlansInput = {} } = req.body || {};
-    if (!Array.isArray(items)) return res.status(400).json({ ok: false, error: 'items 必须是数组' });
+    const { role_plans: rolePlansInput = {} } = req.body || {};
+    // 仅当前端显式传 items 数组时才重建项目明细；只传 role_plans（定价/生成方案）时不动 items，避免误清空
+    const hasItems = req.body && Array.isArray(req.body.items);
+    const items = hasItems ? req.body.items : [];
 
-    // 1. 全删现有 items（按套餐）
-    await conn.query('DELETE FROM booking_package_items WHERE package_id = ?', [pkg.id]);
+    if (hasItems) {
+      // 1. 全删现有 items（按套餐）
+      await conn.query('DELETE FROM booking_package_items WHERE package_id = ?', [pkg.id]);
 
-    // 2. 批量 INSERT 新 items，对缺失快照/价格的 LEFT JOIN checkup_items 回填
-    //    先把请求items做一轮基本格式化 + 非法role过滤
-    const cleanItems = items.map((raw, idx) => {
-      const role = (raw.role && ROLES.includes(raw.role)) ? raw.role : 'common';
-      return {
-        id: uuidv4(),
-        item_id: raw.item_id,
-        role,
-        quantity: Math.max(1, toNum(raw.quantity) || 1),
-        remark: raw.remark || null,
-        sort_order: raw.sort_order != null ? toNum(raw.sort_order) : (idx + 1),
-        item_name_snapshot: raw.item_name_snapshot || null,
-        item_price: raw.item_price != null ? round2(raw.item_price) : null,
-        insurance_price_snapshot: raw.insurance_price_snapshot != null ? round2(raw.insurance_price_snapshot) : null,
-      };
-    }).filter(it => it.item_id);
+      // 2. 批量 INSERT 新 items，对缺失快照/价格的 LEFT JOIN checkup_items 回填
+      //    先把请求items做一轮基本格式化 + 非法role过滤
+      const cleanItems = items.map((raw, idx) => {
+        const role = (raw.role && ROLES.includes(raw.role)) ? raw.role : 'common';
+        return {
+          id: uuidv4(),
+          item_id: raw.item_id,
+          role,
+          quantity: Math.max(1, toNum(raw.quantity) || 1),
+          remark: raw.remark || null,
+          sort_order: raw.sort_order != null ? toNum(raw.sort_order) : (idx + 1),
+          item_name_snapshot: raw.item_name_snapshot || null,
+          item_price: raw.item_price != null ? round2(raw.item_price) : null,
+          insurance_price_snapshot: raw.insurance_price_snapshot != null ? round2(raw.insurance_price_snapshot) : null,
+        };
+      }).filter(it => it.item_id);
 
-    if (cleanItems.length > 0) {
-      // 取出 item_id → checkup_items 最新 default_price / name
-      const itemIds = [...new Set(cleanItems.map(it => it.item_id))];
-      const placeholders = itemIds.map(() => '?').join(',');
-      const [ciRows] = await conn.query(
-        `SELECT id, name, default_price, insurance_price FROM booking_checkup_items WHERE id IN (${placeholders})`,
-        itemIds
-      );
-      const ciMap = new Map(ciRows.map(c => [c.id, c]));
-      const batch = cleanItems.map(it => {
-        const ci = ciMap.get(it.item_id) || {};
-        const nameSnap = it.item_name_snapshot && String(it.item_name_snapshot).trim()
-          ? it.item_name_snapshot : (ci.name || null);
-        const priceSnap = it.item_price != null ? it.item_price : round2(ci.default_price || 0);
-        const insSnap = it.insurance_price_snapshot != null
-          ? it.insurance_price_snapshot : round2(ci.insurance_price || 0);
-        return [
-          it.id, pkg.id, it.item_id, it.role,
-          nameSnap, priceSnap, insSnap,
-          it.quantity, it.remark, it.sort_order,
-        ];
-      });
-      await conn.query(
-        `INSERT INTO booking_package_items
-          (id, package_id, item_id, role, item_name_snapshot, item_price, insurance_price_snapshot, quantity, remark, sort_order)
-         VALUES ?`,
-        [batch]
-      );
+      if (cleanItems.length > 0) {
+        // 取出 item_id → checkup_items 最新 default_price / name
+        const itemIds = [...new Set(cleanItems.map(it => it.item_id))];
+        const placeholders = itemIds.map(() => '?').join(',');
+        const [ciRows] = await conn.query(
+          `SELECT id, name, default_price, insurance_price FROM booking_checkup_items WHERE id IN (${placeholders})`,
+          itemIds
+        );
+        const ciMap = new Map(ciRows.map(c => [c.id, c]));
+        const batch = cleanItems.map(it => {
+          const ci = ciMap.get(it.item_id) || {};
+          const nameSnap = it.item_name_snapshot && String(it.item_name_snapshot).trim()
+            ? it.item_name_snapshot : (ci.name || null);
+          const priceSnap = it.item_price != null ? it.item_price : round2(ci.default_price || 0);
+          const insSnap = it.insurance_price_snapshot != null
+            ? it.insurance_price_snapshot : round2(ci.insurance_price || 0);
+          return [
+            it.id, pkg.id, it.item_id, it.role,
+            nameSnap, priceSnap, insSnap,
+            it.quantity, it.remark, it.sort_order,
+          ];
+        });
+        await conn.query(
+          `INSERT INTO booking_package_items
+            (id, package_id, item_id, role, item_name_snapshot, item_price, insurance_price_snapshot, quantity, remark, sort_order)
+           VALUES ?`,
+          [batch]
+        );
+      }
     }
 
     // 3. 重新计算 three roles 的 original_total

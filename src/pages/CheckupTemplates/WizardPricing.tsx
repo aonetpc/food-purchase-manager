@@ -14,8 +14,9 @@ export default function WizardPricing() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editRole, setEditRole] = useState<Role | null>(null);
-  const [localPrice, setLocalPrice] = useState<Record<Role, number>>({ male: 0, female_married: 0, female_single: 0 });
-  const [localRate, setLocalRate] = useState<Record<Role, number>>({ male: 100, female_married: 100, female_single: 100 });
+  // 用字符串存储，避免数字回写导致输入框永远有 0 / 前导 0 无法删除
+  const [localPrice, setLocalPrice] = useState<Record<Role, string>>({ male: '', female_married: '', female_single: '' });
+  const [localRate, setLocalRate] = useState<Record<Role, string>>({ male: '100', female_married: '100', female_single: '100' });
 
   const load = async () => {
     if (!id) return;
@@ -33,11 +34,11 @@ export default function WizardPricing() {
           // 如果折扣率=100（默认值），强制将 discount_price 同步为 original_total
           // 防止后端 original_total 重算后 discount_price 仍是旧值导致误显示折扣
           if (rate >= 100 && total > 0) {
-            prices[r] = total;
-            rates[r] = 100;
+            prices[r] = String(total);
+            rates[r] = '100';
           } else {
-            prices[r] = Number(plan.discount_price) || total;
-            rates[r] = rate;
+            prices[r] = String(Number(plan.discount_price) || total);
+            rates[r] = String(rate);
           }
         });
         setLocalPrice(prices); setLocalRate(rates);
@@ -60,43 +61,50 @@ export default function WizardPricing() {
     const total = Number(plan.original_total) || 0;
     const priceInit = Number(plan.discount_price) || total;
     const rateInit = total > 0 ? Math.round(priceInit / total * 10000) / 100 : 100;
-    setLocalPrice(prev => ({ ...prev, [r]: Math.round(priceInit * 100) / 100 }));
-    setLocalRate(prev => ({ ...prev, [r]: Math.max(1, Math.min(100, rateInit)) }));
+    setLocalPrice(prev => ({ ...prev, [r]: String(Math.round(priceInit * 100) / 100) }));
+    setLocalRate(prev => ({ ...prev, [r]: String(Math.max(1, Math.min(100, rateInit))) }));
     setEditRole(r);
   };
 
   const onChangePrice = (r: Role, v: string) => {
+    // 保留原始字符串，允许清空/编辑中间态
+    setLocalPrice(p => ({ ...p, [r]: v }));
     const n = parseFloat(v);
-    const price = isNaN(n) ? 0 : Math.max(0, n);
     const total = Number((pkg?.role_plans as any)?.[r]?.original_total || 0);
-    if (total <= 0) {
-      setLocalPrice(p => ({ ...p, [r]: price }));
-      setLocalRate(p => ({ ...p, [r]: 100 }));
+    if (isNaN(n) || total <= 0) {
+      setLocalRate(p => ({ ...p, [r]: total <= 0 ? '100' : '' }));
       return;
     }
-    const clampedPrice = Math.min(price, total);
+    const clampedPrice = Math.min(Math.max(0, n), total);
     let rate = Math.round(clampedPrice / total * 10000) / 100;
     rate = Math.max(1, Math.min(100, rate));
-    setLocalPrice(p => ({ ...p, [r]: clampedPrice }));
-    setLocalRate(p => ({ ...p, [r]: rate }));
+    setLocalRate(p => ({ ...p, [r]: String(rate) }));
   };
 
   const onChangeRate = (r: Role, v: string) => {
-    let n = parseFloat(v);
-    if (isNaN(n)) n = 100;
-    n = Math.max(1, Math.min(100, n));
+    // 保留原始字符串，允许清空/编辑中间态
+    setLocalRate(p => ({ ...p, [r]: v }));
+    const n = parseFloat(v);
+    if (isNaN(n)) return;
+    const clamped = Math.max(1, Math.min(100, n));
     const total = Number((pkg?.role_plans as any)?.[r]?.original_total || 0);
-    const price = Math.round(total * n) / 100;
-    setLocalPrice(p => ({ ...p, [r]: price }));
-    setLocalRate(p => ({ ...p, [r]: n }));
+    const price = Math.round(total * clamped) / 100;
+    setLocalPrice(p => ({ ...p, [r]: String(price) }));
   };
 
   const confirmDiscount = async () => {
     if (!editRole || !pkg || !id) return;
+    const plan: any = pkg.role_plans?.[editRole] || {};
+    const total = Number(plan.original_total) || 0;
+    const priceNum = parseFloat(localPrice[editRole]);
+    const rateNum = parseFloat(localRate[editRole]);
+    // 空输入兜底：价格取原价（无折扣），折扣率取 100
+    const finalPrice = isNaN(priceNum) ? total : Math.max(0, priceNum);
+    const finalRate = isNaN(rateNum) ? 100 : Math.max(1, Math.min(100, rateNum));
     const role_plans: any = {};
     role_plans[editRole] = {
-      discount_price: Math.round(localPrice[editRole] * 100) / 100,
-      discount_rate: Math.round(localRate[editRole] * 100) / 100,
+      discount_price: Math.round(finalPrice * 100) / 100,
+      discount_rate: Math.round(finalRate * 100) / 100,
     };
     setSaving(true);
     try {
@@ -107,8 +115,8 @@ export default function WizardPricing() {
       const prices: any = {}, rates: any = {};
       ROLES.forEach(r => {
         const plan: any = p.role_plans?.[r] || { discount_price: 0, discount_rate: 100 };
-        prices[r] = Number(plan.discount_price) || 0;
-        rates[r] = Number(plan.discount_rate) || 100;
+        prices[r] = String(Number(plan.discount_price) || 0);
+        rates[r] = String(Number(plan.discount_rate) || 100);
       });
       setLocalPrice(prices); setLocalRate(rates);
       toast.success(`${ROLE_LABEL[editRole]}定价已保存`);
@@ -193,7 +201,7 @@ export default function WizardPricing() {
                     </div>
                     <div>
                       <div className={`font-semibold ${rText}`}>{ROLE_LABEL[r]}</div>
-                      <div className="text-[11px] text-gray-500">{plan.item_count || 0}项检查</div>
+                      <div className="text-[11px] text-gray-500">{(pkg as any)?.role_items?.[r]?.item_count || 0}项检查</div>
                     </div>
                   </div>
                   <button onClick={() => openEdit(r)}
@@ -254,8 +262,12 @@ export default function WizardPricing() {
             {(() => {
               const plan: any = pkg.role_plans?.[editRole] || { original_total: 0 };
               const total = Number(plan.original_total) || 0;
-              const disc = localPrice[editRole];
-              const rate = localRate[editRole];
+              const discStr = localPrice[editRole] ?? '';
+              const rateStr = localRate[editRole] ?? '';
+              const discNum = parseFloat(discStr);
+              const rateNum = parseFloat(rateStr);
+              const disc = isNaN(discNum) ? total : discNum;
+              const rate = isNaN(rateNum) ? 100 : rateNum;
               const saved = total - disc;
               return (
                 <div className="space-y-3">
@@ -265,14 +277,14 @@ export default function WizardPricing() {
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 mb-1 block">折扣价</label>
-                    <input type="number" value={disc}
+                    <input type="number" value={discStr}
                       onChange={e => onChangePrice(editRole, e.target.value)}
                       className="w-full h-12 px-4 rounded-xl border border-gray-200 text-base font-semibold text-orange-700 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none"
                       placeholder="输入折扣价" />
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 mb-1 block">折扣率（%）</label>
-                    <input type="number" value={rate}
+                    <input type="number" value={rateStr}
                       onChange={e => onChangeRate(editRole, e.target.value)}
                       min={1} max={100} step={0.01}
                       className="w-full h-12 px-4 rounded-xl border border-gray-200 text-base font-semibold text-orange-700 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none"
