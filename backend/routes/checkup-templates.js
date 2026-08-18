@@ -55,13 +55,27 @@ function coverIncludes(coverJsonField, userId) {
 }
 
 // 读取套餐明细（LEFT JOIN 回填 price/name 快照；合并 common + 单独角色）
+let _hasClinicalSignificance = null; // 缓存列存在性
 async function listPackageItems(packageId) {
+  // 动态检测 clinical_significance 列是否存在（兼容迁移未执行的情况）
+  if (_hasClinicalSignificance === null) {
+    try {
+      const [cols] = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'booking_checkup_items' AND COLUMN_NAME = 'clinical_significance'`
+      );
+      _hasClinicalSignificance = (cols[0].cnt > 0);
+    } catch (_) {
+      _hasClinicalSignificance = false;
+    }
+  }
+  const csSelect = _hasClinicalSignificance ? 'ci.clinical_significance' : 'NULL AS clinical_significance';
   const [rows] = await pool.query(
     `SELECT pi.id, pi.package_id, pi.item_id, pi.role, pi.quantity, pi.remark, pi.sort_order,
             CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
             CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0) THEN ci.default_price ELSE pi.item_price END AS item_price,
             CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
-            ci.category, ci.item_type, ci.clinical_significance
+            ci.category, ci.item_type, ${csSelect}
      FROM booking_package_items AS pi
      LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
      WHERE pi.package_id = ?
