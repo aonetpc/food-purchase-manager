@@ -65,7 +65,7 @@ import {
   groupTotal,
 } from './utils';
 import { bookingApi, type BookingSalesUser, type BookingConfig, type MealTypeRow } from '../../lib/api';
-import { checkupApi, type Role } from '@/pages/CheckupTemplates/api';
+import { checkupApi, type Role, CATEGORIES } from '@/pages/CheckupTemplates/api';
 import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, CheckupItemRow } from './types';
 
 // ================================================
@@ -99,6 +99,57 @@ function emptyPax(): PaxEntry {
 function paxToRole(gender: '男' | '女', married: boolean): Role {
   if (gender === '男') return 'male';
   return married ? 'female_married' : 'female_single';
+}
+
+// 从18位身份证号推断性别：第17位奇数=男，偶数=女；同时可解析出生日期
+function parseIdCardMeta(id: string): { gender?: '男' | '女'; birthDate?: string } {
+  const s = (id || '').trim();
+  if (s.length < 17) return {};
+  const result: { gender?: '男' | '女'; birthDate?: string } = {};
+  const s17 = s.charAt(16);
+  const n17 = parseInt(s17, 10);
+  if (!isNaN(n17)) result.gender = n17 % 2 === 1 ? '男' : '女';
+  if (/^\d{17}[\dXx]$/.test(s)) {
+    const y = s.slice(6, 10);
+    const m = s.slice(10, 12);
+    const d = s.slice(12, 14);
+    result.birthDate = `${y}-${m}-${d}`;
+  }
+  return result;
+}
+
+// 销售套餐胶囊名称兜底：如果是「套餐{UUID}」格式则生成友好名
+function friendlyCapsuleName(cap: any): string {
+  if (!cap) return '';
+  const raw = String(cap.name || '');
+  const uglyRe = /^套餐\s*[0-9a-fA-F-]{8,}$/;
+  if (!uglyRe.test(raw)) return raw;
+  // 优先用 code 字段
+  if (cap.code) return `${cap.code}套餐`;
+  // 否则按角色价拼接
+  const prices = cap.prices || {};
+  const parts: string[] = [];
+  const malePrice = Number(prices.male?.discount_price || 0);
+  const fmMarrPrice = Number(prices.female_married?.discount_price || 0);
+  const fmSinglePrice = Number(prices.female_single?.discount_price || 0);
+  if (malePrice > 0) parts.push(`男¥${malePrice}`);
+  if (fmSinglePrice > 0 && fmSinglePrice === fmMarrPrice) {
+    parts.push(`女¥${fmSinglePrice}`);
+  } else {
+    if (fmMarrPrice > 0) parts.push(`女(婚)¥${fmMarrPrice}`);
+    if (fmSinglePrice > 0 && fmSinglePrice !== fmMarrPrice) parts.push(`女(未)¥${fmSinglePrice}`);
+  }
+  return parts.length > 0 ? `定制体检 · ${parts.join('/')}` : '定制体检套餐';
+}
+
+// 解析一行文本：优先 Tab/逗号分隔；同时兼容中文逗号、多空格
+function splitRow(line: string): string[] {
+  const l = (line || '').trim();
+  if (!l) return [];
+  if (l.includes('\t')) return l.split('\t').map(s => s.trim());
+  if (l.includes(',')) return l.split(',').map(s => s.trim());
+  if (l.includes('，')) return l.split('，').map(s => s.trim());
+  return l.split(/\s{2,}/).map(s => s.trim());
 }
 
 // 获取用餐标准信息（从后端配置或兜底常量）
@@ -308,6 +359,165 @@ interface ImportResult {
 }
 
 // ============================================================
+// 追加项目选择器：分类分组胶囊多选（替代原来的单条下拉列表）
+// ============================================================
+function CapsuleItemPicker(props: {
+  open: boolean;
+  onClose: () => void;
+  lib: CheckupItemRow[];
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onConfirm: () => void;
+  includedIds?: Set<string>; // 已包含的项目id（显示禁用/已包含态）
+  confirmLabel?: string;
+  anchorClass?: string; // 外层定位容器的 className
+  width?: string;
+}) {
+  const {
+    open, onClose, lib, selectedIds, onToggle, onConfirm,
+    includedIds, confirmLabel, anchorClass = 'relative inline-block',
+    width = 'w-[560px]',
+  } = props;
+  const [q, setQ] = useState('');
+  // 按 CATEGORIES 顺序分组
+  const groups = useMemo(() => {
+    const g: Record<string, CheckupItemRow[]> = {};
+    const known = [...CATEGORIES, '其他'];
+    known.forEach(k => g[k] = []);
+    const lowerQ = q.trim().toLowerCase();
+    for (const ci of lib) {
+      if (lowerQ && !ci.name.toLowerCase().includes(lowerQ)) continue;
+      const cat = ci.category || '其他';
+      if (g[cat]) g[cat].push(ci);
+      else g['其他'].push(ci);
+    }
+    return known.map(k => ({ category: k, items: g[k] || [] })).filter(x => x.items.length > 0);
+  }, [lib, q]);
+  const countSel = selectedIds.size;
+  const countInc = includedIds?.size || 0;
+
+  return (
+    <div className={anchorClass}>
+      {open && (
+        <>
+          {/* 外部遮罩：阻止冒泡 + 点击外部关闭（有未确认时给出提醒） */}
+          <div
+            className="fixed inset-0 z-20"
+            onClick={() => {
+              if (countSel > 0) {
+                if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
+              }
+              onClose();
+            }}
+          />
+          <div
+            className={`absolute top-full left-0 mt-1 ${width} max-h-[75vh] overflow-hidden bg-white border border-gray-200 rounded-2xl shadow-2xl z-30 flex flex-col`}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 顶部搜索 */}
+            <div className="p-3 border-b border-gray-100 shrink-0">
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={q}
+                  onChange={e => setQ(e.target.value)}
+                  placeholder="搜索体检项目..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
+                  autoFocus
+                />
+              </div>
+              <div className="flex items-center justify-between mt-2 text-[10px] text-gray-400">
+                <span>按分类浏览，点击胶囊多选；已勾选 {countSel} 项{countInc > 0 ? ` · 已包含 ${countInc} 项（灰色）` : ''}</span>
+                <button onClick={onClose} className="text-gray-400 hover:text-gray-600">关闭</button>
+              </div>
+            </div>
+            {/* 分类组 */}
+            <div className="overflow-y-auto flex-1 px-3 py-2 space-y-3">
+              {groups.length === 0 && (
+                <div className="py-8 text-center text-xs text-gray-400">
+                  {lib.length === 0 ? '项目库暂无数据' : '没有匹配的项目'}
+                </div>
+              )}
+              {groups.map(g => (
+                <div key={g.category}>
+                  <div className="flex items-center gap-2 mb-1.5 px-2 py-1 rounded-md bg-gray-50">
+                    <span className="inline-block w-1 h-3.5 rounded-sm shrink-0 bg-green-500" />
+                    <span className="text-[11px] font-bold text-gray-800">{g.category}</span>
+                    <span className="text-[10px] text-gray-400 font-normal">{g.items.length}项</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 px-0.5">
+                    {g.items.map(ci => {
+                      const isIncluded = includedIds?.has?.(ci.id);
+                      const isSel = selectedIds.has(ci.id);
+                      const disabled = !!isIncluded;
+                      return (
+                        <button
+                          key={ci.id}
+                          disabled={disabled}
+                          onClick={() => onToggle(ci.id)}
+                          className={[
+                            'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-colors shrink-0',
+                            disabled
+                              ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                              : isSel
+                                ? 'bg-green-500/15 border-green-500 text-green-700 shadow-sm'
+                                : 'bg-white border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50',
+                          ].join(' ')}
+                          title={disabled ? '该项目已包含在套餐中' : ci.name}
+                        >
+                          {disabled ? (
+                            <CheckCircle size={10} className="opacity-70" />
+                          ) : isSel ? (
+                            <CheckCircle size={10} />
+                          ) : (
+                            <span className="inline-block w-2" />
+                          )}
+                          <span className="truncate max-w-[200px]">{ci.name}</span>
+                          <span className="font-mono opacity-80">¥{Number(ci.default_price || 0).toFixed(0)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* 底部确认条 */}
+            <div className="border-t border-gray-100 px-3 py-2 shrink-0 flex items-center justify-between bg-gray-50/50">
+              <div className="text-[11px] text-gray-500">
+                {countSel > 0
+                  ? `已选 <span class="font-semibold text-green-600">${countSel}</span> 项，点击确认追加`
+                  : '请从上方分类中选择要追加的项目'}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] rounded-lg bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={onConfirm}
+                  disabled={countSel === 0}
+                  className={[
+                    'inline-flex items-center gap-1 px-3 py-1.5 text-[11px] rounded-lg text-white font-medium transition-colors',
+                    countSel === 0
+                      ? 'bg-gray-300 cursor-not-allowed'
+                      : 'bg-green-500 hover:bg-green-600',
+                  ].join(' ')}
+                >
+                  <CheckCircle size={11} />
+                  {confirmLabel || `确认追加 ${countSel} 项`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // 第4期：单人定制项目编辑器子组件（可安全使用 useState）
 // ============================================================
 function PaxItemsEditor(props: {
@@ -327,6 +537,31 @@ function PaxItemsEditor(props: {
   const { index, pax, paxAmount, items, hasCustom, pkgName, pkgCode, checkupItemsLib, onRemoveItem, onUpdateItemField, onReset, onAddItem } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState('');
+  // 多选选中态
+  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const includedIds = useMemo(() => new Set(items.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [items]);
+  // 点击胶囊切换选中
+  const toggle = (id: string) => {
+    setPickedIds(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+  const confirm = () => {
+    // 按 pickedIds 从 lib 中依次调用 onAddItem（兼容旧的单条添加）
+    for (const id of pickedIds) {
+      const ci = checkupItemsLib.find(x => x.id === id);
+      if (ci) onAddItem(ci);
+    }
+    setPickedIds(new Set());
+    setPickerOpen(false);
+  };
+  const closePicker = () => {
+    setPickedIds(new Set());
+    setPickerOpen(false);
+  };
+  void pickerFilter; // 已由子组件内置搜索支持，保留变量以兼容旧调用习惯
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -421,50 +656,23 @@ function PaxItemsEditor(props: {
         </table>
       </div>
       <div className="border-t border-gray-100 bg-gray-50/30 px-3 py-2">
-        <div className="relative inline-block">
-          <button
-            onClick={() => { setPickerOpen(!pickerOpen); setPickerFilter(''); }}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
-          >
-            <Plus size={11}/> 追加项目
-            <ChevronDown size={11} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
-          </button>
-          {pickerOpen && (
-            <div className="absolute top-full left-0 mt-1 w-[280px] max-h-80 overflow-hidden bg-white border border-gray-200 rounded-lg shadow-xl z-30 flex flex-col">
-              <div className="p-2 border-b border-gray-100">
-                <div className="relative">
-                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                  <input
-                    value={pickerFilter}
-                    onChange={e => setPickerFilter(e.target.value)}
-                    placeholder="搜索体检项目..."
-                    className="w-full pl-7 pr-2 py-1 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                    autoFocus
-                  />
-                </div>
-              </div>
-              <div className="overflow-y-auto flex-1">
-                {checkupItemsLib
-                  .filter(ci => !pickerFilter || ci.name.includes(pickerFilter))
-                  .map(ci => (
-                    <button
-                      key={ci.id}
-                      onClick={() => { onAddItem(ci); setPickerOpen(false); }}
-                      className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-green-50 transition-colors"
-                    >
-                      <span className="text-gray-800">{ci.name}</span>
-                      <span className="text-gray-400 font-mono">¥{Number(ci.default_price || 0).toLocaleString()}</span>
-                    </button>
-                  ))}
-                {checkupItemsLib.length === 0 && (
-                  <div className="px-3 py-4 text-center text-[11px] text-gray-400">
-                    项目库暂无数据
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <button
+          onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
+          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
+        >
+          <Plus size={11}/> 追加项目（按分类多选）
+        </button>
+        <CapsuleItemPicker
+          open={pickerOpen}
+          onClose={closePicker}
+          lib={checkupItemsLib}
+          selectedIds={pickedIds}
+          onToggle={toggle}
+          onConfirm={confirm}
+          includedIds={includedIds}
+          confirmLabel={`确认追加 ${pickedIds.size} 项`}
+          width="w-[600px]"
+        />
       </div>
     </div>
   );
@@ -572,7 +780,9 @@ function PackageGroupSummary(props: {
   } = props;
 
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerFilter, setPickerFilter] = useState('');
+  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const void_pickerFilter_var = true; // placeholder; 搜索已由 CapsuleItemPicker 内置
+  void void_pickerFilter_var;
 
   const nTotal = paxList.length;
   const nCustom = paxList.filter(isCustomizedFn).length;
@@ -586,6 +796,26 @@ function PackageGroupSummary(props: {
       }, 0));
 
   const itemsSubtotal = sharedItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+  const includedIds = useMemo(() => new Set(sharedItems.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [sharedItems]);
+  const toggle = (id: string) => {
+    setPickedIds(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+  const confirm = () => {
+    for (const id of pickedIds) {
+      const ci = checkupItemsLib.find(x => x.id === id);
+      if (ci) onAddItem(ci);
+    }
+    setPickedIds(new Set());
+    setPickerOpen(false);
+  };
+  const closePicker = () => {
+    setPickedIds(new Set());
+    setPickerOpen(false);
+  };
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
@@ -706,49 +936,24 @@ function PackageGroupSummary(props: {
 
       {/* 底部：批量追加 + 说明 */}
       <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between">
-        <div className="relative inline-block">
+        <div>
           <button
-            onClick={() => { setPickerOpen(!pickerOpen); setPickerFilter(''); }}
+            onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
           >
-            <Plus size={11}/> 批量追加项目（同步到 {nStandard} 位标准人员）
-            <ChevronDown size={11} className={`transition-transform ${pickerOpen ? 'rotate-180' : ''}`}/>
+            <Plus size={11}/> 批量追加项目（同步到 {nStandard} 位标准人员 · 按分类多选）
           </button>
-          {pickerOpen && (
-            <div className="absolute top-full left-0 mt-1 w-[300px] max-h-80 overflow-hidden bg-white border border-gray-200 rounded-lg shadow-xl z-30 flex flex-col">
-              <div className="p-2 border-b border-gray-100">
-                <div className="relative">
-                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"/>
-                  <input
-                    value={pickerFilter}
-                    onChange={e => setPickerFilter(e.target.value)}
-                    placeholder="搜索体检项目..."
-                    className="w-full pl-7 pr-2 py-1 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                    autoFocus
-                  />
-                </div>
-              </div>
-              <div className="overflow-y-auto flex-1">
-                {checkupItemsLib
-                  .filter(ci => !pickerFilter || ci.name.includes(pickerFilter))
-                  .map(ci => (
-                    <button
-                      key={ci.id}
-                      onClick={() => { onAddItem(ci); setPickerOpen(false); }}
-                      className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[11px] hover:bg-green-50 transition-colors"
-                    >
-                      <span className="text-gray-800">{ci.name}</span>
-                      <span className="text-gray-400 font-mono">¥{Number(ci.default_price || 0).toLocaleString()}</span>
-                    </button>
-                  ))}
-                {checkupItemsLib.length === 0 && (
-                  <div className="px-3 py-4 text-center text-[11px] text-gray-400">
-                    项目库暂无数据
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          <CapsuleItemPicker
+            open={pickerOpen}
+            onClose={closePicker}
+            lib={checkupItemsLib}
+            selectedIds={pickedIds}
+            onToggle={toggle}
+            onConfirm={confirm}
+            includedIds={includedIds}
+            confirmLabel={nStandard > 1 ? `确认追加 ${pickedIds.size} 项（×${nStandard}人同步）` : `确认追加 ${pickedIds.size} 项`}
+            width="w-[640px]"
+          />
         </div>
         {nCustom > 0 && (
           <div className="text-[10px] text-amber-600 inline-flex items-center gap-1">
@@ -839,6 +1044,7 @@ export default function BookingBoardCreate(props: {
   const [chkPax, setChkPax] = useState<PaxEntry[]>([emptyPax()]);
   const [showChkPaste, setShowChkPaste] = useState(false);
   const [chkPasteText, setChkPasteText] = useState('');
+  const [detailPaxIdx, setDetailPaxIdx] = useState<number | null>(null);
   // 套餐共享批量编辑：key=套餐code, value=CustomPackageItem[]
   //   undefined = 未做过批量修改，跟随套餐表默认项目
   //   数组 = 该套餐下所有"标准状态"人员的共享项目版本
@@ -1042,6 +1248,27 @@ export default function BookingBoardCreate(props: {
 
   // 查找 code→显示信息（优先用动态配置，其次用 constants 的兜底常量）
   function getPackageInfo(code: string): { name: string; price: number; label: string; items?: any[]; autoTotal?: number } {
+    // 先匹配销售胶囊（按id精确匹配）
+    const cap = capsuleMap[code];
+    if (cap) {
+      const name = friendlyCapsuleName(cap);
+      // 价格取第一个非零角色价（兜底展示价）
+      const prices = cap.prices || {};
+      const price = Math.max(
+        Number(prices.male?.discount_price || 0),
+        Number(prices.female_married?.discount_price || 0),
+        Number(prices.female_single?.discount_price || 0),
+      );
+      const items: any[] = cap.items && Array.isArray(cap.items) ? cap.items : [];
+      const autoTotal = items.reduce((s: number, i: any) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+      return {
+        name,
+        price: price > 0 ? price : autoTotal,
+        label: `${name}`,
+        items,
+        autoTotal,
+      };
+    }
     const row = pkgMap[code] ?? finalPkgOptions.find(p => p.code === code);
     if (row) {
       const explicitPrice = Number(row.price || 0);
@@ -1897,27 +2124,42 @@ export default function BookingBoardCreate(props: {
 
   // 体检名单粘贴导入
   function doChkImport() {
-    const rows = parseCSV(chkPasteText);
+    const lines = (chkPasteText || '').split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (lines.length === 0) return;
     const paxList: PaxEntry[] = [];
-    const startIdx =
-      rows[0] && (rows[0][0] === '姓名' || (rows[0][0] || '').includes('姓名')) ? 1 : 0;
-    for (let i = startIdx; i < rows.length; i++) {
-      const r = rows[i];
-      if (!r[0] && !r[1]) continue;
-      const raw = r[5] || 'A';
-      const v = (raw || '').trim();
+    // 是否带表头：第1行含有「姓名」关键字则跳过首行
+    let startIdx = lines[0] && (lines[0].includes('姓名') || (splitRow(lines[0])[0] || '').includes('姓名')) ? 1 : 0;
+    for (let i = startIdx; i < lines.length; i++) {
+      const cells = splitRow(lines[i]);
+      if (cells.length === 0) continue;
+      const name = cells[0] || '';
+      const idCard = cells[1] || '';
+      const phone = cells[2] || '';
+      let genderRaw = cells[3] || '';
+      const marriedRaw = cells[4] || '';
+      const pkgRaw = cells[5] || '';
+      // 解析套餐
+      const v = (pkgRaw || '').trim();
       const up = v.toUpperCase();
       let pkgCode: string = finalPkgOptions[0]?.code || 'A';
-      if (['A', 'B', 'C', 'D'].includes(up[0])) pkgCode = up[0];
-      else if (pkgNameToCode[v]) pkgCode = pkgNameToCode[v];
-      else if (PACKAGE_NAME_MAP[v]) pkgCode = PACKAGE_NAME_MAP[v];
+      if (v) {
+        if (['A', 'B', 'C', 'D'].includes(up[0])) pkgCode = up[0];
+        else if (pkgNameToCode[v]) pkgCode = pkgNameToCode[v];
+        else if (PACKAGE_NAME_MAP[v]) pkgCode = PACKAGE_NAME_MAP[v];
+      }
+      // 解析婚姻
+      const married = ['是', 'true', '1', '已婚', 'Y', 'y'].includes((marriedRaw || '').trim());
+      // 性别：显式值优先；否则从身份证号推断
+      let gender: '男' | '女' | '' = '';
+      if (genderRaw === '男' || genderRaw === '女') gender = genderRaw;
+      if (!gender) {
+        const meta = parseIdCardMeta(idCard);
+        if (meta.gender) gender = meta.gender;
+      }
+      if (!gender) gender = '男';
+      if (!name && !idCard) continue;
       paxList.push({
-        name: r[0] || '',
-        idCard: r[1] || '',
-        phone: r[2] || '',
-        gender: r[3] === '女' ? '女' : '男',
-        married: ['是', 'true', '1', '已婚'].includes((r[4] || '').trim()),
-        package: pkgCode,
+        name, idCard, phone, gender, married, package: pkgCode,
       });
     }
     if (paxList.length) {
@@ -2398,10 +2640,7 @@ export default function BookingBoardCreate(props: {
                     </span>
                     <div className="flex gap-2">
                       <button onClick={() => setShowChkPaste(true)} className={btnGhost}>
-                        <Upload size={12} /> 导入
-                      </button>
-                      <button onClick={exportChkTemplate} className={btnGhost}>
-                        <Download size={12} /> 模板
+                        <ClipboardList size={12} /> 粘贴解析
                       </button>
                       <button onClick={() => setChkPax((p) => [...p, emptyPax()])} className={btnGold}>
                         <Plus size={12} /> 添加
@@ -2412,11 +2651,9 @@ export default function BookingBoardCreate(props: {
                     <table className="w-full text-xs">
                       <thead className="bg-gray-50 text-gray-500">
                         <tr>
-                          <th className="px-2 py-2 text-left font-medium">姓名</th>
-                          <th className="px-2 py-2 text-left font-medium">身份证号</th>
-                          <th className="px-2 py-2 text-left font-medium">手机号</th>
-                          <th className="px-2 py-2 text-left font-medium">性别</th>
-                          <th className="px-2 py-2 text-center font-medium">婚否</th>
+                          <th className="px-2 py-2 text-left font-medium w-28">姓名</th>
+                          <th className="px-2 py-2 text-left font-medium w-16">性别</th>
+                          <th className="px-2 py-2 text-center font-medium w-14">婚否</th>
                           <th className="px-2 py-2 text-left font-medium">套餐</th>
                           <th className="px-2 py-2 text-center font-medium w-36">项目状态</th>
                           <th className="px-2 py-2"></th>
@@ -2425,120 +2662,157 @@ export default function BookingBoardCreate(props: {
                       <tbody>
                         {chkPax.map((p, idx) => {
                           const customized = isPaxCustomized(p);
-                          const pkgInfo = getPackageInfo(p.package);
+                          const paxDetailOpen = detailPaxIdx === idx;
                           return (
-                            <tr key={idx} className="border-t border-gray-100">
-                              <td className="px-1.5 py-1">
-                                <input
-                                  value={p.name}
-                                  onChange={(e) => updChkPax(idx, { name: e.target.value })}
-                                  className={`${cellInput} w-20`}
-                                />
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <input
-                                  value={p.idCard}
-                                  onChange={(e) => updChkPax(idx, { idCard: e.target.value })}
-                                  className={`${cellInput} w-36 font-mono`}
-                                />
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <input
-                                  value={p.phone}
-                                  onChange={(e) => updChkPax(idx, { phone: e.target.value })}
-                                  className={`${cellInput} w-28 font-mono`}
-                                />
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <select
-                                  value={p.gender}
-                                  onChange={(e) =>
-                                    updChkPax(idx, { gender: e.target.value as '男' | '女' })
-                                  }
-                                  className={cellInput}
-                                >
-                                  <option value="男">男</option>
-                                  <option value="女">女</option>
-                                </select>
-                              </td>
-                              <td className="px-1.5 py-1 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={p.married}
-                                  onChange={(e) => updChkPax(idx, { married: e.target.checked })}
-                                  className="accent-green-500"
-                                />
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <select
-                                  value={p.package}
-                                  onChange={(e) => {
-                                    updChkPax(idx, { package: e.target.value as PackageCode, customItems: null });
-                                  }}
-                                  className={cellInput}
-                                >
-                                  <option value="">— 选套餐 —</option>
-                                  {salesCapsules.length > 0
-                                    ? salesCapsules.map((cap) => {
-                                        const role = paxToRole(p.gender, p.married);
-                                        const price = cap.prices?.[role]?.discount_price || 0;
-                                        return (
-                                          <option key={cap.id} value={cap.id}>
-                                            {cap.name} · ¥{Number(price).toLocaleString()}
-                                          </option>
-                                        );
-                                      })
-                                    : finalPkgOptions.map((pkg) => (
-                                        <option key={pkg.code} value={pkg.code}>
-                                          {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
-                                        </option>
-                                      ))
-                                  }
-                                </select>
-                                {salesCapsules.length === 0 && !capsulesLoading && draftGroup.salesPersonId && (
-                                  <span className="text-[10px] text-amber-500 block mt-0.5">该销售员暂无套餐</span>
-                                )}
-                              </td>
-                              <td className="px-1.5 py-1 text-center">
-                                {p.name.trim() ? (
-                                  <button
-                                    onClick={() => setEditingPaxIdx(idx)}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] transition-colors ${
-                                      customized
-                                        ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
-                                        : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
-                                    }`}
+                            <>
+                              <tr key={'r_' + idx} className="border-t border-gray-100">
+                                <td className="px-1.5 py-1">
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      value={p.name}
+                                      onChange={(e) => updChkPax(idx, { name: e.target.value })}
+                                      className={`${cellInput} w-20`}
+                                      placeholder="姓名"
+                                    />
+                                    <button
+                                      onClick={() => setDetailPaxIdx(paxDetailOpen ? null : idx)}
+                                      className={`shrink-0 p-1 rounded transition-colors ${
+                                        paxDetailOpen ? 'bg-green-100 text-green-600' : 'hover:bg-gray-100 text-gray-400'
+                                      }`}
+                                      title="展开/收起：身份证号、手机号"
+                                    >
+                                      {paxDetailOpen ? <ChevronDown size={13} /> : <ChevronDown size={13} className="rotate-[-90deg]" />}
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <select
+                                    value={p.gender}
+                                    onChange={(e) =>
+                                      updChkPax(idx, { gender: e.target.value as '男' | '女' })
+                                    }
+                                    className={cellInput}
                                   >
-                                    {customized ? (
-                                      <>
-                                        <span>✎</span>
-                                        <span>已定制</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <span className="text-[10px]">●</span>
-                                        <span>标准</span>
-                                      </>
-                                    )}
-                                    <span className={`mx-0.5 ${customized ? 'text-amber-400' : 'text-green-400'}`}>|</span>
-                                    <span className="font-medium">编辑</span>
-                                    <span className="font-mono text-[10px] opacity-60 ml-0.5">
-                                      ¥{calcSinglePaxEffective(p).toLocaleString()}
-                                    </span>
+                                    <option value="男">男</option>
+                                    <option value="女">女</option>
+                                  </select>
+                                </td>
+                                <td className="px-1.5 py-1 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={p.married}
+                                    onChange={(e) => updChkPax(idx, { married: e.target.checked })}
+                                    className="accent-green-500"
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <select
+                                    value={p.package}
+                                    onChange={(e) => {
+                                      updChkPax(idx, { package: e.target.value, customItems: null });
+                                    }}
+                                    className={cellInput}
+                                  >
+                                    <option value="">— 选套餐 —</option>
+                                    {salesCapsules.length > 0
+                                      ? salesCapsules.map((cap) => {
+                                          const role = paxToRole(p.gender, p.married);
+                                          const price = cap.prices?.[role]?.discount_price || 0;
+                                          return (
+                                            <option key={cap.id} value={cap.id}>
+                                              {friendlyCapsuleName(cap)} · ¥{Number(price).toLocaleString()}
+                                            </option>
+                                          );
+                                        })
+                                      : finalPkgOptions.map((pkg) => (
+                                          <option key={pkg.code} value={pkg.code}>
+                                            {pkg.code} · ¥{Number(pkg.price || 0).toLocaleString()}
+                                          </option>
+                                        ))
+                                    }
+                                  </select>
+                                  {salesCapsules.length === 0 && !capsulesLoading && draftGroup.salesPersonId && (
+                                    <span className="text-[10px] text-amber-500 block mt-0.5">该销售员暂无套餐</span>
+                                  )}
+                                </td>
+                                <td className="px-1.5 py-1 text-center">
+                                  {p.name.trim() ? (
+                                    <button
+                                      onClick={() => setEditingPaxIdx(idx)}
+                                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] transition-colors ${
+                                        customized
+                                          ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                                          : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
+                                      }`}
+                                    >
+                                      {customized ? (
+                                        <>
+                                          <span>✎</span>
+                                          <span>已定制</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span className="text-[10px]">●</span>
+                                          <span>标准</span>
+                                        </>
+                                      )}
+                                      <span className={`mx-0.5 ${customized ? 'text-amber-400' : 'text-green-400'}`}>|</span>
+                                      <span className="font-medium">编辑</span>
+                                      <span className="font-mono text-[10px] opacity-60 ml-0.5">
+                                        ¥{calcSinglePaxEffective(p).toLocaleString()}
+                                      </span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-300 text-[11px]">—</span>
+                                  )}
+                                </td>
+                                <td className="px-1.5 py-1">
+                                  <button
+                                    onClick={() => setChkPax((prev) => prev.filter((_, i) => i !== idx))}
+                                    className="text-red-400 hover:text-red-600"
+                                  >
+                                    <Trash2 size={14} />
                                   </button>
-                                ) : (
-                                  <span className="text-gray-300 text-[11px]">—</span>
-                                )}
-                              </td>
-                              <td className="px-1.5 py-1">
-                                <button
-                                  onClick={() => setChkPax((prev) => prev.filter((_, i) => i !== idx))}
-                                  className="text-red-400 hover:text-red-600"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </td>
-                            </tr>
+                                </td>
+                              </tr>
+                              {paxDetailOpen && (
+                                <tr key={'d_' + idx} className="border-t border-dashed border-gray-100 bg-gray-50/60">
+                                  <td colSpan={6} className="px-2 py-2">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl">
+                                      <div>
+                                        <label className="text-[10px] text-gray-400 mb-0.5 block">身份证号</label>
+                                        <input
+                                          value={p.idCard}
+                                          onChange={(e) => updChkPax(idx, { idCard: e.target.value })}
+                                          onBlur={(e) => {
+                                            // 失焦时：如性别未显式指定，从身份证第17位推断
+                                            const id = e.target.value.trim();
+                                            if (id && id.length >= 17 && !chkPax[idx]?.gender) {
+                                              const s17 = id.charAt(16);
+                                              const n17 = parseInt(s17, 10);
+                                              if (!isNaN(n17)) {
+                                                updChkPax(idx, { gender: n17 % 2 === 1 ? '男' : '女' });
+                                              }
+                                            }
+                                          }}
+                                          className={`${inputCls} font-mono text-xs`}
+                                          placeholder="18位身份证号，粘贴后自动推断性别"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] text-gray-400 mb-0.5 block">手机号</label>
+                                        <input
+                                          value={p.phone}
+                                          onChange={(e) => updChkPax(idx, { phone: e.target.value })}
+                                          className={`${inputCls} font-mono text-xs`}
+                                          placeholder="11位手机号"
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
                           );
                         })}
                       </tbody>
@@ -3773,25 +4047,36 @@ export default function BookingBoardCreate(props: {
         </div>
       )}
 
-      {/* 体检名单粘贴导入弹窗 */}
+      {/* 体检名单粘贴解析弹窗 */}
       {showChkPaste && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowChkPaste(false)} />
-          <div className="relative w-full max-w-lg bg-white rounded-xl border border-gray-200 shadow-2xl p-5">
+          <div className="relative w-full max-w-xl bg-white rounded-xl border border-gray-200 shadow-2xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-base font-medium text-gray-900">粘贴导入体检名单</h3>
+              <h3 className="text-base font-medium text-gray-900">📋 粘贴解析体检名单</h3>
               <button onClick={() => setShowChkPaste(false)} className="text-gray-500 hover:text-gray-800">
                 <X size={18} />
               </button>
             </div>
-            <p className="text-xs text-gray-400 mb-2">
-              支持 Tab 或逗号分隔，列顺序：姓名、身份证号、手机号、性别、婚否、套餐（A/B/C/D 或套餐名）
-            </p>
+            <div className="mb-3 text-xs text-gray-500 leading-relaxed space-y-1">
+              <div>
+                支持格式：
+                <span className="text-gray-700 font-mono ml-1">姓名、身份证号、手机号、性别、婚否、套餐</span>
+                <span className="text-gray-400 ml-1">（后3项可省略）</span>
+              </div>
+              <div>
+                分隔符：
+                <span className="text-gray-700 ml-1">Tab / 逗号 / 空格 均可</span>
+              </div>
+              <div className="text-green-600">
+                ✨ 粘贴后自动根据身份证号推断性别（第17位奇男偶女），无需手填性别
+              </div>
+            </div>
             <textarea
               value={chkPasteText}
               onChange={(e) => setChkPasteText(e.target.value)}
-              rows={8}
-              placeholder={'张伟\t3301198501011234\t13800138000\t男\t是\tB\n李芳\t...'}
+              rows={10}
+              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t13800138000\t男\t是\tB\n李芳\t310110199205058888\t13900139000\n王敏 320104198812125566 女 是 C'}
               className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 font-mono focus:outline-none focus:border-green-500"
             />
             <div className="flex justify-end gap-2 mt-3">
@@ -3799,7 +4084,7 @@ export default function BookingBoardCreate(props: {
                 取消
               </button>
               <button onClick={doChkImport} className={btnGold}>
-                <Upload size={14} /> 导入
+                <ClipboardList size={14} /> 解析导入
               </button>
             </div>
           </div>
