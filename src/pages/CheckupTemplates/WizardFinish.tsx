@@ -16,9 +16,6 @@ const [pkg, setPkg] = useState<CheckupTemplate | null>(null);
 const [loading, setLoading] = useState(true);
 const [saving, setSaving] = useState(false);
 const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
-const [editRole, setEditRole] = useState<Role | null>(null);
-const [localPrice, setLocalPrice] = useState<Record<Role, number>>({ male: 0, female_married: 0, female_single: 0 });
-const [localRate, setLocalRate] = useState<Record<Role, number>>({ male: 100, female_married: 100, female_single: 100 });
 const [shareResult, setShareResult] = useState<ShareResult | null>(null);
 const [shareExpireDays, setShareExpireDays] = useState<number>(7);
 
@@ -63,79 +60,6 @@ const groupByCategory = (items: CheckupItemRef[]) => {
     return (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
   });
   return keys.map(k => ({ category: k, items: groups[k] }));
-};
-
-const openEdit = (r: Role) => {
-  const plan: any = pkg?.role_plans?.[r] || { original_total: 0, discount_price: 0, discount_rate: 100 };
-  const total = Number(plan.original_total) || 0;
-  // 折扣价：用后端最新 discount_price 初始化（销售谈判价），为 0 时退回到原价
-  const priceInit = Number(plan.discount_price) || total;
-  // 折扣率：永远按 price/total 计算一次，保证打开编辑弹窗时三角一定一致
-  const rateInit = total > 0 ? Math.round(priceInit / total * 10000) / 100 : 100;
-  const clampedRate = Math.max(1, Math.min(100, rateInit));
-  const clampedPrice = total > 0 ? Math.max(1, Math.min(total, priceInit)) : priceInit;
-  setLocalPrice(prev => ({ ...prev, [r]: clampedPrice }));
-  setLocalRate(prev => ({ ...prev, [r]: clampedRate }));
-  setEditRole(r);
-};
-
-const onChangePrice = (r: Role, v: string) => {
-  const n = parseFloat(v);
-  const price = isNaN(n) ? 0 : Math.max(0, n);
-  const total = Number((pkg?.role_plans as any)?.[r]?.original_total || 0);
-  // 原价为 0 的特殊场景（理论不应该，因为有项目就有原价）
-  if (total <= 0) {
-    setLocalPrice(p => ({ ...p, [r]: price }));
-    setLocalRate(p => ({ ...p, [r]: 100 }));
-    return;
-  }
-  // 价格不能高于原价（折扣不能超过原价往上涨，违反"折扣"语义）
-  const clampedPrice = Math.min(price, total);
-  // 扣率按 price/total 自动反算，永远对齐
-  let rate = Math.round(clampedPrice / total * 10000) / 100;
-  rate = Math.max(1, Math.min(100, rate));
-  setLocalPrice(p => ({ ...p, [r]: clampedPrice }));
-  setLocalRate(p => ({ ...p, [r]: rate }));
-};
-const onChangeRate = (r: Role, v: string) => {
-  let n = parseFloat(v);
-  if (isNaN(n)) n = 100;
-  if (n < 1) n = 1; if (n > 100) n = 100;
-  const total = Number((pkg?.role_plans as any)?.[r]?.original_total || 0);
-  // 折扣价按 total × rate / 100 反推，永远对齐
-  const price = Math.round(total * n) / 100;
-  setLocalPrice(p => ({ ...p, [r]: price }));
-  setLocalRate(p => ({ ...p, [r]: n }));
-};
-
-const confirmDiscount = async () => {
-  if (!editRole || !pkg || !id) return;
-  const role_plans: any = {};
-  role_plans[editRole] = {
-    discount_price: round2(localPrice[editRole]),
-    discount_rate: round2(localRate[editRole]),
-  };
-  setSaving(true);
-  try {
-    const items = flattenPkgItems(pkg);
-    const res = await checkupApi.saveItems(id, { items, role_plans });
-    if (!res?.ok) throw new Error(res?.error || '保存失败');
-    const p = res.data as CheckupTemplate;
-    setPkg(p);
-    const prices: any = {}, rates: any = {};
-    ROLES.forEach(r => {
-      const plan: any = p.role_plans?.[r] || { discount_price: 0, discount_rate: 100 };
-      prices[r] = Number(plan.discount_price) || 0;
-      rates[r] = Number(plan.discount_rate) || 100;
-    });
-    setLocalPrice(prices); setLocalRate(rates);
-    toast.success(`${ROLE_LABEL[editRole]}方案折扣已保存`);
-    setEditRole(null);
-  } catch (e: any) {
-    toast.error(e.message || '保存失败');
-  } finally {
-    setSaving(false);
-  }
 };
 
 const onShare = async () => {
@@ -250,16 +174,16 @@ return (
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-lg font-bold text-[#0f5132] flex items-center gap-1">
+                <div className="text-lg font-bold text-[#0f5132]">
                   ¥{disc.toFixed(0)}
-                  {total > disc ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5"><path d="M7 17l10-10M7 7h10v10"/></svg>
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2.5"><path d="m6 9 6 6 6-6"/></svg>
-                  )}
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); openEdit(r); }}
-                  className="text-[11px] text-gray-500 underline mt-0.5">调整折扣价</button>
+                {total > disc && (
+                  <div className="text-[11px] text-gray-400 mt-0.5">
+                    原价 ¥{total.toFixed(0)} · {rate.toFixed(1)}%
+                  </div>
+                )}
+                <button onClick={(e) => { e.stopPropagation(); navigate(`/h/checkup-templates/${id}/pricing`); }}
+                  className="text-[11px] text-emerald-700 underline mt-0.5">定价</button>
               </div>
             </button>
             {isOpen && (
@@ -268,10 +192,18 @@ return (
                   <span className="text-gray-500">原价</span>
                   <span className="font-semibold text-gray-700">¥{total.toFixed(2)}</span>
                 </div>
-                <div className="flex items-center justify-between text-xs bg-orange-50 rounded-xl px-3 py-2 mb-3">
-                  <span className="text-orange-700">折扣率 {rate.toFixed(2)}%</span>
-                  <span className="font-semibold text-orange-700">立省 ¥{(total - disc).toFixed(2)}</span>
-                </div>
+                {total > disc && (
+                  <div className="flex items-center justify-between text-xs bg-orange-50 rounded-xl px-3 py-2 mb-3">
+                    <span className="text-orange-700">折扣价</span>
+                    <span className="font-semibold text-orange-700">¥{disc.toFixed(2)}</span>
+                  </div>
+                )}
+                {total > disc && (
+                  <div className="flex items-center justify-between text-xs bg-orange-50/50 rounded-xl px-3 py-2 mb-3">
+                    <span className="text-orange-700">折扣率 {rate.toFixed(2)}%</span>
+                    <span className="font-semibold text-orange-700">立省 ¥{(total - disc).toFixed(2)}</span>
+                  </div>
+                )}
                 {groups.map(g => (
                   <div key={g.category} className="mb-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-2">
@@ -281,12 +213,14 @@ return (
                     </div>
                     <div className="space-y-1">
                       {g.items.map(it => {
-                        const qty = Math.max(1, Number(it.quantity) || 1);
                         return (
                           <div key={it.id} className="flex items-center gap-2 py-2 border-b border-dashed border-gray-100 last:border-b-0">
-                            <span className="text-sm text-gray-800 flex-1 min-w-0 truncate">{it.item_name_snapshot}</span>
-                            <span className="text-[11px] text-gray-400 shrink-0">x{qty}</span>
-                            <span className="text-sm font-semibold text-gray-700 shrink-0 w-14 text-right">¥{(Number(it.item_price) * qty).toFixed(0)}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm text-gray-800 font-medium truncate">{it.item_name_snapshot}</div>
+                              {it.clinical_significance && (
+                                <div className="text-[11px] text-gray-400 truncate mt-0.5">{it.clinical_significance}</div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -345,53 +279,19 @@ return (
     </main>
 
     <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
+        <button onClick={() => navigate(`/h/checkup-templates/${id}/pricing`)}
+          className="h-12 rounded-2xl border border-gray-200 bg-white text-gray-700 font-medium text-sm">← 调整定价</button>
         <button onClick={() => navigate('/h/checkup-templates')}
           className="h-12 rounded-2xl border border-gray-200 bg-white text-gray-700 font-medium">返回列表</button>
         <button onClick={() => navigate('/h/checkup-templates/new')}
           className="h-12 rounded-2xl bg-gray-900 text-white font-medium flex items-center justify-center gap-1">
-          ↻ 新建下一个套餐
+          ↻ 新建
         </button>
       </div>
     </div>
-
-    {editRole && (
-      <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setEditRole(null)}>
-        <div className="absolute left-3 right-3 top-1/2 -translate-y-1/2 bg-white rounded-3xl p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
-          <div className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <span className="text-2xl">{ROLE_EMOJI[editRole]}</span>{ROLE_LABEL[editRole]} · 调整折扣价
-          </div>
-          <div className="text-xs text-gray-500 mt-1">原价：¥{Number((pkg?.role_plans as any)?.[editRole]?.original_total || 0).toFixed(2)}</div>
-
-          <div className="mt-4">
-            <div className="text-sm text-gray-700 mb-2">折扣价（¥）</div>
-            <input type="number" value={localPrice[editRole]}
-              onChange={e => onChangePrice(editRole, e.target.value)}
-              className="w-full h-12 px-4 rounded-xl bg-gray-50 border border-gray-200 focus:border-[#0f5132] outline-none text-lg font-semibold"
-              placeholder="请输入折后价" />
-          </div>
-          <div className="mt-3">
-            <div className="text-sm text-gray-700 mb-2">折扣率（%）</div>
-            <input type="number" min={1} max={100} step={0.1} value={localRate[editRole]}
-              onChange={e => onChangeRate(editRole, e.target.value)}
-              className="w-full h-12 px-4 rounded-xl bg-gray-50 border border-gray-200 focus:border-[#0f5132] outline-none text-lg font-semibold" />
-            <div className="text-[11px] text-emerald-800 mt-2 bg-blue-50 rounded-xl px-3 py-2">
-              💡 输入折扣价将自动计算折扣率；输入折扣率也会自动反推折后价
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            <button onClick={() => setEditRole(null)} className="h-11 rounded-2xl border border-gray-200 text-gray-700">取消</button>
-            <button onClick={confirmDiscount} disabled={saving}
-              className="h-11 rounded-2xl bg-[#0f5132] text-white font-medium disabled:opacity-60">
-              {saving ? '保存中...' : '确认保存'}
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
   </div>
-);
+  );
 }
 
 /**
@@ -420,4 +320,4 @@ let so = 1;
 });
 return out;
 }
-function round2(n: number) { return Math.round((Number(n) || 0) * 100) / 100; }
+/**

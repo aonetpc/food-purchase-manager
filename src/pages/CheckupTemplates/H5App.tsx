@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import ListPage from './ListPage';
 import WizardNew from './WizardNew';
 import WizardItems from './WizardItems';
+import WizardPricing from './WizardPricing';
 import WizardFinish from './WizardFinish';
 
 export default function H5App() {
@@ -13,6 +14,7 @@ export default function H5App() {
         <Route path="new" element={<WizardNew />} />
         <Route path=":id/edit" element={<WizardNew />} />
         <Route path=":id/items" element={<WizardItems />} />
+        <Route path=":id/pricing" element={<WizardPricing />} />
         <Route path=":id/finish" element={<WizardFinish />} />
         <Route path=":id" element={<TemplateDetailRouter />} />
         <Route path="*" element={<Navigate to="/h/checkup-templates" replace />} />

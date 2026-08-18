@@ -268,8 +268,8 @@ const onSaveAndNext = async () => {
   try {
     const res = await checkupApi.saveItems(id, { items: flatItems, role_plans });
     if (!res?.ok) throw new Error(res?.error || '保存失败');
-    toast.success('保存成功，生成方案中...');
-    navigate(`/h/checkup-templates/${id}/finish`, { state: { justCreated: true } });
+    toast.success('项目保存成功，进入定价环节...');
+    navigate(`/h/checkup-templates/${id}/pricing`);
   } catch (e: any) {
     toast.error(e.message || '保存失败');
   } finally {
@@ -398,7 +398,7 @@ return (
         </button>
         <button onClick={onSaveAndNext} disabled={saving}
           className="h-12 rounded-2xl bg-gradient-to-r from-[#0f5132] to-emerald-800 text-white font-semibold shadow-lg shadow-emerald-800/30 flex items-center justify-center gap-1 disabled:opacity-60">
-          {saving ? '保存中...' : '生成方案 ✓'}
+          {saving ? '保存中...' : '下一步：定价 →'}
         </button>
       </div>
     </div>

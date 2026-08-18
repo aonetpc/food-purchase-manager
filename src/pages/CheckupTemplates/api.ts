@@ -46,6 +46,7 @@ export interface CheckupItemRef {
   sort_order: number;
   category?: string;
   item_type?: 'item' | 'combo';
+  clinical_significance?: string;
 }
 export interface CheckupTemplate {
   id: string;
