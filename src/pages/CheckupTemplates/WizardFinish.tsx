@@ -27,13 +27,6 @@ const load = async () => {
     if (res?.ok) {
       const p: CheckupTemplate = res.data;
       setPkg(p);
-      const prices: any = {}, rates: any = {};
-      ROLES.forEach(r => {
-        const plan: any = p.role_plans?.[r] || { discount_price: 0, discount_rate: 100 };
-        prices[r] = Number(plan.discount_price) || 0;
-        rates[r] = Number(plan.discount_rate) || 100;
-      });
-      setLocalPrice(prices); setLocalRate(rates);
     } else {
       toast.error(res?.error || '加载失败');
     }
@@ -193,12 +186,7 @@ return (
                   <span className="text-gray-500">原价</span>
                   <span className="font-semibold text-gray-700">¥{total.toFixed(2)}</span>
                 </div>
-                {total > disc && (
-                  <div className="flex items-center justify-between text-xs bg-orange-50 rounded-xl px-3 py-2 mb-3">
-                    <span className="text-orange-700">折扣价</span>
-                    <span className="font-semibold text-orange-700">¥{disc.toFixed(2)}</span>
-                  </div>
-                )}
+
                 {total > disc && (
                   <div className="flex items-center justify-between text-xs bg-orange-50/50 rounded-xl px-3 py-2 mb-3">
                     <span className="text-orange-700">折扣率 {rate.toFixed(2)}%</span>
