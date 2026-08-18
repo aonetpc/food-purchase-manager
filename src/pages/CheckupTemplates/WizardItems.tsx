@@ -151,6 +151,12 @@ const summaryForRole = (r: Role) => {
   for (const si of merged.values()) { total += si.price_snapshot * si.quantity; count += 1; }
   return { total, count };
 };
+// 公共项目汇总（仅 common）
+const summaryCommonTotal = () => {
+  let total = 0;
+  for (const si of Object.values(selected.common || {})) { total += si.price_snapshot * si.quantity; }
+  return total;
+};
 
 const toggleItem = (item: CheckupItem) => {
   setSelected(prev => {
@@ -238,29 +244,28 @@ return (
           <div className="text-[11px] text-gray-500 truncate">已套用【基础套餐】· 可自由加减</div>
         </div>
       </div>
-      {/* 三角色 Tabs */}
-      <div className="px-2 flex gap-1 overflow-x-auto scrollbar-hide">
+      {/* 三角色 Tabs（缩小：四Tab一行平分，不滑动） */}
+      <div className="px-2 flex gap-1.5 pb-2">
         <TabButton active={scope === 'common'} onClick={() => setScope('common')}
-          emoji="🔗" name="公共项目" badge={Object.keys(selected.common).length} color="text-gray-800 bg-amber-50 border-amber-200"
-          sub="改一次三个人群同步" />
+          emoji="🔗" name="公共" badge={Object.keys(selected.common).length} color="text-gray-800 bg-amber-50 border-amber-200"
+          sub={Object.keys(selected.common).length + '项·¥' + summaryCommonTotal().toFixed(0)} />
         {applicable.map(r => {
           const smr = summaryForRole(r);
           const active = scope === r;
           const st = TAB_ROLE_STYLE[r].active;
           return (
             <button key={r} onClick={() => setScope(r)}
-              className={`shrink-0 relative flex flex-col items-start px-3 py-2 rounded-xl mx-1 my-1 mb-2 border-2 transition-all min-w-[104px] ${
+              className={`flex-1 relative flex flex-col items-start px-2 py-1.5 rounded-lg border-2 transition-all ${
                 active ? `${st.border} ${st.bg}` : 'border-gray-100 bg-white hover:border-gray-200'
               }`}>
-              <div className="flex items-center gap-2 w-full">
-                <div className="text-2xl leading-none">{ROLE_EMOJI[r]}</div>
+              <div className="flex items-center gap-1.5 w-full">
+                <div className="text-base leading-none">{ROLE_EMOJI[r]}</div>
                 <div className="flex-1 min-w-0">
-                  <div className={`text-sm font-semibold ${active ? st.text : 'text-gray-800'}`}>{ROLE_LABEL[r]}</div>
-                  <div className="text-[10px] text-gray-500">{smr.count}项 · ¥{smr.total.toFixed(0)}</div>
+                  <div className={`text-xs font-semibold leading-tight ${active ? st.text : 'text-gray-800'}`}>{ROLE_LABEL[r]}</div>
+                  <div className="text-[9px] text-gray-500 leading-tight">{smr.count}项·¥{smr.total.toFixed(0)}</div>
                 </div>
                 <Badge n={Object.keys(selected[r]).length + Object.keys(selected.common).length} />
               </div>
-              <div className={`mt-1 text-[10px] font-semibold ${active ? st.price : 'text-[#0f5132]'}`}>¥{smr.total.toFixed(0)}</div>
             </button>
           );
         })}
@@ -290,6 +295,18 @@ return (
       <div className="mx-3 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2 flex items-start gap-2">
         <span className="text-base">💡</span>
         <div>当前：<span className="font-semibold">公共项目区</span>。选中的项目会自动同步给 <span className="font-semibold">{applicable.map(r => ROLE_LABEL[r]).join('、')}</span> 三类角色。</div>
+      </div>
+    )}
+
+    {/* 角色视角提示 banner */}
+    {scope !== 'common' && (
+      <div className={`mx-3 mt-3 border text-xs rounded-xl px-3 py-2 flex items-start gap-2 ${
+        scope === 'male' ? 'bg-blue-50 border-blue-200 text-blue-800' :
+        scope === 'female_married' ? 'bg-pink-50 border-pink-200 text-pink-800' :
+        'bg-purple-50 border-purple-200 text-purple-800'
+      }`}>
+        <span className="text-base">🎯</span>
+        <div>当前：<span className="font-semibold">{ROLE_EMOJI[scope as Role]} {ROLE_LABEL[scope as Role]}视角</span>。仅显示「公共已含」+「{ROLE_LABEL[scope as Role]}可选」项目，可在此增删专属项目。</div>
       </div>
     )}
 
@@ -349,14 +366,14 @@ return <span className="ml-1 inline-flex items-center justify-center min-w-[18px
 function TabButton({ active, onClick, emoji, name, badge, sub, color }: any) {
 return (
   <button onClick={onClick}
-    className={`shrink-0 relative flex flex-col items-start px-3 py-2 rounded-xl mx-1 my-1 mb-2 border-2 transition-all min-w-[130px] ${
+    className={`flex-1 relative flex flex-col items-start px-2 py-1.5 rounded-lg border-2 transition-all ${
       active ? 'border-amber-400 ' + color : 'border-gray-100 bg-white'
     }`}>
-    <div className="flex items-center gap-2 w-full">
-      <div className="text-2xl leading-none">{emoji}</div>
+    <div className="flex items-center gap-1.5 w-full">
+      <div className="text-base leading-none">{emoji}</div>
       <div className="flex-1 min-w-0">
-        <div className={`text-sm font-semibold ${active ? 'text-amber-800' : 'text-gray-800'}`}>{name}</div>
-        <div className="text-[10px] text-gray-500 leading-tight">{sub}</div>
+        <div className={`text-xs font-semibold leading-tight ${active ? 'text-amber-800' : 'text-gray-800'}`}>{name}</div>
+        <div className="text-[9px] text-gray-500 leading-tight truncate">{sub}</div>
       </div>
       <Badge n={badge} />
     </div>
