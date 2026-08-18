@@ -24,15 +24,54 @@ const EMPTY_SCOPE: SelectedState = {
 common: {}, male: {}, female_married: {}, female_single: {},
 };
 
+// 项目名关键字规则（与迁移 083 对应，作为 applicable_roles 未填时的前端兜底）
+// 男性专属关键字
+const MALE_ONLY_KEYS = ['前列腺','阴囊','精液','男科','睾丸','勃起','包皮','精索','附睾','PSA','男性激素'];
+// 已婚女专属（含侵入性）关键字
+const FM_ONLY_KEYS = ['阴超','阴道B','阴道镜','宫腔镜','妇科内诊','双合诊','白带','宫颈刮片','TCT','液基','HPV','宫颈','阴道'];
+// 已婚女+未婚女通用关键字
+const FEMALE_KEYS = ['乳腺','卵巢','子宫','盆腔','附件','性激素','雌激素','孕酮','妇科','妇产科','产前','唐筛','孕检','HCG','人绒毛膜','月经','痛经'];
+// 未婚女禁用（已婚女专属，但未命中上述 FM_ONLY_KEYS 的补充）
+const SINGLE_FORBID_KEYS = ['经阴道'];
+
+// 判断某项目名是否命中给定关键字数组
+function nameHitKeys(name: string, keys: string[]): boolean {
+  const n = (name || '').toLowerCase();
+  return keys.some(k => n.includes(k.toLowerCase()));
+}
+
 // 判断某项目是否对当前 scope 可见
-// 规则：
-//   scope === 'common'（公共项目区）→ 所有项目都可见（公共区不分男女）
-//   scope === 具体角色 → 通用项目（applicable_roles 为 null/空/undefined）OR applicable_roles 包含当前角色
+// 优先级：applicable_roles 字段 > 项目名关键字兜底
 function scopeVisible(it: CheckupItem, s: Scope): boolean {
   if (s === 'common') return true;
+  const name = it.name || '';
   const roles = it.applicable_roles;
-  if (!roles || !Array.isArray(roles) || roles.length === 0) return true;
-  return roles.includes(s);
+
+  // 优先用字段值
+  if (roles && Array.isArray(roles) && roles.length > 0) {
+    return roles.includes(s);
+  }
+
+  // 否则用关键字兜底
+  // 男性视角 → 隐藏所有女性项目（FM_ONLY_KEYS + FEMALE_KEYS）
+  if (s === 'male') {
+    if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
+    if (nameHitKeys(name, FEMALE_KEYS)) return false;
+    return true;
+  }
+  // 已婚女视角 → 隐藏男性专属项目
+  if (s === 'female_married') {
+    if (nameHitKeys(name, MALE_ONLY_KEYS)) return false;
+    return true;
+  }
+  // 未婚女视角 → 隐藏男性专属项目 + 侵入性已婚女专属项目（FM_ONLY_KEYS + SINGLE_FORBID_KEYS）
+  if (s === 'female_single') {
+    if (nameHitKeys(name, MALE_ONLY_KEYS)) return false;
+    if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
+    if (nameHitKeys(name, SINGLE_FORBID_KEYS)) return false;
+    return true;
+  }
+  return true;
 }
 
 // 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
@@ -244,27 +283,32 @@ return (
           <div className="text-[11px] text-gray-500 truncate">已套用【基础套餐】· 可自由加减</div>
         </div>
       </div>
-      {/* 三角色 Tabs（缩小：四Tab一行平分，不滑动） */}
-      <div className="px-2 flex gap-1.5 pb-2">
+      {/* 三角色 Tabs（单行：emoji+名称+数量价格，无Badge，公共略宽） */}
+      <div className="px-2 flex gap-1 pb-2">
+        {/* 公共：占比 5 份 */}
         <TabButton active={scope === 'common'} onClick={() => setScope('common')}
-          emoji="🔗" name="公共" badge={Object.keys(selected.common).length} color="text-gray-800 bg-amber-50 border-amber-200"
-          sub={Object.keys(selected.common).length + '项·¥' + summaryCommonTotal().toFixed(0)} />
+          color="text-gray-800 bg-amber-50 border-amber-200"
+          flexClass="flex-[1.2]"
+          emoji="🔗" label="公共" meta={`(${Object.keys(selected.common).length}) ¥${summaryCommonTotal().toFixed(0)}`} />
+        {/* 三角色：各占 4 份 */}
         {applicable.map(r => {
           const smr = summaryForRole(r);
           const active = scope === r;
           const st = TAB_ROLE_STYLE[r].active;
+          const label = r === 'male' ? '男' : r === 'female_married' ? '已婚' : '未婚';
           return (
             <button key={r} onClick={() => setScope(r)}
-              className={`flex-1 relative flex flex-col items-start px-2 py-1.5 rounded-lg border-2 transition-all ${
+              className={`flex-1 relative px-1.5 py-1.5 rounded-lg border transition-all ${
                 active ? `${st.border} ${st.bg}` : 'border-gray-100 bg-white hover:border-gray-200'
               }`}>
-              <div className="flex items-center gap-1.5 w-full">
-                <div className="text-base leading-none">{ROLE_EMOJI[r]}</div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-semibold leading-tight ${active ? st.text : 'text-gray-800'}`}>{ROLE_LABEL[r]}</div>
-                  <div className="text-[9px] text-gray-500 leading-tight">{smr.count}项·¥{smr.total.toFixed(0)}</div>
+              <div className="flex items-center gap-1 w-full justify-center">
+                <div className="text-sm leading-none">{ROLE_EMOJI[r]}</div>
+                <div className={`text-[11px] font-semibold leading-tight whitespace-nowrap ${active ? st.text : 'text-gray-800'}`}>
+                  {label}
                 </div>
-                <Badge n={Object.keys(selected[r]).length + Object.keys(selected.common).length} />
+                <div className={`text-[10px] font-semibold whitespace-nowrap ${active ? 'text-gray-700' : 'text-gray-500'}`}>
+                  {smr.count}¥{smr.total.toFixed(0)}
+                </div>
               </div>
             </button>
           );
@@ -363,19 +407,16 @@ if (n <= 0) return null;
 return <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#0f5132] text-white text-[10px] font-bold">{n}</span>;
 }
 
-function TabButton({ active, onClick, emoji, name, badge, sub, color }: any) {
+function TabButton({ active, onClick, emoji, label, meta, color, flexClass }: any) {
 return (
   <button onClick={onClick}
-    className={`flex-1 relative flex flex-col items-start px-2 py-1.5 rounded-lg border-2 transition-all ${
+    className={`${flexClass || 'flex-1'} relative px-1.5 py-1.5 rounded-lg border transition-all ${
       active ? 'border-amber-400 ' + color : 'border-gray-100 bg-white'
     }`}>
-    <div className="flex items-center gap-1.5 w-full">
-      <div className="text-base leading-none">{emoji}</div>
-      <div className="flex-1 min-w-0">
-        <div className={`text-xs font-semibold leading-tight ${active ? 'text-amber-800' : 'text-gray-800'}`}>{name}</div>
-        <div className="text-[9px] text-gray-500 leading-tight truncate">{sub}</div>
-      </div>
-      <Badge n={badge} />
+    <div className="flex items-center gap-1 w-full justify-center">
+      <div className="text-sm leading-none">{emoji}</div>
+      <div className={`text-[11px] font-semibold leading-tight whitespace-nowrap ${active ? 'text-amber-800' : 'text-gray-800'}`}>{label}</div>
+      <div className={`text-[10px] font-semibold whitespace-nowrap ${active ? 'text-gray-700' : 'text-gray-500'}`}>{meta}</div>
     </div>
   </button>
 );
