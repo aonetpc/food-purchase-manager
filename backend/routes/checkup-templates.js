@@ -853,16 +853,25 @@ router.put('/:id/items-batch', async (req, res) => {
     //    规则：
     //      - 前端传 discount_price → 以 price 为准（销售谈判价），rate = price / original_total × 100 自动重算
     //      - 前端只传 discount_rate（没传 price）→ rate 为准，price = original_total × rate / 100 反推
-    //      - 两者都没传 → price=original_total，rate=100
+    //      - 两者都没传 且 前端没明确传该角色 key → 读取该角色现存的 discount_price/rate（避免单角色更新把其他角色折扣清掉）
+    //      - 两者都没传 且 前端明确传了该角色（可能是要清空/复位）→ price=original_total，rate=100
+    // 先把现存三角色折扣一次性读出来，避免 for 内逐行查询
+    const [existingPlans] = await conn.query(
+      `SELECT role, discount_price, discount_rate, remark FROM booking_package_role_plans WHERE package_id = ?`,
+      [pkg.id]
+    );
+    const existingMap = new Map();
+    existingPlans.forEach(p => existingMap.set(p.role, p));
     for (const role of ROLES) {
       const originalTotal = round2(agg[role].total);
-      const input = rolePlansInput && rolePlansInput[role] ? rolePlansInput[role] : {};
+      const roleProvided = !!(rolePlansInput && rolePlansInput[role]);
+      const input = roleProvided ? rolePlansInput[role] : {};
+      const existing = existingMap.get(role) || {};
       let discountPrice = originalTotal;
       let discountRate = 100;
       const hasPrice = input.discount_price != null;
       const hasRate = input.discount_rate != null;
       if (hasPrice && hasRate) {
-        // 同时传了 price 和 rate：以 price（销售谈判价）为准，rate 按 original_total 重新对齐，避免三角矛盾
         discountPrice = round2(Math.max(0, input.discount_price));
         discountRate = originalTotal > 0 ? round2(discountPrice / originalTotal * 100) : 100;
       } else if (hasPrice) {
@@ -872,6 +881,11 @@ router.put('/:id/items-batch', async (req, res) => {
         const r = toNum(input.discount_rate);
         discountRate = (r >= 1 && r <= 100) ? round2(r) : 100;
         discountPrice = round2(originalTotal * discountRate / 100);
+      } else if (!roleProvided && existing.discount_price != null) {
+        // 前端没传这个角色 → 复用现存折扣（三角对齐：以现存price为准，用新original_total重算rate）
+        const prevPrice = round2(Math.max(0, existing.discount_price));
+        discountPrice = prevPrice;
+        discountRate = originalTotal > 0 ? round2(prevPrice / originalTotal * 100) : 100;
       }
       // 边界：rate 不能低于 1 或高于 100
       if (discountRate < 1) { discountRate = 1; discountPrice = Math.max(discountPrice, round2(originalTotal * 0.01)); }
@@ -888,7 +902,7 @@ router.put('/:id/items-batch', async (req, res) => {
         [
           uuidv4(), pkg.id, role,
           originalTotal, discountPrice, discountRate,
-          input.remark || null,
+          roleProvided ? (input.remark || null) : (existing.remark ?? null),
         ]
       );
     }

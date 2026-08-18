@@ -327,12 +327,8 @@ export default function SharePage() {
                     </div>
                   </div>
 
-                  {/* 明细分类 —— 分类标题用主色背景条 + 小计，单项用小圆点弱化 */}
+                  {/* 明细分类 —— 客户页不展示单价/小计，改为项目名 + 体检意义 */}
                   {groups.map(g => {
-                    const catSubtotal = g.items.reduce((sum, it) => {
-                      const qty = Math.max(1, Number(it.quantity) || 1);
-                      return sum + Number(it.item_price) * qty;
-                    }, 0);
                     return (
                     <div key={g.category} className="mb-3 last:mb-0">
                       <div className="flex items-center gap-2 mb-1.5 px-2.5 py-1.5 rounded-lg"
@@ -340,18 +336,24 @@ export default function SharePage() {
                         <span className="inline-block w-1 h-3.5 rounded-sm shrink-0" style={{ background: primaryColor }} />
                         <span className="text-[12px] font-bold text-gray-800">{g.category}</span>
                         <span className="text-[10px] text-gray-400 font-normal">{g.items.length}项</span>
-                        <span className="ml-auto text-[11px] font-semibold tabular-nums" style={{ color: primaryColor }}>小计 ¥{catSubtotal.toFixed(0)}</span>
                       </div>
                       <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50 overflow-hidden">
                         {g.items.map((it, idx) => {
                           const qty = Math.max(1, Number(it.quantity) || 1);
-                          const line = Number(it.item_price) * qty;
                           return (
-                            <div key={it.id || idx} className="flex items-center gap-2 px-3 py-2 last:border-b-0">
-                              <span className="w-1 h-1 rounded-full bg-gray-300 shrink-0 ml-1.5" />
-                              <span className="text-[13px] text-gray-600 flex-1 min-w-0 truncate">{it.item_name_snapshot}</span>
-                              {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
-                              <span className="text-[12px] text-gray-500 shrink-0 w-14 text-right tabular-nums">¥{line.toFixed(0)}</span>
+                            <div key={it.id || idx} className="flex items-start gap-2 px-3 py-2.5 last:border-b-0">
+                              <span className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2 ml-1.5" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[13px] text-gray-800 font-medium truncate">{it.item_name_snapshot}</span>
+                                  {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
+                                </div>
+                                {(it as any).clinical_significance && (
+                                  <div className="text-[11px] text-gray-400 mt-0.5 leading-snug line-clamp-2">
+                                    {(it as any).clinical_significance}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
