@@ -34,6 +34,23 @@ const FEMALE_KEYS = ['乳腺','卵巢','子宫','盆腔','附件','性激素','�
 // 未婚女禁用（已婚女专属，但未命中上述 FM_ONLY_KEYS 的补充）
 const SINGLE_FORBID_KEYS = ['经阴道'];
 
+// 分类 → emoji 映射（胶囊美化：左侧小图标增加可识别度）
+const CATEGORY_EMOJI: Record<string, string> = {
+  '体格检查': '🩺',
+  '实验室检查': '🔬',
+  '影像检查': '📸',
+  '功能检查': '💓',
+  '肿瘤筛查': '🎗️',
+  '妇科专项': '🌸',
+  '男科专项': '♂️',
+  '特色加项': '⭐',
+  '其他': '📌',
+};
+function categoryEmoji(cat?: string): string {
+  if (!cat) return '📌';
+  return CATEGORY_EMOJI[cat] || '📌';
+}
+
 // 判断某项目名是否命中给定关键字数组
 function nameHitKeys(name: string, keys: string[]): boolean {
   const n = (name || '').toLowerCase();
@@ -275,19 +292,16 @@ return (
           <div className="text-[11px] text-gray-500 truncate">已套用【基础套餐】· 可自由加减</div>
         </div>
       </div>
-      {/* 三角色 Tabs（单行：emoji+名称+数量价格，无Badge，公共略宽） */}
+      {/* 三角色 Tabs（单行：emoji+名称+数量，无价格无Badge，统一flex-1） */}
       <div className="px-2 flex gap-1 pb-2">
-        {/* 公共：占比 5 份 */}
         <TabButton active={scope === 'common'} onClick={() => setScope('common')}
           color="text-gray-800 bg-amber-50 border-amber-200"
-          flexClass="flex-[1.2]"
-          emoji="🔗" label="公共" meta={`(${Object.keys(selected.common).length}) ¥${summaryCommonTotal().toFixed(0)}`} />
-        {/* 三角色：各占 4 份 */}
+          emoji="🔗" label="公共" meta={`${Object.keys(selected.common).length}`} />
         {applicable.map(r => {
           const smr = summaryForRole(r);
           const active = scope === r;
           const st = TAB_ROLE_STYLE[r].active;
-          const label = r === 'male' ? '男' : r === 'female_married' ? '已婚' : '未婚';
+          const label = r === 'male' ? '男' : r === 'female_married' ? '已婚女' : '未婚女';
           return (
             <button key={r} onClick={() => setScope(r)}
               className={`flex-1 relative px-1.5 py-1.5 rounded-lg border transition-all ${
@@ -299,7 +313,7 @@ return (
                   {label}
                 </div>
                 <div className={`text-[10px] font-semibold whitespace-nowrap ${active ? 'text-gray-700' : 'text-gray-500'}`}>
-                  {smr.count}¥{smr.total.toFixed(0)}
+                  {smr.count}
                 </div>
               </div>
             </button>
@@ -397,10 +411,10 @@ if (n <= 0) return null;
 return <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#0f5132] text-white text-[10px] font-bold">{n}</span>;
 }
 
-function TabButton({ active, onClick, emoji, label, meta, color, flexClass }: any) {
+function TabButton({ active, onClick, emoji, label, meta, color }: any) {
 return (
   <button onClick={onClick}
-    className={`${flexClass || 'flex-1'} relative px-1.5 py-1.5 rounded-lg border transition-all ${
+    className={`flex-1 relative px-1.5 py-1.5 rounded-lg border transition-all ${
       active ? 'border-amber-400 ' + color : 'border-gray-100 bg-white'
     }`}>
     <div className="flex items-center gap-1 w-full justify-center">
@@ -420,36 +434,43 @@ onToggle: () => void;
 const isCombo = item.item_type === 'combo';
 const label = getApplicableLabel(item);
 const isPublic = shadowSelected && scope !== 'common';
+const catEmoji = categoryEmoji(item.category);
 
-// 选中态：深绿色背景+白字；公共已含：琥珀色背景；未选中：白底
+// 选中态：渐变绿+白字+轻阴影；公共已含：琥珀+橙描边；未选中：白底+灰描边+悬停加深
 const cardClass = selected
-  ? 'bg-emerald-500 border-emerald-500 text-white'
+  ? 'bg-gradient-to-br from-emerald-400 to-emerald-600 border-emerald-500 text-white shadow-md shadow-emerald-500/30'
   : isPublic
-  ? 'bg-amber-50 border-amber-300 text-amber-900'
-  : 'bg-white border-gray-200 text-gray-800';
+  ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-400 text-amber-900 shadow-sm'
+  : 'bg-white border-gray-200 text-gray-800 shadow-sm hover:border-emerald-300 hover:shadow-md';
 
 return (
   <button onClick={onToggle}
-    className={`w-full text-left rounded-xl border-2 px-2.5 py-2.5 transition-all ${cardClass}`}>
-    <div className="flex items-center gap-1.5">
-      {selected && <span className="text-sm shrink-0">✓</span>}
-      {isPublic && <span className="text-sm shrink-0">📌</span>}
-      <span className={`truncate text-[13px] font-semibold flex-1 ${selected || isPublic ? '' : ''}`}>{item.name}</span>
-    </div>
-    <div className="mt-1 flex items-center gap-1 flex-wrap">
-      {isCombo && (
-        <span className={`text-[9px] px-1 py-0 rounded ${
-          selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
-        }`}>组合</span>
-      )}
-      {label && (
-        <span className={`text-[9px] px-1 py-0 rounded ${
-          selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
-        }`}>{label}</span>
-      )}
-      {isPublic && (
-        <span className="text-[9px] px-1 py-0 rounded bg-amber-200 text-amber-800">公共</span>
-      )}
+    className={`w-full h-16 text-left rounded-2xl border px-2.5 py-2 transition-all active:scale-[0.98] ${cardClass}`}>
+    <div className="flex items-center gap-1.5 h-full">
+      {/* 左侧分类 emoji */}
+      <span className="text-base leading-none shrink-0">{catEmoji}</span>
+      {/* 中间项目名 */}
+      <div className="flex-1 min-w-0 flex flex-col justify-center">
+        <div className="truncate text-[13px] font-semibold leading-tight">{item.name}</div>
+        <div className="mt-0.5 flex items-center gap-1 flex-wrap">
+          {isCombo && (
+            <span className={`text-[9px] px-1 py-0 rounded ${
+              selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
+            }`}>组合</span>
+          )}
+          {label && (
+            <span className={`text-[9px] px-1 py-0 rounded ${
+              selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
+            }`}>{label}</span>
+          )}
+          {isPublic && (
+            <span className="text-[9px] px-1 py-0 rounded bg-amber-300 text-amber-900 font-semibold">公共</span>
+          )}
+        </div>
+      </div>
+      {/* 右侧状态图标 */}
+      {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
+      {isPublic && !selected && <span className="text-amber-500 text-sm shrink-0">📌</span>}
     </div>
   </button>
 );

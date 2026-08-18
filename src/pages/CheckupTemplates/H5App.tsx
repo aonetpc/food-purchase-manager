@@ -11,6 +11,7 @@ export default function H5App() {
       <Routes>
         <Route index element={<ListPage />} />
         <Route path="new" element={<WizardNew />} />
+        <Route path=":id/edit" element={<WizardNew />} />
         <Route path=":id/items" element={<WizardItems />} />
         <Route path=":id/finish" element={<WizardFinish />} />
         <Route path=":id" element={<TemplateDetailRouter />} />

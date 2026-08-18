@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, ROLE_HINT, type Role, type CheckupTemplate } from './api';
 import { useToast } from '@/components/Toast';
 
@@ -19,6 +19,9 @@ const ROLE_CAPSULE: Record<Role, string> = {
 export default function WizardNew() {
 const navigate = useNavigate();
 const toast = useToast();
+const { id } = useParams();
+// 编辑模式：路径含 :id/edit 则是编辑现有套餐
+const editMode = !!id;
 const [name, setName] = useState('');
 const [roles, setRoles] = useState<Role[]>(['male', 'female_married']);
 const [publicTemplates, setPublicTemplates] = useState<CheckupTemplate[]>([]);
@@ -41,13 +44,46 @@ const loadPublicTemplates = async () => {
     setLoading(false);
   }
 };
-useEffect(() => { loadPublicTemplates(); }, []);
+
+// 编辑模式：加载现有套餐，回填 name + roles
+const loadEditData = async () => {
+  if (!id) return;
+  setLoading(true);
+  try {
+    const res = await checkupApi.get(id);
+    if (res?.ok && res.data) {
+      setName(res.data.name || '');
+      const ar = res.data.applicable_roles;
+      if (Array.isArray(ar) && ar.length > 0) setRoles(ar as Role[]);
+    } else {
+      toast.error(res?.error || '加载套餐失败');
+    }
+  } catch (e: any) {
+    toast.error(e.message || '加载失败');
+  } finally {
+    setLoading(false);
+  }
+};
+
+useEffect(() => {
+  if (editMode) loadEditData();
+  else loadPublicTemplates();
+}, [id]);
 
 const submit = async () => {
   if (!name.trim()) { toast.error('请输入套餐名称'); return; }
   if (roles.length === 0) { toast.error('请至少选择一种适用角色'); return; }
   setSubmitting(true);
   try {
+    if (editMode && id) {
+      // 编辑模式：调用 PUT /:id 更新基础信息，然后跳转到 items 继续调整项目
+      const res = await checkupApi.update(id, { name: name.trim(), applicable_roles: roles });
+      if (!res?.ok) throw new Error(res?.error || '更新失败');
+      toast.success('已更新套餐基础信息');
+      navigate(`/h/checkup-templates/${id}/items`);
+      return;
+    }
+
     let pkgId: string;
     // 1) 若选了基础套餐 → 克隆
     if (baseTemplateId) {
@@ -80,8 +116,8 @@ return (
       <div className="mt-4 flex items-start gap-3">
         <div className="w-11 h-11 rounded-2xl bg-white/20 flex items-center justify-center text-2xl">🧾</div>
         <div>
-          <h1 className="text-xl font-bold">新建体检套餐</h1>
-          <p className="text-xs text-white/80 mt-1">选角色、选模板，快速生成多角色方案</p>
+          <h1 className="text-xl font-bold">{editMode ? '编辑体检套餐' : '新建体检套餐'}</h1>
+          <p className="text-xs text-white/80 mt-1">{editMode ? '修改套餐名称和适用角色' : '选角色、选模板，快速生成多角色方案'}</p>
         </div>
       </div>
     </header>
@@ -137,7 +173,8 @@ return (
         </div>
       </section>
 
-      {/* Step 3 套基础套餐 */}
+      {/* Step 3 套基础套餐（仅新建模式显示，编辑模式不需要再克隆模板） */}
+      {!editMode && (
       <section className="bg-white rounded-3xl p-4 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-7 h-7 rounded-full bg-[#0f5132] text-white flex items-center justify-center text-xs font-bold">3</div>
@@ -183,13 +220,14 @@ return (
           </div>
         )}
       </section>
+      )}
     </main>
 
     {/* 底部开始按钮 */}
     <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
       <button onClick={submit} disabled={submitting}
         className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#1f6b3e] to-green-800 text-white text-base font-semibold shadow-lg shadow-emerald-700/30 disabled:opacity-60 flex items-center justify-center gap-2">
-        {submitting ? '提交中...' : '开始配置项目 →'}
+        {submitting ? '提交中...' : editMode ? '保存并继续 →' : '开始配置项目 →'}
       </button>
     </div>
   </div>

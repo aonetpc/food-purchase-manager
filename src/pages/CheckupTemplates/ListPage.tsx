@@ -56,6 +56,13 @@ export default function ListPage() {
    return !isPublic && isOwner;
  };
 
+ // 编辑权限：同删除（管理员 或 自己创建且非公共模板）
+ const canEditPkg = (pkg: CheckupTemplate) => canDeletePkg(pkg);
+
+ const onEdit = (pkg: CheckupTemplate) => {
+   navigate('/h/checkup-templates/' + pkg.id + '/edit');
+ };
+
  const tabs: { key: ScopeTab; name: string; emoji: string }[] = [
    { key: 'mine', name: '我的套餐', emoji: '💼' },
    { key: 'public', name: '公共模板', emoji: '🏛️' },
@@ -114,9 +121,11 @@ export default function ListPage() {
          </div>
        ) : (
          list.map(pkg => <PackageCard key={pkg.id} pkg={pkg}
-           onClick={() => navigate('/h/checkup-templates/' + pkg.id + '/finish')}
-           onDelete={() => onDelete(pkg)}
-           canDelete={canDeletePkg(pkg)} />)
+          onClick={() => navigate('/h/checkup-templates/' + pkg.id + '/finish')}
+          onDelete={() => onDelete(pkg)}
+          canDelete={canDeletePkg(pkg)}
+          onEdit={() => onEdit(pkg)}
+          canEdit={canEditPkg(pkg)} />)
        )}
      </main>
 
@@ -132,7 +141,7 @@ export default function ListPage() {
  );
 }
 
-function PackageCard({ pkg, onClick, onDelete, canDelete }: { pkg: CheckupTemplate; onClick: () => void; onDelete?: () => void; canDelete?: boolean }) {
+function PackageCard({ pkg, onClick, onDelete, canDelete, onEdit, canEdit }: { pkg: CheckupTemplate; onClick: () => void; onDelete?: () => void; canDelete?: boolean; onEdit?: () => void; canEdit?: boolean }) {
  const applicable: any[] = (pkg as any).applicable_roles || ROLES;
  return (
    <div className="bg-white rounded-3xl p-4 shadow-sm active:scale-[0.99] transition">
@@ -152,6 +161,16 @@ function PackageCard({ pkg, onClick, onDelete, canDelete }: { pkg: CheckupTempla
          </div>
        </div>
        <div className="flex items-center gap-2 shrink-0">
+         {canEdit && onEdit && (
+           <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
+             className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 active:bg-blue-100 transition"
+             title="编辑">
+             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+             </svg>
+           </button>
+         )}
          {canDelete && onDelete && (
            <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
              className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100 active:bg-rose-100 transition">
