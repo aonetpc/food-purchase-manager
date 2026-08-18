@@ -91,6 +91,29 @@ function scopeVisible(it: CheckupItem, s: Scope): boolean {
   return true;
 }
 
+// 判断某项目是否为「角色专属项」（非全角色通用）
+// applicable_roles 非空且不包含全部三角色 = 专属；或关键字命中任一角色专属词表 = 专属
+function isRoleSpecific(it: CheckupItem, role: Role): boolean {
+  const name = it.name || '';
+  // 关键字兜底：命中某角色专属词且对当前角色可见 = 专属
+  if (role === 'male') {
+    if (nameHitKeys(name, MALE_ONLY_KEYS)) return true;
+  }
+  if (role === 'female_married' || role === 'female_single') {
+    if (nameHitKeys(name, FM_ONLY_KEYS)) return true;
+    if (nameHitKeys(name, FEMALE_KEYS)) return true;
+  }
+  if (role === 'female_married') {
+    if (nameHitKeys(name, SINGLE_FORBID_KEYS)) return true;
+  }
+  // applicable_roles 字段：有值但不包含全部三角色 = 专属
+  const roles = it.applicable_roles;
+  if (roles && Array.isArray(roles) && roles.length > 0 && roles.length < 3) {
+    return roles.includes(role);
+  }
+  return false;
+}
+
 // 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
 function getApplicableLabel(it: CheckupItem): string | null {
   const roles = it.applicable_roles;
@@ -184,24 +207,48 @@ const loadAll = async () => {
 };
 useEffect(() => { loadAll(); }, [id]);
 
-// 过滤后的项目列表（分类 + 关键字 + 适用角色）
+// 过滤后的项目列表
+// 公共tab：显示全部项目
+// 角色tab：只显示「本角色专属项」+「公共区已选项」+「本角色已选项」，其余全隐藏
 const filteredItems = useMemo(() => {
   const kw = keyword.trim().toLowerCase();
+  const matchKw = (it: CheckupItem) =>
+    !kw || (it.name || '').toLowerCase().includes(kw) || (it.code || '').toLowerCase().includes(kw);
+  const matchCat = (it: CheckupItem) =>
+    category === '全部' || it.category === category;
+
+  // 公共tab：全部项目
+  if (scope === 'common') {
+    return items.filter(it => matchKw(it) && matchCat(it));
+  }
+
+  // 角色 tab：只显示专属项 + 公共已选 + 本角色已选
   return items.filter(it => {
-    if (category !== '全部' && it.category !== category) return false;
-    if (kw && !(it.name || '').toLowerCase().includes(kw) && !(it.code || '').toLowerCase().includes(kw)) return false;
-    if (!scopeVisible(it, scope)) return false;
-    return true;
+    if (!matchKw(it) || !matchCat(it)) return false;
+    // 公共区已选 → 显示（阴影态）
+    if (selected.common?.[it.id]) return true;
+    // 本角色已选 → 显示
+    if (selected[scope]?.[it.id]) return true;
+    // 本角色专属项（对其他角色不适用的） → 显示，可在此添加
+    if (isRoleSpecific(it, scope)) return true;
+    // 其余（通用但未选、其他角色专属） → 隐藏
+    return false;
   });
-}, [items, category, keyword, scope]);
+}, [items, category, keyword, scope, selected]);
 
 // 每个 scope 下是否选中某 item（对于 role scope，还要算 common 里选过的"阴影"显示）
 const isSelectedInScope = (itemId: string, s: Scope) => !!selected[s]?.[itemId];
 
-// 当前 role 汇总统计（common + 当前角色合并）
+// 当前 role 汇总统计（common 中适用的 + 当前角色专属的）
 const summaryForRole = (r: Role) => {
   const merged = new Map<string, SelectedItem>();
-  Object.values(selected.common || {}).forEach(si => merged.set(si.item_id, { ...si }));
+  // common 中只合并对该角色适用的项目（妇科不计入男性等）
+  Object.values(selected.common || {}).forEach(si => {
+    const item = items.find(i => i.id === si.item_id);
+    if (item && scopeVisible(item, r)) {
+      merged.set(si.item_id, { ...si });
+    }
+  });
   Object.values(selected[r] || {}).forEach(si => merged.set(si.item_id, { ...si }));
   let total = 0, count = 0;
   for (const si of merged.values()) { total += si.price_snapshot * si.quantity; count += 1; }

@@ -11,6 +11,40 @@ const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 
+// ---------- 项目名关键字规则（与前端 WizardItems 保持一致） ----------
+const MALE_ONLY_KEYS = ['前列腺','阴囊','精液','男科','睾丸','勃起','包皮','精索','附睾','PSA','男性激素'];
+const FM_ONLY_KEYS = ['阴超','阴道B','阴道镜','宫腔镜','妇科内诊','双合诊','白带','宫颈刮片','TCT','液基','HPV','宫颈','阴道'];
+const FEMALE_KEYS = ['乳腺','卵巢','子宫','盆腔','附件','性激素','雌激素','孕酮','妇科','妇产科','产前','唐筛','孕检','HCG','人绒毛膜','月经','痛经'];
+const SINGLE_FORBID_KEYS = ['经阴道'];
+function nameHitKeys(name, keys) {
+  const n = (name || '').toLowerCase();
+  return keys.some(k => n.includes(k.toLowerCase()));
+}
+// 判断 common 区某项目是否对指定角色适用（与前端 scopeVisible 逻辑一致）
+function isItemVisibleForRole(it, role) {
+  const name = it.item_name_snapshot || it.item_name || '';
+  const roles = it.applicable_roles ? (typeof it.applicable_roles === 'string' ? (() => { try { return JSON.parse(it.applicable_roles); } catch(_) { return null; } })() : it.applicable_roles) : null;
+  if (roles && Array.isArray(roles) && roles.length > 0) {
+    return roles.includes(role);
+  }
+  if (role === 'male') {
+    if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
+    if (nameHitKeys(name, FEMALE_KEYS)) return false;
+    return true;
+  }
+  if (role === 'female_married') {
+    if (nameHitKeys(name, MALE_ONLY_KEYS)) return false;
+    return true;
+  }
+  if (role === 'female_single') {
+    if (nameHitKeys(name, MALE_ONLY_KEYS)) return false;
+    if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
+    if (nameHitKeys(name, SINGLE_FORBID_KEYS)) return false;
+    return true;
+  }
+  return true;
+}
+
 // ---------- 路径常量 ----------
 const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
 if (!fs.existsSync(PDF_DIR)) {
@@ -97,7 +131,11 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
     const roleItems = items.filter(i => i.role === role);
     // 以 item_id 去重：单独角色项优先覆盖 common（同 item_id 出现两次时用 role 那一条的 qty/price）
     const map = new Map();
-    for (const c of commons) map.set(c.item_id + '|common', { ...c, role });
+    for (const c of commons) {
+      // common 区只合并对该角色适用的项目（妇科不计入男性等）
+      if (!isItemVisibleForRole(c, role)) continue;
+      map.set(c.item_id + '|common', { ...c, role });
+    }
     for (const r of roleItems) {
       // 如果 common 里有相同 item_id，覆盖
       const commonKey = r.item_id + '|common';
