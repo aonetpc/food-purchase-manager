@@ -4,10 +4,9 @@ import {
   checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, ROLE_HINT, CATEGORIES,
   type Role, type CheckupTemplate, type CheckupItem, type CheckupItemRef, type RolePlan
 } from './api';
+import { scopeVisible, isRoleSpecific, type Scope } from '@/pages/CheckupTemplates/roleVisibility';
 import { useToast } from '@/components/Toast';
 import { useAuthStore } from '@/store/authStore';
-
-type Scope = 'common' | Role;
 
 interface SelectedItem {
   item_id: string;
@@ -132,19 +131,38 @@ export default function PackageDrawer({
   // -------- 项目选择逻辑 --------
   const filteredItems = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
+    const matchKw = (it: CheckupItem) =>
+      !kw || (it.name || '').toLowerCase().includes(kw) || (it.code || '').toLowerCase().includes(kw);
+    const matchCat = (it: CheckupItem) =>
+      category === '全部' || it.category === category;
+
+    if (scope === 'common') {
+      return items.filter(it => it.status === 1 && matchKw(it) && matchCat(it));
+    }
+
+    // 角色 tab：强制 scopeVisible 前置，再判断是否展示
     return items.filter(it => {
       if (it.status !== 1) return false;
-      if (category !== '全部' && it.category !== category) return false;
-      if (kw && !(it.name || '').toLowerCase().includes(kw) && !(it.code || '').toLowerCase().includes(kw)) return false;
-      return true;
+      if (!matchKw(it) || !matchCat(it)) return false;
+      if (!scopeVisible(it, scope)) return false;
+      if (selected.common?.[it.id]) return true;
+      if (selected[scope]?.[it.id]) return true;
+      if (isRoleSpecific(it, scope)) return true;
+      return false;
     });
-  }, [items, category, keyword]);
+  }, [items, category, keyword, scope, selected]);
 
   const isSelectedInScope = (itemId: string, s: Scope) => !!selected[s]?.[itemId];
 
   const summaryForRole = (r: Role) => {
     const merged = new Map<string, SelectedItem>();
-    Object.values(selected.common || {}).forEach(si => merged.set(si.item_id, { ...si }));
+    // common 中只合并对该角色适用的项目（妇科不计入男性等）
+    Object.values(selected.common || {}).forEach(si => {
+      const item = items.find(i => i.id === si.item_id);
+      if (item && scopeVisible(item, r)) {
+        merged.set(si.item_id, { ...si });
+      }
+    });
     Object.values(selected[r] || {}).forEach(si => merged.set(si.item_id, { ...si }));
     let total = 0, count = 0, insurance = 0;
     for (const si of merged.values()) {

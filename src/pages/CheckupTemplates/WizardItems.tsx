@@ -4,10 +4,12 @@ import {
 checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
 type Role, type CheckupTemplate, type CheckupItem, type CheckupItemRef, type RolePlan
 } from './api';
+import {
+  scopeVisible, isRoleSpecific, nameHitKeys,
+  MALE_ONLY_KEYS, FM_ONLY_KEYS, FEMALE_KEYS, SINGLE_FORBID_KEYS,
+} from './roleVisibility';
+import type { Scope } from './roleVisibility';
 import { useToast } from '@/components/Toast';
-
-// 当前 Tab 的「作用域」
-type Scope = 'common' | Role;
 
 interface SelectedItem {
 item_id: string;
@@ -24,16 +26,6 @@ const EMPTY_SCOPE: SelectedState = {
 common: {}, male: {}, female_married: {}, female_single: {},
 };
 
-// 项目名关键字规则（与迁移 083 对应，作为 applicable_roles 未填时的前端兜底）
-// 男性专属关键字
-const MALE_ONLY_KEYS = ['前列腺','阴囊','精液','男科','睾丸','勃起','包皮','精索','附睾','PSA','男性激素'];
-// 已婚女专属（含侵入性）关键字
-const FM_ONLY_KEYS = ['阴超','阴道B','阴道镜','宫腔镜','妇科内诊','双合诊','白带','宫颈刮片','TCT','液基','HPV','宫颈','阴道'];
-// 已婚女+未婚女通用关键字
-const FEMALE_KEYS = ['乳腺','卵巢','子宫','盆腔','附件','性激素','雌激素','孕酮','妇科','妇产科','产前','唐筛','孕检','HCG','人绒毛膜','月经','痛经'];
-// 未婚女禁用（已婚女专属，但未命中上述 FM_ONLY_KEYS 的补充）
-const SINGLE_FORBID_KEYS = ['经阴道'];
-
 // 分类 → emoji 映射（胶囊美化：左侧小图标增加可识别度）
 const CATEGORY_EMOJI: Record<string, string> = {
   '体格检查': '🩺',
@@ -49,69 +41,6 @@ const CATEGORY_EMOJI: Record<string, string> = {
 function categoryEmoji(cat?: string): string {
   if (!cat) return '📌';
   return CATEGORY_EMOJI[cat] || '📌';
-}
-
-// 判断某项目名是否命中给定关键字数组
-function nameHitKeys(name: string, keys: string[]): boolean {
-  const n = (name || '').toLowerCase();
-  return keys.some(k => n.includes(k.toLowerCase()));
-}
-
-// 判断某项目是否对当前 scope 可见
-// 优先级：applicable_roles 字段 > 项目名关键字兜底
-function scopeVisible(it: CheckupItem, s: Scope): boolean {
-  if (s === 'common') return true;
-  const name = it.name || '';
-  const roles = it.applicable_roles;
-
-  // 优先用字段值
-  if (roles && Array.isArray(roles) && roles.length > 0) {
-    return roles.includes(s);
-  }
-
-  // 否则用关键字兜底
-  // 男性视角 → 隐藏所有女性项目（FM_ONLY_KEYS + FEMALE_KEYS）
-  if (s === 'male') {
-    if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
-    if (nameHitKeys(name, FEMALE_KEYS)) return false;
-    return true;
-  }
-  // 已婚女视角 → 隐藏男性专属项目
-  if (s === 'female_married') {
-    if (nameHitKeys(name, MALE_ONLY_KEYS)) return false;
-    return true;
-  }
-  // 未婚女视角 → 隐藏男性专属项目 + 侵入性已婚女专属项目（FM_ONLY_KEYS + SINGLE_FORBID_KEYS）
-  if (s === 'female_single') {
-    if (nameHitKeys(name, MALE_ONLY_KEYS)) return false;
-    if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
-    if (nameHitKeys(name, SINGLE_FORBID_KEYS)) return false;
-    return true;
-  }
-  return true;
-}
-
-// 判断某项目是否为「角色专属项」（非全角色通用）
-// applicable_roles 非空且不包含全部三角色 = 专属；或关键字命中任一角色专属词表 = 专属
-function isRoleSpecific(it: CheckupItem, role: Role): boolean {
-  const name = it.name || '';
-  // 关键字兜底：命中某角色专属词且对当前角色可见 = 专属
-  if (role === 'male') {
-    if (nameHitKeys(name, MALE_ONLY_KEYS)) return true;
-  }
-  if (role === 'female_married' || role === 'female_single') {
-    if (nameHitKeys(name, FM_ONLY_KEYS)) return true;
-    if (nameHitKeys(name, FEMALE_KEYS)) return true;
-  }
-  if (role === 'female_married') {
-    if (nameHitKeys(name, SINGLE_FORBID_KEYS)) return true;
-  }
-  // applicable_roles 字段：有值但不包含全部三角色 = 专属
-  const roles = it.applicable_roles;
-  if (roles && Array.isArray(roles) && roles.length > 0 && roles.length < 3) {
-    return roles.includes(role);
-  }
-  return false;
 }
 
 // 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
@@ -222,16 +151,15 @@ const filteredItems = useMemo(() => {
     return items.filter(it => matchKw(it) && matchCat(it));
   }
 
-  // 角色 tab：只显示专属项 + 公共已选 + 本角色已选
+  // 角色 tab：先强制 scopeVisible（对当前角色不可见的项目一律不显示），再判断是否展示
   return items.filter(it => {
     if (!matchKw(it) || !matchCat(it)) return false;
-    // 公共区已选 → 显示（阴影态）
+    // 强制可见性校验：不可见的项目（如未婚女视角的阴超）一律不显示
+    if (!scopeVisible(it, scope)) return false;
+    // 公共已选 / 本角色已选 / 本角色专属 → 显示
     if (selected.common?.[it.id]) return true;
-    // 本角色已选 → 显示
     if (selected[scope]?.[it.id]) return true;
-    // 本角色专属项（对其他角色不适用的） → 显示，可在此添加
     if (isRoleSpecific(it, scope)) return true;
-    // 其余（通用但未选、其他角色专属） → 隐藏
     return false;
   });
 }, [items, category, keyword, scope, selected]);
