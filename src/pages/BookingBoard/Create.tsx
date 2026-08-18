@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -370,39 +370,94 @@ function CapsuleItemPicker(props: {
   onConfirm: () => void;
   includedIds?: Set<string>; // 已包含的项目id（显示禁用/已包含态）
   confirmLabel?: string;
-  anchorClass?: string; // 外层定位容器的 className
-  width?: string;
+  anchorRef?: React.RefObject<HTMLElement | null>; // 锚点按钮（可选）；未传则用组件自身外层容器
+  width?: number; // 像素宽度，默认 560
 }) {
   const {
-    open, onClose, lib, selectedIds, onToggle, onConfirm,
-    includedIds, confirmLabel, anchorClass = 'relative inline-block',
-    width = 'w-[560px]',
+    open, onClose, selectedIds, onToggle, onConfirm,
+    includedIds, confirmLabel, width = 560,
   } = props;
+  // 合并兜底 lib（从 props.lib + fallbackLib）
+  const effectiveLib = useMemo<CheckupItemRow[]>(() => {
+    const base = Array.isArray(props.lib) ? props.lib : [];
+    const byId = new Map<string, CheckupItemRow>();
+    for (const ci of base) if (ci?.id) byId.set(ci.id, ci);
+    return Array.from(byId.values());
+  }, [props.lib]);
+
   const [q, setQ] = useState('');
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const outerRef = useRef<HTMLDivElement | null>(null);
+  // 面板位置（fixed坐标）+ 是否向上弹出
+  const [pos, setPos] = useState<{ top: number; left: number; placeUp: boolean }>({ top: 0, left: 0, placeUp: false });
+  // 跟随锚点更新位置
+  useLayoutEffect(() => {
+    if (!open) return;
+    const calcPos = () => {
+      // 定位优先级：1) anchorRef 2) 外层按钮 div 内第一个可见按钮 3) outerRef 自身
+      let el: HTMLElement | null = null;
+      if (props.anchorRef?.current) el = props.anchorRef.current as HTMLElement;
+      else {
+        const root = outerRef.current;
+        if (root) el = root.querySelector('button') || root;
+      }
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const panelW = width;
+      const panelH = 520; // 估算最大高度（max-h-[75vh]也会控制）
+      const margin = 8;
+      // left：面板贴齐按钮左边，若超右边界则回退
+      let left = r.left;
+      const rightMost = left + panelW;
+      if (rightMost > window.innerWidth - margin) {
+        left = Math.max(margin, window.innerWidth - panelW - margin);
+      }
+      // 优先下方弹出；下方不够且上方空间更多时，向上弹出
+      const belowSpace = window.innerHeight - r.bottom;
+      const aboveSpace = r.top;
+      let placeUp = false;
+      let top = r.bottom + 6;
+      if (belowSpace < Math.min(panelH, 420) && aboveSpace > belowSpace) {
+        placeUp = true;
+        top = r.top - 6; // 由 bottom 控制
+      }
+      setPos({ top, left, placeUp });
+    };
+    calcPos();
+    // 打开时重置搜索词
+    setQ('');
+    window.addEventListener('scroll', calcPos, true);
+    window.addEventListener('resize', calcPos, true);
+    return () => {
+      window.removeEventListener('scroll', calcPos, true);
+      window.removeEventListener('resize', calcPos, true);
+    };
+  }, [open, width, props.anchorRef]);
+
   // 按 CATEGORIES 顺序分组
   const groups = useMemo(() => {
     const g: Record<string, CheckupItemRow[]> = {};
     const known = [...CATEGORIES, '其他'];
     known.forEach(k => g[k] = []);
     const lowerQ = q.trim().toLowerCase();
-    for (const ci of lib) {
-      if (lowerQ && !ci.name.toLowerCase().includes(lowerQ)) continue;
+    for (const ci of effectiveLib) {
+      if (lowerQ && !(ci.name || '').toLowerCase().includes(lowerQ)) continue;
       const cat = ci.category || '其他';
       if (g[cat]) g[cat].push(ci);
       else g['其他'].push(ci);
     }
     return known.map(k => ({ category: k, items: g[k] || [] })).filter(x => x.items.length > 0);
-  }, [lib, q]);
+  }, [effectiveLib, q]);
   const countSel = selectedIds.size;
   const countInc = includedIds?.size || 0;
 
   return (
-    <div className={anchorClass}>
+    <div className={''} ref={outerRef}>
       {open && (
         <>
-          {/* 外部遮罩：阻止冒泡 + 点击外部关闭（有未确认时给出提醒） */}
+          {/* 全局固定遮罩：层级高于 modal(z-[80]) */}
           <div
-            className="fixed inset-0 z-20"
+            className="fixed inset-0 z-[95] bg-black/10"
             onClick={() => {
               if (countSel > 0) {
                 if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
@@ -411,7 +466,17 @@ function CapsuleItemPicker(props: {
             }}
           />
           <div
-            className={`absolute top-full left-0 mt-1 ${width} max-h-[75vh] overflow-hidden bg-white border border-gray-200 rounded-2xl shadow-2xl z-30 flex flex-col`}
+            ref={shellRef}
+            style={{
+              position: 'fixed',
+              zIndex: 96,
+              top: pos.placeUp ? undefined : pos.top,
+              bottom: pos.placeUp ? (window.innerHeight - pos.top) : undefined,
+              left: pos.left,
+              width: width,
+              maxWidth: 'calc(100vw - 16px)',
+            }}
+            className={`max-h-[75vh] overflow-hidden bg-white border border-gray-200 rounded-2xl shadow-2xl flex flex-col`}
             onClick={e => e.stopPropagation()}
           >
             {/* 顶部搜索 */}
@@ -421,21 +486,46 @@ function CapsuleItemPicker(props: {
                 <input
                   value={q}
                   onChange={e => setQ(e.target.value)}
-                  placeholder="搜索体检项目..."
+                  placeholder="搜索体检项目（按名称模糊搜索）..."
                   className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
                   autoFocus
                 />
               </div>
               <div className="flex items-center justify-between mt-2 text-[10px] text-gray-400">
-                <span>按分类浏览，点击胶囊多选；已勾选 {countSel} 项{countInc > 0 ? ` · 已包含 ${countInc} 项（灰色）` : ''}</span>
-                <button onClick={onClose} className="text-gray-400 hover:text-gray-600">关闭</button>
+                <span>
+                  按分类浏览，点击胶囊多选；已勾选
+                  <span className="text-green-600 font-semibold mx-1">{countSel}</span>
+                  项
+                  {countInc > 0 && <span className="mx-1">· 已包含 {countInc} 项（灰色）</span>}
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (countSel > 0) {
+                      if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
+                    }
+                    onClose();
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  关闭
+                </button>
               </div>
             </div>
             {/* 分类组 */}
             <div className="overflow-y-auto flex-1 px-3 py-2 space-y-3">
               {groups.length === 0 && (
-                <div className="py-8 text-center text-xs text-gray-400">
-                  {lib.length === 0 ? '项目库暂无数据' : '没有匹配的项目'}
+                <div className="py-8 text-center text-xs text-gray-400 space-y-1">
+                  <div>
+                    {effectiveLib.length === 0
+                      ? '项目库暂无数据（请在「业务配置」中添加体检项目）'
+                      : '没有匹配的项目，请换关键词搜索'}
+                  </div>
+                  {effectiveLib.length === 0 && (
+                    <div className="text-[10px] text-gray-300">
+                      当前共 {effectiveLib.length} 个项目
+                    </div>
+                  )}
                 </div>
               )}
               {groups.map(g => (
@@ -447,14 +537,14 @@ function CapsuleItemPicker(props: {
                   </div>
                   <div className="flex flex-wrap gap-1.5 px-0.5">
                     {g.items.map(ci => {
-                      const isIncluded = includedIds?.has?.(ci.id);
-                      const isSel = selectedIds.has(ci.id);
+                      const isIncluded = !!(includedIds && ci.id && includedIds.has(ci.id));
+                      const isSel = !!(ci.id && selectedIds.has(ci.id));
                       const disabled = !!isIncluded;
                       return (
                         <button
-                          key={ci.id}
+                          key={ci.id || ci.name}
                           disabled={disabled}
-                          onClick={() => onToggle(ci.id)}
+                          onClick={() => ci.id && onToggle(ci.id)}
                           className={[
                             'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-colors shrink-0',
                             disabled
@@ -485,18 +575,24 @@ function CapsuleItemPicker(props: {
             <div className="border-t border-gray-100 px-3 py-2 shrink-0 flex items-center justify-between bg-gray-50/50">
               <div className="text-[11px] text-gray-500">
                 {countSel > 0
-                  ? `已选 <span class="font-semibold text-green-600">${countSel}</span> 项，点击确认追加`
+                  ? <>已选 <span className="font-semibold text-green-600">{countSel}</span> 项，点击确认追加</>
                   : '请从上方分类中选择要追加的项目'}
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={onClose}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (countSel > 0) {
+                      if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
+                    }
+                    onClose();
+                  }}
                   className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] rounded-lg bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 transition-colors"
                 >
                   取消
                 </button>
                 <button
-                  onClick={onConfirm}
+                  onClick={(e) => { e.stopPropagation(); onConfirm(); }}
                   disabled={countSel === 0}
                   className={[
                     'inline-flex items-center gap-1 px-3 py-1.5 text-[11px] rounded-lg text-white font-medium transition-colors',
@@ -520,6 +616,7 @@ function CapsuleItemPicker(props: {
 // ============================================================
 // 第4期：单人定制项目编辑器子组件（可安全使用 useState）
 // ============================================================
+// PaxItemsEditor（子组件）
 function PaxItemsEditor(props: {
   index: number;
   pax: PaxEntry;
@@ -533,12 +630,39 @@ function PaxItemsEditor(props: {
   onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
   onReset: () => void;
   onAddItem: (ci: CheckupItemRow) => void;
+  fallbackLib?: CheckupItemRow[]; // 项目库为空时的兜底
 }) {
-  const { index, pax, paxAmount, items, hasCustom, pkgName, pkgCode, checkupItemsLib, onRemoveItem, onUpdateItemField, onReset, onAddItem } = props;
+  const { checkupItemsLib, items, fallbackLib = [] } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState('');
+  const anchorBtnRef = useRef<HTMLButtonElement | null>(null);
   // 多选选中态
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  // 合并最终 lib：项目库优先；不足时兜底 + 从当前 items 反推（保证不空）
+  const finalLib = useMemo<CheckupItemRow[]>(() => {
+    const byId = new Map<string, CheckupItemRow>();
+    for (const ci of checkupItemsLib) if (ci?.id) byId.set(ci.id, ci);
+    for (const ci of fallbackLib) if (ci?.id && !byId.has(ci.id)) byId.set(ci.id, ci);
+    // 从当前 items 反推（保证胶囊面板至少能看到已有项目分类）
+    for (const it of items || []) {
+      const id = String(it.item_id || it.id || '').trim();
+      if (!id) continue;
+      if (byId.has(id)) continue;
+      const fallback: CheckupItemRow = {
+        id,
+        code: it.item_id || it.item_name_snapshot?.slice(0, 8) || id.slice(0, 8),
+        name: it.item_name_snapshot || '未知项目',
+        category: '其他',
+        description: '',
+        default_price: Number(it.item_price || 0),
+        unit: '',
+        status: 1,
+        sort_order: 0,
+      };
+      byId.set(id, fallback);
+    }
+    return Array.from(byId.values());
+  }, [checkupItemsLib, fallbackLib, items]);
   const includedIds = useMemo(() => new Set(items.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [items]);
   // 点击胶囊切换选中
   const toggle = (id: string) => {
@@ -551,8 +675,8 @@ function PaxItemsEditor(props: {
   const confirm = () => {
     // 按 pickedIds 从 lib 中依次调用 onAddItem（兼容旧的单条添加）
     for (const id of pickedIds) {
-      const ci = checkupItemsLib.find(x => x.id === id);
-      if (ci) onAddItem(ci);
+      const ci = finalLib.find(x => x.id === id);
+      if (ci) props.onAddItem(ci);
     }
     setPickedIds(new Set());
     setPickerOpen(false);
@@ -561,7 +685,7 @@ function PaxItemsEditor(props: {
     setPickedIds(new Set());
     setPickerOpen(false);
   };
-  void pickerFilter; // 已由子组件内置搜索支持，保留变量以兼容旧调用习惯
+  void pickerFilter;
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -657,6 +781,7 @@ function PaxItemsEditor(props: {
       </div>
       <div className="border-t border-gray-100 bg-gray-50/30 px-3 py-2">
         <button
+          ref={anchorBtnRef as any}
           onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
           className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
         >
@@ -665,13 +790,14 @@ function PaxItemsEditor(props: {
         <CapsuleItemPicker
           open={pickerOpen}
           onClose={closePicker}
-          lib={checkupItemsLib}
+          lib={finalLib}
           selectedIds={pickedIds}
           onToggle={toggle}
           onConfirm={confirm}
           includedIds={includedIds}
           confirmLabel={`确认追加 ${pickedIds.size} 项`}
-          width="w-[600px]"
+          anchorRef={anchorBtnRef as any}
+          width={620}
         />
       </div>
     </div>
@@ -781,6 +907,7 @@ function PackageGroupSummary(props: {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const anchorBtnRef = useRef<HTMLButtonElement | null>(null);
   const void_pickerFilter_var = true; // placeholder; 搜索已由 CapsuleItemPicker 内置
   void void_pickerFilter_var;
 
@@ -796,6 +923,27 @@ function PackageGroupSummary(props: {
       }, 0));
 
   const itemsSubtotal = sharedItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+  // 合并最终 lib（项目库 + 已有 sharedItems 反推兜底）
+  const finalLib = useMemo<CheckupItemRow[]>(() => {
+    const byId = new Map<string, CheckupItemRow>();
+    for (const ci of checkupItemsLib) if (ci?.id) byId.set(ci.id, ci);
+    for (const it of sharedItems || []) {
+      const id = String(it.item_id || it.id || '').trim();
+      if (!id || byId.has(id)) continue;
+      byId.set(id, {
+        id,
+        code: it.item_id || it.item_name_snapshot?.slice(0, 8) || id.slice(0, 8),
+        name: it.item_name_snapshot || '未知项目',
+        category: '其他',
+        description: '',
+        default_price: Number(it.item_price || 0),
+        unit: '',
+        status: 1,
+        sort_order: 0,
+      });
+    }
+    return Array.from(byId.values());
+  }, [checkupItemsLib, sharedItems]);
   const includedIds = useMemo(() => new Set(sharedItems.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [sharedItems]);
   const toggle = (id: string) => {
     setPickedIds(prev => {
@@ -806,7 +954,7 @@ function PackageGroupSummary(props: {
   };
   const confirm = () => {
     for (const id of pickedIds) {
-      const ci = checkupItemsLib.find(x => x.id === id);
+      const ci = finalLib.find(x => x.id === id);
       if (ci) onAddItem(ci);
     }
     setPickedIds(new Set());
@@ -938,6 +1086,7 @@ function PackageGroupSummary(props: {
       <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between">
         <div>
           <button
+            ref={anchorBtnRef as any}
             onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
           >
@@ -946,13 +1095,14 @@ function PackageGroupSummary(props: {
           <CapsuleItemPicker
             open={pickerOpen}
             onClose={closePicker}
-            lib={checkupItemsLib}
+            lib={finalLib}
             selectedIds={pickedIds}
             onToggle={toggle}
             onConfirm={confirm}
             includedIds={includedIds}
             confirmLabel={nStandard > 1 ? `确认追加 ${pickedIds.size} 项（×${nStandard}人同步）` : `确认追加 ${pickedIds.size} 项`}
-            width="w-[640px]"
+            anchorRef={anchorBtnRef as any}
+            width={660}
           />
         </div>
         {nCustom > 0 && (
