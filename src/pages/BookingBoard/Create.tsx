@@ -632,7 +632,11 @@ function PaxItemsEditor(props: {
   onAddItem: (ci: CheckupItemRow) => void;
   fallbackLib?: CheckupItemRow[]; // 项目库为空时的兜底
 }) {
-  const { checkupItemsLib, items, fallbackLib = [] } = props;
+  const {
+    index, pax, paxAmount, items, hasCustom, pkgName, pkgCode,
+    checkupItemsLib, onRemoveItem, onUpdateItemField, onReset, onAddItem,
+    fallbackLib = [],
+  } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState('');
   const anchorBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -676,7 +680,7 @@ function PaxItemsEditor(props: {
     // 按 pickedIds 从 lib 中依次调用 onAddItem（兼容旧的单条添加）
     for (const id of pickedIds) {
       const ci = finalLib.find(x => x.id === id);
-      if (ci) props.onAddItem(ci);
+      if (ci) onAddItem(ci);
     }
     setPickedIds(new Set());
     setPickerOpen(false);
@@ -900,7 +904,7 @@ function PackageGroupSummary(props: {
   onReset: () => void;
 }) {
   const {
-    pkgCode, pkgName, paxList, sharedItems, hasSharedEdits,
+    pkgCode, pkgName, pkgPrice, paxList, sharedItems, hasSharedEdits,
     isCustomizedFn, checkupItemsLib, singlePaxAmountFn,
     onAddItem, onRemoveItem, onUpdateItemField, onReset,
   } = props;
