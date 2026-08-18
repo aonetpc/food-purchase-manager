@@ -27,9 +27,18 @@ export default function WizardPricing() {
         setPkg(p);
         const prices: any = {}, rates: any = {};
         ROLES.forEach(r => {
-          const plan: any = p.role_plans?.[r] || { discount_price: 0, discount_rate: 100 };
-          prices[r] = Number(plan.discount_price) || 0;
-          rates[r] = Number(plan.discount_rate) || 100;
+          const plan: any = p.role_plans?.[r] || { original_total: 0, discount_price: 0, discount_rate: 100 };
+          const total = Number(plan.original_total) || 0;
+          const rate = Number(plan.discount_rate) || 100;
+          // 如果折扣率=100（默认值），强制将 discount_price 同步为 original_total
+          // 防止后端 original_total 重算后 discount_price 仍是旧值导致误显示折扣
+          if (rate >= 100 && total > 0) {
+            prices[r] = total;
+            rates[r] = 100;
+          } else {
+            prices[r] = Number(plan.discount_price) || total;
+            rates[r] = rate;
+          }
         });
         setLocalPrice(prices); setLocalRate(rates);
       } else {

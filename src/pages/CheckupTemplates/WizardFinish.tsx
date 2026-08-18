@@ -158,8 +158,9 @@ return (
         const plan: any = pkg.role_plans?.[r] || {};
         const roleItems = (pkg.role_items as any)?.[r]?.items || [];
         const total = Number(plan.original_total) || 0;
-        const disc = Number(plan.discount_price) || 0;
+        let disc = Number(plan.discount_price) || 0;
         const rate = Number(plan.discount_rate) || 100;
+        if (rate >= 100 && total > 0) disc = total;
         const isOpen = expanded[r];
         const groups = groupByCategory(roleItems);
         return (
