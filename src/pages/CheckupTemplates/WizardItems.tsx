@@ -215,14 +215,6 @@ const toggleItem = (item: CheckupItem) => {
   });
 };
 
-const setQty = (itemId: string, qty: number) => {
-  const q = Math.max(1, Math.floor(qty) || 1);
-  setSelected(prev => {
-    if (!prev[scope][itemId]) return prev;
-    return { ...prev, [scope]: { ...prev[scope], [itemId]: { ...prev[scope][itemId], quantity: q } } };
-  });
-};
-
 // 保存并进入下一步
 const onSaveAndNext = async () => {
   if (!pkg || !id) return;
@@ -354,21 +346,19 @@ return (
       </div>
     )}
 
-    {/* 项目列表 */}
+    {/* 项目列表（双列胶囊网格） */}
     <main className="px-3 pt-3">
       {loading && <div className="text-center text-gray-400 text-xs py-12">加载中...</div>}
       {!loading && filteredItems.length === 0 && (
         <div className="text-center py-12 text-gray-400 text-xs">没有匹配的项目</div>
       )}
-      <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
         {filteredItems.map(it => (
           <ItemCard key={it.id} item={it}
             scope={scope}
             selected={isSelectedInScope(it.id, scope)}
             shadowSelected={scope !== 'common' && isSelectedInScope(it.id, 'common')}
-            qty={selected[scope][it.id]?.quantity || 1}
             onToggle={() => toggleItem(it)}
-            onQty={n => setQty(it.id, n)}
           />
         ))}
       </div>
@@ -422,64 +412,45 @@ return (
 );
 }
 
-function ItemCard({ item, scope, selected, shadowSelected, qty, onToggle, onQty }: {
+function ItemCard({ item, scope, selected, shadowSelected, onToggle }: {
 item: CheckupItem; scope: Scope;
-selected: boolean; shadowSelected: boolean; qty: number;
-onToggle: () => void; onQty: (n: number) => void;
+selected: boolean; shadowSelected: boolean;
+onToggle: () => void;
 }) {
-const [expanded, setExpanded] = useState(false);
 const isCombo = item.item_type === 'combo';
+const label = getApplicableLabel(item);
+const isPublic = shadowSelected && scope !== 'common';
+
+// 选中态：深绿色背景+白字；公共已含：琥珀色背景；未选中：白底
+const cardClass = selected
+  ? 'bg-emerald-500 border-emerald-500 text-white'
+  : isPublic
+  ? 'bg-amber-50 border-amber-300 text-amber-900'
+  : 'bg-white border-gray-200 text-gray-800';
+
 return (
-  <div className={`bg-white rounded-2xl px-3 py-3 shadow-sm border ${
-    selected ? 'border-emerald-400' : shadowSelected ? 'border-amber-200' : 'border-gray-100'
-  }`}>
-    <div className="flex items-start gap-3">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-gray-900 leading-snug">{item.name}</span>
-          {isCombo && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">组合</span>}
-          {(() => {
-            const label = getApplicableLabel(item);
-            return label ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{label}</span> : null;
-          })()}
-        </div>
-        <div className="text-[11px] text-gray-500 mt-0.5">
-          {item.description || (isCombo ? '组合项目，点击查看明细' : '单项检查')}
-        </div>
-        <div className="mt-1 flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-100">{item.category}</span>
-          {isCombo && (
-            <button onClick={() => setExpanded(x => !x)} className="text-[11px] text-[#0f5132] flex items-center gap-0.5">
-              查看组合子项
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className={`transition ${expanded ? 'rotate-180' : ''}`}><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-          )}
-        </div>
-        {expanded && isCombo && (
-          <div className="mt-2 text-[11px] text-gray-500 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100">
-            ⚠️ 组合项目子项由医生根据标准执行，具体包含内容以当日医院公示为准。
-          </div>
-        )}
-      </div>
-      <div className="flex flex-col items-end gap-1">
-        <div className="text-base font-bold text-[#0f5132]">¥{Number(item.default_price).toFixed(0)}</div>
-        {selected ? (
-          <div className="flex items-center gap-1">
-            <button onClick={() => onQty(qty - 1)} className="w-6 h-6 rounded-full bg-gray-100 text-gray-600 text-sm">-</button>
-            <span className="text-xs w-6 text-center">{qty}</span>
-            <button onClick={() => onQty(qty + 1)} className="w-6 h-6 rounded-full bg-gray-100 text-gray-600 text-sm">+</button>
-          </div>
-        ) : shadowSelected && scope !== 'common' ? (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">公共已含</span>
-        ) : null}
-        <button onClick={onToggle}
-          className={`h-8 w-20 rounded-full text-xs font-semibold flex items-center justify-center transition ${
-            selected ? 'bg-emerald-500 text-white shadow-sm' : 'border border-gray-300 text-gray-600 bg-white'
-          }`}>
-          {selected ? '✓ 已添加' : '添加'}
-        </button>
-      </div>
+  <button onClick={onToggle}
+    className={`w-full text-left rounded-xl border-2 px-2.5 py-2.5 transition-all ${cardClass}`}>
+    <div className="flex items-center gap-1.5">
+      {selected && <span className="text-sm shrink-0">✓</span>}
+      {isPublic && <span className="text-sm shrink-0">📌</span>}
+      <span className={`truncate text-[13px] font-semibold flex-1 ${selected || isPublic ? '' : ''}`}>{item.name}</span>
     </div>
-  </div>
+    <div className="mt-1 flex items-center gap-1 flex-wrap">
+      {isCombo && (
+        <span className={`text-[9px] px-1 py-0 rounded ${
+          selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
+        }`}>组合</span>
+      )}
+      {label && (
+        <span className={`text-[9px] px-1 py-0 rounded ${
+          selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
+        }`}>{label}</span>
+      )}
+      {isPublic && (
+        <span className="text-[9px] px-1 py-0 rounded bg-amber-200 text-amber-800">公共</span>
+      )}
+    </div>
+  </button>
 );
 }
