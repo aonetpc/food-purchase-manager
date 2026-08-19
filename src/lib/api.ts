@@ -201,6 +201,8 @@ export interface CheckupItemRow {
   item_type?: 'item' | 'combo';
   category: string;
   description: string;
+  /** 体检意义 / 临床意义（在客户展示页 SharePage 显示） */
+  clinical_significance?: string | null;
   default_price: number;
   insurance_price?: number;
   unit: string;

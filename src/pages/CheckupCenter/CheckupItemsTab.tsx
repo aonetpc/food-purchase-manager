@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Save, Search, AlertTriangle, FileSpreadsheet, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Save, Search, AlertTriangle, FileSpreadsheet, ChevronDown, ChevronUp, X, Sparkles } from 'lucide-react';
 import { bookingApi, type CheckupItemRow } from '@/lib/api';
 import { CATEGORIES } from './api';
 import { useToast } from '@/components/Toast';
@@ -124,7 +124,7 @@ function appRoleLabel(roles: AppRole[] | null | undefined): string | null {
 
 const DEFAULT_CHECKUP: Partial<CheckupItemRow> = {
   code: '', name: '', item_type: 'item', category: DEFAULT_CATEGORY,
-  description: '', default_price: 0, insurance_price: 0, unit: '次',
+  description: '', clinical_significance: '', default_price: 0, insurance_price: 0, unit: '次',
   status: 1, sort_order: 100, sub_item_ids: [], applicable_roles: [],
 };
 
@@ -143,8 +143,11 @@ export default function CheckupItemsTab() {
   const [manualBindMap, setManualBindMap] = useState<Record<string, string>>({});
   // A4: 选中的diff行 key（用行index+name组合）
   const [selectedDiffKeys, setSelectedDiffKeys] = useState<Set<string>>(new Set());
-  // A5: 批量同步/删除/导入进度（msg 是可选自定义文案，curr 用于同步场景的当前项目名）
   const [syncProgress, setSyncProgress] = useState<{ done: number; total: number; curr?: string | null; msg?: string } | null>(null);
+  // 组合项目子项目胶囊弹窗状态
+  const [subPickerOpen, setSubPickerOpen] = useState(false);
+  const [subPickerPicked, setSubPickerPicked] = useState<Set<string>>(new Set());
+  const [subPickerSearch, setSubPickerSearch] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -282,68 +285,240 @@ export default function CheckupItemsTab() {
   function renderApplicablePicker() {
     if (!editing) return null;
     const current: AppRole[] = Array.isArray(editing.data.applicable_roles) ? editing.data.applicable_roles : [];
+    const isAll = current.length === 0 || current.length === 3;
     return (
-      <div className="px-3 py-2 bg-purple-50/60 border-t border-purple-100">
-        <div className="text-[11px] text-gray-500 mb-1.5">
-          适用角色（不勾选=全通用；勾选后仅被勾选的角色在配单页可见，公共项目区不过滤）
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {APPLICABLE_ROLES.map(r => {
-            const checked = current.includes(r.key);
-            return (
-              <button
-                key={r.key}
-                type="button"
-                onClick={() => toggleApplicableRole(r.key)}
-                className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
-                  checked
-                    ? 'bg-purple-500 text-white border-purple-500'
-                    : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-100'
-                }`}
-              >
-                {checked && '✓ '}{r.label}
-              </button>
-            );
-          })}
-          {current.length === 0 && <span className="text-[11px] text-purple-700 px-2 py-1 bg-purple-100 rounded-full">✨ 全角色通用</span>}
-          {current.length === 3 && <span className="text-[11px] text-purple-700 px-2 py-1 bg-purple-100 rounded-full">✨ 全选=通用</span>}
-        </div>
-      </div>
+      <tr className="border-t border-purple-100 bg-purple-50/30">
+        <td colSpan={10} className="px-3 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-purple-700 font-medium shrink-0">适用角色：</span>
+            <div className="flex flex-wrap gap-1">
+              {APPLICABLE_ROLES.map(r => {
+                const checked = current.includes(r.key);
+                return (
+                  <button
+                    key={r.key}
+                    type="button"
+                    onClick={() => toggleApplicableRole(r.key)}
+                    className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                      checked
+                        ? 'bg-purple-500 text-white border-purple-500'
+                        : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-100'
+                    }`}
+                  >
+                    {checked && '✓ '}{r.label}
+                  </button>
+                );
+              })}
+              {isAll && <span className="text-[10px] text-purple-500 px-1.5 py-0.5 rounded bg-purple-100">✨ 全角色通用</span>}
+            </div>
+          </div>
+        </td>
+      </tr>
     );
   }
 
-  function renderSubItemPicker() {
+  function openSubItemPicker() {
+    if (!editing) return;
+    const isCombo = editing.data.item_type === 'combo';
+    if (!isCombo) return;
+    const selected: string[] = editing.data.sub_item_ids || [];
+    setSubPickerPicked(new Set(selected));
+    setSubPickerSearch('');
+    setSubPickerOpen(true);
+  }
+
+  function renderSubItemPickerSummary() {
     if (!editing) return null;
     const isCombo = editing.data.item_type === 'combo';
     if (!isCombo) return null;
     const selected = editing.data.sub_item_ids || [];
     return (
-      <div className="px-3 py-2 bg-amber-50/60 border-t border-amber-100">
-        <div className="text-[11px] text-gray-500 mb-1.5">子项目（勾选包含的普通项目）</div>
-        <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-          {availableSubItems.filter(r => r.id !== currentEditingId).map(r => {
-            const checked = selected.includes(r.id);
-            return (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => toggleSubItem(r.id)}
-                disabled={!isAdmin}
-                className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
-                  checked
-                    ? 'bg-cyan-500 text-white border-cyan-500'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-cyan-300 disabled:opacity-60'
-                }`}
-              >
-                {r.name} ¥{Number(r.default_price || 0)}
-              </button>
-            );
-          })}
-          {availableSubItems.length === 0 && (
-            <span className="text-[11px] text-gray-400">暂无可选的普通项目</span>
+      <tr className="border-t border-amber-100 bg-amber-50/30">
+        <td colSpan={10} className="px-3 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-amber-700 font-medium">组合子项目：</span>
+            <span className="text-[11px] text-amber-600">{selected.length > 0 ? `${selected.length} 项已选` : '未选择'}</span>
+            <button
+              type="button"
+              onClick={openSubItemPicker}
+              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 hover:bg-cyan-600 text-white font-medium transition-colors"
+            >
+              编辑子项目
+            </button>
+          </div>
+          {selected.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+              {selected.map((id: string) => {
+                const item = availableSubItems.find(r => r.id === id);
+                if (!item) return null;
+                return (
+                  <span key={id} className="text-[10px] bg-cyan-50 border border-cyan-200 text-cyan-700 rounded px-1.5 py-0.5">
+                    {item.name} ¥{Number(item.default_price || 0)}
+                  </span>
+                );
+              })}
+            </div>
           )}
+        </td>
+      </tr>
+    );
+  }
+
+  // 子项目胶囊模态框（组合项目专用）
+  function renderSubItemPickerModal() {
+    if (!subPickerOpen || !editing) return null;
+    const currentCategory = editing.data.category || DEFAULT_CATEGORY;
+    const searchVal = subPickerSearch;
+    // 可用子项目：排除当前编辑的项目本身，按分类过滤（先显示当前分类的，再显示其他分类）
+    const subItems = availableSubItems.filter(r => r.id !== currentEditingId);
+    const filtered = searchVal
+      ? subItems.filter(r => `${r.name}${r.code}`.toLowerCase().includes(searchVal.toLowerCase()))
+      : subItems;
+
+    // 按分类分组
+    const grouped = useMemo(() => {
+      const map = new Map<string, CheckupItemRow[]>();
+      filtered.forEach(r => {
+        const cat = r.category || '其他';
+        if (!map.has(cat)) map.set(cat, []);
+        map.get(cat)!.push(r);
+      });
+      // 当前分类排最前
+      const sortedKeys = [...map.keys()].sort((a, b) => {
+        if (a === currentCategory) return -1;
+        if (b === currentCategory) return 1;
+        return 0;
+      });
+      return { map, sortedKeys };
+    }, [filtered, currentCategory, subPickerOpen]);
+
+    const confirm = () => {
+      setField('sub_item_ids', Array.from(subPickerPicked));
+      setSubPickerOpen(false);
+      setSubPickerPicked(new Set());
+    };
+
+    return (
+      <>
+        {/* 遮罩 */}
+        <div
+          className="fixed inset-0 z-[95] bg-black/20"
+          onClick={() => {
+            if (subPickerPicked.size > 0) {
+              if (!window.confirm('有未确认的选中项，确定关闭？')) return;
+            }
+            setSubPickerOpen(false);
+            setSubPickerPicked(new Set());
+          }}
+        />
+        {/* 弹窗 */}
+        <div
+          className="fixed z-[96] bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col"
+          style={{
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: '720px',
+            maxWidth: '95vw',
+            height: '80vh',
+            maxHeight: '600px',
+          }}
+        >
+          {/* 头部 */}
+          <div className="px-4 py-3 bg-gradient-to-r from-amber-50 to-cyan-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-cyan-600" />
+              <span className="font-semibold text-sm text-gray-800">选择子项目（仅显示「{currentCategory}」分类下的普通项目）</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">已选 {subPickerPicked.size} 项</span>
+              <button onClick={() => setSubPickerOpen(false)} className="p-1 rounded hover:bg-gray-200 text-gray-500">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* 搜索框 */}
+          <div className="px-4 py-2 border-b border-gray-100 shrink-0">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                placeholder="搜索项目名或编码..."
+                className="w-full text-xs border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-cyan-500"
+                value={subPickerSearch}
+                onChange={(e) => setSubPickerSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* 分类分组 */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-4">
+            {grouped.sortedKeys.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 text-sm">暂无可选的普通项目</div>
+            ) : grouped.sortedKeys.map(cat => {
+              const items = grouped.map.get(cat) || [];
+              const isCurrentCat = cat === currentCategory;
+              return (
+                <div key={cat}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`text-xs font-semibold ${isCurrentCat ? 'text-cyan-700' : 'text-gray-600'}`}>
+                      {isCurrentCat && '⭐ '}{cat}
+                    </span>
+                    <span className="text-[10px] text-gray-400">{items.length} 项</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {items.map(item => {
+                      const checked = subPickerPicked.has(item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            const next = new Set(subPickerPicked);
+                            if (checked) next.delete(item.id); else next.add(item.id);
+                            setSubPickerPicked(next);
+                          }}
+                          className={`text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
+                            checked
+                              ? 'bg-cyan-500 text-white border-cyan-500 shadow-sm'
+                              : 'bg-white text-gray-700 border-gray-200 hover:border-cyan-300 hover:bg-cyan-50'
+                          }`}
+                        >
+                          {checked && '✓ '}{item.name}
+                          <span className={`ml-1 ${checked ? 'text-cyan-100' : 'text-gray-400'}`}>
+                            ¥{Number(item.default_price || 0)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 底部 */}
+          <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between shrink-0">
+            <span className="text-xs text-gray-500">已选 <span className="font-semibold text-cyan-600">{subPickerPicked.size}</span> 项</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  if (subPickerPicked.size > 0) {
+                    if (!window.confirm('有未确认的选中项，确定关闭？')) return;
+                  }
+                  setSubPickerOpen(false);
+                  setSubPickerPicked(new Set());
+                }}
+                className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100"
+              >取消</button>
+              <button
+                onClick={confirm}
+                className="px-4 py-1.5 text-xs rounded-lg bg-cyan-500 hover:bg-cyan-600 text-white font-medium"
+              >确认追加 ({subPickerPicked.size})</button>
+            </div>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -1138,6 +1313,13 @@ export default function CheckupItemsTab() {
                         const lb = appRoleLabel(editing!.data.applicable_roles as any);
                         return lb ? <div className="mt-1"><span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{lb}</span></div> : null;
                       })()}
+                      {/* 体检意义 */}
+                      <input
+                        value={editing!.data.clinical_significance || ''}
+                        onChange={(e) => setField('clinical_significance', e.target.value)}
+                        placeholder="体检意义（客户展示页可见）"
+                        className="mt-1 w-full text-[10px] border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-400"
+                      />
                     </td>
                     <td className="px-2 py-1.5">
                       <select
@@ -1176,7 +1358,7 @@ export default function CheckupItemsTab() {
                       <RowBtn onClick={() => setEditing(null)}>取消</RowBtn>
                     </td>
                   </tr>
-                  {renderSubItemPicker()}
+                  {renderSubItemPickerSummary()}
                   {renderApplicablePicker()}
                 </>
               )}
@@ -1204,6 +1386,13 @@ export default function CheckupItemsTab() {
                               const lb = appRoleLabel(editing!.data.applicable_roles as any);
                               return lb ? <div className="mt-1"><span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{lb}</span></div> : null;
                             })()}
+                            {/* 体检意义 */}
+                            <input
+                              value={editing!.data.clinical_significance || ''}
+                              onChange={(e) => setField('clinical_significance', e.target.value)}
+                              placeholder="体检意义（客户展示页可见）"
+                              className="mt-1 w-full text-[10px] border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-400"
+                            />
                           </div>
                         ) : (
                           <div>
@@ -1216,6 +1405,12 @@ export default function CheckupItemsTab() {
                               const lb = appRoleLabel(r.applicable_roles);
                               return lb ? <div className="mt-0.5"><span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">{lb}</span></div> : null;
                             })()}
+                            {/* 展示体检意义摘要 */}
+                            {r.clinical_significance && (
+                              <div className="mt-0.5 text-[10px] text-gray-400 truncate max-w-[240px]">
+                                体检意义：{r.clinical_significance}
+                              </div>
+                            )}
                           </div>
                         )}
                       </td>
@@ -1290,7 +1485,7 @@ export default function CheckupItemsTab() {
                         )}
                       </td>
                     </tr>
-                    {editRow && renderSubItemPicker()}
+                    {editRow && renderSubItemPickerSummary()}
                     {editRow && renderApplicablePicker()}
                     {!editRow && r.item_type === 'combo' && r.sub_items && r.sub_items.length > 0 && (
                       <tr className="bg-amber-50/30 border-t-0">
@@ -1313,6 +1508,9 @@ export default function CheckupItemsTab() {
           </table>
         </div>
       )}
+
+      {/* 子项目选择弹窗 */}
+      {renderSubItemPickerModal()}
     </div>
   );
 }

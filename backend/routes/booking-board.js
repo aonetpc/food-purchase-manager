@@ -526,7 +526,7 @@ function makeCheckupItemCrud(routerRef) {
   const basePath = '/config/checkup-items';
   const table = 'booking_checkup_items';
   const requiredFields = ['code', 'name'];
-  const editableFields = ['item_type', 'category', 'description', 'default_price', 'insurance_price', 'unit', 'status', 'sort_order', 'applicable_roles'];
+  const editableFields = ['item_type', 'category', 'description', 'clinical_significance', 'default_price', 'insurance_price', 'unit', 'status', 'sort_order', 'applicable_roles'];
 
   // 查询组合项目的子项目列表
   async function getSubItems(conn, comboItemId) {
