@@ -375,22 +375,18 @@ export default function CheckupItemsTab() {
       ? subItems.filter(r => `${r.name}${r.code}`.toLowerCase().includes(searchVal.toLowerCase()))
       : subItems;
 
-    // 按分类分组
-    const grouped = useMemo(() => {
-      const map = new Map<string, CheckupItemRow[]>();
-      filtered.forEach(r => {
-        const cat = r.category || '其他';
-        if (!map.has(cat)) map.set(cat, []);
-        map.get(cat)!.push(r);
-      });
-      // 当前分类排最前
-      const sortedKeys = [...map.keys()].sort((a, b) => {
-        if (a === currentCategory) return -1;
-        if (b === currentCategory) return 1;
-        return 0;
-      });
-      return { map, sortedKeys };
-    }, [filtered, currentCategory, subPickerOpen]);
+    // 按分类分组（普通函数内不能用 useMemo，改为即时计算）
+    const map = new Map<string, CheckupItemRow[]>();
+    filtered.forEach(r => {
+      const cat = r.category || '其他';
+      if (!map.has(cat)) map.set(cat, []);
+      map.get(cat)!.push(r);
+    });
+    const sortedKeys = [...map.keys()].sort((a, b) => {
+      if (a === currentCategory) return -1;
+      if (b === currentCategory) return 1;
+      return 0;
+    });
 
     const confirm = () => {
       setField('sub_item_ids', Array.from(subPickerPicked));
@@ -453,10 +449,10 @@ export default function CheckupItemsTab() {
 
           {/* 分类分组 */}
           <div className="flex-1 overflow-y-auto p-3 space-y-4">
-            {grouped.sortedKeys.length === 0 ? (
+            {sortedKeys.length === 0 ? (
               <div className="text-center py-10 text-gray-400 text-sm">暂无可选的普通项目</div>
-            ) : grouped.sortedKeys.map(cat => {
-              const items = grouped.map.get(cat) || [];
+            ) : sortedKeys.map(cat => {
+              const items = map.get(cat) || [];
               const isCurrentCat = cat === currentCategory;
               return (
                 <div key={cat}>
