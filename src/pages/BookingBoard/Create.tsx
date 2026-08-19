@@ -402,22 +402,29 @@ interface ImportResult {
 
 // ============================================================
 // 追加项目选择器：居中 Modal 弹窗，分类分组胶囊多选
+// 支持默认选中（原套餐项目）、新增、移除三种操作
 // ============================================================
+interface PickResult {
+  addedIds: string[];    // 新增选中的项目ID
+  removedIds: string[];  // 从原套餐中移除的项目ID
+}
+
 function CapsuleItemPicker(props: {
   open: boolean;
   onClose: () => void;
   lib: CheckupItemRow[];
-  selectedIds: Set<string>;
-  onToggle: (id: string) => void;
-  onConfirm: () => void;
-  includedIds?: Set<string>; // 已包含的项目id（显示禁用/已包含态）
+  defaultSelectedIds: Set<string>; // 原套餐包含的项目（默认选中，可点击移除）
+  userSelectedIds: Set<string>;    // 用户新增选中的项目
+  onToggleUserSelection: (id: string) => void; // 切换用户新增选中
+  onConfirm: (result: PickResult) => void;
   confirmLabel?: string;
-  title?: string; // 可选自定义标题
-  multiplierLabel?: string; // 可选人数乘数标签（如"×3人同步"）
+  title?: string;
+  multiplierLabel?: string;
+  allowRemove?: boolean;
 }) {
   const {
-    open, onClose, selectedIds, onToggle, onConfirm,
-    includedIds, confirmLabel, title, multiplierLabel,
+    open, onClose, defaultSelectedIds, userSelectedIds, onToggleUserSelection, onConfirm,
+    confirmLabel, title, multiplierLabel, allowRemove = true,
   } = props;
 
   // 合并去重 lib
@@ -429,36 +436,8 @@ function CapsuleItemPicker(props: {
   }, [props.lib]);
 
   const [q, setQ] = useState('');
-  // 分类折叠状态（默认展开全部，有选中的分类优先展开）
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  // 打开时重置搜索词 + ESC 键支持
-  useEffect(() => {
-    if (!open) return;
-    setQ('');
-    // 默认展开所有分类，但自动折叠没有选中项的分类（当有选中时）
-    if (selectedIds.size > 0) {
-      const nextCollapsed = new Set<string>();
-      groups.forEach(g => {
-        const hasSel = g.items.some(ci => ci.id && selectedIds.has(ci.id));
-        if (!hasSel) nextCollapsed.add(g.category);
-      });
-      setCollapsed(nextCollapsed);
-    } else {
-      setCollapsed(new Set());
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (selectedIds.size > 0) {
-          if (!confirm(`您已选 ${selectedIds.size} 项未确认追加，确定关闭吗？`)) return;
-        }
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
 
   // 按 CATEGORIES 顺序分组
   const groups = useMemo(() => {
@@ -475,21 +454,57 @@ function CapsuleItemPicker(props: {
     return known.map(k => ({ category: k, items: g[k] || [] })).filter(x => x.items.length > 0);
   }, [effectiveLib, q]);
 
-  const countSel = selectedIds.size;
-  const countInc = includedIds?.size || 0;
+  // 打开时初始化
+  useEffect(() => {
+    if (!open) return;
+    setQ('');
+    setRemovedIds(new Set());
+    // 根据选中状态自动折叠无选中的分类
+    const activeIds = new Set([...userSelectedIds, ...defaultSelectedIds]);
+    if (activeIds.size > 0) {
+      const nextCollapsed = new Set<string>();
+      groups.forEach(g => {
+        const hasActive = g.items.some(ci => ci.id && activeIds.has(ci.id));
+        if (!hasActive) nextCollapsed.add(g.category);
+      });
+      setCollapsed(nextCollapsed);
+    } else {
+      setCollapsed(new Set());
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        const totalChanges = userSelectedIds.size + removedIds.size;
+        if (totalChanges > 0) {
+          if (!confirm(`您有 ${totalChanges} 项变更未确认，确定关闭吗？`)) return;
+        }
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  // 预估追加金额
-  const estimatedTotal = useMemo(() => {
-    let sum = 0;
+  // 统计数量
+  const countAdded = userSelectedIds.size;
+  const countRemoved = removedIds.size;
+  const countDefaultKept = [...defaultSelectedIds].filter(id => !removedIds.has(id)).length;
+
+  // 净变化金额
+  const netChange = useMemo(() => {
+    let addedSum = 0;
+    let removedSum = 0;
     for (const ci of effectiveLib) {
-      if (ci.id && selectedIds.has(ci.id)) {
-        sum += Number(ci.default_price || 0);
+      if (ci.id && userSelectedIds.has(ci.id)) {
+        addedSum += Number(ci.default_price || 0);
+      }
+      if (ci.id && removedIds.has(ci.id)) {
+        removedSum += Number(ci.default_price || 0);
       }
     }
-    return sum;
-  }, [effectiveLib, selectedIds]);
+    return addedSum - removedSum;
+  }, [effectiveLib, userSelectedIds, removedIds]);
 
-  // 搜索匹配高亮辅助函数
   const highlightMatch = (text: string, keyword: string) => {
     if (!keyword) return text;
     const idx = text.toLowerCase().indexOf(keyword.toLowerCase());
@@ -512,28 +527,38 @@ function CapsuleItemPicker(props: {
     });
   };
 
-  const clearSelection = () => {
-    // 通过 onToggle 反选即可清空
-    for (const id of selectedIds) onToggle(id);
+  const clearAll = () => {
+    // 取消所有新增选中
+    for (const id of userSelectedIds) {
+      onToggleUserSelection(id);
+    }
+    // 恢复所有被移除的原套餐项目
+    setRemovedIds(new Set());
   };
 
   const handleClose = () => {
-    if (countSel > 0) {
-      if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
+    const totalChanges = userSelectedIds.size + removedIds.size;
+    if (totalChanges > 0) {
+      if (!confirm(`您有 ${totalChanges} 项变更未确认，确定关闭吗？`)) return;
     }
     onClose();
+  };
+
+  const handleConfirm = () => {
+    const result: PickResult = {
+      addedIds: [...userSelectedIds],
+      removedIds: [...removedIds],
+    };
+    onConfirm(result);
   };
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" onClick={handleClose}>
-      {/* 半透明遮罩 */}
       <div className="absolute inset-0 bg-black/50" />
-
-      {/* 弹窗主体 */}
       <div
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[700px] max-h-[85vh] flex flex-col border border-gray-200"
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[720px] max-h-[85vh] flex flex-col border border-gray-200"
         onClick={e => e.stopPropagation()}
       >
         {/* 标题栏 */}
@@ -542,9 +567,9 @@ function CapsuleItemPicker(props: {
             <div className="flex items-center gap-2">
               <ClipboardList size={16} className="text-green-600" />
               <span className="text-sm font-semibold text-gray-800">
-                {title || '追加体检项目'}
+                {title || '体检项目配置'}
               </span>
-              <span className="text-xs text-gray-400">（按分类多选，已包含项目不可选）</span>
+              <span className="text-xs text-gray-400">（勾选新增 · 点击已选可取消 · 原套餐项目默认选中）</span>
             </div>
             <button
               onClick={handleClose}
@@ -579,13 +604,25 @@ function CapsuleItemPicker(props: {
           {/* 统计信息 */}
           <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
             <span>
-              已选 <span className="font-semibold text-green-600">{countSel}</span> 项
-              {countInc > 0 && <span className="mx-1">· 已包含 <span className="text-gray-400">{countInc}</span> 项（灰色）</span>}
-              <span className="mx-1">· 共 <span className="text-gray-400">{effectiveLib.length}</span> 个项目</span>
+              <span className="text-gray-400">共 {effectiveLib.length} 项</span>
+              <span className="mx-1">·</span>
+              <span className="text-green-600 font-semibold">{countDefaultKept}</span> 原套餐保留
+              {countRemoved > 0 && (
+                <>
+                  <span className="mx-1">·</span>
+                  <span className="text-red-500 font-semibold">{countRemoved}</span> 已移除
+                </>
+              )}
+              {countAdded > 0 && (
+                <>
+                  <span className="mx-1">·</span>
+                  <span className="text-green-600 font-semibold">{countAdded}</span> 新增
+                </>
+              )}
             </span>
-            {countSel > 0 && (
-              <span className="text-green-600 font-mono font-semibold">
-                预估新增 ¥{estimatedTotal.toLocaleString()}
+            {(countAdded > 0 || countRemoved > 0) && (
+              <span className={`font-mono font-semibold ${netChange >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                净变化 {netChange >= 0 ? '+' : ''}¥{netChange.toLocaleString()}
                 {multiplierLabel && <span className="ml-1 text-xs text-gray-400 font-normal">({multiplierLabel})</span>}
               </span>
             )}
@@ -601,19 +638,15 @@ function CapsuleItemPicker(props: {
                   ? '项目库暂无数据（请在「业务配置」中添加体检项目）'
                   : '没有匹配的项目，请换关键词搜索'}
               </div>
-              {effectiveLib.length === 0 && (
-                <div className="text-[10px] text-gray-300">
-                  当前共 {effectiveLib.length} 个项目
-                </div>
-              )}
             </div>
           )}
           {groups.map(g => {
             const isCollapsed = collapsed.has(g.category);
-            const groupSelCount = g.items.filter(ci => ci.id && selectedIds.has(ci.id)).length;
+            const groupCountAdded = g.items.filter(ci => ci.id && userSelectedIds.has(ci.id)).length;
+            const groupCountRemoved = g.items.filter(ci => ci.id && removedIds.has(ci.id)).length;
+            const groupCountDefault = g.items.filter(ci => ci.id && defaultSelectedIds.has(ci.id) && !removedIds.has(ci.id)).length;
             return (
               <div key={g.category} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                {/* 分类标题 - 可折叠 */}
                 <button
                   onClick={() => toggleCollapse(g.category)}
                   className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 transition-colors"
@@ -621,9 +654,11 @@ function CapsuleItemPicker(props: {
                   <span className="inline-block w-1 h-4 rounded-sm shrink-0 bg-green-500" />
                   <span className="text-xs font-bold text-gray-800 flex-1 text-left">{g.category}</span>
                   <span className="text-[10px] text-gray-400">{g.items.length} 项</span>
-                  {groupSelCount > 0 && (
-                    <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">
-                      已选 {groupSelCount}
+                  {(groupCountAdded > 0 || groupCountRemoved > 0 || groupCountDefault > 0) && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                      {groupCountDefault > 0 && <span className="bg-green-100 text-green-700">{groupCountDefault} 套餐</span>}
+                      {groupCountAdded > 0 && <span className="bg-blue-100 text-blue-700">+{groupCountAdded}</span>}
+                      {groupCountRemoved > 0 && <span className="bg-red-100 text-red-600">-{groupCountRemoved}</span>}
                     </span>
                   )}
                   {isCollapsed ? (
@@ -632,39 +667,79 @@ function CapsuleItemPicker(props: {
                     <ChevronUp size={14} className="text-gray-400" />
                   )}
                 </button>
-                {/* 项目列表 */}
                 {!isCollapsed && (
                   <div className="px-3 pb-3 flex flex-wrap gap-1.5">
                     {g.items.map(ci => {
-                      const isIncluded = !!(includedIds && ci.id && includedIds.has(ci.id));
-                      const isSel = !!(ci.id && selectedIds.has(ci.id));
-                      const disabled = !!isIncluded;
+                      const id = ci.id || '';
+                      const isDefault = !!id && defaultSelectedIds.has(id);
+                      const isRemoved = !!id && removedIds.has(id);
+                      const isNewSelected = !!id && userSelectedIds.has(id);
+
+                      // 三种状态的样式
+                      let stateClass = '';
+                      let iconEl: React.ReactNode = <span className="inline-block w-2" />;
+                      let tagEl: React.ReactNode = null;
+
+                      if (isDefault && !isRemoved) {
+                        // 原套餐保留：绿色 + [套餐] 标签
+                        stateClass = 'bg-green-500/15 border-green-500 text-green-700 shadow-sm hover:bg-green-500/20';
+                        iconEl = <CheckCircle size={10} />;
+                        tagEl = <span className="text-[9px] bg-green-500 text-white px-1 py-0 rounded-sm font-medium">套餐</span>;
+                      } else if (isRemoved) {
+                        // 从原套餐移除：红色 + × 图标
+                        stateClass = 'bg-red-50 border-red-300 text-red-500 line-through opacity-70 hover:bg-red-100';
+                        iconEl = <span className="text-red-400">×</span>;
+                        tagEl = <span className="text-[9px] bg-red-400 text-white px-1 py-0 rounded-sm font-medium">已移除</span>;
+                      } else if (isNewSelected) {
+                        // 用户新增选中：蓝色
+                        stateClass = 'bg-blue-500/10 border-blue-500 text-blue-700 shadow-sm hover:bg-blue-500/20';
+                        iconEl = <CheckCircle size={10} className="text-blue-600" />;
+                      } else {
+                        // 未选择
+                        stateClass = 'bg-white border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50';
+                      }
+
+                      const isClickable = !isDefault || allowRemove;
+
                       return (
                         <button
-                          key={ci.id || ci.name}
-                          disabled={disabled}
-                          onClick={() => ci.id && onToggle(ci.id)}
+                          key={id || ci.name}
+                          disabled={!isClickable && !isRemoved}
+                          onClick={() => {
+                            if (!id) return;
+                            if (isDefault) {
+                              if (!allowRemove) return;
+                              setRemovedIds(prev => {
+                                const n = new Set(prev);
+                                if (n.has(id)) n.delete(id);
+                                else n.add(id);
+                                return n;
+                              });
+                            } else {
+                              onToggleUserSelection(id);
+                            }
+                          }}
                           className={[
-                            'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-all shrink-0',
-                            disabled
-                              ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed opacity-70'
-                              : isSel
-                                ? 'bg-green-500/15 border-green-500 text-green-700 shadow-sm hover:bg-green-500/20'
-                                : 'bg-white border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50',
+                            'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-all shrink-0 cursor-pointer',
+                            stateClass,
+                            isRemoved ? 'cursor-pointer' : '',
                           ].join(' ')}
-                          title={disabled ? '该项目已包含在套餐中，不可重复选择' : `${ci.name} ¥${Number(ci.default_price || 0).toFixed(0)}`}
+                          title={
+                            isDefault && !isRemoved
+                              ? '点击从套餐中移除此项目'
+                              : isRemoved
+                              ? '点击恢复到套餐中'
+                              : `${ci.name} ¥${Number(ci.default_price || 0).toFixed(0)}`
+                          }
                         >
-                          {disabled ? (
-                            <CheckCircle size={10} className="opacity-70" />
-                          ) : isSel ? (
-                            <CheckCircle size={10} />
-                          ) : (
-                            <span className="inline-block w-2" />
-                          )}
+                          {iconEl}
+                          {tagEl}
                           <span className="truncate max-w-[180px]">
-                            {q && !disabled ? highlightMatch(ci.name, q) : ci.name}
+                            {q ? highlightMatch(ci.name, q) : ci.name}
                           </span>
-                          <span className="font-mono opacity-70 text-[10px]">¥{Number(ci.default_price || 0).toFixed(0)}</span>
+                          <span className={`font-mono text-[10px] ${isDefault && !isRemoved ? 'opacity-100' : 'opacity-70'}`}>
+                            ¥{Number(ci.default_price || 0).toFixed(0)}
+                          </span>
                         </button>
                       );
                     })}
@@ -678,26 +753,35 @@ function CapsuleItemPicker(props: {
         {/* 底部确认条 - 始终可见 */}
         <div className="shrink-0 border-t border-gray-200 px-4 py-3 bg-gray-50 flex items-center justify-between">
           <div className="text-xs text-gray-500">
-            {countSel > 0 ? (
+            {countAdded > 0 || countRemoved > 0 ? (
               <>
-                已选 <span className="font-semibold text-green-600">{countSel}</span> 项
+                {countDefaultKept > 0 && (
+                  <><span className="text-green-600 font-semibold">{countDefaultKept}</span> 套餐项目保留</>
+                )}
+                {countRemoved > 0 && (
+                  <><span className="mx-1">·</span><span className="text-red-500 font-semibold">{countRemoved}</span> 项移除</>
+                )}
+                {countAdded > 0 && (
+                  <><span className="mx-1">·</span><span className="text-blue-600 font-semibold">{countAdded}</span> 项新增</>
+                )}
                 <span className="mx-1">·</span>
-                预估新增 <span className="font-mono font-semibold text-green-600">¥{estimatedTotal.toLocaleString()}</span>
-                {multiplierLabel && <span className="ml-1 text-gray-400">({multiplierLabel})</span>}
+                净变化 <span className={`font-mono font-semibold ${netChange >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  {netChange >= 0 ? '+' : ''}¥{netChange.toLocaleString()}
+                </span>
               </>
             ) : (
-              <span className="text-gray-400">请从上方分类中选择要追加的项目</span>
+              <span className="text-gray-400">点击项目进行勾选新增或取消选择</span>
             )}
           </div>
           <div className="flex gap-2">
-            {countSel > 0 && (
+            {(countAdded > 0 || countRemoved > 0) && (
               <button
-                onClick={clearSelection}
+                onClick={clearAll}
                 className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-500 border border-gray-200 transition-colors"
-                title="清空全部已选项"
+                title="清空所有变更（取消新增 + 恢复移除）"
               >
                 <Eraser size={12} />
-                清空
+                重置
               </button>
             )}
             <button
@@ -707,17 +791,17 @@ function CapsuleItemPicker(props: {
               取消
             </button>
             <button
-              onClick={onConfirm}
-              disabled={countSel === 0}
+              onClick={handleConfirm}
+              disabled={countAdded === 0 && countRemoved === 0}
               className={[
                 'inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg text-white font-medium transition-colors',
-                countSel === 0
+                countAdded === 0 && countRemoved === 0
                   ? 'bg-gray-300 cursor-not-allowed'
                   : 'bg-green-500 hover:bg-green-600 shadow-sm',
               ].join(' ')}
             >
               <CheckCircle size={12} />
-              {confirmLabel || `确认追加 ${countSel} 项`}
+              {confirmLabel || `确认 (新增 ${countAdded} / 移除 ${countRemoved})`}
             </button>
           </div>
         </div>
@@ -740,18 +824,19 @@ function PaxItemsEditor(props: {
   pkgCode: string;
   checkupItemsLib: CheckupItemRow[];
   onRemoveItem: (itemIdx: number) => void;
+  onRemoveItemById: (itemId: string) => void;
   onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
   onReset: () => void;
   onAddItem: (ci: CheckupItemRow) => void;
-  fallbackLib?: CheckupItemRow[]; // 项目库为空时的兜底
+  fallbackLib?: CheckupItemRow[];
 }) {
   const {
     index, pax, paxAmount, items, hasCustom, pkgName, pkgCode,
-    checkupItemsLib, onRemoveItem, onUpdateItemField, onReset, onAddItem,
+    checkupItemsLib, onRemoveItem, onRemoveItemById, onUpdateItemField, onReset, onAddItem,
     fallbackLib = [],
   } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
-  // 多选选中态
+  // 用户新增选中态
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
   // 合并最终 lib：项目库优先；不足时兜底 + 从当前 items 反推（保证不空）
   const finalLib = useMemo<CheckupItemRow[]>(() => {
@@ -778,18 +863,21 @@ function PaxItemsEditor(props: {
     }
     return Array.from(byId.values());
   }, [checkupItemsLib, fallbackLib, items]);
-  const includedIds = useMemo(() => new Set(items.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [items]);
-  // 点击胶囊切换选中
-  const toggle = (id: string) => {
+  const defaultSelectedIds = useMemo(() => new Set(items.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [items]);
+  const toggleUserSelection = (id: string) => {
     setPickedIds(prev => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id); else n.add(id);
       return n;
     });
   };
-  const confirm = () => {
-    // 按 pickedIds 从 lib 中依次调用 onAddItem（兼容旧的单条添加）
-    for (const id of pickedIds) {
+  const confirm = (result: PickResult) => {
+    // 处理移除的项目（先移除再新增，避免冲突）
+    for (const id of result.removedIds) {
+      onRemoveItemById(id);
+    }
+    // 处理新增的项目
+    for (const id of result.addedIds) {
       const ci = finalLib.find(x => x.id === id);
       if (ci) onAddItem(ci);
     }
@@ -903,18 +991,18 @@ function PaxItemsEditor(props: {
           onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
           className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
         >
-          <Plus size={11}/> 追加项目（按分类多选）
+          <Plus size={11}/> 配置项目（按分类多选增/删）
         </button>
         <CapsuleItemPicker
           open={pickerOpen}
           onClose={closePicker}
           lib={finalLib}
-          selectedIds={pickedIds}
-          onToggle={toggle}
+          defaultSelectedIds={defaultSelectedIds}
+          userSelectedIds={pickedIds}
+          onToggleUserSelection={toggleUserSelection}
           onConfirm={confirm}
-          includedIds={includedIds}
-          confirmLabel={`确认追加 ${pickedIds.size} 项`}
-          title="追加体检项目"
+          confirmLabel="确认配置"
+          title="体检项目配置（可增可减）"
         />
       </div>
     </div>
@@ -932,6 +1020,7 @@ function PaxItemsEditorModal(props: {
   checkupItemsLib: CheckupItemRow[];
   hasSharedEdits: boolean;
   onRemoveItem: (itemIdx: number) => void;
+  onRemoveItemById: (itemId: string) => void;
   onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
   onReset: () => void;
   onAddItem: (ci: CheckupItemRow) => void;
@@ -995,6 +1084,7 @@ function PaxItemsEditorModal(props: {
             pkgCode={props.pkgCode}
             checkupItemsLib={props.checkupItemsLib}
             onRemoveItem={props.onRemoveItem}
+            onRemoveItemById={props.onRemoveItemById}
             onUpdateItemField={props.onUpdateItemField}
             onReset={props.onReset}
             onAddItem={props.onAddItem}
@@ -1018,13 +1108,14 @@ function PackageGroupSummary(props: {
   singlePaxAmountFn: (sharedOverride: CustomPackageItem[]) => number;
   onAddItem: (ci: CheckupItemRow) => void;
   onRemoveItem: (itemIdx: number) => void;
+  onRemoveItemById: (itemId: string) => void;
   onUpdateItemField: (itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) => void;
   onReset: () => void;
 }) {
   const {
     pkgCode, pkgName, pkgPrice, paxList, sharedItems, hasSharedEdits,
     isCustomizedFn, checkupItemsLib, singlePaxAmountFn,
-    onAddItem, onRemoveItem, onUpdateItemField, onReset,
+    onAddItem, onRemoveItem, onRemoveItemById, onUpdateItemField, onReset,
   } = props;
 
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1063,16 +1154,21 @@ function PackageGroupSummary(props: {
     }
     return Array.from(byId.values());
   }, [checkupItemsLib, sharedItems]);
-  const includedIds = useMemo(() => new Set(sharedItems.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [sharedItems]);
-  const toggle = (id: string) => {
+  const defaultSelectedIds = useMemo(() => new Set(sharedItems.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [sharedItems]);
+  const toggleUserSelection = (id: string) => {
     setPickedIds(prev => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id); else n.add(id);
       return n;
     });
   };
-  const confirm = () => {
-    for (const id of pickedIds) {
+  const confirm = (result: PickResult) => {
+    // 处理移除的项目
+    for (const id of result.removedIds) {
+      onRemoveItemById(id);
+    }
+    // 处理新增的项目
+    for (const id of result.addedIds) {
       const ci = finalLib.find(x => x.id === id);
       if (ci) onAddItem(ci);
     }
@@ -1201,25 +1297,24 @@ function PackageGroupSummary(props: {
         </table>
       </div>
 
-      {/* 底部：批量追加 + 说明 */}
       <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between">
         <div>
           <button
             onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
           >
-            <Plus size={11}/> 批量追加项目（同步到 {nStandard} 位标准人员 · 按分类多选）
+            <Plus size={11}/> 批量配置项目（同步到 {nStandard} 位标准人员 · 可增可减）
           </button>
           <CapsuleItemPicker
             open={pickerOpen}
             onClose={closePicker}
             lib={finalLib}
-            selectedIds={pickedIds}
-            onToggle={toggle}
+            defaultSelectedIds={defaultSelectedIds}
+            userSelectedIds={pickedIds}
+            onToggleUserSelection={toggleUserSelection}
             onConfirm={confirm}
-            includedIds={includedIds}
-            confirmLabel={nStandard > 1 ? `确认追加 ${pickedIds.size} 项（×${nStandard}人同步）` : `确认追加 ${pickedIds.size} 项`}
-            title="批量追加体检项目"
+            confirmLabel={nStandard > 1 ? `确认配置（×${nStandard}人同步）` : '确认配置'}
+            title="批量配置体检项目（可增可减）"
             multiplierLabel={nStandard > 1 ? `×${nStandard}人同步` : undefined}
           />
         </div>
@@ -1792,6 +1887,16 @@ export default function BookingBoardCreate(props: {
     }));
   }
 
+  // 定制：按 item_id 移除项目（用于 diff 回调整）
+  function removePaxItemById(idx: number, itemId: string) {
+    setChkPax((prev) => prev.map((p, i) => {
+      if (i !== idx) return p;
+      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const next = base.filter((it: any) => String(it.item_id || it.id || '') !== itemId);
+      return { ...p, customItems: next };
+    }));
+  }
+
   // 定制：重置为套餐原始项目
   function resetPaxItems(idx: number) {
     setChkPax((prev) => prev.map((p, i) => (i === idx ? { ...p, customItems: null } : p)));
@@ -1919,6 +2024,13 @@ export default function BookingBoardCreate(props: {
   function removeSharedItem(pkgCode: string, itemIdx: number) {
     const base = getSharedItems(pkgCode);
     const next = base.filter((_, i) => i !== itemIdx);
+    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
+  }
+
+  // 套餐共享版：按 item_id 移除项目（用于 diff 回调整）
+  function removeSharedItemById(pkgCode: string, itemId: string) {
+    const base = getSharedItems(pkgCode);
+    const next = base.filter((it: any) => String(it.item_id || it.id || '') !== itemId);
     setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
   }
 
@@ -3129,6 +3241,7 @@ export default function BookingBoardCreate(props: {
                               }
                               onAddItem={(ci) => addSharedItem(pkgCode, ci)}
                               onRemoveItem={(ii) => removeSharedItem(pkgCode, ii)}
+                              onRemoveItemById={(id) => removeSharedItemById(pkgCode, id)}
                               onUpdateItemField={(ii, f, v) => updateSharedItemField(pkgCode, ii, f, v)}
                               onReset={() => resetSharedItems(pkgCode)}
                             />
@@ -3159,6 +3272,7 @@ export default function BookingBoardCreate(props: {
                         checkupItemsLib={checkupItemsLib}
                         hasSharedEdits={hasSharedEdits(pax.package)}
                         onRemoveItem={(itemIdx) => removePaxItem(editingPaxIdx, itemIdx)}
+                        onRemoveItemById={(id) => removePaxItemById(editingPaxIdx, id)}
                         onUpdateItemField={(itemIdx, field, val) => updatePaxItemField(editingPaxIdx, itemIdx, field, val)}
                         onReset={() => resetPaxItems(editingPaxIdx)}
                         onAddItem={(ci) => addItemToPax(editingPaxIdx, ci)}
