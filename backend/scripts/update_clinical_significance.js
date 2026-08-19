@@ -232,9 +232,32 @@ const mappings = [
   ['CT动态分析', '影像', 'CT动态扫描分析，评估脏器血流灌注'],
 ];
 
+async function ensureColumn() {
+  // 先确保列存在（幂等）
+  try {
+    await pool.query(
+      `ALTER TABLE booking_checkup_items ADD COLUMN clinical_significance VARCHAR(500) NULL COMMENT '检查意义/临床意义'`
+    );
+    console.log('  ✅ 已添加 clinical_significance 列');
+  } catch (err) {
+    if (err.errno === 1060) {
+      console.log('  ℹ️  clinical_significance 列已存在，跳过');
+    } else {
+      throw err;
+    }
+  }
+}
+
 async function main() {
   console.log('\n🔬 体检项目体检意义批量更新');
   console.log('═'.repeat(60));
+
+  // Step 1: 确保列存在
+  console.log('\n📋 Step 1: 检查并添加 clinical_significance 列...');
+  await ensureColumn();
+
+  // Step 2: 批量更新数据
+  console.log('\n📋 Step 2: 批量更新体检意义数据...');
 
   let success = 0;
   let failed = 0;
