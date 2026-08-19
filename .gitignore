@@ -17,6 +17,10 @@ dist-ssr
 .env.local
 .env.*.local
 
+# GitHub 认证凭证（持久化在 workspace，绝对不能提交）
+.netrc
+.git-cred-helper.sh
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
