@@ -2,18 +2,8 @@
 -- 说明：覆盖 201 个体检项目的体检意义描述
 -- 迁移 085 因 schema_migrations 已存在记录导致未执行，改用新编号 086
 
--- 先确保列存在（幂等）
-SET @col_exists = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'booking_checkup_items' AND COLUMN_NAME = 'clinical_significance'
-);
-SET @sql = IF(@col_exists = 0,
-  'ALTER TABLE booking_checkup_items ADD COLUMN clinical_significance VARCHAR(500) NULL COMMENT ''检查意义/临床意义''',
-  'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
+-- 先确保列存在（migrate.js 已内置 errno 1060 忽略逻辑，列已存在时自动跳过）
+ALTER TABLE booking_checkup_items ADD COLUMN clinical_significance VARCHAR(500) NULL COMMENT '检查意义/临床意义';
 
 -- 以下按 name + category 精确匹配更新
 
