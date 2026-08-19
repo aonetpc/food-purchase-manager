@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -14,6 +14,7 @@ import {
   CheckCircle,
   ClipboardList,
   ChevronDown,
+  ChevronUp,
   RefreshCw,
   Edit3,
   Search,
@@ -118,15 +119,56 @@ function parseIdCardMeta(id: string): { gender?: '男' | '女'; birthDate?: stri
   return result;
 }
 
-// 销售套餐胶囊名称兜底：如果是「套餐{UUID}」格式则生成友好名
-function friendlyCapsuleName(cap: any): string {
+// 销售套餐胶囊名称兜底：识别 UUID/纯ID 等自动生成名，生成友好名
+function friendlyCapsuleName(cap: any, knownPackages?: Array<{ code: string; name: string; items?: any[] }>): string {
   if (!cap) return '';
-  const raw = String(cap.name || '');
-  const uglyRe = /^套餐\s*[0-9a-fA-F-]{8,}$/;
-  if (!uglyRe.test(raw)) return raw;
-  // 优先用 code 字段
+  const raw = String(cap.name || '').trim();
+
+  // 1. 空名称兜底
+  if (!raw) return cap.code ? `${cap.code}套餐` : '体检套餐';
+
+  // 2. 识别各种"丑陋"自动生成格式
+  const uglyPatterns = [
+    /^套餐\s*[0-9a-fA-F-]{8,}$/,          // 套餐-UUID格式
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F-]+$/,     // 纯UUID
+    /^[0-9]+$/,                           // 纯数字ID
+    /^[Pp]KG[_-]?\w+$/,                   // pkg_xxx / PKG_xxx
+    /^[Pp]ackage[_-]?\w+$/,              // package_xxx
+    /^[0-9a-fA-F]{12,}$/,                // 无分隔长十六进制串
+  ];
+  const isUgly = uglyPatterns.some(p => p.test(raw));
+
+  // 如果名称看起来正常（含中文、或至少2个可读单词），直接返回
+  if (!isUgly && /[\u4e00-\u9fa5]/.test(raw)) return raw;
+  if (!isUgly && raw.split(/\s+/).length >= 2) return raw;
+
+  // 3. 尝试从已知套餐库中查找匹配（通过 item_id 相似度关联）
+  if (knownPackages && Array.isArray(cap.items) && cap.items.length > 0) {
+    const capItemIds = new Set(
+      cap.items.map((it: any) => String(it.item_id || '').trim()).filter(Boolean)
+    );
+    if (capItemIds.size > 0) {
+      let bestMatch: { name: string; score: number } | null = null;
+      for (const pkg of knownPackages) {
+        const pkgItemIds = new Set(
+          (pkg.items || []).map((it: any) => String(it.item_id || '').trim()).filter(Boolean)
+        );
+        if (pkgItemIds.size === 0) continue;
+        let matchCount = 0;
+        capItemIds.forEach((id: string) => { if (pkgItemIds.has(id)) matchCount++; });
+        const score = matchCount / Math.min(capItemIds.size, pkgItemIds.size);
+        if (score > 0.4 && (!bestMatch || score > bestMatch.score)) {
+          bestMatch = { name: pkg.name, score };
+        }
+      }
+      if (bestMatch) return bestMatch.name;
+    }
+  }
+
+  // 4. 用 code 字段兜底
   if (cap.code) return `${cap.code}套餐`;
-  // 否则按角色价拼接
+
+  // 5. 按角色价拼接
   const prices = cap.prices || {};
   const parts: string[] = [];
   const malePrice = Number(prices.male?.discount_price || 0);
@@ -359,7 +401,7 @@ interface ImportResult {
 }
 
 // ============================================================
-// 追加项目选择器：分类分组胶囊多选（替代原来的单条下拉列表）
+// 追加项目选择器：居中 Modal 弹窗，分类分组胶囊多选
 // ============================================================
 function CapsuleItemPicker(props: {
   open: boolean;
@@ -370,14 +412,15 @@ function CapsuleItemPicker(props: {
   onConfirm: () => void;
   includedIds?: Set<string>; // 已包含的项目id（显示禁用/已包含态）
   confirmLabel?: string;
-  anchorRef?: React.RefObject<HTMLElement | null>; // 锚点按钮（可选）；未传则用组件自身外层容器
-  width?: number; // 像素宽度，默认 560
+  title?: string; // 可选自定义标题
+  multiplierLabel?: string; // 可选人数乘数标签（如"×3人同步"）
 }) {
   const {
     open, onClose, selectedIds, onToggle, onConfirm,
-    includedIds, confirmLabel, width = 560,
+    includedIds, confirmLabel, title, multiplierLabel,
   } = props;
-  // 合并兜底 lib（从 props.lib + fallbackLib）
+
+  // 合并去重 lib
   const effectiveLib = useMemo<CheckupItemRow[]>(() => {
     const base = Array.isArray(props.lib) ? props.lib : [];
     const byId = new Map<string, CheckupItemRow>();
@@ -386,53 +429,36 @@ function CapsuleItemPicker(props: {
   }, [props.lib]);
 
   const [q, setQ] = useState('');
-  const shellRef = useRef<HTMLDivElement | null>(null);
-  const outerRef = useRef<HTMLDivElement | null>(null);
-  // 面板位置（fixed坐标）+ 是否向上弹出
-  const [pos, setPos] = useState<{ top: number; left: number; placeUp: boolean }>({ top: 0, left: 0, placeUp: false });
-  // 跟随锚点更新位置
-  useLayoutEffect(() => {
+  // 分类折叠状态（默认展开全部，有选中的分类优先展开）
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // 打开时重置搜索词 + ESC 键支持
+  useEffect(() => {
     if (!open) return;
-    const calcPos = () => {
-      // 定位优先级：1) anchorRef 2) 外层按钮 div 内第一个可见按钮 3) outerRef 自身
-      let el: HTMLElement | null = null;
-      if (props.anchorRef?.current) el = props.anchorRef.current as HTMLElement;
-      else {
-        const root = outerRef.current;
-        if (root) el = root.querySelector('button') || root;
-      }
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const panelW = width;
-      const panelH = 520; // 估算最大高度（max-h-[75vh]也会控制）
-      const margin = 8;
-      // left：面板贴齐按钮左边，若超右边界则回退
-      let left = r.left;
-      const rightMost = left + panelW;
-      if (rightMost > window.innerWidth - margin) {
-        left = Math.max(margin, window.innerWidth - panelW - margin);
-      }
-      // 优先下方弹出；下方不够且上方空间更多时，向上弹出
-      const belowSpace = window.innerHeight - r.bottom;
-      const aboveSpace = r.top;
-      let placeUp = false;
-      let top = r.bottom + 6;
-      if (belowSpace < Math.min(panelH, 420) && aboveSpace > belowSpace) {
-        placeUp = true;
-        top = r.top - 6; // 由 bottom 控制
-      }
-      setPos({ top, left, placeUp });
-    };
-    calcPos();
-    // 打开时重置搜索词
     setQ('');
-    window.addEventListener('scroll', calcPos, true);
-    window.addEventListener('resize', calcPos, true);
-    return () => {
-      window.removeEventListener('scroll', calcPos, true);
-      window.removeEventListener('resize', calcPos, true);
+    // 默认展开所有分类，但自动折叠没有选中项的分类（当有选中时）
+    if (selectedIds.size > 0) {
+      const nextCollapsed = new Set<string>();
+      groups.forEach(g => {
+        const hasSel = g.items.some(ci => ci.id && selectedIds.has(ci.id));
+        if (!hasSel) nextCollapsed.add(g.category);
+      });
+      setCollapsed(nextCollapsed);
+    } else {
+      setCollapsed(new Set());
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedIds.size > 0) {
+          if (!confirm(`您已选 ${selectedIds.size} 项未确认追加，确定关闭吗？`)) return;
+        }
+        onClose();
+      }
     };
-  }, [open, width, props.anchorRef]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // 按 CATEGORIES 顺序分组
   const groups = useMemo(() => {
@@ -448,94 +474,167 @@ function CapsuleItemPicker(props: {
     }
     return known.map(k => ({ category: k, items: g[k] || [] })).filter(x => x.items.length > 0);
   }, [effectiveLib, q]);
+
   const countSel = selectedIds.size;
   const countInc = includedIds?.size || 0;
 
+  // 预估追加金额
+  const estimatedTotal = useMemo(() => {
+    let sum = 0;
+    for (const ci of effectiveLib) {
+      if (ci.id && selectedIds.has(ci.id)) {
+        sum += Number(ci.default_price || 0);
+      }
+    }
+    return sum;
+  }, [effectiveLib, selectedIds]);
+
+  // 搜索匹配高亮辅助函数
+  const highlightMatch = (text: string, keyword: string) => {
+    if (!keyword) return text;
+    const idx = text.toLowerCase().indexOf(keyword.toLowerCase());
+    if (idx < 0) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark className="bg-yellow-200 text-gray-900 rounded px-0.5">{text.slice(idx, idx + keyword.length)}</mark>
+        {text.slice(idx + keyword.length)}
+      </>
+    );
+  };
+
+  const toggleCollapse = (cat: string) => {
+    setCollapsed(prev => {
+      const n = new Set(prev);
+      if (n.has(cat)) n.delete(cat);
+      else n.add(cat);
+      return n;
+    });
+  };
+
+  const clearSelection = () => {
+    // 通过 onToggle 反选即可清空
+    for (const id of selectedIds) onToggle(id);
+  };
+
+  const handleClose = () => {
+    if (countSel > 0) {
+      if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
+    }
+    onClose();
+  };
+
+  if (!open) return null;
+
   return (
-    <div className={''} ref={outerRef}>
-      {open && (
-        <>
-          {/* 全局固定遮罩：层级高于 modal(z-[80]) */}
-          <div
-            className="fixed inset-0 z-[95] bg-black/10"
-            onClick={() => {
-              if (countSel > 0) {
-                if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
-              }
-              onClose();
-            }}
-          />
-          <div
-            ref={shellRef}
-            style={{
-              position: 'fixed',
-              zIndex: 96,
-              top: pos.placeUp ? undefined : pos.top,
-              bottom: pos.placeUp ? (window.innerHeight - pos.top) : undefined,
-              left: pos.left,
-              width: width,
-              maxWidth: 'calc(100vw - 16px)',
-            }}
-            className={`max-h-[75vh] overflow-hidden bg-white border border-gray-200 rounded-2xl shadow-2xl flex flex-col`}
-            onClick={e => e.stopPropagation()}
-          >
-            {/* 顶部搜索 */}
-            <div className="p-3 border-b border-gray-100 shrink-0">
-              <div className="relative">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  value={q}
-                  onChange={e => setQ(e.target.value)}
-                  placeholder="搜索体检项目（按名称模糊搜索）..."
-                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
-                  autoFocus
-                />
-              </div>
-              <div className="flex items-center justify-between mt-2 text-[10px] text-gray-400">
-                <span>
-                  按分类浏览，点击胶囊多选；已勾选
-                  <span className="text-green-600 font-semibold mx-1">{countSel}</span>
-                  项
-                  {countInc > 0 && <span className="mx-1">· 已包含 {countInc} 项（灰色）</span>}
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (countSel > 0) {
-                      if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
-                    }
-                    onClose();
-                  }}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  关闭
-                </button>
-              </div>
+    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" onClick={handleClose}>
+      {/* 半透明遮罩 */}
+      <div className="absolute inset-0 bg-black/50" />
+
+      {/* 弹窗主体 */}
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[700px] max-h-[85vh] flex flex-col border border-gray-200"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* 标题栏 */}
+        <div className="shrink-0 px-4 py-3 border-b border-gray-200">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <ClipboardList size={16} className="text-green-600" />
+              <span className="text-sm font-semibold text-gray-800">
+                {title || '追加体检项目'}
+              </span>
+              <span className="text-xs text-gray-400">（按分类多选，已包含项目不可选）</span>
             </div>
-            {/* 分类组 */}
-            <div className="overflow-y-auto flex-1 px-3 py-2 space-y-3">
-              {groups.length === 0 && (
-                <div className="py-8 text-center text-xs text-gray-400 space-y-1">
-                  <div>
-                    {effectiveLib.length === 0
-                      ? '项目库暂无数据（请在「业务配置」中添加体检项目）'
-                      : '没有匹配的项目，请换关键词搜索'}
-                  </div>
-                  {effectiveLib.length === 0 && (
-                    <div className="text-[10px] text-gray-300">
-                      当前共 {effectiveLib.length} 个项目
-                    </div>
-                  )}
+            <button
+              onClick={handleClose}
+              className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors"
+              title="关闭 (Esc)"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* 搜索框 */}
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="搜索体检项目（按名称模糊搜索）..."
+              className="w-full pl-8 pr-8 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
+              autoFocus
+            />
+            {q && (
+              <button
+                onClick={() => setQ('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                title="清空搜索"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* 统计信息 */}
+          <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
+            <span>
+              已选 <span className="font-semibold text-green-600">{countSel}</span> 项
+              {countInc > 0 && <span className="mx-1">· 已包含 <span className="text-gray-400">{countInc}</span> 项（灰色）</span>}
+              <span className="mx-1">· 共 <span className="text-gray-400">{effectiveLib.length}</span> 个项目</span>
+            </span>
+            {countSel > 0 && (
+              <span className="text-green-600 font-mono font-semibold">
+                预估新增 ¥{estimatedTotal.toLocaleString()}
+                {multiplierLabel && <span className="ml-1 text-xs text-gray-400 font-normal">({multiplierLabel})</span>}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* 滚动内容区 */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50/30">
+          {groups.length === 0 && (
+            <div className="py-10 text-center text-xs text-gray-400 space-y-2">
+              <div>
+                {effectiveLib.length === 0
+                  ? '项目库暂无数据（请在「业务配置」中添加体检项目）'
+                  : '没有匹配的项目，请换关键词搜索'}
+              </div>
+              {effectiveLib.length === 0 && (
+                <div className="text-[10px] text-gray-300">
+                  当前共 {effectiveLib.length} 个项目
                 </div>
               )}
-              {groups.map(g => (
-                <div key={g.category}>
-                  <div className="flex items-center gap-2 mb-1.5 px-2 py-1 rounded-md bg-gray-50">
-                    <span className="inline-block w-1 h-3.5 rounded-sm shrink-0 bg-green-500" />
-                    <span className="text-[11px] font-bold text-gray-800">{g.category}</span>
-                    <span className="text-[10px] text-gray-400 font-normal">{g.items.length}项</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 px-0.5">
+            </div>
+          )}
+          {groups.map(g => {
+            const isCollapsed = collapsed.has(g.category);
+            const groupSelCount = g.items.filter(ci => ci.id && selectedIds.has(ci.id)).length;
+            return (
+              <div key={g.category} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                {/* 分类标题 - 可折叠 */}
+                <button
+                  onClick={() => toggleCollapse(g.category)}
+                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 transition-colors"
+                >
+                  <span className="inline-block w-1 h-4 rounded-sm shrink-0 bg-green-500" />
+                  <span className="text-xs font-bold text-gray-800 flex-1 text-left">{g.category}</span>
+                  <span className="text-[10px] text-gray-400">{g.items.length} 项</span>
+                  {groupSelCount > 0 && (
+                    <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">
+                      已选 {groupSelCount}
+                    </span>
+                  )}
+                  {isCollapsed ? (
+                    <ChevronDown size={14} className="text-gray-400" />
+                  ) : (
+                    <ChevronUp size={14} className="text-gray-400" />
+                  )}
+                </button>
+                {/* 项目列表 */}
+                {!isCollapsed && (
+                  <div className="px-3 pb-3 flex flex-wrap gap-1.5">
                     {g.items.map(ci => {
                       const isIncluded = !!(includedIds && ci.id && includedIds.has(ci.id));
                       const isSel = !!(ci.id && selectedIds.has(ci.id));
@@ -546,14 +645,14 @@ function CapsuleItemPicker(props: {
                           disabled={disabled}
                           onClick={() => ci.id && onToggle(ci.id)}
                           className={[
-                            'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-colors shrink-0',
+                            'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-all shrink-0',
                             disabled
-                              ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                              ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed opacity-70'
                               : isSel
-                                ? 'bg-green-500/15 border-green-500 text-green-700 shadow-sm'
+                                ? 'bg-green-500/15 border-green-500 text-green-700 shadow-sm hover:bg-green-500/20'
                                 : 'bg-white border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50',
                           ].join(' ')}
-                          title={disabled ? '该项目已包含在套餐中' : ci.name}
+                          title={disabled ? '该项目已包含在套餐中，不可重复选择' : `${ci.name} ¥${Number(ci.default_price || 0).toFixed(0)}`}
                         >
                           {disabled ? (
                             <CheckCircle size={10} className="opacity-70" />
@@ -562,53 +661,67 @@ function CapsuleItemPicker(props: {
                           ) : (
                             <span className="inline-block w-2" />
                           )}
-                          <span className="truncate max-w-[200px]">{ci.name}</span>
-                          <span className="font-mono opacity-80">¥{Number(ci.default_price || 0).toFixed(0)}</span>
+                          <span className="truncate max-w-[180px]">
+                            {q && !disabled ? highlightMatch(ci.name, q) : ci.name}
+                          </span>
+                          <span className="font-mono opacity-70 text-[10px]">¥{Number(ci.default_price || 0).toFixed(0)}</span>
                         </button>
                       );
                     })}
                   </div>
-                </div>
-              ))}
-            </div>
-            {/* 底部确认条 */}
-            <div className="border-t border-gray-100 px-3 py-2 shrink-0 flex items-center justify-between bg-gray-50/50">
-              <div className="text-[11px] text-gray-500">
-                {countSel > 0
-                  ? <>已选 <span className="font-semibold text-green-600">{countSel}</span> 项，点击确认追加</>
-                  : '请从上方分类中选择要追加的项目'}
+                )}
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (countSel > 0) {
-                      if (!confirm(`您已选 ${countSel} 项未确认追加，确定关闭吗？`)) return;
-                    }
-                    onClose();
-                  }}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] rounded-lg bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); onConfirm(); }}
-                  disabled={countSel === 0}
-                  className={[
-                    'inline-flex items-center gap-1 px-3 py-1.5 text-[11px] rounded-lg text-white font-medium transition-colors',
-                    countSel === 0
-                      ? 'bg-gray-300 cursor-not-allowed'
-                      : 'bg-green-500 hover:bg-green-600',
-                  ].join(' ')}
-                >
-                  <CheckCircle size={11} />
-                  {confirmLabel || `确认追加 ${countSel} 项`}
-                </button>
-              </div>
-            </div>
+            );
+          })}
+        </div>
+
+        {/* 底部确认条 - 始终可见 */}
+        <div className="shrink-0 border-t border-gray-200 px-4 py-3 bg-gray-50 flex items-center justify-between">
+          <div className="text-xs text-gray-500">
+            {countSel > 0 ? (
+              <>
+                已选 <span className="font-semibold text-green-600">{countSel}</span> 项
+                <span className="mx-1">·</span>
+                预估新增 <span className="font-mono font-semibold text-green-600">¥{estimatedTotal.toLocaleString()}</span>
+                {multiplierLabel && <span className="ml-1 text-gray-400">({multiplierLabel})</span>}
+              </>
+            ) : (
+              <span className="text-gray-400">请从上方分类中选择要追加的项目</span>
+            )}
           </div>
-        </>
-      )}
+          <div className="flex gap-2">
+            {countSel > 0 && (
+              <button
+                onClick={clearSelection}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-500 border border-gray-200 transition-colors"
+                title="清空全部已选项"
+              >
+                <Eraser size={12} />
+                清空
+              </button>
+            )}
+            <button
+              onClick={handleClose}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 transition-colors"
+            >
+              取消
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={countSel === 0}
+              className={[
+                'inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg text-white font-medium transition-colors',
+                countSel === 0
+                  ? 'bg-gray-300 cursor-not-allowed'
+                  : 'bg-green-500 hover:bg-green-600 shadow-sm',
+              ].join(' ')}
+            >
+              <CheckCircle size={12} />
+              {confirmLabel || `确认追加 ${countSel} 项`}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -638,8 +751,6 @@ function PaxItemsEditor(props: {
     fallbackLib = [],
   } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerFilter, setPickerFilter] = useState('');
-  const anchorBtnRef = useRef<HTMLButtonElement | null>(null);
   // 多选选中态
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
   // 合并最终 lib：项目库优先；不足时兜底 + 从当前 items 反推（保证不空）
@@ -649,7 +760,7 @@ function PaxItemsEditor(props: {
     for (const ci of fallbackLib) if (ci?.id && !byId.has(ci.id)) byId.set(ci.id, ci);
     // 从当前 items 反推（保证胶囊面板至少能看到已有项目分类）
     for (const it of items || []) {
-      const id = String(it.item_id || it.id || '').trim();
+      const id = String((it as any).item_id || (it as any).id || '').trim();
       if (!id) continue;
       if (byId.has(id)) continue;
       const fallback: CheckupItemRow = {
@@ -689,18 +800,22 @@ function PaxItemsEditor(props: {
     setPickedIds(new Set());
     setPickerOpen(false);
   };
-  void pickerFilter;
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       <div className="bg-gray-50 px-3 py-2 text-xs flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-medium text-gray-800 truncate">{pax.name}</span>
-          <span className="text-gray-400">·</span>
-          <span className={`truncate ${hasCustom ? 'text-amber-600' : 'text-gray-500'}`}>
-            {pkgName} ({pkgCode})
-            {hasCustom && ' ✎已定制'}
+          <span className="text-gray-300">|</span>
+          <span className="text-green-600 font-semibold truncate">{pkgName}</span>
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-gray-200 text-gray-600 font-mono">
+            {pkgCode}
           </span>
+          {hasCustom && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 font-medium">
+              ✎ 已定制
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {hasCustom && (
@@ -785,7 +900,6 @@ function PaxItemsEditor(props: {
       </div>
       <div className="border-t border-gray-100 bg-gray-50/30 px-3 py-2">
         <button
-          ref={anchorBtnRef as any}
           onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
           className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
         >
@@ -800,8 +914,7 @@ function PaxItemsEditor(props: {
           onConfirm={confirm}
           includedIds={includedIds}
           confirmLabel={`确认追加 ${pickedIds.size} 项`}
-          anchorRef={anchorBtnRef as any}
-          width={620}
+          title="追加体检项目"
         />
       </div>
     </div>
@@ -833,14 +946,19 @@ function PaxItemsEditorModal(props: {
         onClick={e => e.stopPropagation()}
       >
         <div className="px-4 py-2.5 border-b border-gray-200 shrink-0 flex items-center justify-between">
-          <div className="text-sm">
+          <div className="flex items-center gap-2 text-sm">
             <span className="font-semibold text-gray-900">{props.pax.name}</span>
-            <span className="text-gray-400 mx-1.5">·</span>
-            <span className={`${props.hasCustom ? 'text-amber-600' : 'text-gray-500'}`}>
-              {props.pkgName} ({props.pkgCode})
-              {props.hasCustom && ' ✎ 已定制'}
+            <span className="text-gray-300">|</span>
+            <span className="text-green-600 font-semibold">{props.pkgName}</span>
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-gray-200 text-gray-600 font-mono">
+              {props.pkgCode}
             </span>
-            <span className="text-gray-400 mx-1.5">·</span>
+            {props.hasCustom && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 font-medium">
+                ✎ 已定制
+              </span>
+            )}
+            <span className="text-gray-300">|</span>
             <span className="font-mono text-green-600 font-semibold">¥{props.paxAmount.toLocaleString()}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -911,9 +1029,6 @@ function PackageGroupSummary(props: {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
-  const anchorBtnRef = useRef<HTMLButtonElement | null>(null);
-  const void_pickerFilter_var = true; // placeholder; 搜索已由 CapsuleItemPicker 内置
-  void void_pickerFilter_var;
 
   const nTotal = paxList.length;
   const nCustom = paxList.filter(isCustomizedFn).length;
@@ -932,7 +1047,7 @@ function PackageGroupSummary(props: {
     const byId = new Map<string, CheckupItemRow>();
     for (const ci of checkupItemsLib) if (ci?.id) byId.set(ci.id, ci);
     for (const it of sharedItems || []) {
-      const id = String(it.item_id || it.id || '').trim();
+      const id = String((it as any).item_id || (it as any).id || '').trim();
       if (!id || byId.has(id)) continue;
       byId.set(id, {
         id,
@@ -1090,7 +1205,6 @@ function PackageGroupSummary(props: {
       <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between">
         <div>
           <button
-            ref={anchorBtnRef as any}
             onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg bg-cyan-500 text-white hover:bg-cyan-600 transition-colors"
           >
@@ -1105,8 +1219,8 @@ function PackageGroupSummary(props: {
             onConfirm={confirm}
             includedIds={includedIds}
             confirmLabel={nStandard > 1 ? `确认追加 ${pickedIds.size} 项（×${nStandard}人同步）` : `确认追加 ${pickedIds.size} 项`}
-            anchorRef={anchorBtnRef as any}
-            width={660}
+            title="批量追加体检项目"
+            multiplierLabel={nStandard > 1 ? `×${nStandard}人同步` : undefined}
           />
         </div>
         {nCustom > 0 && (
@@ -1405,7 +1519,8 @@ export default function BookingBoardCreate(props: {
     // 先匹配销售胶囊（按id精确匹配）
     const cap = capsuleMap[code];
     if (cap) {
-      const name = friendlyCapsuleName(cap);
+      // 传入已知套餐列表用于智能匹配
+      const name = friendlyCapsuleName(cap, finalPkgOptions);
       // 价格取第一个非零角色价（兜底展示价）
       const prices = cap.prices || {};
       const price = Math.max(
@@ -1423,17 +1538,25 @@ export default function BookingBoardCreate(props: {
         autoTotal,
       };
     }
+    // 回退1：从 pkgMap（动态配置的套餐）按 code 查找
     const row = pkgMap[code] ?? finalPkgOptions.find(p => p.code === code);
     if (row) {
       const explicitPrice = Number(row.price || 0);
-      const items = row.items || [];
+      const items = (row as any).items || [];
       const autoTotal = items.reduce((s: number, i: any) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
       const price = explicitPrice > 0 ? explicitPrice : autoTotal;
-      return { name: row.name, price, label: `${row.code} · ¥${price.toLocaleString()}`, items, autoTotal };
+      return { name: row.name, price, label: `${row.code} · ${row.name} ¥${price.toLocaleString()}`, items, autoTotal };
     }
+    // 回退2：通过名称反查 code（处理从导入数据中存的是名称而非 code 的情况）
+    const byName = pkgNameToCode[code];
+    if (byName && byName !== code) {
+      return getPackageInfo(byName);
+    }
+    // 回退3：硬编码常量兜底
     const fb = (CHECKUP_PACKAGES as any)[code];
-    if (fb) return { name: fb.name, price: fb.price, label: `${code} · ¥${fb.price.toLocaleString()}` };
-    return { name: code, price: 0, label: code };
+    if (fb) return { name: fb.name, price: fb.price, label: `${code} · ${fb.name} ¥${fb.price.toLocaleString()}` };
+    // 最终兜底：返回 code 本身（用户可见，便于调试）
+    return { name: code || '未知套餐', price: 0, label: code || '未知套餐' };
   }
   function getRoomInfo(code: string): { name: string; price: number } {
     const row = roomMap[code] ?? finalRoomOptions.find(p => p.code === code);
