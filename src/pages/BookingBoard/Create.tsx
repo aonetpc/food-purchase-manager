@@ -3798,17 +3798,33 @@ export default function BookingBoardCreate(props: {
                               const minOut = fmt(addDays(parseDateLocal(lgIn), 1));
                               const checkIn = lgIn || todayStr();
                               const checkOut = lgOut && parseDateLocal(lgOut) >= parseDateLocal(minOut) ? lgOut : minOut;
-                              setLgSessions((prev) => [
-                                ...prev,
-                                {
-                                  id: `lg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                                  lodgingType: rt.code,
-                                  dateCheckIn: checkIn,
-                                  dateCheckOut: checkOut,
-                                  arrivalTime: lgArr || '14:00',
-                                  rooms: lgRooms || 1,
-                                },
-                              ]);
+                              const arrivalTime = lgArr || '14:00';
+                              const addRooms = Math.max(1, lgRooms || 1);
+                              // 修复：同条件(房型+入住+离店+到达)合并累加间数，避免点击 13 次就拆成 13 条独立 1 间
+                              setLgSessions((prev) => {
+                                const sameIdx = prev.findIndex(s =>
+                                  s.lodgingType === rt.code
+                                  && s.dateCheckIn === checkIn
+                                  && s.dateCheckOut === checkOut
+                                  && s.arrivalTime === arrivalTime
+                                );
+                                if (sameIdx >= 0) {
+                                  const next = prev.slice();
+                                  next[sameIdx] = { ...next[sameIdx], rooms: next[sameIdx].rooms + addRooms };
+                                  return next;
+                                }
+                                return [
+                                  ...prev,
+                                  {
+                                    id: `lg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                    lodgingType: rt.code,
+                                    dateCheckIn: checkIn,
+                                    dateCheckOut: checkOut,
+                                    arrivalTime,
+                                    rooms: addRooms,
+                                  },
+                                ];
+                              });
                             }}
                             className={`px-2 py-2 rounded-lg text-xs border transition-colors relative ${
                               count > 0
