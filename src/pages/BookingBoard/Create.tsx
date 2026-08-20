@@ -1866,7 +1866,8 @@ export default function BookingBoardCreate(props: {
     for (const p of list) {
       if (p.gender === '男') counts.male++;
       else if (p.gender === '女') {
-        if (p.married === '已婚') counts.female_married++;
+        // married 字段是布尔值 true/false（checkbox 写入 + emptyPax 默认），不能用字符串比较
+        if (p.married) counts.female_married++;
         else counts.female_single++;
       }
     }
