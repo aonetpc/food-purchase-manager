@@ -2657,15 +2657,30 @@ export default function BookingBoardCreate(props: {
       const phone = cells[3] || '';
       const marriedRaw = cells[4] || '';
       const pkgRaw = cells[5] || '';
-      // 解析套餐：弹窗默认套餐优先，文本中有则覆盖
+      // 解析套餐：弹窗默认套餐优先（已选销售员的胶囊ID），文本中有则覆盖
       const v = (pkgRaw || '').trim();
       const up = v.toUpperCase();
-      let pkgCode: string = chkPastePkg || salesCapsules[0]?.id || finalPkgOptions[0]?.code || 'A';
+      // 默认值：优先弹窗选择的 → 当前销售员第一个销售胶囊 → 基础套餐 → 'A'
+      let pkgCode: string = chkPastePkg
+        || salesCapsules[0]?.id
+        || finalPkgOptions[0]?.code
+        || 'A';
       if (v) {
-        if (['A', 'B', 'C', 'D'].includes(up[0])) pkgCode = up[0];
-        else if (pkgNameToCode[v]) pkgCode = pkgNameToCode[v];
-        else if (PACKAGE_NAME_MAP[v]) pkgCode = PACKAGE_NAME_MAP[v];
-        else pkgCode = v; // 销售胶囊 UUID
+        // 匹配销售胶囊：用名称精确匹配
+        const capMatch = salesCapsules.find((c: any) =>
+          c.name === v || c.label === v || friendlyCapsuleName(c).replace(/\s*\(.*\)/, '') === v
+        );
+        if (capMatch) {
+          pkgCode = capMatch.id;
+        } else if (['A', 'B', 'C', 'D'].includes(up[0])) {
+          pkgCode = up[0];
+        } else if (pkgNameToCode[v]) {
+          pkgCode = pkgNameToCode[v];
+        } else if (PACKAGE_NAME_MAP[v]) {
+          pkgCode = PACKAGE_NAME_MAP[v];
+        } else {
+          pkgCode = v; // 直接用 UUID/短码
+        }
       }
       // 解析婚姻：支持 已婚/是/true/1/Y → 已婚；未婚/否/false/0/N → 未婚
       const mRaw = (marriedRaw || '').trim();
@@ -4625,24 +4640,33 @@ export default function BookingBoardCreate(props: {
                 className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
               >
                 <option value="">— 请选择默认套餐 —</option>
-                <optgroup label="销售胶囊">
-                  {salesCapsules.map((cap) => {
-                    const role = '男';
-                    const price = cap.prices?.[role]?.discount_price || cap.prices?.['标准']?.discount_price || 0;
-                    return (
-                      <option key={cap.id} value={cap.id}>
-                        {friendlyCapsuleName(cap)} · ¥{Number(price).toLocaleString()}
+                {/* 已选销售员：只显示该销售员名下的销售胶囊 */}
+                {salesCapsules.length > 0 && (
+                  <optgroup label={`${draftGroup.salesPerson || '当前销售员'}的套餐`}>
+                    {salesCapsules.map((cap) => {
+                      const price = Math.max(
+                        Number(cap.prices?.male?.discount_price || 0),
+                        Number(cap.prices?.female_married?.discount_price || 0),
+                        Number(cap.prices?.female_single?.discount_price || 0),
+                      );
+                      return (
+                        <option key={cap.id} value={cap.id}>
+                          {friendlyCapsuleName(cap)} · ¥{Number(price).toLocaleString()}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+                {/* 未选销售员或胶囊为空：显示基础套餐兜底 */}
+                {salesCapsules.length === 0 && (
+                  <optgroup label="基础套餐">
+                    {finalPkgOptions.map((pkg) => (
+                      <option key={pkg.code} value={pkg.code}>
+                        {pkg.code} · {pkg.name} · ¥{Number(pkg.price || 0).toLocaleString()}
                       </option>
-                    );
-                  })}
-                </optgroup>
-                <optgroup label="基础套餐">
-                  {finalPkgOptions.map((pkg) => (
-                    <option key={pkg.code} value={pkg.code}>
-                      {pkg.code} · {pkg.name} · ¥{Number(pkg.price || 0).toLocaleString()}
-                    </option>
-                  ))}
-                </optgroup>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
             {/* 格式说明 */}
