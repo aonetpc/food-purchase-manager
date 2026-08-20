@@ -38,7 +38,12 @@ const load = async () => {
 };
 useEffect(() => { load(); }, [id]);
 
-const applicable: Role[] = useMemo(() => (pkg?.applicable_roles as any) || ROLES, [pkg]);
+// 强制标准顺序：男→已婚女→未婚女
+const _ROLE_ORDER: Role[] = ['male', 'female_married', 'female_single'];
+const applicable: Role[] = useMemo(() => {
+  const raw = (pkg?.applicable_roles as any) || ROLES;
+  return _ROLE_ORDER.filter(r => raw.includes(r));
+}, [pkg]);
 
 const groupByCategory = (items: CheckupItemRef[]) => {
   const groups: Record<string, CheckupItemRef[]> = {};

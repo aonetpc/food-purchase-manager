@@ -89,7 +89,12 @@ const [keyword, setKeyword] = useState('');
 const [selected, setSelected] = useState<SelectedState>({ ...EMPTY_SCOPE });
 const [saving, setSaving] = useState(false);
 
-const applicable: Role[] = (pkg?.applicable_roles as any) || ROLES;
+// 强制标准顺序：男→已婚女→未婚女，不受后端存储顺序影响
+const _ROLE_ORDER: Role[] = ['male', 'female_married', 'female_single'];
+const applicable: Role[] = (() => {
+  const raw = (pkg?.applicable_roles as any) || ROLES;
+  return _ROLE_ORDER.filter(r => raw.includes(r));
+})();
 
 // 加载套餐 + 体检项目原子表 + 回填已选
 const loadAll = async () => {

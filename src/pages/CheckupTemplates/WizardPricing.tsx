@@ -53,7 +53,12 @@ export default function WizardPricing() {
   };
   useEffect(() => { load(); }, [id]);
 
-  const applicable: Role[] = (pkg?.applicable_roles as any) || ROLES;
+  // 强制标准顺序：男→已婚女→未婚女
+  const _ROLE_ORDER: Role[] = ['male', 'female_married', 'female_single'];
+  const applicable: Role[] = (() => {
+    const raw = (pkg?.applicable_roles as any) || ROLES;
+    return _ROLE_ORDER.filter(r => raw.includes(r));
+  })();
 
   const openEdit = (r: Role) => {
     if (!pkg) return;

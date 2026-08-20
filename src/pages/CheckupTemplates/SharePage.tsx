@@ -101,7 +101,12 @@ export default function SharePage() {
     });
   }, [token]);
 
-  const applicable: Role[] = useMemo(() => (pkg?.applicable_roles as any) || ROLES, [pkg]);
+  // 强制标准顺序：男→已婚女→未婚女
+  const _ROLE_ORDER: Role[] = ['male', 'female_married', 'female_single'];
+  const applicable: Role[] = useMemo(() => {
+    const raw = (pkg?.applicable_roles as any) || ROLES;
+    return _ROLE_ORDER.filter(r => raw.includes(r));
+  }, [pkg]);
   const primaryColor = company?.primary_color || '#0f5132';
 
   // ✅ 所有 useMemo / hook 派生值必须在条件 return 之前，否则 React 会因 hooks 数量不一致报错

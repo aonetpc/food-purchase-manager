@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, type CheckupTemplate } from './api';
+import { checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, type CheckupTemplate, type Role } from './api';
 import { useToast } from '@/components/Toast';
 import { useAuthStore } from '@/store/authStore';
 
@@ -142,7 +142,12 @@ export default function ListPage() {
 }
 
 function PackageCard({ pkg, onClick, onDelete, canDelete, onEdit, canEdit }: { pkg: CheckupTemplate; onClick: () => void; onDelete?: () => void; canDelete?: boolean; onEdit?: () => void; canEdit?: boolean }) {
- const applicable: any[] = (pkg as any).applicable_roles || ROLES;
+ // 强制标准顺序：男→已婚女→未婚女
+ const _ROLE_ORDER: Role[] = ['male', 'female_married', 'female_single'];
+ const applicable: Role[] = (() => {
+   const raw = (pkg as any).applicable_roles || ROLES;
+   return _ROLE_ORDER.filter(r => raw.includes(r));
+ })();
  return (
    <div className="bg-white rounded-3xl p-4 shadow-sm active:scale-[0.99] transition">
      <div className="flex items-start justify-between">
