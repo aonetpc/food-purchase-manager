@@ -398,9 +398,12 @@ export const bookingApi = {
   // 获取业务常量
   async getConfig(): Promise<BookingConfig> {
     const res = await api.get<{ ok: boolean; data: any }>('/booking/config');
+    // 【修复】后端字段名可能是 snake_case，也可能因 FastAPI response_model 转 camelCase
+    // 双读兜底：先读 camelCase（若后端开启 alias generator 会走这个），否则读 snake_case
+    const d = res.data || {};
     return {
       // 套餐：fromBackend 转换后需将嵌套 items 还原为 snake_case（渲染代码使用 snake_case）
-      packages: (res.data?.packages || []).map((p: any) => {
+      packages: (d.packages || d.pkg_list || []).map((p: any) => {
         const transformed = fromBackend(p);
         if (transformed.items && Array.isArray(transformed.items)) {
           transformed.items = transformed.items.map((it: any) => ({
@@ -414,13 +417,13 @@ export const bookingApi = {
         }
         return transformed;
       }),
-      roomTypes: (res.data?.roomTypes || []).map(fromBackend),
-      meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
-      wellnessTypes: (res.data?.wellnessTypes || []) as WellnessTypeRow[],
-      mealTypes: (res.data?.mealTypes || []) as MealTypeRow[],
+      roomTypes:    (d.roomTypes    || d.room_types    || []).map(fromBackend),
+      meetingHalls: (d.meetingHalls || d.meeting_halls || []).map(fromBackend),
+      wellnessTypes:(d.wellnessTypes|| d.wellness_types|| []) as WellnessTypeRow[],
+      mealTypes:    (d.mealTypes    || d.meal_types    || []) as MealTypeRow[],
       // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
-      checkupItems: (res.data?.checkupItems || []) as CheckupItemRow[],
-      salesUsers: (res.data?.salesUsers || []).map(fromBackend),
+      checkupItems: (d.checkupItems || d.checkup_items || []) as CheckupItemRow[],
+      salesUsers:   (d.salesUsers   || d.sales_users   || []).map(fromBackend),
     };
   },
 
