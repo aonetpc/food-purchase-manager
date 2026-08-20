@@ -1519,6 +1519,13 @@ export default function BookingBoardCreate(props: {
     return m;
   }, [salesCapsules]);
 
+  // 【关键】将销售胶囊 UUID 解析为套餐 code（短码如 A/B/C）
+  // 因为 pax.package 可能存的是销售胶囊 id（UUID），而套餐项目查找需要 code
+  function resolvePkgCode(pkgOrCapsuleId: string): string {
+    const cap = capsuleMap[pkgOrCapsuleId];
+    return cap?.code || pkgOrCapsuleId;
+  }
+
   // 获取某 pax 的套餐折后价（基于胶囊 + 性别角色匹配）
   function getCapsulePriceForPax(p: PaxEntry): number {
     if (!p.package) return 0;
@@ -1881,7 +1888,8 @@ export default function BookingBoardCreate(props: {
   function removePaxItem(idx: number, itemIdx: number) {
     setChkPax((prev) => prev.map((p, i) => {
       if (i !== idx) return p;
-      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const pkgKey = resolvePkgCode(p.package);
+      const base = resolvePaxItems({ ...p, package: pkgKey }, finalBizConfigForCalc);
       const next = base.filter((_, j) => j !== itemIdx);
       return { ...p, customItems: next };
     }));
@@ -1891,7 +1899,8 @@ export default function BookingBoardCreate(props: {
   function removePaxItemById(idx: number, itemId: string) {
     setChkPax((prev) => prev.map((p, i) => {
       if (i !== idx) return p;
-      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const pkgKey = resolvePkgCode(p.package);
+      const base = resolvePaxItems({ ...p, package: pkgKey }, finalBizConfigForCalc);
       const next = base.filter((it: any) => String(it.item_id || it.id || '') !== itemId);
       return { ...p, customItems: next };
     }));
@@ -1906,7 +1915,8 @@ export default function BookingBoardCreate(props: {
   function addItemToPax(idx: number, ci: CheckupItemRow) {
     setChkPax((prev) => prev.map((p, i) => {
       if (i !== idx) return p;
-      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const pkgKey = resolvePkgCode(p.package);
+      const base = resolvePaxItems({ ...p, package: pkgKey }, finalBizConfigForCalc);
       const next: CustomPackageItem[] = [
         ...base,
         {
@@ -1926,7 +1936,8 @@ export default function BookingBoardCreate(props: {
   function updatePaxItemField(idx: number, itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) {
     setChkPax((prev) => prev.map((p, i) => {
       if (i !== idx) return p;
-      const base = resolvePaxItems(p, finalBizConfigForCalc);
+      const pkgKey = resolvePkgCode(p.package);
+      const base = resolvePaxItems({ ...p, package: pkgKey }, finalBizConfigForCalc);
       const next = [...base];
       next[itemIdx] = { ...next[itemIdx], [field]: val };
       return { ...p, customItems: next };
@@ -1943,7 +1954,9 @@ export default function BookingBoardCreate(props: {
     if (p.customItems && p.customItems.length > 0) {
       return p.customItems;
     }
-    const shared = packageSharedEdits[p.package];
+    // 关键：将销售胶囊 UUID 解析为套餐 code
+    const pkgKey = resolvePkgCode(p.package);
+    const shared = packageSharedEdits[p.package] ?? packageSharedEdits[pkgKey];
     if (shared && shared.length > 0) {
       return shared;
     }
@@ -1951,7 +1964,8 @@ export default function BookingBoardCreate(props: {
       // 批量清空了项目
       return [];
     }
-    return resolvePaxItems(p, finalBizConfigForCalc);
+    // 用解析后的 code 构建临时 pax 进行查找
+    return resolvePaxItems({ ...p, package: pkgKey }, finalBizConfigForCalc);
   }
 
   // 【有效解析】获取一个 pax 的最终金额
@@ -1960,14 +1974,16 @@ export default function BookingBoardCreate(props: {
     if (p.customItems && p.customItems.length > 0) {
       return p.customItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
     }
-    const shared = packageSharedEdits[p.package];
+    // 关键：解析销售胶囊 UUID → 套餐 code
+    const pkgKey = resolvePkgCode(p.package);
+    const shared = packageSharedEdits[p.package] ?? packageSharedEdits[pkgKey];
     if (shared) {
       return shared.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
     }
     // Phase 4：如果该套餐是销售胶囊中的套餐，按性别角色匹配折后价
     const capPrice = getCapsulePriceForPax(p);
     if (capPrice > 0) return capPrice;
-    return calcSinglePaxAmount(p, finalBizConfigForCalc);
+    return calcSinglePaxAmount({ ...p, package: pkgKey }, finalBizConfigForCalc);
   }
 
   // 【有效解析】合计体检总额（用于UI展示，不影响保存）
@@ -1977,10 +1993,12 @@ export default function BookingBoardCreate(props: {
 
   // 获取某套餐的共享项目（未设置共享版则返回套餐默认）
   function getSharedItems(pkgCode: string): CustomPackageItem[] {
-    const shared = packageSharedEdits[pkgCode];
+    // 关键：将销售胶囊 UUID 解析为套餐 code
+    const lookupCode = resolvePkgCode(pkgCode);
+    const shared = packageSharedEdits[pkgCode] ?? packageSharedEdits[lookupCode];
     if (shared) return shared;
     const pkgMap = (finalBizConfigForCalc?.packages || []).reduce((acc: any, r: any) => { acc[r.code] = r; return acc; }, {});
-    const row = pkgMap[pkgCode];
+    const row = pkgMap[lookupCode];
     if (row && row.items && row.items.length > 0) {
       return row.items.map((i: any) => ({
         item_id: i.item_id,
@@ -1992,13 +2010,14 @@ export default function BookingBoardCreate(props: {
       }));
     }
     // fallback: 套餐表没返回 items，用 resolvePaxItems 传入一个假的 pax 来兜底
-    const fake: PaxEntry = { name: '', idCard: '', phone: '', gender: '男', married: false, package: pkgCode as PackageCode };
+    const fake: PaxEntry = { name: '', idCard: '', phone: '', gender: '男', married: false, package: lookupCode as PackageCode };
     return resolvePaxItems(fake, finalBizConfigForCalc);
   }
 
   // 判断套餐是否有独立于默认的共享修改
   function hasSharedEdits(pkgCode: string): boolean {
-    return packageSharedEdits[pkgCode] !== undefined;
+    const lookupCode = resolvePkgCode(pkgCode);
+    return packageSharedEdits[pkgCode] !== undefined || packageSharedEdits[lookupCode] !== undefined;
   }
 
   // ==== 套餐共享批量编辑操作 ====
@@ -2017,35 +2036,37 @@ export default function BookingBoardCreate(props: {
         __temporary: true,
       },
     ];
-    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
+    setPackageSharedEdits(prev => ({ ...prev, [resolvePkgCode(pkgCode)]: next }));
   }
 
   // 套餐共享版：移除项目
   function removeSharedItem(pkgCode: string, itemIdx: number) {
     const base = getSharedItems(pkgCode);
     const next = base.filter((_, i) => i !== itemIdx);
-    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
+    setPackageSharedEdits(prev => ({ ...prev, [resolvePkgCode(pkgCode)]: next }));
   }
 
   // 套餐共享版：按 item_id 移除项目（用于 diff 回调整）
   function removeSharedItemById(pkgCode: string, itemId: string) {
     const base = getSharedItems(pkgCode);
     const next = base.filter((it: any) => String(it.item_id || it.id || '') !== itemId);
-    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: next }));
+    setPackageSharedEdits(prev => ({ ...prev, [resolvePkgCode(pkgCode)]: next }));
   }
 
   // 套餐共享版：更新某个字段
   function updateSharedItemField(pkgCode: string, itemIdx: number, field: 'item_price' | 'quantity' | 'remark', val: any) {
     const base = [...getSharedItems(pkgCode)];
     base[itemIdx] = { ...base[itemIdx], [field]: val };
-    setPackageSharedEdits(prev => ({ ...prev, [pkgCode]: base }));
+    setPackageSharedEdits(prev => ({ ...prev, [resolvePkgCode(pkgCode)]: base }));
   }
 
   // 套餐共享版：重置为套餐默认（清掉 sharedEdits 记录）
   function resetSharedItems(pkgCode: string) {
     setPackageSharedEdits(prev => {
       const next = { ...prev };
+      const key = resolvePkgCode(pkgCode);
       delete next[pkgCode];
+      delete next[key];
       return next;
     });
   }
