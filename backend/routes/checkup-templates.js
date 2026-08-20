@@ -147,8 +147,6 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
     for (const it of merged) {
       const qty = Math.max(1, toNum(it.quantity) || 1);
       total += toNum(it.item_price) * qty;
-      // 原价包含体检价 + 保险价（人保价格），避免"截图显示人保价格但原价没加"的问题
-      total += toNum(it.insurance_price_snapshot) * qty;
     }
     result[role] = {
       total: round2(total),
@@ -736,11 +734,11 @@ router.post('/:id/clone', async (req, res) => {
         [batch]
       );
     }
-    // 克隆 role_plans：按刚克隆出来的项目快照即时重算三角色价格（含保险价）
+    // 克隆 role_plans：按刚克隆出来的项目快照即时重算三角色价格（不含保险价）
     // 防止用户中途退出 WizardItems 未点「生成方案」时，ListPage 显示 ¥0
     const roleTotals = { male: 0, female_married: 0, female_single: 0 };
     for (const it of srcItems) {
-      const amt = (toNum(it.item_price) + toNum(it.insurance_price_snapshot)) * Math.max(1, toNum(it.quantity) || 1);
+      const amt = toNum(it.item_price) * Math.max(1, toNum(it.quantity) || 1);
       if (it.role === 'common') {
         for (const r of ROLES) roleTotals[r] += amt;
       } else if (roleTotals[it.role] !== undefined) {
