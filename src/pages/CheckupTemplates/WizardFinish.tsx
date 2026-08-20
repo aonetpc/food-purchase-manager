@@ -155,9 +155,10 @@ return (
       {applicable.map(r => {
         const plan: any = pkg.role_plans?.[r] || {};
         const roleItems = (pkg.role_items as any)?.[r]?.items || [];
-        const total = Number(plan.original_total) || 0;
+        // 根据实际展示的项目重新计算原价（确保排除的项目不会计入）
+        const total = roleItems.reduce((s, it) => s + (Number(it.item_price) || 0) * (Number(it.quantity) || 1), 0);
         let disc = Number(plan.discount_price) || 0;
-        const rate = Number(plan.discount_rate) || 100;
+        const rate = total > 0 ? Math.round((disc / total) * 10000) / 100 : 100;
         if (rate >= 100 && total > 0) disc = total;
         const isOpen = expanded[r];
         const groups = groupByCategory(roleItems);
@@ -187,17 +188,6 @@ return (
             </button>
             {isOpen && (
               <div className="px-4 pb-4 border-t border-gray-50 pt-3">
-                <div className="flex items-center justify-between text-xs bg-gray-50 rounded-xl px-3 py-2 mb-3">
-                  <span className="text-gray-500">原价</span>
-                  <span className="font-semibold text-gray-700">¥{total.toFixed(2)}</span>
-                </div>
-
-                {total > disc && (
-                  <div className="flex items-center justify-between text-xs bg-orange-50/50 rounded-xl px-3 py-2 mb-3">
-                    <span className="text-orange-700">折扣率 {rate.toFixed(2)}%</span>
-                    <span className="font-semibold text-orange-700">立省 ¥{(total - disc).toFixed(2)}</span>
-                  </div>
-                )}
                 {groups.map(g => (
                   <div key={g.category} className="mb-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-2">
