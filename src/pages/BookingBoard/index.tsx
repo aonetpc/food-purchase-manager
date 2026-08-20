@@ -24,10 +24,38 @@ import {
   type FlatItem,
 } from './utils';
 import { bookingApi, type BookingApiOrder } from '../../lib/api';
+import { checkupApi } from '@/pages/CheckupTemplates/api';
 import { useAuthStore } from '@/store/authStore';
 import { useToast } from '@/components/Toast';
 import CreateFormRaw from './Create';
 import BizConfigModal from './BizConfigModal';
+
+const ROLE_LABEL: Record<string, string> = {
+  male: '男性', female_married: '已婚女', female_single: '未婚女',
+};
+function paxToRole(gender?: string, married?: any): 'male' | 'female_married' | 'female_single' {
+  if (gender === '男') return 'male';
+  return married ? 'female_married' : 'female_single';
+}
+function maskIdCard(id: string): string {
+  if (!id) return '-';
+  const s = String(id);
+  if (s.length <= 8) return s;
+  return `${s.slice(0, 4)}****${s.slice(-4)}`;
+}
+// 销售套餐胶囊名称兜底：识别 UUID/纯ID 等自动生成名，生成友好名
+function friendlyCapsuleName(cap: any): string {
+  if (!cap) return '未设置套餐';
+  const raw = String(cap.name || cap.code || '').trim();
+  if (!raw) return cap.code ? `${cap.code}套餐` : '体检套餐';
+  const ugly = [
+    /^套餐\s*[0-9a-fA-F-]{8,}$/, /^[0-9a-fA-F]{8}-[0-9a-fA-F-]+$/,
+    /^[0-9]+$/, /^[Pp]KG[_-]?\w+$/, /^[Pp]ackage[_-]?\w+$/, /^[0-9a-fA-F]{12,}$/,
+  ].some(p => p.test(raw));
+  if (!ugly) return raw;
+  if (cap.code) return `${cap.code}套餐`;
+  return '体检套餐';
+}
 
 const CreateForm = CreateFormRaw as unknown as React.FC<{
   mode: 'create' | 'edit' | 'copy';
@@ -469,6 +497,30 @@ function DetailModal({
   const status = STATUS_MAP[order.status];
   // 第5期：展开的体检项目明细行（item.id）
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  // 体检改1：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
+  const [salesCapsules, setSalesCapsules] = useState<any[]>([]);
+  const [capsulesLoading, setCapsulesLoading] = useState(false);
+  useEffect(() => {
+    const sid = order.salesPersonId;
+    if (!sid) { setSalesCapsules([]); return; }
+    let mounted = true;
+    setCapsulesLoading(true);
+    (async () => {
+      try {
+        const res = await checkupApi.listSalesCapsules(sid);
+        if (!mounted) return;
+        if (res?.ok) setSalesCapsules(res.data || []);
+        else setSalesCapsules([]);
+      } catch { if (mounted) setSalesCapsules([]); }
+      finally { if (mounted) setCapsulesLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, [order.salesPersonId]);
+  const capsuleMap = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const c of salesCapsules) m[c.id] = c;
+    return m;
+  }, [salesCapsules]);
   function toggleExpand(id: string) {
     setExpandedItems(prev => {
       const next = new Set(prev);
@@ -640,6 +692,79 @@ function DetailModal({
                           <tr key={`${it.id}_detail`} className="bg-sky-50/40 border-t-0">
                             <td colSpan={6} className="px-3 py-2">
                               <div className="space-y-2">
+                                {/* 【改1】套餐胶囊 + 角色定价/人数 摘要块 */}
+                                {(() => {
+                                  const savedPkgId = (it.extra as any)?.selectedChkPkgId;
+                                  const savedCounts = (it.extra as any)?.roleCounts as { male?: number; female_married?: number; female_single?: number } | undefined;
+                                  const firstPkg = savedPkgId || paxList.find((p: any) => p?.package)?.package || '';
+                                  const cap = capsuleMap[firstPkg] || null;
+                                  const packageName = friendlyCapsuleName(cap) || (firstPkg ? `套餐${firstPkg}` : '未设置');
+                                  const getPrice = (role: 'male' | 'female_married' | 'female_single') =>
+                                    Number(cap?.prices?.[role]?.discount_price || 0);
+                                  const prices = { male: getPrice('male'), female_married: getPrice('female_married'), female_single: getPrice('female_single') };
+                                  const roleOrder: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
+                                  const imported = roleOrder.reduce((acc, k) => { acc[k] = 0; return acc; }, {} as Record<string, number>);
+                                  paxList.forEach((p: any) => {
+                                    const r = paxToRole(p.gender, p.married);
+                                    imported[r] = (imported[r] || 0) + 1;
+                                  });
+                                  const roleTotal = roleOrder.reduce((s, k) => {
+                                    const cnt = Number(savedCounts?.[k] || 0);
+                                    return s + cnt * prices[k];
+                                  }, 0);
+                                  const displayRoleTotal = roleTotal > 0 ? roleTotal : displayAmount;
+                                  const hasRoleSetting = savedCounts && roleOrder.some(k => Number(savedCounts[k] || 0) > 0);
+                                  return (
+                                    <div className="mb-2 p-3 bg-sky-50 rounded-lg border border-sky-100">
+                                      <div className="flex items-center justify-between gap-2 mb-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-white border border-sky-200 text-sky-700">
+                                            <ClipboardList size={11} /> 体检套餐
+                                          </span>
+                                          <span className="text-sm font-semibold text-gray-800 truncate">{packageName}</span>
+                                          {capsulesLoading && <span className="text-[10px] text-gray-400">加载中…</span>}
+                                        </div>
+                                        <span className="text-xs font-mono text-green-700 font-semibold whitespace-nowrap">
+                                          合计 ¥{displayRoleTotal.toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-2 text-[11px]">
+                                        {roleOrder.map(k => {
+                                          const setN = Number(savedCounts?.[k] || 0);
+                                          const importedN = imported[k] || 0;
+                                          const remain = hasRoleSetting ? Math.max(0, setN - importedN) : 0;
+                                          const sub = (hasRoleSetting ? setN : importedN) * prices[k];
+                                          return (
+                                            <div key={k} className="bg-white border border-sky-100 rounded p-2">
+                                              <div className="flex items-center justify-between mb-1">
+                                                <span className="text-gray-700 font-medium">{ROLE_LABEL[k]}</span>
+                                                <span className="text-gray-500 font-mono">¥{prices[k].toLocaleString()}/人</span>
+                                              </div>
+                                              <div className="grid grid-cols-3 gap-1 text-center font-mono">
+                                                <div className="bg-gray-50 rounded px-1 py-0.5">
+                                                  <div className="text-[9px] text-gray-400">设定</div>
+                                                  <div className="text-gray-800">{hasRoleSetting ? setN : '-'}</div>
+                                                </div>
+                                                <div className="bg-gray-50 rounded px-1 py-0.5">
+                                                  <div className="text-[9px] text-gray-400">已导</div>
+                                                  <div className="text-gray-800">{importedN}</div>
+                                                </div>
+                                                <div className="bg-amber-50 rounded px-1 py-0.5">
+                                                  <div className="text-[9px] text-amber-500">待绑</div>
+                                                  <div className="text-amber-700">{remain}</div>
+                                                </div>
+                                              </div>
+                                              <div className="text-right mt-1 text-green-700 font-mono font-medium">
+                                                小计 ¥{sub.toLocaleString()}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
                                 {paxList.map((p: any, pIdx: number) => {
                                   const items: CustomPackageItem[] = Array.isArray(p.finalItems) ? p.finalItems : [];
                                   const paxTotal = typeof p.finalAmount === 'number'
@@ -647,6 +772,13 @@ function DetailModal({
                                     : items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
                                   const isCustom = (p.customItems && p.customItems.length > 0);
                                   if (items.length === 0) return null;
+                                  // 【改2】如果明细总价对不上单人价，按比例分摊，保证表中不再出现¥0
+                                  const rawSum = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+                                  const scale = (rawSum > 0 && paxTotal > 0) ? paxTotal / rawSum : 1;
+                                  const role = paxToRole(p.gender, p.married);
+                                  const roleIcon = role === 'male' ? '👨' : (role === 'female_married' ? '👩‍💍' : '👩');
+                                  const roleCap = capsuleMap[p.package] || null;
+                                  const rolePrice = Number(roleCap?.prices?.[role]?.discount_price || 0);
                                   return (
                                     <div key={pIdx} className="border border-sky-100 rounded overflow-hidden bg-white">
                                       <div className="bg-sky-50 px-3 py-1.5 text-[11px] flex items-center justify-between">
@@ -654,14 +786,31 @@ function DetailModal({
                                           <Users size={11} className="text-sky-600 flex-shrink-0" />
                                           <span className="font-medium text-gray-800 truncate">{p.name || `体检人${pIdx + 1}`}</span>
                                           <span className="text-gray-400">·</span>
+                                          <span className="text-gray-500 whitespace-nowrap">{roleIcon} {ROLE_LABEL[role]}</span>
+                                          {p.idCard && (<>
+                                            <span className="text-gray-400">·</span>
+                                            <span className="text-gray-500 font-mono whitespace-nowrap">{maskIdCard(p.idCard)}</span>
+                                          </>)}
+                                          {p.phone && (<>
+                                            <span className="text-gray-400">·</span>
+                                            <span className="text-gray-500 font-mono whitespace-nowrap">{p.phone}</span>
+                                          </>)}
+                                          <span className="text-gray-400">·</span>
                                           <span className={`truncate ${isCustom ? 'text-amber-600' : 'text-gray-500'}`}>
                                             套餐{p.package || '-'}
                                             {isCustom && ' ✎已定制'}
                                           </span>
                                         </div>
-                                        <span className="font-mono font-semibold text-green-600 flex-shrink-0 ml-2">
-                                          ¥{paxTotal.toLocaleString()}
-                                        </span>
+                                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                                          {rolePrice > 0 && (
+                                            <span className="text-[10px] text-sky-600 font-mono bg-sky-100 px-1.5 py-0.5 rounded">
+                                              角色价 ¥{rolePrice.toLocaleString()}
+                                            </span>
+                                          )}
+                                          <span className="font-mono font-semibold text-green-600">
+                                            ¥{paxTotal.toLocaleString()}
+                                          </span>
+                                        </div>
                                       </div>
                                       <div className="overflow-x-auto">
                                         <table className="w-full text-[11px]">
@@ -677,7 +826,13 @@ function DetailModal({
                                           </thead>
                                           <tbody>
                                             {items.map((itm, iIdx) => {
-                                              const subtotal = Number(itm.item_price || 0) * Number(itm.quantity || 1);
+                                              const qty = Number(itm.quantity || 1);
+                                              const rawPrice = Number(itm.item_price || 0);
+                                              // 改2：分摊兜底，避免 0 价/0 小计；scale=1 时等价于原值
+                                              const priceAdj = Math.round(rawPrice * scale * 100) / 100;
+                                              const subtotal = priceAdj > 0 || rawPrice > 0
+                                                ? Math.round(priceAdj * qty * 100) / 100
+                                                : 0;
                                               return (
                                                 <tr key={iIdx} className="border-t border-sky-50">
                                                   <td className="px-2 py-1 text-gray-400 font-mono">{iIdx + 1}</td>
@@ -689,9 +844,9 @@ function DetailModal({
                                                   </td>
                                                   <td className="px-2 py-1 text-gray-500">{itm.remark || '-'}</td>
                                                   <td className="px-2 py-1 text-right font-mono text-gray-600">
-                                                    ¥{Number(itm.item_price || 0).toLocaleString()}
+                                                    ¥{(rawPrice > 0 ? rawPrice : priceAdj).toLocaleString()}
                                                   </td>
-                                                  <td className="px-2 py-1 text-center text-gray-600">{itm.quantity || 1}</td>
+                                                  <td className="px-2 py-1 text-center text-gray-600">{qty}</td>
                                                   <td className="px-2 py-1 text-right font-mono text-gray-700">
                                                     ¥{subtotal.toLocaleString()}
                                                   </td>
