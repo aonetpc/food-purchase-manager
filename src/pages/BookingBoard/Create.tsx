@@ -1637,6 +1637,8 @@ export default function BookingBoardCreate(props: {
           roomTypes: Array.isArray(cfg.roomTypes) ? cfg.roomTypes : [],
           meetingHalls: Array.isArray(cfg.meetingHalls) ? cfg.meetingHalls : [],
           wellnessTypes: Array.isArray(cfg.wellnessTypes) ? cfg.wellnessTypes : [],
+          // 修复：补上 mealTypes（之前完全遗漏，导致 bizConfig.mealTypes 永远是空数组 → 午餐晚餐只显示 4 个 fallback）
+          mealTypes: Array.isArray(cfg.mealTypes) ? cfg.mealTypes.filter((m: any) => Number(m.status) === 1) : [],
           checkupItems: Array.isArray(cfg.checkupItems) ? cfg.checkupItems : [],
           salesUsers: cfg.salesUsers || [],
         });
