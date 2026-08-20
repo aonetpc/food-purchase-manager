@@ -1131,6 +1131,7 @@ function PackageGroupSummary(props: {
   isCustomizedFn: (p: PaxEntry) => boolean;
   checkupItemsLib: CheckupItemRow[];
   singlePaxAmountFn: (sharedOverride: CustomPackageItem[]) => number;
+  getPerPersonPrice: (p: PaxEntry) => number;
   onAddItem: (ci: CheckupItemRow) => void;
   onRemoveItem: (itemIdx: number) => void;
   onRemoveItemById: (itemId: string) => void;
@@ -1139,7 +1140,7 @@ function PackageGroupSummary(props: {
 }) {
   const {
     pkgCode, pkgName, pkgPrice, paxList, sharedItems, hasSharedEdits,
-    isCustomizedFn, checkupItemsLib, singlePaxAmountFn,
+    isCustomizedFn, checkupItemsLib, singlePaxAmountFn, getPerPersonPrice,
     onAddItem, onRemoveItem, onRemoveItemById, onUpdateItemField, onReset,
   } = props;
 
@@ -1151,13 +1152,35 @@ function PackageGroupSummary(props: {
   const nTotal = paxList.length;
   const nCustom = paxList.filter(isCustomizedFn).length;
   const nStandard = nTotal - nCustom;
-  const singleAmt = singlePaxAmountFn(sharedItems);
-  const groupTotal = (nCustom === 0
-    ? nTotal * singleAmt
-    : nStandard * singleAmt + paxList.filter(isCustomizedFn).reduce((s, p) => {
-        if (!p.customItems) return s;
+
+  // 修复：单人金额优先使用胶囊折扣价，而非逐项原价合计
+  // 只有在用户实际编辑了共享项目时，才使用逐项计算
+  const singleAmt = (() => {
+    // 如果有共享编辑，使用逐项计算
+    if (hasSharedEdits && sharedItems.length > 0) {
+      return singlePaxAmountFn(sharedItems);
+    }
+    // 否则使用胶囊折扣价（取第一位标准人员的价格作为代表）
+    const standardPax = paxList.filter(p => !isCustomizedFn(p));
+    if (standardPax.length > 0) {
+      return getPerPersonPrice(standardPax[0]);
+    }
+    // 兜底
+    return singlePaxAmountFn(sharedItems);
+  })();
+
+  // 修复：合计金额使用每人的实际价格（胶囊折扣价或定制价）
+  const groupTotal = paxList.reduce((s, p) => {
+    if (isCustomizedFn(p)) {
+      // 已定制：使用 customItems 计算
+      if (p.customItems && p.customItems.length > 0) {
         return s + p.customItems.reduce((a, i) => a + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
-      }, 0));
+      }
+      return s;
+    }
+    // 标准人：使用胶囊折扣价
+    return s + getPerPersonPrice(p);
+  }, 0);
 
   const itemsSubtotal = sharedItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
   // 摘要统计
@@ -2077,7 +2100,7 @@ export default function BookingBoardCreate(props: {
   }
 
   // 【有效解析】获取一个 pax 的最终金额
-  // 优先级：customItems > sharedEdits > 销售胶囊(按性别角色匹配) > 传统套餐单价
+  // 优先级：customItems > sharedEdits(非空) > 销售胶囊(按性别角色匹配) > 传统套餐单价
   function calcSinglePaxEffective(p: PaxEntry): number {
     if (p.customItems && p.customItems.length > 0) {
       return p.customItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
@@ -2085,7 +2108,8 @@ export default function BookingBoardCreate(props: {
     // 关键：解析销售胶囊 UUID → 套餐 code
     const pkgKey = resolvePkgCode(p.package);
     const shared = packageSharedEdits[p.package] ?? packageSharedEdits[pkgKey];
-    if (shared) {
+    // 修复：只在 shared 有内容时才使用 shared 计算（空数组 [] 视为未设置）
+    if (shared && shared.length > 0) {
       return shared.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
     }
     // Phase 4：如果该套餐是销售胶囊中的套餐，按性别角色匹配折后价
@@ -3418,6 +3442,7 @@ export default function BookingBoardCreate(props: {
                               singlePaxAmountFn={(items) =>
                                 items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0)
                               }
+                              getPerPersonPrice={(p) => calcSinglePaxEffective(p)}
                               onAddItem={(ci) => addSharedItem(pkgCode, ci)}
                               onRemoveItem={(ii) => removeSharedItem(pkgCode, ii)}
                               onRemoveItemById={(id) => removeSharedItemById(pkgCode, id)}
