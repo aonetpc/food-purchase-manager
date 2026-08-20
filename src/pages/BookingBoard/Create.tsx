@@ -1378,6 +1378,55 @@ function PackageGroupSummary(props: {
   );
 }
 
+// -------- 解析预览详情组件（可折叠） --------
+function ImportPreviewDetails(props: { paxList: PaxEntry[] }) {
+  const [open, setOpen] = useState(false);
+  const { paxList } = props;
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full px-3 py-2 bg-gray-50 hover:bg-gray-100 text-xs text-gray-600 flex items-center justify-between"
+      >
+        <span>查看导入详情（{paxList.length} 人）</span>
+        <span>{open ? '收起 ▲' : '展开 ▼'}</span>
+      </button>
+      {open && (
+        <div className="max-h-48 overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 text-gray-500 sticky top-0">
+              <tr>
+                <th className="px-2 py-1 text-left font-medium">姓名</th>
+                <th className="px-2 py-1 text-left font-medium">性别</th>
+                <th className="px-2 py-1 text-left font-medium">婚姻</th>
+                <th className="px-2 py-1 text-left font-medium">套餐</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paxList.map((p, i) => (
+                <tr key={i} className="border-t border-gray-100">
+                  <td className="px-2 py-1 text-gray-800">{p.name}</td>
+                  <td className="px-2 py-1">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${p.gender === '男' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                      {p.gender}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${p.married ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {p.married ? '已婚' : '未婚'}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1 text-gray-600 font-mono">{p.package}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ================================================
 // 主组件
 // ================================================
@@ -1456,6 +1505,16 @@ export default function BookingBoardCreate(props: {
   const [chkPax, setChkPax] = useState<PaxEntry[]>([emptyPax()]);
   const [showChkPaste, setShowChkPaste] = useState(false);
   const [chkPasteText, setChkPasteText] = useState('');
+  // 粘贴导入弹窗的默认套餐（解析时每行默认套用，除非文本中含套餐列）
+  const [chkPastePkg, setChkPastePkg] = useState<string>('');
+  // 解析后预览弹窗
+  const [showImportPreview, setShowImportPreview] = useState(false);
+  const [chkImportPreview, setChkImportPreview] = useState<{
+    paxList: PaxEntry[];
+    male: number;
+    marriedFemale: number;
+    singleFemale: number;
+  }>({ paxList: [], male: 0, marriedFemale: 0, singleFemale: 0 });
   const [detailPaxIdx, setDetailPaxIdx] = useState<number | null>(null);
   // 套餐共享批量编辑：key=套餐code, value=CustomPackageItem[]
   //   undefined = 未做过批量修改，跟随套餐表默认项目
@@ -2407,7 +2466,7 @@ export default function BookingBoardCreate(props: {
               idCard: get('身份证号'),
               phone: get('手机号'),
               gender: get('性别') === '女' ? '女' : '男',
-              married: ['是', 'true', '1', '已婚'].includes(get('婚否').trim()),
+              married: ['是', 'true', '1', '已婚', 'Y', 'y'].includes((get('婚否') || '').trim()),
               package: pkgCode,
             });
           }
@@ -2581,7 +2640,7 @@ export default function BookingBoardCreate(props: {
     reader.readAsText(file, 'utf-8');
   }
 
-  // 体检名单粘贴导入
+  // 体检名单粘贴导入（列序：姓名/身份证/性别/手机/婚否/套餐）
   function doChkImport() {
     const lines = (chkPasteText || '').split(/\r?\n/).filter(l => l.trim().length > 0);
     if (lines.length === 0) return;
@@ -2591,23 +2650,26 @@ export default function BookingBoardCreate(props: {
     for (let i = startIdx; i < lines.length; i++) {
       const cells = splitRow(lines[i]);
       if (cells.length === 0) continue;
+      // 新列序：姓名(0)/身份证(1)/性别(2)/手机(3)/婚否(4)/套餐(5)
       const name = cells[0] || '';
       const idCard = cells[1] || '';
-      const phone = cells[2] || '';
-      let genderRaw = cells[3] || '';
+      let genderRaw = cells[2] || '';
+      const phone = cells[3] || '';
       const marriedRaw = cells[4] || '';
       const pkgRaw = cells[5] || '';
-      // 解析套餐
+      // 解析套餐：弹窗默认套餐优先，文本中有则覆盖
       const v = (pkgRaw || '').trim();
       const up = v.toUpperCase();
-      let pkgCode: string = finalPkgOptions[0]?.code || 'A';
+      let pkgCode: string = chkPastePkg || salesCapsules[0]?.id || finalPkgOptions[0]?.code || 'A';
       if (v) {
         if (['A', 'B', 'C', 'D'].includes(up[0])) pkgCode = up[0];
         else if (pkgNameToCode[v]) pkgCode = pkgNameToCode[v];
         else if (PACKAGE_NAME_MAP[v]) pkgCode = PACKAGE_NAME_MAP[v];
+        else pkgCode = v; // 销售胶囊 UUID
       }
-      // 解析婚姻
-      const married = ['是', 'true', '1', '已婚', 'Y', 'y'].includes((marriedRaw || '').trim());
+      // 解析婚姻：支持 已婚/是/true/1/Y → 已婚；未婚/否/false/0/N → 未婚
+      const mRaw = (marriedRaw || '').trim();
+      const married = ['已婚', '是', 'true', '1', 'Y', 'y'].includes(mRaw);
       // 性别：显式值优先；否则从身份证号推断
       let gender: '男' | '女' | '' = '';
       if (genderRaw === '男' || genderRaw === '女') gender = genderRaw;
@@ -2622,17 +2684,37 @@ export default function BookingBoardCreate(props: {
       });
     }
     if (paxList.length) {
-      setChkPax((prev) => [...prev.filter((p) => p.name.trim()), ...paxList]);
+      // 计算统计数据
+      let male = 0, marriedFemale = 0, singleFemale = 0;
+      for (const p of paxList) {
+        if (p.gender === '男') male++;
+        else if (p.gender === '女') {
+          if (p.married) marriedFemale++;
+          else singleFemale++;
+        }
+      }
+      setChkImportPreview({ paxList, male, marriedFemale, singleFemale });
       setShowChkPaste(false);
-      setChkPasteText('');
+      setShowImportPreview(true);
     }
+  }
+
+  // 确认导入（从预览弹窗确认后写入）
+  function confirmChkImport() {
+    const { paxList } = chkImportPreview;
+    if (paxList.length) {
+      setChkPax((prev) => [...prev.filter((p) => p.name.trim()), ...paxList]);
+    }
+    setShowImportPreview(false);
+    setChkImportPreview({ paxList: [], male: 0, marriedFemale: 0, singleFemale: 0 });
+    setChkPasteText('');
   }
 
   function exportChkTemplate() {
     const rows = chkPax
       .filter((p) => p.name.trim())
-      .map((p) => [p.name, p.idCard, p.phone, p.gender, p.married ? '是' : '否', p.package]);
-    const csv = toCSV(rows, ['姓名', '身份证号', '手机号', '性别', '婚否', '套餐']);
+      .map((p) => [p.name, p.idCard, p.gender, p.phone, p.married ? '已婚' : '未婚', p.package]);
+    const csv = toCSV(rows, ['姓名', '身份证号', '性别', '手机号', '婚否', '套餐']);
     downloadFile('体检名单.csv', csv);
   }
 
@@ -2672,6 +2754,10 @@ export default function BookingBoardCreate(props: {
   async function handleSubmit() {
     if (!draftGroup.customerName.trim()) {
       setErr('请填写客户/单位名称');
+      return;
+    }
+    if (!draftGroup.salesPersonId) {
+      setErr('请先选择销售员');
       return;
     }
     if (draftGroup.items.length === 0) {
@@ -2812,12 +2898,12 @@ export default function BookingBoardCreate(props: {
               />
             </div>
             <div>
-              <label className={labelCls}>销售员</label>
+              <label className={labelCls}>销售员 <span className="text-red-500">*</span></label>
               <div className="relative">
                 <button
                   type="button"
                   onClick={() => setSalesPickerOpen((v) => !v)}
-                  className={`${inputCls} text-left flex items-center justify-between ${draftGroup.salesPerson ? 'text-gray-900' : 'text-gray-400'}`}
+                  className={`${inputCls} text-left flex items-center justify-between ${draftGroup.salesPerson ? 'text-gray-900' : 'text-gray-400'} ${!draftGroup.salesPerson ? 'border-red-300 focus:border-red-500' : ''}`}
                 >
                   <span className="truncate">{draftGroup.salesPerson || '点击选择销售员'}</span>
                   <span className="flex items-center gap-1 shrink-0">
@@ -3098,12 +3184,20 @@ export default function BookingBoardCreate(props: {
                       体检名单（{chkPax.filter((p) => p.name.trim()).length} 人）
                     </span>
                     <div className="flex gap-2">
-                      <button onClick={() => setShowChkPaste(true)} className={btnGhost}>
-                        <ClipboardList size={12} /> 粘贴解析
-                      </button>
-                      <button onClick={() => setChkPax((p) => [...p, emptyPax()])} className={btnGold}>
-                        <Plus size={12} /> 添加
-                      </button>
+                      {!draftGroup.salesPersonId ? (
+                        <span className="text-[11px] text-red-500 bg-red-50 px-2 py-1 rounded">
+                          ⚠ 请先选择销售员
+                        </span>
+                      ) : (
+                        <>
+                          <button onClick={() => { setChkPastePkg(salesCapsules[0]?.id || finalPkgOptions[0]?.code || ''); setShowChkPaste(true); }} className={btnGhost}>
+                            <ClipboardList size={12} /> 粘贴解析
+                          </button>
+                          <button onClick={() => setChkPax((p) => [...p, emptyPax()])} className={btnGold}>
+                            <Plus size={12} /> 添加
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -4519,10 +4613,43 @@ export default function BookingBoardCreate(props: {
                 <X size={18} />
               </button>
             </div>
+            {/* 默认套餐选择 */}
+            <div className="mb-3 p-3 bg-blue-50/50 border border-blue-200 rounded-lg">
+              <div className="text-xs text-gray-600 mb-1.5">
+                <span className="text-red-500 font-medium">*</span> 默认套餐
+                <span className="text-gray-400 ml-1">（粘贴文本中未指定套餐时，使用此默认值）</span>
+              </div>
+              <select
+                value={chkPastePkg}
+                onChange={(e) => setChkPastePkg(e.target.value)}
+                className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
+              >
+                <option value="">— 请选择默认套餐 —</option>
+                <optgroup label="销售胶囊">
+                  {salesCapsules.map((cap) => {
+                    const role = '男';
+                    const price = cap.prices?.[role]?.discount_price || cap.prices?.['标准']?.discount_price || 0;
+                    return (
+                      <option key={cap.id} value={cap.id}>
+                        {friendlyCapsuleName(cap)} · ¥{Number(price).toLocaleString()}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+                <optgroup label="基础套餐">
+                  {finalPkgOptions.map((pkg) => (
+                    <option key={pkg.code} value={pkg.code}>
+                      {pkg.code} · {pkg.name} · ¥{Number(pkg.price || 0).toLocaleString()}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+            {/* 格式说明 */}
             <div className="mb-3 text-xs text-gray-500 leading-relaxed space-y-1">
               <div>
-                支持格式：
-                <span className="text-gray-700 font-mono ml-1">姓名、身份证号、手机号、性别、婚否、套餐</span>
+                列序：
+                <span className="text-gray-700 font-mono ml-1">姓名 / 身份证号 / 性别 / 手机 / 婚否 / 套餐</span>
                 <span className="text-gray-400 ml-1">（后3项可省略）</span>
               </div>
               <div>
@@ -4530,14 +4657,14 @@ export default function BookingBoardCreate(props: {
                 <span className="text-gray-700 ml-1">Tab / 逗号 / 空格 均可</span>
               </div>
               <div className="text-green-600">
-                ✨ 粘贴后自动根据身份证号推断性别（第17位奇男偶女），无需手填性别
+                ✨ 粘贴后自动根据身份证号推断性别（第17位奇男偶女），婚姻支持「已婚/未婚/是/否」
               </div>
             </div>
             <textarea
               value={chkPasteText}
               onChange={(e) => setChkPasteText(e.target.value)}
               rows={10}
-              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t13800138000\t男\t是\tB\n李芳\t310110199205058888\t13900139000\n王敏 320104198812125566 女 是 C'}
+              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t男\t13800138000\t已婚\tB\n李芳\t310110199205058888\t女\t13900139000\t未婚\n王敏 320104198812125566 女 13800138000 已婚 C'}
               className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 font-mono focus:outline-none focus:border-green-500"
             />
             <div className="flex justify-end gap-2 mt-3">
@@ -4546,6 +4673,52 @@ export default function BookingBoardCreate(props: {
               </button>
               <button onClick={doChkImport} className={btnGold}>
                 <ClipboardList size={14} /> 解析导入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 解析结果预览弹窗 */}
+      {showImportPreview && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowImportPreview(false)} />
+          <div className="relative w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-2xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-medium text-gray-900">
+                ✅ 解析成功
+                <span className="ml-2 text-sm text-gray-500">共 {chkImportPreview.paxList.length} 人</span>
+              </h3>
+              <button onClick={() => setShowImportPreview(false)} className="text-gray-500 hover:text-gray-800">
+                <X size={18} />
+              </button>
+            </div>
+            {/* 统计卡片 */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                <div className="text-2xl mb-1">👨</div>
+                <div className="text-xl font-bold text-blue-700">{chkImportPreview.male}</div>
+                <div className="text-[11px] text-blue-600">男性</div>
+              </div>
+              <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 text-center">
+                <div className="text-2xl mb-1">👩‍💍</div>
+                <div className="text-xl font-bold text-pink-700">{chkImportPreview.marriedFemale}</div>
+                <div className="text-[11px] text-pink-600">已婚女</div>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
+                <div className="text-2xl mb-1">👩</div>
+                <div className="text-xl font-bold text-purple-700">{chkImportPreview.singleFemale}</div>
+                <div className="text-[11px] text-purple-600">未婚女</div>
+              </div>
+            </div>
+            {/* 人员列表（可折叠） */}
+            <ImportPreviewDetails paxList={chkImportPreview.paxList} />
+            <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-gray-100">
+              <button onClick={() => { setShowImportPreview(false); }} className={btnGhost}>
+                返回修改
+              </button>
+              <button onClick={confirmChkImport} className={btnGold}>
+                <CheckCircle size={14} /> 确认导入
               </button>
             </div>
           </div>
