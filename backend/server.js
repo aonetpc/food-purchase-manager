@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const pool = require('./db');
 
 const categoriesRouter = require('./routes/categories');
 const ingredientsRouter = require('./routes/ingredients');
@@ -143,6 +144,43 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
-});
+// 启动时自动修复 booking_package_items 索引问题
+async function fixPackageItemsIndex() {
+  try {
+    console.log('🔧 检查 booking_package_items 索引...');
+    // 检查旧索引是否存在
+    const [checkOld] = await pool.query(
+      "SELECT COUNT(*) as cnt FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='booking_package_items' AND INDEX_NAME='uk_package_item'"
+    );
+    if (checkOld[0].cnt > 0) {
+      console.log('⚠️  发现旧索引 uk_package_item，正在删除...');
+      await pool.query('ALTER TABLE booking_package_items DROP INDEX uk_package_item');
+      console.log('✅ 旧索引已删除');
+    } else {
+      console.log('✅ 旧索引 uk_package_item 不存在（无需删除）');
+    }
+
+    // 确保新索引存在
+    const [checkNew] = await pool.query(
+      "SELECT COUNT(*) as cnt FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='booking_package_items' AND INDEX_NAME='uk_pkg_role_item'"
+    );
+    if (checkNew[0].cnt === 0) {
+      console.log('⚠️  新索引 uk_pkg_role_item 不存在，正在创建...');
+      await pool.query('ALTER TABLE booking_package_items ADD UNIQUE INDEX uk_pkg_role_item (package_id, role, item_id)');
+      console.log('✅ 新索引已创建');
+    } else {
+      console.log('✅ 新索引 uk_pkg_role_item 已存在');
+    }
+    console.log('✅ booking_package_items 索引检查完成\n');
+  } catch (e) {
+    console.error('❌ 索引修复失败（不影响服务启动）:', e.message);
+  }
+}
+
+// 启动服务
+(async () => {
+  await fixPackageItemsIndex();
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
+  });
+})();
