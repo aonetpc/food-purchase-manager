@@ -350,14 +350,33 @@ function makeItemSummary(
   let sub = '';
   if (item.itemType === 'checkup') {
     main = `${item.date} ${item.startTime}`;
-    const pkgs = (item.extra.paxList || []).reduce(
+    const paxList = (item.extra.paxList || []) as Array<{ package: string; name?: string }>;
+    const pkgs = paxList.reduce(
       (acc, p) => {
         acc[p.package] = (acc[p.package] || 0) + 1;
         return acc;
       },
       {} as Record<string, number>,
     );
-    sub = `${item.pax}人 · ${Object.entries(pkgs)
+    const paxListCount = Number((item.extra as any)?.paxListCount ?? paxList.length);
+    // 【C-1】区分：如果有 roleCounts 且不等于名单人数，显式注明「名单X人 · 设定Y人」
+    const savedCounts = (item.extra as any)?.roleCounts;
+    let roleTotal = 0;
+    if (savedCounts) {
+      roleTotal =
+        Number(savedCounts.male) +
+        Number(savedCounts.female_married) +
+        Number(savedCounts.female_single);
+    } else {
+      // 没存过角色人数时，item.pax 就是名单人数（老数据）
+      roleTotal = item.pax;
+    }
+    let peopleLabel = `${item.pax}人`;
+    if (savedCounts && roleTotal > 0 && roleTotal !== paxListCount) {
+      // 设定人数与名单人数不一致 → 同时显示，按「设定人数（名单实际录入X人）」显示
+      peopleLabel = `${roleTotal}人(名单${paxListCount}人)`;
+    }
+    sub = `${peopleLabel} · ${Object.entries(pkgs)
       .map(([k, v]) => `${helpers.getPackageInfo(k).name || k}×${v}`)
       .join(' ')}`;
   } else if (item.itemType === 'lodging') {
@@ -1994,9 +2013,39 @@ export default function BookingBoardCreate(props: {
     setDrawer({ open: true, mode: 'form', itemType: item.itemType, editIdx: idx });
     if (item.itemType === 'checkup') {
       setChkDate(item.date || todayStr());
-      setChkTime(item.startTime || '08:00');
+      // B-1：chkTime 兜底改为 07:30（与新建默认一致）
+      setChkTime(item.startTime || '07:30');
+      const paxListBackup = (item.extra.paxList || []).map((p) => ({ ...p }));
       // 第5期：编辑时从 finalItems 快照恢复 customItems，确保定制内容可继续编辑
-      setChkPax(restoreCustomItemsFromSnapshot((item.extra.paxList || []).map((p) => ({ ...p }))));
+      setChkPax(restoreCustomItemsFromSnapshot(paxListBackup));
+      // B-2：恢复 selectedChkPkgId（优先 extra 中保存的，其次从首个 pax.package 反推）
+      const savedPkgId = (item.extra as any)?.selectedChkPkgId;
+      const firstPaxPkg = paxListBackup.find((p: any) => p && p.package)?.package as string | undefined;
+      setSelectedChkPkg(savedPkgId || firstPaxPkg || '');
+      // B-3：恢复 roleCounts（优先 extra 中保存的；老数据则从 paxList 反推，保证至少能对齐名单人数）
+      const savedCounts = (item.extra as any)?.roleCounts;
+      if (savedCounts && (Number(savedCounts.male) + Number(savedCounts.female_married) + Number(savedCounts.female_single)) > 0) {
+        setRoleCounts({
+          male: Number(savedCounts.male) || 0,
+          female_married: Number(savedCounts.female_married) || 0,
+          female_single: Number(savedCounts.female_single) || 0,
+        });
+      } else {
+        let male = 0, marriedF = 0, singleF = 0;
+        for (const p of paxListBackup) {
+          const any = p as any;
+          if (!any?.name) continue;
+          if (any.gender === '男') male++;
+          else if (any.gender === '女') {
+            // married 字段可能是布尔值或字符串 '已婚'，两者都视为真
+            const isMarried = any.married === true || any.married === '已婚';
+            if (isMarried) marriedF++; else singleF++;
+          }
+        }
+        setRoleCounts({ male, female_married: marriedF, female_single: singleF });
+      }
+      // 清理套餐共享编辑缓存（避免带入上次状态）
+      setPackageSharedEdits({});
     } else if (item.itemType === 'lodging') {
       setLgIn(item.extra.dateCheckIn || todayStr());
       setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
@@ -2281,28 +2330,42 @@ export default function BookingBoardCreate(props: {
 
     if (itemType === 'checkup') {
       const paxListRaw = chkPax.filter((p) => p.name.trim());
-      if (paxListRaw.length === 0) {
-        setErr('请至少添加一名体检人员');
+      // 【A-1】角色设定总人数（0 表示未启用角色人数模式）
+      const rolePaxTotal = roleCounts.male + roleCounts.female_married + roleCounts.female_single;
+      // 名单人数至少 1（否则直接返回错误）
+      if (paxListRaw.length === 0 && rolePaxTotal === 0) {
+        setErr('请至少添加一名体检人员，或设置角色人数');
         return;
       }
       // 为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
-      // 使用 resolvePaxItemsEffective（合并了套餐共享批量编辑版）
       const paxList = paxListRaw.map(p => {
         const finalItems = resolvePaxItemsEffective(p);
         return {
           ...p,
-          finalItems,  // 最终体检项目快照（订完后不再依赖项目库/套餐）
+          finalItems,
           finalAmount: calcSinglePaxEffective(p),
         };
       });
-      const amount = calcCheckupEffective(paxListRaw);
+      // 【A-2】金额口径：角色总人数>0 且已选套餐时用 roleBasedTotal，否则按名单逐人计算
+      const amount = (selectedChkPkg && rolePaxTotal > 0 && roleBasedTotal > 0)
+        ? roleBasedTotal
+        : calcCheckupEffective(paxListRaw);
+      // 【A-3】pax 人数：优先角色总人数，否则名单人数
+      const displayPax = rolePaxTotal > 0 ? rolePaxTotal : paxList.length;
       item = {
         id: keepId,
         itemType,
         date: chkDate,
         startTime: chkTime,
-        pax: paxList.length,
-        extra: { paxList, packageTotal: amount },
+        pax: displayPax,
+        extra: {
+          paxList,
+          packageTotal: amount,
+          // 【A-4】保存角色设定信息，供编辑时恢复
+          selectedChkPkgId: selectedChkPkg || undefined,
+          roleCounts: rolePaxTotal > 0 ? { ...roleCounts } : undefined,
+          paxListCount: paxList.length,
+        },
         amount,
       };
     } else if (itemType === 'lodging') {
