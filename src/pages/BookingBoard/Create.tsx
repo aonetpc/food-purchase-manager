@@ -3859,19 +3859,22 @@ export default function BookingBoardCreate(props: {
 
                   {/* 已添加住宿明细 */}
                   {lgSessions.length > 0 && (
-                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    // 容器：加纵向最大高度 44vh + 纵滚，避免顶出保存按钮；min-w-0 保证横滚在 flex 中生效
+                    <div className="overflow-x-auto overflow-y-auto max-h-[44vh] rounded-lg border border-gray-200 min-w-0">
                       <table className="w-full text-xs">
-                        <thead className="bg-gray-50 text-gray-500">
+                        <thead className="bg-gray-50 text-gray-500 sticky top-0 z-10">
                           <tr>
-                            <th className="px-2 py-2 text-left font-medium">房型</th>
-                            <th className="px-2 py-2 text-left font-medium">单价(元/间/晚)</th>
-                            <th className="px-2 py-2 text-left font-medium">入住</th>
-                            <th className="px-2 py-2 text-left font-medium">离店</th>
-                            <th className="px-2 py-2 text-left font-medium">到达</th>
-                            <th className="px-2 py-2 text-left font-medium">间数</th>
-                            <th className="px-2 py-2 text-left font-medium">晚数</th>
-                            <th className="px-2 py-2 text-left font-medium">小计</th>
-                            <th className="px-2 py-2"></th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[9rem]">房型</th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[7rem]">
+                              单价<span className="text-[9px] text-gray-400 block leading-tight">(元/间/晚)</span>
+                            </th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[7.5rem]">入住</th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[7.5rem]">离店</th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[5.5rem]">到达</th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[3.5rem]">间数</th>
+                            <th className="px-2 py-2 text-left font-medium min-w-[3.5rem]">晚数</th>
+                            <th className="px-2 py-2 text-right font-medium min-w-[5rem]">小计</th>
+                            <th className="px-2 py-2 min-w-[2.5rem]"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3885,113 +3888,142 @@ export default function BookingBoardCreate(props: {
                             const isNegotiated = hasCustom && Number(s.customPrice) !== basePrice;
                             const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice) : 0;
                             return (
-                              <tr key={s.id} className="border-t border-gray-100">
-                                <td className="px-1.5 py-1.5">
-                                  <div className="font-medium text-gray-700">{info.name}</div>
-                                  <div className={`text-[10px] font-mono ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                                    {hasCustom
-                                      ? (isNegotiated
-                                          ? `🔺 议价 ¥${showPrice.toLocaleString()}/晚（标准 ¥${basePrice.toLocaleString()}）`
-                                          : `¥${showPrice.toLocaleString()}/晚`)
-                                      : `¥${info.price.toLocaleString()}/晚`}
-                                  </div>
-                                </td>
-                                <td className="px-1.5 py-1.5">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    placeholder={`标准 ¥${basePrice.toLocaleString()}`}
-                                    value={hasCustom ? Number(s.customPrice) : ''}
-                                    onChange={(e) => {
-                                      const raw = e.target.value.trim();
-                                      setLgSessions((prev) => prev.map((x, i) => {
-                                        if (i !== idx) return x;
-                                        if (raw === '') {
-                                          // 清空 = 回到标准价
-                                          const { customPrice: _drop, ...rest } = x;
-                                          return rest;
+                              // 一条 session → 两行 <tr>：房型卡/删除跨 2 行。React Fragment 不能有 key，用 <tbody> 或 key 包装；这里用数组扁平化并给两个 tr 各自独立 key
+                              [
+                                (
+                                  <tr key={`${s.id}-r1`} className="border-t border-gray-100">
+                                    <td className="px-1.5 py-1.5 align-middle" rowSpan={2}>
+                                      <div className="font-medium text-gray-700 whitespace-normal leading-tight">{info.name}</div>
+                                      <div className={`text-[10px] font-mono mt-0.5 ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                                        {hasCustom
+                                          ? (isNegotiated
+                                              ? `🔺 议价 ¥${showPrice.toLocaleString()}/晚（标准 ¥${basePrice.toLocaleString()}）`
+                                              : `¥${showPrice.toLocaleString()}/晚`)
+                                          : `¥${info.price.toLocaleString()}/晚`}
+                                      </div>
+                                    </td>
+                                    {/* 第 1 行：单价 / 入住 / 离店 / 到达 */}
+                                    <td className="px-1.5 py-1.5">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder={`标准 ¥${basePrice.toLocaleString()}`}
+                                        value={hasCustom ? Number(s.customPrice) : ''}
+                                        onChange={(e) => {
+                                          const raw = e.target.value.trim();
+                                          setLgSessions((prev) => prev.map((x, i) => {
+                                            if (i !== idx) return x;
+                                            if (raw === '') {
+                                              const { customPrice: _drop, ...rest } = x;
+                                              return rest;
+                                            }
+                                            const n = Number(raw);
+                                            return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
+                                          }));
+                                        }}
+                                        className={`${cellInput} w-full font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
+                                      />
+                                    </td>
+                                    <td className="px-1.5 py-1.5">
+                                      <input
+                                        type="date"
+                                        value={s.dateCheckIn}
+                                        onChange={(e) => {
+                                          const newIn = e.target.value;
+                                          setLgSessions((prev) => prev.map((x, i) => {
+                                            if (i !== idx) return x;
+                                            let out = x.dateCheckOut;
+                                            if (newIn && out) {
+                                              const minOut = fmt(addDays(parseDateLocal(newIn), 1));
+                                              if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
+                                            }
+                                            return { ...x, dateCheckIn: newIn, dateCheckOut: out };
+                                          }));
+                                        }}
+                                        className={`${cellInput} w-full font-mono`}
+                                      />
+                                    </td>
+                                    <td className="px-1.5 py-1.5">
+                                      <input
+                                        type="date"
+                                        value={s.dateCheckOut}
+                                        onChange={(e) =>
+                                          setLgSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, dateCheckOut: e.target.value } : x
+                                          ))
                                         }
-                                        const n = Number(raw);
-                                        return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
-                                      }));
-                                    }}
-                                    className={`${cellInput} w-28 font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1.5">
-                                  <input
-                                    type="date"
-                                    value={s.dateCheckIn}
-                                    onChange={(e) => {
-                                      const newIn = e.target.value;
-                                      setLgSessions((prev) => prev.map((x, i) => {
-                                        if (i !== idx) return x;
-                                        let out = x.dateCheckOut;
-                                        if (newIn && out) {
-                                          const minOut = fmt(addDays(parseDateLocal(newIn), 1));
-                                          if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
+                                        className={`${cellInput} w-full font-mono`}
+                                      />
+                                    </td>
+                                    <td className="px-1.5 py-1.5">
+                                      <input
+                                        type="time"
+                                        value={s.arrivalTime}
+                                        onChange={(e) =>
+                                          setLgSessions((prev) => prev.map((x, i) =>
+                                            i === idx ? { ...x, arrivalTime: e.target.value } : x
+                                          ))
                                         }
-                                        return { ...x, dateCheckIn: newIn, dateCheckOut: out };
-                                      }));
-                                    }}
-                                    className={`${cellInput} w-32 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1.5">
-                                  <input
-                                    type="date"
-                                    value={s.dateCheckOut}
-                                    onChange={(e) =>
-                                      setLgSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, dateCheckOut: e.target.value } : x
-                                      ))
-                                    }
-                                    className={`${cellInput} w-32 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1.5">
-                                  <input
-                                    type="time"
-                                    value={s.arrivalTime}
-                                    onChange={(e) =>
-                                      setLgSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, arrivalTime: e.target.value } : x
-                                      ))
-                                    }
-                                    className={`${cellInput} w-20 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1.5">
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={s.rooms}
-                                    onChange={(e) =>
-                                      setLgSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) } : x
-                                      ))
-                                    }
-                                    className={`${cellInput} w-14 font-mono`}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1.5 font-mono">
-                                  <span className={valid ? 'text-green-600' : 'text-red-500'}>
-                                    {valid ? `${nights}晚` : '⚠️ 无效'}
-                                  </span>
-                                </td>
-                                <td className="px-1.5 py-1.5 font-mono text-green-600">¥{amt.toLocaleString()}</td>
-                                <td className="px-1.5 py-1.5">
-                                  <button
-                                    onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
-                                    className="text-red-400 hover:text-red-600"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </td>
-                              </tr>
+                                        className={`${cellInput} w-full font-mono`}
+                                      />
+                                    </td>
+                                    {/* 列 6-8 空占位 */}
+                                    <td className="px-1.5 py-1.5"></td>
+                                    <td className="px-1.5 py-1.5"></td>
+                                    <td className="px-1.5 py-1.5"></td>
+                                    <td className="px-1.5 py-1.5" rowSpan={2}>
+                                      <button
+                                        onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
+                                        className="text-red-400 hover:text-red-600"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ),
+                                (
+                                  <tr key={`${s.id}-r2`} className="border-b border-gray-100/70 bg-gray-50/40">
+                                    {/* 房型已跨掉（colspan 不是 td，已在上面 rowSpan=2） */}
+                                    <td className="px-1.5 py-1.5 text-[10px] text-gray-400 pl-3">
+                                      <span>→ 下方</span>
+                                    </td>
+                                    {/* 第 2 行：间数 / 晚数 / 小计  */}
+                                    <td className="px-1.5 py-1.5" colSpan={2}>
+                                      <div className="flex items-center gap-1">
+                                        <label className="text-[10px] text-gray-500 shrink-0">间数</label>
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          value={s.rooms}
+                                          onChange={(e) =>
+                                            setLgSessions((prev) => prev.map((x, i) =>
+                                              i === idx ? { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) } : x
+                                            ))
+                                          }
+                                          className={`${cellInput} w-20 font-mono`}
+                                        />
+                                      </div>
+                                    </td>
+                                    <td className="px-1.5 py-1.5">
+                                      <div className="flex items-center gap-1">
+                                        <label className="text-[10px] text-gray-500 shrink-0">晚数</label>
+                                        <span className={`font-mono ${valid ? 'text-green-600' : 'text-red-500'}`}>
+                                          {valid ? `${nights}晚` : '⚠️ 无效'}
+                                        </span>
+                                      </div>
+                                    </td>
+                                    <td className="px-1.5 py-1.5" colSpan={3}>
+                                      <div className="flex items-center justify-end gap-1 pr-1">
+                                        <label className="text-[10px] text-gray-500 shrink-0">小计</label>
+                                        <span className="font-mono text-green-600 font-semibold">¥{amt.toLocaleString()}</span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ),
+                              ]
                             );
-                          })}
+                          }).flat()}
                         </tbody>
                       </table>
                     </div>
