@@ -101,22 +101,44 @@ export default function WizardPricing() {
     // 空输入兜底：价格取原价（无折扣），折扣率取 100
     const finalPrice = isNaN(priceNum) ? total : Math.max(0, priceNum);
     const finalRate = isNaN(rateNum) ? 100 : Math.max(1, Math.min(100, rateNum));
+    // 修复：发送全部三个角色的数据，未编辑的保持原值，防止后端覆盖其他角色定价
     const role_plans: any = {};
-    role_plans[editRole] = {
-      discount_price: Math.round(finalPrice * 100) / 100,
-      discount_rate: Math.round(finalRate * 100) / 100,
-    };
+    ROLES.forEach(r => {
+      if (r === editRole) {
+        role_plans[r] = {
+          discount_price: Math.round(finalPrice * 100) / 100,
+          discount_rate: Math.round(finalRate * 100) / 100,
+        };
+      } else {
+        const existing: any = pkg.role_plans?.[r] || {};
+        const exTotal = Number(existing.original_total) || 0;
+        const exPrice = Number(existing.discount_price) || exTotal;
+        const exRate = Number(existing.discount_rate) || 100;
+        role_plans[r] = {
+          discount_price: Math.round(exPrice * 100) / 100,
+          discount_rate: Math.round(exRate * 100) / 100,
+        };
+      }
+    });
     setSaving(true);
     try {
       const res = await checkupApi.saveItems(id, { role_plans });
       if (!res?.ok) throw new Error(res?.error || '保存失败');
       const p = res.data as CheckupTemplate;
       setPkg(p);
+      // 修复：保存后刷新逻辑与 load 函数一致，防止未编辑角色显示 ¥0
       const prices: any = {}, rates: any = {};
       ROLES.forEach(r => {
-        const plan: any = p.role_plans?.[r] || { discount_price: 0, discount_rate: 100 };
-        prices[r] = String(Number(plan.discount_price) || 0);
-        rates[r] = String(Number(plan.discount_rate) || 100);
+        const rp: any = p.role_plans?.[r] || { original_total: 0, discount_price: 0, discount_rate: 100 };
+        const rpTotal = Number(rp.original_total) || 0;
+        const rpRate = Number(rp.discount_rate) || 100;
+        if (rpRate >= 100 && rpTotal > 0) {
+          prices[r] = String(rpTotal);
+          rates[r] = '100';
+        } else {
+          prices[r] = String(Number(rp.discount_price) || rpTotal);
+          rates[r] = String(rpRate);
+        }
       });
       setLocalPrice(prices); setLocalRate(rates);
       toast.success(`${ROLE_LABEL[editRole]}定价已保存`);
