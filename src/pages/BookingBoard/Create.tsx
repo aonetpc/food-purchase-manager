@@ -1579,6 +1579,8 @@ export default function BookingBoardCreate(props: {
     dateCheckOut: string;
     arrivalTime: string;
     rooms: number;
+    // 单晚自定义单价（单位：元/间/晚）。undefined = 用房型配置标准价；显式 0 = 免费接待
+    customPrice?: number;
   };
   const [lgIn, setLgIn] = useState(todayStr());
   const [lgOut, setLgOut] = useState(fmt(addDays(new Date(), 1)));
@@ -1939,7 +1941,7 @@ export default function BookingBoardCreate(props: {
     if (t === 'lodging')
       return lgSessions.reduce((s, x) => {
         const n = Math.max(0, daysBetween(x.dateCheckIn, x.dateCheckOut));
-        return s + calcLodgingAmount(x.lodgingType, x.rooms, n, finalBizConfigForCalc);
+        return s + calcLodgingAmount(x.lodgingType, x.rooms, n, finalBizConfigForCalc, x.customPrice);
       }, 0);
     if (t === 'lunch' || t === 'dinner')
       return mlSessions.reduce((s, x) => s + calcMealAmount(x.pricingMode, x.unitPrice, x.tables, x.perTable, x.pax), 0);
@@ -2053,6 +2055,9 @@ export default function BookingBoardCreate(props: {
       setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
       setLgArr(item.extra.arrivalTime || '14:00');
       setLgRooms(item.pax || 1);
+      // 住宿：恢复单晚自定义单价 customPrice（有就带回，没有=undefined，继续用标准价）
+      const cpRaw = (item.extra as any)?.customPrice;
+      const hasCP = cpRaw !== undefined && cpRaw !== null && !Number.isNaN(Number(cpRaw));
       setLgSessions([{
         id: item.id,
         lodgingType: item.extra.lodgingType || 'standard',
@@ -2060,6 +2065,7 @@ export default function BookingBoardCreate(props: {
         dateCheckOut: item.extra.dateCheckOut || fmt(addDays(new Date(), 1)),
         arrivalTime: item.extra.arrivalTime || '14:00',
         rooms: item.pax || 1,
+        ...(hasCP ? { customPrice: Number(cpRaw) } : {}),
       }]);
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
       setMlSessions((item.extra.sessions as MealSession[] || []).map((s) => ({
@@ -2380,7 +2386,10 @@ export default function BookingBoardCreate(props: {
       }
       const newItems: BookingItem[] = sessions.map((s, i) => {
         const nights = daysBetween(s.dateCheckIn, s.dateCheckOut);
-        const amt = calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc);
+        // 住宿：每条 session 支持单晚自定义单价（customPrice），用于按单位不同分别议价
+        const amt = calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice);
+        // 决定 customPrice 是否写入 extra：有值（含显式 0）时写，未设置则不写（老数据兼容，字段体积更小）
+        const hasCP = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
         return {
           id: i === 0 ? keepId : (s.id && s.id.startsWith('lg_') ? s.id : genItemId()),
           itemType,
@@ -2393,6 +2402,7 @@ export default function BookingBoardCreate(props: {
             dateCheckOut: s.dateCheckOut,
             arrivalTime: s.arrivalTime,
             nights,
+            ...(hasCP ? { customPrice: Number(s.customPrice) } : {}),
           },
           amount: amt,
         };
@@ -3854,6 +3864,7 @@ export default function BookingBoardCreate(props: {
                         <thead className="bg-gray-50 text-gray-500">
                           <tr>
                             <th className="px-2 py-2 text-left font-medium">房型</th>
+                            <th className="px-2 py-2 text-left font-medium">单价(元/间/晚)</th>
                             <th className="px-2 py-2 text-left font-medium">入住</th>
                             <th className="px-2 py-2 text-left font-medium">离店</th>
                             <th className="px-2 py-2 text-left font-medium">到达</th>
@@ -3868,12 +3879,45 @@ export default function BookingBoardCreate(props: {
                             const nights = Math.max(0, daysBetween(s.dateCheckIn, s.dateCheckOut));
                             const valid = s.dateCheckIn && s.dateCheckOut && nights >= 1;
                             const info = getRoomInfo(s.lodgingType);
-                            const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc) : 0;
+                            const basePrice = Number(info.price || 0);
+                            const hasCustom = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
+                            const showPrice = hasCustom ? Number(s.customPrice) : basePrice;
+                            const isNegotiated = hasCustom && Number(s.customPrice) !== basePrice;
+                            const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice) : 0;
                             return (
                               <tr key={s.id} className="border-t border-gray-100">
                                 <td className="px-1.5 py-1.5">
                                   <div className="font-medium text-gray-700">{info.name}</div>
-                                  <div className="text-[10px] text-gray-400 font-mono">¥{info.price.toLocaleString()}/晚</div>
+                                  <div className={`text-[10px] font-mono ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                                    {hasCustom
+                                      ? (isNegotiated
+                                          ? `🔺 议价 ¥${showPrice.toLocaleString()}/晚（标准 ¥${basePrice.toLocaleString()}）`
+                                          : `¥${showPrice.toLocaleString()}/晚`)
+                                      : `¥${info.price.toLocaleString()}/晚`}
+                                  </div>
+                                </td>
+                                <td className="px-1.5 py-1.5">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder={`标准 ¥${basePrice.toLocaleString()}`}
+                                    value={hasCustom ? Number(s.customPrice) : ''}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.trim();
+                                      setLgSessions((prev) => prev.map((x, i) => {
+                                        if (i !== idx) return x;
+                                        if (raw === '') {
+                                          // 清空 = 回到标准价
+                                          const { customPrice: _drop, ...rest } = x;
+                                          return rest;
+                                        }
+                                        const n = Number(raw);
+                                        return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
+                                      }));
+                                    }}
+                                    className={`${cellInput} w-28 font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
+                                  />
                                 </td>
                                 <td className="px-1.5 py-1.5">
                                   <input

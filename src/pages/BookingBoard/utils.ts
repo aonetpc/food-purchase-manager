@@ -143,9 +143,12 @@ export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput):
   return paxList.reduce((sum, p) => sum + calcSinglePaxAmount(p, config), 0);
 }
 
-export function calcLodgingAmount(lodgingType: string, rooms: number, nights: number, config?: BizConfigInput): number {
+export function calcLodgingAmount(lodgingType: string, rooms: number, nights: number, config?: BizConfigInput, customPrice?: number): number {
   const row = buildMap(config?.roomTypes)[lodgingType];
-  const price = row ? Number(row.price) : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+  const basePrice = row ? Number(row.price) : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+  // customPrice 允许显式 0 元（免费接待），只有 undefined/null/NaN 才退回标准价
+  const useCustom = customPrice !== undefined && customPrice !== null && !Number.isNaN(Number(customPrice));
+  const price = useCustom ? Number(customPrice) : basePrice;
   return (price || 0) * Math.max(0, rooms) * Math.max(0, nights);
 }
 
