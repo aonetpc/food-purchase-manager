@@ -88,6 +88,10 @@ const [category, setCategory] = useState<string>('全部');
 const [keyword, setKeyword] = useState('');
 const [selected, setSelected] = useState<SelectedState>({ ...EMPTY_SCOPE });
 const [saving, setSaving] = useState(false);
+// 角色级排除：某角色排除某个公共项目
+const [excluded, setExcluded] = useState<Record<Role, Set<string>>>({
+  male: new Set(), female_married: new Set(), female_single: new Set(),
+});
 
 // 强制标准顺序：男→已婚女→未婚女，不受后端存储顺序影响
 const _ROLE_ORDER: Role[] = ['male', 'female_married', 'female_single'];
@@ -161,8 +165,9 @@ const filteredItems = useMemo(() => {
     if (!matchKw(it) || !matchCat(it)) return false;
     // 强制可见性校验：不可见的项目（如未婚女视角的阴超）一律不显示
     if (!scopeVisible(it, scope)) return false;
-    // 公共已选 / 本角色已选 / 本角色专属 → 显示
-    if (selected.common?.[it.id]) return true;
+    // 公共已选（且本角色未排除）/ 本角色已选 / 本角色专属 → 显示
+    if (selected.common?.[it.id] && !excluded[scope as Role]?.has(it.id)) return true;
+    if (selected.common?.[it.id] && excluded[scope as Role]?.has(it.id)) return true; // 已排除也显示（灰色态）
     if (selected[scope]?.[it.id]) return true;
     if (isRoleSpecific(it, scope)) return true;
     return false;
@@ -172,13 +177,14 @@ const filteredItems = useMemo(() => {
 // 每个 scope 下是否选中某 item（对于 role scope，还要算 common 里选过的"阴影"显示）
 const isSelectedInScope = (itemId: string, s: Scope) => !!selected[s]?.[itemId];
 
-// 当前 role 汇总统计（common 中适用的 + 当前角色专属的）
+// 当前 role 汇总统计（common 中适用的 + 当前角色专属的，排除被角色级排除的项目）
 const summaryForRole = (r: Role) => {
   const merged = new Map<string, SelectedItem>();
-  // common 中只合并对该角色适用的项目（妇科不计入男性等）
+  const excludedSet = excluded[r] || new Set<string>();
+  // common 中只合并对该角色适用的项目（妇科不计入男性等），且排除角色级排除的
   Object.values(selected.common || {}).forEach(si => {
     const item = items.find(i => i.id === si.item_id);
-    if (item && scopeVisible(item, r)) {
+    if (item && scopeVisible(item, r) && !excludedSet.has(si.item_id)) {
       merged.set(si.item_id, { ...si });
     }
   });
@@ -195,6 +201,24 @@ const summaryCommonTotal = () => {
 };
 
 const toggleItem = (item: CheckupItem) => {
+  // 角色 tab 中：如果是公共阴影项 → 切换排除状态
+  if (scope !== 'common' && selected.common?.[item.id]) {
+    const role = scope as Role;
+    setExcluded(prev => {
+      const next = { ...prev };
+      const set = new Set(next[role]);
+      if (set.has(item.id)) {
+        set.delete(item.id); // 恢复：从排除移除
+        toast.info(`已恢复「${item.name}」到${ROLE_LABEL[role]}`);
+      } else {
+        set.add(item.id); // 排除：加入排除
+        toast.info(`已排除「${item.name}」，不参与${ROLE_LABEL[role]}`);
+      }
+      next[role] = set;
+      return next;
+    });
+    return;
+  }
   setSelected(prev => {
     const cur = { ...prev[scope] };
     if (cur[item.id]) {
@@ -220,14 +244,66 @@ const onSaveAndNext = async () => {
   const itemLib: Record<string, CheckupItem> = {};
   for (const ci of items) itemLib[ci.id] = ci;
   // 构造 items list：把 selected 的四个 scope 展平
+  // 处理角色级排除：被某角色排除的公共项目 → 该角色不再参与，由其他角色单独包含
   const flatItems: any[] = [];
   let so = 1;
-  (['common', ...ROLES] as Scope[]).forEach(s => {
-    Object.values(selected[s]).forEach(si => {
+
+  // 1) 公共项目：检查每个角色的排除状态
+  Object.values(selected.common).forEach(si => {
+    const ci = itemLib[si.item_id];
+    const excludedRoles = ROLES.filter(r => excluded[r].has(si.item_id));
+    const includedRoles = ROLES.filter(r => !excluded[r].has(si.item_id));
+    if (excludedRoles.length === 0) {
+      // 没有角色排除 → 保持公共
+      flatItems.push({
+        item_id: si.item_id,
+        role: 'common',
+        quantity: si.quantity,
+        item_name_snapshot: ci?.name || si.name_snapshot,
+        item_price: ci ? Number(ci.default_price) || 0 : si.price_snapshot,
+        insurance_price_snapshot: ci ? Number(ci.insurance_price) || 0 : si.insurance_snapshot,
+        sort_order: so++,
+        remark: null,
+      });
+    } else {
+      // 有角色排除 → 公共项目按 includedRoles 拆分（只包含未排除的角色）
+      if (includedRoles.length === ROLES.length) {
+        // 全部未排除 → 保持公共
+        flatItems.push({
+          item_id: si.item_id,
+          role: 'common',
+          quantity: si.quantity,
+          item_name_snapshot: ci?.name || si.name_snapshot,
+          item_price: ci ? Number(ci.default_price) || 0 : si.price_snapshot,
+          insurance_price_snapshot: ci ? Number(ci.insurance_price) || 0 : si.insurance_snapshot,
+          sort_order: so++,
+          remark: null,
+        });
+      } else {
+        // 按剩余角色单独添加
+        includedRoles.forEach(r => {
+          flatItems.push({
+            item_id: si.item_id,
+            role: r,
+            quantity: si.quantity,
+            item_name_snapshot: ci?.name || si.name_snapshot,
+            item_price: ci ? Number(ci.default_price) || 0 : si.price_snapshot,
+            insurance_price_snapshot: ci ? Number(ci.insurance_price) || 0 : si.insurance_snapshot,
+            sort_order: so++,
+            remark: null,
+          });
+        });
+      }
+    }
+  });
+
+  // 2) 角色专属项目
+  ROLES.forEach(r => {
+    Object.values(selected[r] || {}).forEach(si => {
       const ci = itemLib[si.item_id];
       flatItems.push({
         item_id: si.item_id,
-        role: s,
+        role: r,
         quantity: si.quantity,
         item_name_snapshot: ci?.name || si.name_snapshot,
         item_price: ci ? Number(ci.default_price) || 0 : si.price_snapshot,
@@ -347,14 +423,18 @@ return (
         <div className="text-center py-12 text-gray-400 text-xs">没有匹配的项目</div>
       )}
       <div className="grid grid-cols-2 gap-2">
-        {filteredItems.map(it => (
-          <ItemCard key={it.id} item={it}
-            scope={scope}
-            selected={isSelectedInScope(it.id, scope)}
-            shadowSelected={scope !== 'common' && isSelectedInScope(it.id, 'common')}
-            onToggle={() => toggleItem(it)}
-          />
-        ))}
+        {filteredItems.map(it => {
+          const isExcluded = scope !== 'common' && isSelectedInScope(it.id, 'common') && excluded[scope as Role]?.has(it.id);
+          return (
+            <ItemCard key={it.id} item={it}
+              scope={scope}
+              selected={isSelectedInScope(it.id, scope)}
+              shadowSelected={scope !== 'common' && isSelectedInScope(it.id, 'common')}
+              isExcluded={isExcluded}
+              onToggle={() => toggleItem(it)}
+            />
+          );
+        })}
       </div>
     </main>
 
@@ -406,9 +486,9 @@ return (
 );
 }
 
-function ItemCard({ item, scope, selected, shadowSelected, onToggle }: {
+function ItemCard({ item, scope, selected, shadowSelected, isExcluded, onToggle }: {
 item: CheckupItem; scope: Scope;
-selected: boolean; shadowSelected: boolean;
+selected: boolean; shadowSelected: boolean; isExcluded: boolean;
 onToggle: () => void;
 }) {
 const isCombo = item.item_type === 'combo';
@@ -416,8 +496,13 @@ const label = getApplicableLabel(item);
 const isPublic = shadowSelected && scope !== 'common';
 const catEmoji = categoryEmoji(item.category);
 
-// 选中态：渐变绿+白字+轻阴影；公共已含：琥珀+橙描边；未选中：白底+灰描边+悬停加深
-const cardClass = selected
+// 选中态：渐变绿+白字+轻阴影
+// 公共已含且未排除：琥珀+橙描边
+// 公共已含且已排除：灰色+红描边+删除线效果
+// 未选中：白底+灰描边+悬停加深
+const cardClass = isExcluded
+  ? 'bg-gray-100 border-red-300 text-gray-400 shadow-sm opacity-70'
+  : selected
   ? 'bg-gradient-to-br from-emerald-400 to-emerald-600 border-emerald-500 text-white shadow-md shadow-emerald-500/30'
   : isPublic
   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-400 text-amber-900 shadow-sm'
@@ -431,26 +516,32 @@ return (
       <span className="text-base leading-none shrink-0">{catEmoji}</span>
       {/* 中间项目名 */}
       <div className="flex-1 min-w-0 flex flex-col justify-center">
-        <div className="truncate text-[13px] font-semibold leading-tight">{item.name}</div>
+        <div className={`truncate text-[13px] font-semibold leading-tight ${isExcluded ? 'line-through' : ''}`}>{item.name}</div>
         <div className="mt-0.5 flex items-center gap-1 flex-wrap">
           {isCombo && (
             <span className={`text-[9px] px-1 py-0 rounded ${
+              isExcluded ? 'bg-gray-300 text-gray-500' :
               selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
             }`}>组合</span>
           )}
           {label && (
             <span className={`text-[9px] px-1 py-0 rounded ${
+              isExcluded ? 'bg-gray-300 text-gray-500' :
               selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
             }`}>{label}</span>
           )}
-          {isPublic && (
+          {isPublic && !isExcluded && (
             <span className="text-[9px] px-1 py-0 rounded bg-amber-300 text-amber-900 font-semibold">公共</span>
+          )}
+          {isExcluded && (
+            <span className="text-[9px] px-1 py-0 rounded bg-red-100 text-red-600 font-semibold">已排除</span>
           )}
         </div>
       </div>
       {/* 右侧状态图标 */}
+      {isExcluded && <span className="text-red-400 text-sm shrink-0">✕</span>}
       {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
-      {isPublic && !selected && <span className="text-amber-500 text-sm shrink-0">📌</span>}
+      {isPublic && !selected && !isExcluded && <span className="text-amber-500 text-sm shrink-0">📌</span>}
     </div>
   </button>
 );
