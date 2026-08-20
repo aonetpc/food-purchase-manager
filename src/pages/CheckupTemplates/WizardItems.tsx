@@ -56,6 +56,36 @@ function getApplicableLabel(it: CheckupItem): string | null {
   return roles.map(r => ROLE_LABEL[r]).join('+');
 }
 
+// 获取项目实际适用的角色列表（用于保存时正确处理角色级排除）
+// 优先使用 applicable_roles 字段，否则通过关键字判断
+function getItemApplicableRoles(item: CheckupItem | undefined): Role[] {
+  if (!item) return [...ROLES]; // 兜底：返回全部角色
+  // 1. 如果有 applicable_roles 字段，直接使用
+  if (item.applicable_roles && Array.isArray(item.applicable_roles) && item.applicable_roles.length > 0) {
+    return item.applicable_roles.filter(r => ROLES.includes(r)) as Role[];
+  }
+  // 2. 否则通过关键字判断
+  const name = item.name || '';
+  const applicable: Role[] = [];
+  // 男性：不包含女性关键字
+  if (!nameHitKeys(name, FM_ONLY_KEYS) && !nameHitKeys(name, FEMALE_KEYS)) {
+    applicable.push('male');
+  }
+  // 已婚女：不包含男性关键字
+  if (!nameHitKeys(name, MALE_ONLY_KEYS)) {
+    applicable.push('female_married');
+  }
+  // 未婚女：不包含男性关键字、女性专属关键字、经阴道关键字
+  if (!nameHitKeys(name, MALE_ONLY_KEYS) && !nameHitKeys(name, FM_ONLY_KEYS) && !nameHitKeys(name, SINGLE_FORBID_KEYS)) {
+    applicable.push('female_single');
+  }
+  // 3. 兜底：如果没识别出适用角色，默认全部适用
+  if (applicable.length === 0) {
+    return [...ROLES];
+  }
+  return applicable;
+}
+
 // WizardItems 角色配色（Tab 选中态 + 底部价格胶囊）
 const TAB_ROLE_STYLE: Record<Role, {
   active: { border: string; bg: string; text: string; price: string };
@@ -248,13 +278,15 @@ const onSaveAndNext = async () => {
   const flatItems: any[] = [];
   let so = 1;
 
-  // 1) 公共项目：检查每个角色的排除状态
+  // 1) 公共项目：检查每个角色的排除状态（仅在项目适用的角色范围内计算）
   Object.values(selected.common).forEach(si => {
     const ci = itemLib[si.item_id];
-    const excludedRoles = ROLES.filter(r => excluded[r].has(si.item_id));
-    const includedRoles = ROLES.filter(r => !excluded[r].has(si.item_id));
+    // 获取项目实际适用的角色（如：彩超-盆腔 仅适用于女性）
+    const itemRoles = getItemApplicableRoles(ci);
+    const excludedRoles = itemRoles.filter(r => excluded[r].has(si.item_id));
+    const includedRoles = itemRoles.filter(r => !excluded[r].has(si.item_id));
     if (excludedRoles.length === 0) {
-      // 没有角色排除 → 保持公共
+      // 没有角色排除 → 保持公共（仅对实际适用的角色）
       flatItems.push({
         item_id: si.item_id,
         role: 'common',
@@ -266,9 +298,9 @@ const onSaveAndNext = async () => {
         remark: null,
       });
     } else {
-      // 有角色排除 → 公共项目按 includedRoles 拆分（只包含未排除的角色）
-      if (includedRoles.length === ROLES.length) {
-        // 全部未排除 → 保持公共
+      // 有角色排除 → 公共项目按 includedRoles 拆分（只包含未排除的适用角色）
+      if (includedRoles.length === itemRoles.length) {
+        // 全部适用角色都未排除 → 保持公共
         flatItems.push({
           item_id: si.item_id,
           role: 'common',
@@ -280,7 +312,7 @@ const onSaveAndNext = async () => {
           remark: null,
         });
       } else {
-        // 按剩余角色单独添加
+        // 按剩余适用角色单独添加
         includedRoles.forEach(r => {
           flatItems.push({
             item_id: si.item_id,
