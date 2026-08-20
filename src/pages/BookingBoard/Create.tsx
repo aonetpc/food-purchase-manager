@@ -838,6 +838,8 @@ function PaxItemsEditor(props: {
   const [pickerOpen, setPickerOpen] = useState(false);
   // 用户新增选中态
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  // 项目表格展开/折叠状态
+  const [tableExpanded, setTableExpanded] = useState(false);
   // 合并最终 lib：项目库优先；不足时兜底 + 从当前 items 反推（保证不空）
   const finalLib = useMemo<CheckupItemRow[]>(() => {
     const byId = new Map<string, CheckupItemRow>();
@@ -864,6 +866,12 @@ function PaxItemsEditor(props: {
     return Array.from(byId.values());
   }, [checkupItemsLib, fallbackLib, items]);
   const defaultSelectedIds = useMemo(() => new Set(items.map((i: any) => String(i.item_id || i.id || '')).filter(Boolean)), [items]);
+  // 摘要统计
+  const stats = useMemo(() => {
+    const added = items.filter(i => i.__temporary).length;
+    const subtotal = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+    return { total: items.length, added, subtotal };
+  }, [items]);
   const toggleUserSelection = (id: string) => {
     setPickedIds(prev => {
       const n = new Set(prev);
@@ -917,75 +925,92 @@ function PaxItemsEditor(props: {
           <span className="font-mono text-green-600 font-semibold">¥{paxAmount.toLocaleString()}</span>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="text-gray-500 border-b border-gray-100 bg-gray-50/50">
-            <tr>
-              <th className="px-2 py-1.5 text-left font-medium">项目</th>
-              <th className="px-2 py-1.5 text-left font-medium w-20">备注</th>
-              <th className="px-2 py-1.5 text-right font-medium w-16">单价</th>
-              <th className="px-2 py-1.5 text-center font-medium w-12">数量</th>
-              <th className="px-2 py-1.5 text-right font-medium w-16">小计</th>
-              <th className="px-2 py-1.5 text-center font-medium w-16">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((it, iIdx) => {
-              const subtotal = Number(it.item_price || 0) * Number(it.quantity || 1);
-              return (
-                <tr key={iIdx} className={`border-t border-gray-100 ${it.__temporary ? 'bg-cyan-50/40' : ''}`}>
-                  <td className="px-2 py-1.5 text-gray-700">
-                    {it.__temporary && <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>}
-                    {it.item_name_snapshot}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input
-                      value={it.remark || ''}
-                      onChange={e => onUpdateItemField(iIdx, 'remark', e.target.value)}
-                      className={`w-full px-1.5 py-0.5 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
-                      placeholder="如空腹"
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 text-right">
-                    <input
-                      type="number"
-                      value={it.item_price}
-                      onChange={e => onUpdateItemField(iIdx, 'item_price', Number(e.target.value) || 0)}
-                      className={`w-20 px-1 py-0.5 text-[11px] border border-gray-200 rounded font-mono text-right focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 text-center">
-                    <input
-                      type="number"
-                      min="1"
-                      value={it.quantity}
-                      onChange={e => onUpdateItemField(iIdx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
-                      className={`w-12 px-1 py-0.5 text-[11px] border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 text-right font-mono text-gray-700">¥{subtotal.toLocaleString()}</td>
-                  <td className="px-2 py-1.5 text-center">
-                    <button
-                      onClick={() => onRemoveItem(iIdx)}
-                      className="text-red-400 hover:text-red-600 inline-flex items-center gap-0.5"
-                      title="移除"
-                    >
-                      <Trash2 size={12}/>
-                    </button>
+      {/* 摘要条（默认折叠显示） */}
+      <div className="border-t border-gray-100 bg-gray-50/40 px-3 py-2 flex items-center justify-between text-xs">
+        <div className="flex items-center gap-3 text-gray-600">
+          <span>共 <span className="font-semibold text-gray-800">{stats.total}</span> 项</span>
+          {stats.added > 0 && <span className="text-cyan-600">追加 {stats.added} 项</span>}
+          <span>合计 <span className="font-mono font-semibold text-green-600">¥{stats.subtotal.toLocaleString()}</span></span>
+        </div>
+        <button
+          onClick={() => setTableExpanded(v => !v)}
+          className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] text-gray-500 hover:bg-gray-100 border border-gray-200"
+        >
+          {tableExpanded ? '收起 ▲' : '展开详情 ▼'}
+        </button>
+      </div>
+      {/* 展开的详情表格 */}
+      {tableExpanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-gray-500 border-b border-gray-100 bg-gray-50/50">
+              <tr>
+                <th className="px-2 py-1.5 text-left font-medium">项目</th>
+                <th className="px-2 py-1.5 text-left font-medium w-20">备注</th>
+                <th className="px-2 py-1.5 text-right font-medium w-16">单价</th>
+                <th className="px-2 py-1.5 text-center font-medium w-12">数量</th>
+                <th className="px-2 py-1.5 text-right font-medium w-16">小计</th>
+                <th className="px-2 py-1.5 text-center font-medium w-16">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, iIdx) => {
+                const subtotal = Number(it.item_price || 0) * Number(it.quantity || 1);
+                return (
+                  <tr key={iIdx} className={`border-t border-gray-100 ${it.__temporary ? 'bg-cyan-50/40' : ''}`}>
+                    <td className="px-2 py-1.5 text-gray-700">
+                      {it.__temporary && <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>}
+                      {it.item_name_snapshot}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        value={it.remark || ''}
+                        onChange={e => onUpdateItemField(iIdx, 'remark', e.target.value)}
+                        className={`w-full px-1.5 py-0.5 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                        placeholder="如空腹"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <input
+                        type="number"
+                        value={it.item_price}
+                        onChange={e => onUpdateItemField(iIdx, 'item_price', Number(e.target.value) || 0)}
+                        className={`w-20 px-1 py-0.5 text-[11px] border border-gray-200 rounded font-mono text-right focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      <input
+                        type="number"
+                        min="1"
+                        value={it.quantity}
+                        onChange={e => onUpdateItemField(iIdx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
+                        className={`w-12 px-1 py-0.5 text-[11px] border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono text-gray-700">¥{subtotal.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-center">
+                      <button
+                        onClick={() => onRemoveItem(iIdx)}
+                        className="text-red-400 hover:text-red-600 inline-flex items-center gap-0.5"
+                        title="移除"
+                      >
+                        <Trash2 size={12}/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-3 text-center text-xs text-gray-400">
+                    当前无项目，请从下方「追加项目」按钮选择
                   </td>
                 </tr>
-              );
-            })}
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-3 py-3 text-center text-xs text-gray-400">
-                  当前无项目，请从下方「追加项目」按钮选择
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className="border-t border-gray-100 bg-gray-50/30 px-3 py-2">
         <button
           onClick={() => { setPickerOpen(!pickerOpen); setPickedIds(new Set()); }}
@@ -1120,6 +1145,8 @@ function PackageGroupSummary(props: {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  // 项目表格展开/折叠状态
+  const [tableExpanded, setTableExpanded] = useState(false);
 
   const nTotal = paxList.length;
   const nCustom = paxList.filter(isCustomizedFn).length;
@@ -1133,6 +1160,11 @@ function PackageGroupSummary(props: {
       }, 0));
 
   const itemsSubtotal = sharedItems.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
+  // 摘要统计
+  const grpStats = useMemo(() => {
+    const added = sharedItems.filter(i => i.__temporary).length;
+    return { total: sharedItems.length, added, subtotal: itemsSubtotal };
+  }, [sharedItems, itemsSubtotal]);
   // 合并最终 lib（项目库 + 已有 sharedItems 反推兜底）
   const finalLib = useMemo<CheckupItemRow[]>(() => {
     const byId = new Map<string, CheckupItemRow>();
@@ -1216,86 +1248,103 @@ function PackageGroupSummary(props: {
         </div>
       </div>
 
-      {/* 项目表 */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-[11px]">
-          <thead className="text-gray-500 bg-gray-50/50">
-            <tr>
-              <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
-              <th className="px-3 py-1.5 text-left font-medium">项目</th>
-              <th className="px-3 py-1.5 text-left font-medium w-28">备注</th>
-              <th className="px-3 py-1.5 text-right font-medium w-20">单价</th>
-              <th className="px-3 py-1.5 text-center font-medium w-14">数量</th>
-              <th className="px-3 py-1.5 text-right font-medium w-20">小计</th>
-              <th className="px-3 py-1.5 text-center font-medium w-16">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sharedItems.length === 0 ? (
+      {/* 摘要条（默认折叠显示） */}
+      <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between text-xs">
+        <div className="flex items-center gap-3 text-gray-600">
+          <span>共 <span className="font-semibold text-gray-800">{grpStats.total}</span> 项</span>
+          {grpStats.added > 0 && <span className="text-cyan-600">追加 {grpStats.added} 项</span>}
+          <span>项目合计 <span className="font-mono font-semibold text-green-600">¥{grpStats.subtotal.toLocaleString()}</span></span>
+          {nStandard > 1 && <span className="text-gray-400">× {nStandard} 标准人 = ¥{(grpStats.subtotal * nStandard).toLocaleString()}</span>}
+        </div>
+        <button
+          onClick={() => setTableExpanded(v => !v)}
+          className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] text-gray-500 hover:bg-gray-100 border border-gray-200"
+        >
+          {tableExpanded ? '收起 ▲' : '展开详情 ▼'}
+        </button>
+      </div>
+      {/* 展开的详情表格 */}
+      {tableExpanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead className="text-gray-500 bg-gray-50/50">
               <tr>
-                <td colSpan={7} className="px-3 py-4 text-center text-xs text-gray-400">
-                  当前无项目，请从下方「批量追加项目」添加
-                </td>
+                <th className="px-3 py-1.5 text-left font-medium w-8">#</th>
+                <th className="px-3 py-1.5 text-left font-medium">项目</th>
+                <th className="px-3 py-1.5 text-left font-medium w-28">备注</th>
+                <th className="px-3 py-1.5 text-right font-medium w-20">单价</th>
+                <th className="px-3 py-1.5 text-center font-medium w-14">数量</th>
+                <th className="px-3 py-1.5 text-right font-medium w-20">小计</th>
+                <th className="px-3 py-1.5 text-center font-medium w-16">操作</th>
               </tr>
-            ) : sharedItems.map((it, iIdx) => {
-              const subtotal = Number(it.item_price || 0) * Number(it.quantity || 1);
-              return (
-                <tr key={iIdx} className={`border-t border-gray-100 ${it.__temporary ? 'bg-cyan-50/40' : ''}`}>
-                  <td className="px-3 py-1 text-gray-400 font-mono text-center">{iIdx + 1}</td>
-                  <td className="px-3 py-1 text-gray-700">
-                    {it.__temporary && <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>}
-                    {it.item_name_snapshot}
-                  </td>
-                  <td className="px-3 py-1">
-                    <input
-                      value={it.remark || ''}
-                      onChange={e => onUpdateItemField(iIdx, 'remark', e.target.value)}
-                      className={`w-full px-1.5 py-0.5 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
-                      placeholder="如：需空腹"
-                    />
-                  </td>
-                  <td className="px-3 py-1 text-right">
-                    <input
-                      type="number"
-                      value={it.item_price}
-                      onChange={e => onUpdateItemField(iIdx, 'item_price', Number(e.target.value) || 0)}
-                      className={`w-20 px-1 py-0.5 text-[11px] border border-gray-200 rounded font-mono text-right focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
-                    />
-                  </td>
-                  <td className="px-3 py-1 text-center">
-                    <input
-                      type="number"
-                      min="1"
-                      value={it.quantity}
-                      onChange={e => onUpdateItemField(iIdx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
-                      className={`w-14 px-1 py-0.5 text-[11px] border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
-                    />
-                  </td>
-                  <td className="px-3 py-1 text-right font-mono text-gray-700">¥{subtotal.toLocaleString()}</td>
-                  <td className="px-3 py-1 text-center">
-                    <button
-                      onClick={() => onRemoveItem(iIdx)}
-                      className="text-red-400 hover:text-red-600 inline-flex items-center gap-0.5"
-                      title="移除"
-                    >
-                      <Trash2 size={12}/>
-                    </button>
+            </thead>
+            <tbody>
+              {sharedItems.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-4 text-center text-xs text-gray-400">
+                    当前无项目，请从下方「批量追加项目」添加
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-gray-200 bg-gray-50/40">
-              <td colSpan={5} className="py-1.5 pr-4 text-right font-medium text-gray-500 text-xs">
-                项目合计（× {nStandard} 标准人 = 标准部分 ¥{(itemsSubtotal * nStandard).toLocaleString()}）
-              </td>
-              <td className="py-1.5 text-right font-mono font-semibold text-green-600">¥{itemsSubtotal.toLocaleString()}</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+              ) : sharedItems.map((it, iIdx) => {
+                const subtotal = Number(it.item_price || 0) * Number(it.quantity || 1);
+                return (
+                  <tr key={iIdx} className={`border-t border-gray-100 ${it.__temporary ? 'bg-cyan-50/40' : ''}`}>
+                    <td className="px-3 py-1 text-gray-400 font-mono text-center">{iIdx + 1}</td>
+                    <td className="px-3 py-1 text-gray-700">
+                      {it.__temporary && <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>}
+                      {it.item_name_snapshot}
+                    </td>
+                    <td className="px-3 py-1">
+                      <input
+                        value={it.remark || ''}
+                        onChange={e => onUpdateItemField(iIdx, 'remark', e.target.value)}
+                        className={`w-full px-1.5 py-0.5 text-[11px] border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                        placeholder="如：需空腹"
+                      />
+                    </td>
+                    <td className="px-3 py-1 text-right">
+                      <input
+                        type="number"
+                        value={it.item_price}
+                        onChange={e => onUpdateItemField(iIdx, 'item_price', Number(e.target.value) || 0)}
+                        className={`w-20 px-1 py-0.5 text-[11px] border border-gray-200 rounded font-mono text-right focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                      />
+                    </td>
+                    <td className="px-3 py-1 text-center">
+                      <input
+                        type="number"
+                        min="1"
+                        value={it.quantity}
+                        onChange={e => onUpdateItemField(iIdx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
+                        className={`w-14 px-1 py-0.5 text-[11px] border border-gray-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500`}
+                      />
+                    </td>
+                    <td className="px-3 py-1 text-right font-mono text-gray-700">¥{subtotal.toLocaleString()}</td>
+                    <td className="px-3 py-1 text-center">
+                      <button
+                        onClick={() => onRemoveItem(iIdx)}
+                        className="text-red-400 hover:text-red-600 inline-flex items-center gap-0.5"
+                        title="移除"
+                      >
+                        <Trash2 size={12}/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-gray-200 bg-gray-50/40">
+                <td colSpan={5} className="py-1.5 pr-4 text-right font-medium text-gray-500 text-xs">
+                  项目合计（× {nStandard} 标准人 = 标准部分 ¥{(itemsSubtotal * nStandard).toLocaleString()}）
+                </td>
+                <td className="py-1.5 text-right font-mono font-semibold text-green-600">¥{itemsSubtotal.toLocaleString()}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
 
       <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-2 flex items-center justify-between">
         <div>
