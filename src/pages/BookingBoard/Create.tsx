@@ -1524,12 +1524,18 @@ export default function BookingBoardCreate(props: {
 
   // 体检表单
   const [chkDate, setChkDate] = useState(todayStr());
-  const [chkTime, setChkTime] = useState('08:00');
+  const [chkTime, setChkTime] = useState('07:30');
   const [chkPax, setChkPax] = useState<PaxEntry[]>([emptyPax()]);
   const [showChkPaste, setShowChkPaste] = useState(false);
   const [chkPasteText, setChkPasteText] = useState('');
-  // 粘贴导入弹窗的默认套餐（解析时每行默认套用，除非文本中含套餐列）
+  // 粘贴导入弹窗的默认套餐（改为使用 selectedChkPkg）
   const [chkPastePkg, setChkPastePkg] = useState<string>('');
+  // 体检改造：选中的套餐胶囊ID
+  const [selectedChkPkg, setSelectedChkPkg] = useState<string>('');
+  // 体检改造：各角色人数
+  const [roleCounts, setRoleCounts] = useState<{ male: number; female_married: number; female_single: number }>({
+    male: 0, female_married: 0, female_single: 0,
+  });
   // 解析后预览弹窗
   const [showImportPreview, setShowImportPreview] = useState(false);
   const [chkImportPreview, setChkImportPreview] = useState<{
@@ -1864,7 +1870,11 @@ export default function BookingBoardCreate(props: {
   const drawerAmount = useMemo(() => {
     const t = drawer.itemType;
     if (!t) return 0;
-    if (t === 'checkup') return calcCheckupEffective(chkPax.filter((p) => p.name.trim()));
+    if (t === 'checkup') {
+      // 如果已选套餐，使用角色人数计算合计；否则回退到名单计算
+      if (selectedChkPkg && roleBasedTotal > 0) return roleBasedTotal;
+      return calcCheckupEffective(chkPax.filter((p) => p.name.trim()));
+    }
     if (t === 'lodging')
       return lgSessions.reduce((s, x) => {
         const n = Math.max(0, daysBetween(x.dateCheckIn, x.dateCheckOut));
@@ -1896,8 +1906,10 @@ export default function BookingBoardCreate(props: {
     setDrawer({ open: true, mode: 'form', itemType: type, editIdx: -1 });
     if (type === 'checkup') {
       setChkDate(todayStr());
-      setChkTime('08:00');
+      setChkTime('07:30');
       setChkPax([emptyPax()]);
+      setSelectedChkPkg('');
+      setRoleCounts({ male: 0, female_married: 0, female_single: 0 });
     } else if (type === 'lodging') {
       setLgIn(todayStr());
       setLgOut(fmt(addDays(new Date(), 1)));
@@ -2122,6 +2134,45 @@ export default function BookingBoardCreate(props: {
   function calcCheckupEffective(paxList: PaxEntry[]): number {
     return paxList.reduce((s, p) => s + calcSinglePaxEffective(p), 0);
   }
+
+  // 体检改造：从胶囊获取指定角色的价格
+  function getCapsulePriceByRole(capsuleId: string, role: 'male' | 'female_married' | 'female_single'): number {
+    const cap = capsuleMap[capsuleId];
+    if (!cap) return 0;
+    const plan = cap.prices?.[role];
+    return Number(plan?.discount_price || 0);
+  }
+
+  // 体检改造：按角色人数计算合计金额
+  const roleBasedTotal = useMemo(() => {
+    if (!selectedChkPkg) return 0;
+    return (
+      roleCounts.male * getCapsulePriceByRole(selectedChkPkg, 'male') +
+      roleCounts.female_married * getCapsulePriceByRole(selectedChkPkg, 'female_married') +
+      roleCounts.female_single * getCapsulePriceByRole(selectedChkPkg, 'female_single')
+    );
+  }, [selectedChkPkg, roleCounts, capsuleMap]);
+
+  // 体检改造：统计已导入名单的角色人数
+  const importedRoleCounts = useMemo(() => {
+    const list = chkPax.filter(p => p.name.trim());
+    const counts = { male: 0, female_married: 0, female_single: 0 };
+    for (const p of list) {
+      if (p.gender === '男') counts.male++;
+      else if (p.gender === '女') {
+        if (p.married === '已婚') counts.female_married++;
+        else counts.female_single++;
+      }
+    }
+    return counts;
+  }, [chkPax]);
+
+  // 体检改造：剩余需绑定的各角色人数
+  const remainingRoleCounts = useMemo(() => ({
+    male: Math.max(0, roleCounts.male - importedRoleCounts.male),
+    female_married: Math.max(0, roleCounts.female_married - importedRoleCounts.female_married),
+    female_single: Math.max(0, roleCounts.female_single - importedRoleCounts.female_single),
+  }), [roleCounts, importedRoleCounts]);
 
   // 获取某套餐的共享项目（未设置共享版则返回套餐默认）
   function getSharedItems(pkgCode: string): CustomPackageItem[] {
@@ -2681,11 +2732,10 @@ export default function BookingBoardCreate(props: {
       const phone = cells[3] || '';
       const marriedRaw = cells[4] || '';
       const pkgRaw = cells[5] || '';
-      // 解析套餐：弹窗默认套餐优先（已选销售员的胶囊ID），文本中有则覆盖
+      // 解析套餐：优先使用已选中的套餐胶囊
       const v = (pkgRaw || '').trim();
       const up = v.toUpperCase();
-      // 默认值：优先弹窗选择的 → 当前销售员第一个销售胶囊 → 基础套餐 → 'A'
-      let pkgCode: string = chkPastePkg
+      let pkgCode: string = selectedChkPkg
         || salesCapsules[0]?.id
         || finalPkgOptions[0]?.code
         || 'A';
@@ -3218,6 +3268,125 @@ export default function BookingBoardCreate(props: {
                       />
                     </div>
                   </div>
+
+                  {/* 套餐选择 */}
+                  <div>
+                    <label className={labelCls}>选择体检套餐</label>
+                    {!draftGroup.salesPersonId ? (
+                      <div className="text-[11px] text-red-500 bg-red-50 px-3 py-2 rounded border border-red-200">
+                        ⚠ 请先选择销售员
+                      </div>
+                    ) : salesCapsules.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {salesCapsules.map((cap: any) => {
+                          const isSelected = selectedChkPkg === cap.id;
+                          const prices = cap.prices || {};
+                          const maxPrice = Math.max(
+                            Number(prices.male?.discount_price || 0),
+                            Number(prices.female_married?.discount_price || 0),
+                            Number(prices.female_single?.discount_price || 0)
+                          );
+                          return (
+                            <button
+                              key={cap.id}
+                              type="button"
+                              onClick={() => setSelectedChkPkg(isSelected ? '' : cap.id)}
+                              className={`px-3 py-2 rounded-lg border text-left transition-all ${
+                                isSelected
+                                  ? 'border-green-500 bg-green-50 ring-2 ring-green-200'
+                                  : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="text-xs font-medium text-gray-800">
+                                {friendlyCapsuleName(cap)}
+                              </div>
+                              <div className="text-[10px] text-gray-500 mt-0.5">
+                                ¥{Number(maxPrice).toLocaleString()} 起
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-gray-400 bg-gray-50 px-3 py-2 rounded">
+                        该销售员暂无套餐
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 按角色设置人数 */}
+                  {selectedChkPkg && (
+                    <div>
+                      <label className={labelCls}>设置体检人数（按角色）</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {([
+                          { key: 'male', label: '男性', icon: '👨', color: 'blue' },
+                          { key: 'female_married', label: '已婚女', icon: '👩‍💍', color: 'pink' },
+                          { key: 'female_single', label: '未婚女', icon: '👩', color: 'purple' },
+                        ] as const).map(({ key, label, icon, color }) => {
+                          const price = getCapsulePriceByRole(selectedChkPkg, key);
+                          const count = roleCounts[key];
+                          const imported =
+                            key === 'male' ? importedRoleCounts.male
+                            : key === 'female_married' ? importedRoleCounts.female_married
+                            : importedRoleCounts.female_single;
+                          const bgMap: Record<string, string> = {
+                            blue: 'bg-blue-50 border-blue-200',
+                            pink: 'bg-pink-50 border-pink-200',
+                            purple: 'bg-purple-50 border-purple-200',
+                          };
+                          const textMap: Record<string, string> = {
+                            blue: 'text-blue-700',
+                            pink: 'text-pink-700',
+                            purple: 'text-purple-700',
+                          };
+                          return (
+                            <div key={key} className={`border rounded-lg p-3 ${bgMap[color]}`}>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-sm">{icon} {label}</span>
+                                <span className={`text-xs font-medium ${textMap[color]}`}>
+                                  ¥{price.toLocaleString()}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setRoleCounts(rc => ({ ...rc, [key]: Math.max(0, rc[key] - 1) }))}
+                                  className="w-7 h-7 rounded border border-gray-300 bg-white hover:bg-gray-100 text-sm"
+                                >−</button>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={count}
+                                  onChange={(e) => setRoleCounts(rc => ({ ...rc, [key]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                  className="w-12 text-center border border-gray-200 rounded px-1 py-0.5 text-sm font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setRoleCounts(rc => ({ ...rc, [key]: rc[key] + 1 }))}
+                                  className="w-7 h-7 rounded border border-gray-300 bg-white hover:bg-gray-100 text-sm"
+                                >+</button>
+                              </div>
+                              {imported > 0 && (
+                                <div className="text-[10px] text-gray-500 text-center mt-1">
+                                  已导入 {imported} 人
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* 角色汇总 */}
+                      <div className="flex items-center justify-between mt-2 px-2">
+                        <span className="text-xs text-gray-500">
+                          合计 {roleCounts.male + roleCounts.female_married + roleCounts.female_single} 人
+                        </span>
+                        <span className="text-sm font-semibold text-green-600 font-mono">
+                          ¥{roleBasedTotal.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-700">
                       体检名单（{chkPax.filter((p) => p.name.trim()).length} 人）
@@ -3229,7 +3398,7 @@ export default function BookingBoardCreate(props: {
                         </span>
                       ) : (
                         <>
-                          <button onClick={() => { setChkPastePkg(salesCapsules[0]?.id || finalPkgOptions[0]?.code || ''); setShowChkPaste(true); }} className={btnGhost}>
+                          <button onClick={() => { setChkPastePkg(selectedChkPkg || salesCapsules[0]?.id || ''); setShowChkPaste(true); }} className={btnGhost}>
                             <ClipboardList size={12} /> 粘贴解析
                           </button>
                           <button onClick={() => setChkPax((p) => [...p, emptyPax()])} className={btnGold}>
@@ -3410,8 +3579,28 @@ export default function BookingBoardCreate(props: {
                       </tbody>
                     </table>
                   </div>
-                  <div className="text-right text-sm text-green-600 font-mono">
-                    合计：¥{calcCheckupEffective(chkPax.filter((p) => p.name.trim())).toLocaleString()}
+                  {/* 统计信息：已导入 vs 还需绑定 */}
+                  {selectedChkPkg && (
+                    <div className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                      <span>
+                        已导入 {importedRoleCounts.male + importedRoleCounts.female_married + importedRoleCounts.female_single} 人
+                        （男{importedRoleCounts.male} / 婚{importedRoleCounts.female_married} / 未{importedRoleCounts.female_single}）
+                      </span>
+                      {(remainingRoleCounts.male > 0 || remainingRoleCounts.female_married > 0 || remainingRoleCounts.female_single > 0) ? (
+                        <span className="text-amber-600">
+                          还需绑定：男{remainingRoleCounts.male} / 婚{remainingRoleCounts.female_married} / 未{remainingRoleCounts.female_single}
+                        </span>
+                      ) : (
+                        <span className="text-green-600">✓ 人数已匹配</span>
+                      )}
+                    </div>
+                  )}
+                  {/* 体检合计：按角色人数计算（与名单无关） */}
+                  <div className="flex items-center justify-between text-sm mt-1">
+                    <span className="text-gray-500">体检合计（按设定人数）</span>
+                    <span className="text-green-600 font-semibold font-mono text-base">
+                      ¥{roleBasedTotal.toLocaleString()}
+                    </span>
                   </div>
                   {/* 套餐汇总层：按套餐分组展示共享项目，支持批量修改；单人定制通过上方「编辑」弹窗调整 */}
                   {(() => {
@@ -4653,53 +4842,34 @@ export default function BookingBoardCreate(props: {
                 <X size={18} />
               </button>
             </div>
-            {/* 默认套餐选择 */}
-            <div className="mb-3 p-3 bg-blue-50/50 border border-blue-200 rounded-lg">
-              <div className="text-xs text-gray-600 mb-1.5">
-                <span className="text-red-500 font-medium">*</span> 默认套餐
-                <span className="text-gray-400 ml-1">（粘贴文本中未指定套餐时，使用此默认值）</span>
-              </div>
-              <select
-                value={chkPastePkg}
-                onChange={(e) => setChkPastePkg(e.target.value)}
-                className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
-              >
-                <option value="">— 请选择默认套餐 —</option>
-                {/* 已选销售员：只显示该销售员名下的销售胶囊 */}
-                {salesCapsules.length > 0 && (
-                  <optgroup label={`${draftGroup.salesPerson || '当前销售员'}的套餐`}>
-                    {salesCapsules.map((cap) => {
-                      const price = Math.max(
-                        Number(cap.prices?.male?.discount_price || 0),
-                        Number(cap.prices?.female_married?.discount_price || 0),
-                        Number(cap.prices?.female_single?.discount_price || 0),
-                      );
-                      return (
-                        <option key={cap.id} value={cap.id}>
-                          {friendlyCapsuleName(cap)} · ¥{Number(price).toLocaleString()}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
-                )}
-                {/* 未选销售员或胶囊为空：显示基础套餐兜底 */}
-                {salesCapsules.length === 0 && (
-                  <optgroup label="基础套餐">
-                    {finalPkgOptions.map((pkg) => (
-                      <option key={pkg.code} value={pkg.code}>
-                        {pkg.code} · {pkg.name} · ¥{Number(pkg.price || 0).toLocaleString()}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+            {/* 已选套餐提示 */}
+            <div className={`mb-3 p-3 border rounded-lg ${selectedChkPkg ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+              {selectedChkPkg ? (
+                <>
+                  <div className="text-xs text-gray-600 mb-1">
+                    已选套餐（名单将自动使用此套餐）：
+                  </div>
+                  <div className="text-sm font-medium text-green-700">
+                    {friendlyCapsuleName(capsuleMap[selectedChkPkg])}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-xs text-amber-600 font-medium">
+                    ⚠ 请先在上方选择体检套餐
+                  </div>
+                  <div className="text-[11px] text-amber-500 mt-0.5">
+                    未选择套餐时将使用默认套餐
+                  </div>
+                </>
+              )}
             </div>
             {/* 格式说明 */}
             <div className="mb-3 text-xs text-gray-500 leading-relaxed space-y-1">
               <div>
                 列序：
-                <span className="text-gray-700 font-mono ml-1">姓名 / 身份证号 / 性别 / 手机 / 婚否 / 套餐</span>
-                <span className="text-gray-400 ml-1">（后3项可省略）</span>
+                <span className="text-gray-700 font-mono ml-1">姓名 / 身份证号 / 性别 / 手机 / 婚否</span>
+                <span className="text-gray-400 ml-1">（套餐已在上方选择，无需再填）</span>
               </div>
               <div>
                 分隔符：
@@ -4713,7 +4883,7 @@ export default function BookingBoardCreate(props: {
               value={chkPasteText}
               onChange={(e) => setChkPasteText(e.target.value)}
               rows={10}
-              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t男\t13800138000\t已婚\tB\n李芳\t310110199205058888\t女\t13900139000\t未婚\n王敏 320104198812125566 女 13800138000 已婚 C'}
+              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t男\t13800138000\t已婚\n李芳\t310110199205058888\t女\t13900139000\t未婚\n王敏 320104198812125566 女 13800138000 已婚'}
               className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 font-mono focus:outline-none focus:border-green-500"
             />
             <div className="flex justify-end gap-2 mt-3">
