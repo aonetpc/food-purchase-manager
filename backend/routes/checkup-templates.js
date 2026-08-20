@@ -971,15 +971,15 @@ router.put('/:id/cover-sales', async (req, res) => {
 /**
  * GET /api/booking/checkup-templates/sales/:salesId/capsules
  *   返回：套餐胶囊列表，含三角色折扣价，供预订下单横滑选择
- *   权限：登录（预订员/管理员可查任意 salesId，销售仅能查自己）
+ *   权限：仅需登录（预订功能本身已有权限控制，此处不重复检查）
  */
 router.get('/sales/:salesId/capsules', async (req, res) => {
   try {
     const { salesId } = req.params;
-    // 权限：管理员全可查，销售只能查自己
-    if (!isAdminOrManager(req.user) && req.user.id !== salesId) {
-      return res.status(403).json({ ok: false, error: '只能查看自己名下的套餐' });
-    }
+    // 注意：此处不做额外权限检查
+    // 预订下单功能本身已有权限控制（不是所有用户都能操作），
+    // 因此任何已登录用户在预订流程中都应能查看指定销售员的套餐
+
     const where = `(
       owner_sales_id = ?
       OR is_public = 1
@@ -989,8 +989,18 @@ router.get('/sales/:salesId/capsules', async (req, res) => {
       `SELECT * FROM booking_packages WHERE ${where} ORDER BY sort_order ASC, created_at DESC`,
       [salesId, JSON.stringify(salesId)]
     );
-    const pids = pkgs.map(p => p.id);
-    const capsules = pkgs.map(p => ({
+
+    // 兜底：如果该销售员名下没有任何套餐，返回所有公共套餐
+    let finalPkgs = pkgs;
+    if (pkgs.length === 0) {
+      const [publicPkgs] = await pool.query(
+        `SELECT * FROM booking_packages WHERE is_public = 1 AND status = 1 ORDER BY sort_order ASC, created_at DESC`
+      );
+      finalPkgs = publicPkgs;
+    }
+
+    const pids = finalPkgs.map(p => p.id);
+    const capsules = finalPkgs.map(p => ({
       id: p.id, code: p.code, name: p.name, description: p.description,
       applicable_roles: parseMaybeJson(p.applicable_roles) || ROLES,
       base_template_id: p.base_template_id || null,
