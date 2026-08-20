@@ -495,11 +495,18 @@ function DetailModal({
     (order.status === 'pending' || order.status === 'reviewing' || order.status === 'confirmed');
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
-  // 第5期：展开的体检项目明细行（item.id）
+  const toast = useToast();
+  // 全部业务展开（不再只体检）
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  // 体检改1：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
+  // 体检：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
   const [salesCapsules, setSalesCapsules] = useState<any[]>([]);
   const [capsulesLoading, setCapsulesLoading] = useState(false);
+  // 业务配置（用于 code→中文名反查，以及体检套餐 items 导出）
+  const [bizCfg, setBizCfg] = useState<any>({
+    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], mealTypes: [],
+  });
+  const [bizCfgLoading, setBizCfgLoading] = useState(false);
+
   useEffect(() => {
     const sid = order.salesPersonId;
     if (!sid) { setSalesCapsules([]); return; }
@@ -516,11 +523,77 @@ function DetailModal({
     })();
     return () => { mounted = false; };
   }, [order.salesPersonId]);
+
+  useEffect(() => {
+    let mounted = true;
+    setBizCfgLoading(true);
+    (async () => {
+      try {
+        const cfg = await bookingApi.getConfig();
+        if (!mounted) return;
+        setBizCfg({
+          packages: cfg.packages || [],
+          roomTypes: cfg.roomTypes || [],
+          meetingHalls: cfg.meetingHalls || [],
+          wellnessTypes: cfg.wellnessTypes || [],
+          mealTypes: cfg.mealTypes || [],
+        });
+      } catch {
+        // 失败保持空数组，用 code 兜底展示
+      } finally { if (mounted) setBizCfgLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
   const capsuleMap = useMemo(() => {
     const m: Record<string, any> = {};
     for (const c of salesCapsules) m[c.id] = c;
     return m;
   }, [salesCapsules]);
+
+  // 体检套餐模板缓存（胶囊id→{ template, loading }）
+  const [tplCache, setTplCache] = useState<Record<string, { loading?: boolean; template?: any; error?: boolean }>>({});
+  function loadTemplateForCapsule(capId: string, cap: any): Promise<any> {
+    return new Promise(async (resolve) => {
+      const cached = tplCache[capId];
+      if (cached && cached.template) return resolve(cached.template);
+      if (cached && cached.loading) {
+        // 轮询等待
+        let tryLeft = 20;
+        const tick = () => {
+          const c = tplCache[capId];
+          if (c && c.template) return resolve(c.template);
+          if (c && c.error) return resolve(null);
+          if (tryLeft-- <= 0) return resolve(null);
+          setTimeout(tick, 200);
+        };
+        return tick();
+      }
+      setTplCache(prev => ({ ...prev, [capId]: { loading: true } }));
+      let tpl: any = null;
+      // 优先从胶囊字段取 items_by_role / role_items
+      if (cap && (cap.items_by_role || cap.role_items || (cap.items && cap.items.length))) {
+        tpl = {
+          id: cap.template_id || cap.id,
+          name: cap.name,
+          code: cap.code,
+          items_by_role: cap.items_by_role,
+          role_items: cap.role_items,
+          items: cap.items,
+          role_price_capsule: cap.prices,
+        };
+      }
+      if (!tpl && cap?.template_id) {
+        try {
+          const res = await checkupApi.get(cap.template_id);
+          if (res?.ok) tpl = res.data;
+        } catch { /* 忽略 */ }
+      }
+      setTplCache(prev => ({ ...prev, [capId]: { template: tpl || null, loading: false, error: !tpl } }));
+      resolve(tpl || null);
+    });
+  }
+
   function toggleExpand(id: string) {
     setExpandedItems(prev => {
       const next = new Set(prev);
@@ -530,13 +603,172 @@ function DetailModal({
     });
   }
 
+  // ======== 导出：体检名单（xlsx，不脱敏，用于导入体检系统） ========
+  async function exportCheckupPax(item: BookingItem, packageName: string) {
+    const paxList: any[] = (item.extra as any).paxList || [];
+    if (paxList.length === 0) { toast.warn('暂无体检名单可导出'); return; }
+    try {
+      const XLSX = (await import('xlsx')) as any;
+      const header = ['序号', '姓名', '性别', '婚否', '身份证号', '手机号', '角色', '套餐', '单人价(元)', '备注'];
+      const rows: any[][] = paxList.map((p, i) => {
+        const role = paxToRole(p.gender, p.married);
+        const cap = capsuleMap[p.package] || null;
+        const price = Number(cap?.prices?.[role]?.discount_price || (typeof p.finalAmount === 'number' ? p.finalAmount : 0) || 0);
+        return [
+          i + 1,
+          p.name || '',
+          p.gender || '',
+          p.married ? '已婚' : '未婚',
+          { t: 's', v: String(p.idCard || '') }, // 强制文本，避免18位科学计数
+          { t: 's', v: String(p.phone || '') },
+          ROLE_LABEL[role] || role,
+          packageName,
+          price,
+          (p.remark ?? ''),
+        ];
+      });
+      const aoa = [header, ...rows];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      // 设置身份证/手机号列宽 + 文本格式
+      ws['!cols'] = [
+        { wch: 6 }, { wch: 12 }, { wch: 6 }, { wch: 6 },
+        { wch: 22 }, { wch: 14 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 24 },
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '体检名单');
+      const dateTag = (item.date || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+      XLSX.writeFile(wb, `${order.id}_${order.customerName || '订单'}_体检名单_${dateTag}.xlsx`);
+      toast.success(`已导出 ${paxList.length} 人体检名单`);
+    } catch (e: any) {
+      toast.error('导出失败：' + (e?.message || String(e)));
+    }
+  }
+
+  // ======== 导出/查看：三角色套餐项目（xlsx，用于导入体检系统） ========
+  // 直接查看：内嵌 Sub-Modal（不要 PDF）
+  const [viewingPkg, setViewingPkg] = useState<{ capId: string; loading: boolean; sheets?: any[]; error?: string; autoExport?: boolean } | null>(null);
+  useEffect(() => {
+    // 「导出套餐.xlsx」按钮用：加载完成后自动下载并关闭弹窗
+    if (viewingPkg && viewingPkg.autoExport && viewingPkg.sheets) {
+      exportCheckupPackageExcel();
+      setViewingPkg(null);
+    }
+    if (viewingPkg && viewingPkg.autoExport && viewingPkg.error) {
+      toast.error('套餐数据加载失败，无法导出：' + viewingPkg.error);
+      setViewingPkg(null);
+    }
+  }, [viewingPkg?.sheets, viewingPkg?.error, viewingPkg?.autoExport]);
+  async function viewCheckupPackage(capId: string, cap: any, fallbackPackageCodeName: string, opts?: { autoExport?: boolean }) {
+    setViewingPkg({ capId, loading: true, autoExport: !!opts?.autoExport });
+    try {
+      const tpl = await loadTemplateForCapsule(capId, cap);
+      const displayRoles: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
+      const sheets = displayRoles.map(role => {
+        let items: any[] = [];
+        if (tpl?.items_by_role && typeof tpl.items_by_role === 'object') {
+          const common: any[] = Array.isArray(tpl.items_by_role.common) ? tpl.items_by_role.common : [];
+          const roleItems: any[] = Array.isArray(tpl.items_by_role[role]) ? tpl.items_by_role[role] : [];
+          items = [...common, ...roleItems];
+        } else if (tpl?.role_items && typeof tpl.role_items === 'object') {
+          items = (tpl.role_items[role]?.items) || [];
+        } else if (tpl?.items && Array.isArray(tpl.items)) {
+          const all: any[] = tpl.items;
+          items = all.filter((it: any) => it.role === 'common' || it.role === role);
+        } else if (cap?.items && Array.isArray(cap.items)) {
+          const all: any[] = cap.items;
+          items = all.filter((it: any) => (!it.role) || it.role === 'common' || it.role === role);
+        }
+        const discountPrice = Number(cap?.prices?.[role]?.discount_price || tpl?.role_price_capsule?.[role]?.discount_price || tpl?.role_plans?.[role]?.discount_price || 0);
+        const CATEGORY_ORDER = ['体格检查', '实验室', '影像检查', '功能检查', '肿瘤筛查', '妇科专项', '特色加项'];
+        items.sort((a, b) => {
+          const sa = (Number(a.sort_order ?? 0) || 0) - (Number(b.sort_order ?? 0) || 0);
+          if (sa !== 0) return sa;
+          const ca = CATEGORY_ORDER.indexOf(a.category || '') >>> 0;
+          const cb = CATEGORY_ORDER.indexOf(b.category || '') >>> 0;
+          return ca - cb;
+        });
+        return {
+          role,
+          label: ROLE_LABEL[role] || role,
+          discountPrice,
+          items: items.map(i => ({
+            category: i.category || '—',
+            name: i.item_name_snapshot || i.name || '—',
+            price: Number(i.item_price || i.default_price || i.price || 0),
+            qty: Number(i.quantity || 1),
+            remark: (i.remark ?? ''),
+          })),
+        };
+      });
+      setViewingPkg({ capId, loading: false, sheets, autoExport: !!opts?.autoExport });
+    } catch (e: any) {
+      setViewingPkg({ capId, loading: false, error: e?.message || '套餐详情加载失败', autoExport: !!opts?.autoExport });
+    }
+  }
+  async function exportCheckupPackageExcel() {
+    if (!viewingPkg?.sheets) return;
+    try {
+      const XLSX = (await import('xlsx')) as any;
+      const wb = XLSX.utils.book_new();
+      for (const sheet of viewingPkg.sheets) {
+        const header = ['序号', '分类', '项目名称', '单价(元)', '数量', '小计(元)', '备注'];
+        const rawTotal = sheet.items.reduce((s: number, it: any) => s + it.price * it.qty, 0);
+        const rows: any[][] = sheet.items.map((it: any, i: number) => [
+          i + 1, it.category, it.name, it.price, it.qty, Math.round(it.price * it.qty * 100) / 100, it.remark || '',
+        ]);
+        rows.push([
+          '', '', '合计（原价）', '', '', rawTotal, '',
+        ]);
+        rows.push([
+          '', '', `合计（折扣·${sheet.label}）`, '', '', sheet.discountPrice, '胶囊折后价',
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+        ws['!cols'] = [
+          { wch: 6 }, { wch: 10 }, { wch: 28 }, { wch: 10 }, { wch: 6 }, { wch: 12 }, { wch: 20 },
+        ];
+        const safeName = sheet.label.length > 20 ? sheet.label.slice(0, 20) : sheet.label;
+        XLSX.utils.book_append_sheet(wb, ws, safeName);
+      }
+      const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const capName = viewingPkg.capId && capsuleMap[viewingPkg.capId] ? friendlyCapsuleName(capsuleMap[viewingPkg.capId]) : '体检套餐';
+      XLSX.writeFile(wb, `${order.id}_${order.customerName || '订单'}_${capName}_${dateTag}.xlsx`);
+      toast.success('体检套餐 Excel 已导出');
+    } catch (e: any) {
+      toast.error('导出失败：' + (e?.message || String(e)));
+    }
+  }
+
+  // ======== 反查 helpers（mealTypes/rooms/halls/wellness/packages） ========
+  function mealName(code: string): string {
+    const f = (bizCfg.mealTypes || []).find((m: any) => m.code === code);
+    return f?.name || code;
+  }
+  function roomName(code: string): string {
+    const f = (bizCfg.roomTypes || []).find((m: any) => m.code === code);
+    return f?.name || (LODGING_TYPES[code as keyof typeof LODGING_TYPES]?.name) || code;
+  }
+  function hallName(code: string): string {
+    const f = (bizCfg.meetingHalls || []).find((m: any) => m.code === code);
+    return f?.name || (MEETING_HALLS[code as keyof typeof MEETING_HALLS]?.name) || code;
+  }
+  function wellnessName(code: string): string {
+    const f = (bizCfg.wellnessTypes || []).find((m: any) => m.code === code);
+    return f?.name || (WELLNESS_TYPES[code as keyof typeof WELLNESS_TYPES]?.name) || code;
+  }
+  function wellnessPrice(code: string, forGuest: boolean): number {
+    const f = (bizCfg.wellnessTypes || []).find((m: any) => m.code === code);
+    if (!f) return 0;
+    if (Number(f.is_free) === 1) return 0;
+    return Number(forGuest ? (f.price_guest || f.price || 0) : (f.price_external || f.price || 0));
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 shadow-2xl"
+        className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 shadow-2xl relative"
         onClick={e => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -641,21 +873,61 @@ function DetailModal({
                   {order.items.map(it => {
                     const biz = BIZ_MAP[it.itemType];
                     const isCheckup = it.itemType === 'checkup';
-                    const paxList: any[] = it.extra.paxList || [];
-                    const hasFinalItems = isCheckup && paxList.some((p: any) => Array.isArray(p.finalItems) && p.finalItems.length > 0);
+                    const paxList: any[] = (it.extra as any).paxList || [];
+                    const hasContent = (() => {
+                      switch (it.itemType) {
+                        case 'checkup': return true; // 总有摘要/导出
+                        case 'lodging': return true;
+                        case 'breakfast': return true;
+                        case 'lunch':
+                        case 'dinner':
+                          return Array.isArray(it.extra.sessions) && it.extra.sessions.length > 0;
+                        case 'meeting':
+                        case 'wellness':
+                          return Array.isArray(it.extra.sessions) && it.extra.sessions.length > 0;
+                        case 'carpickup':
+                          return !!(it.extra as any).carpickup;
+                        default: return false;
+                      }
+                    })();
                     const expanded = expandedItems.has(it.id);
                     // 计算快照合计金额（用于对比 item.amount 是否一致）
                     let snapTotal = 0;
                     paxList.forEach((p: any) => { if (typeof p.finalAmount === 'number') snapTotal += p.finalAmount; });
                     const displayAmount = snapTotal > 0 ? snapTotal : (it.amount || 0);
+
+                    const savedPkgId = (it.extra as any)?.selectedChkPkgId;
+                    const savedCounts = (it.extra as any)?.roleCounts as { male?: number; female_married?: number; female_single?: number } | undefined;
+                    const firstPkg = savedPkgId || paxList.find((p: any) => p?.package)?.package || '';
+                    const cap = capsuleMap[firstPkg] || null;
+                    const packageName = friendlyCapsuleName(cap) || (firstPkg ? `套餐${firstPkg}` : '未设置');
+
+                    const roleOrder: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
+                    const importedCounts = roleOrder.reduce((acc, k) => { acc[k] = 0; return acc; }, {} as Record<string, number>);
+                    const paxByRole: Record<string, any[]> = { male: [], female_married: [], female_single: [] };
+                    paxList.forEach((p: any) => {
+                      const r = paxToRole(p.gender, p.married);
+                      importedCounts[r] = (importedCounts[r] || 0) + 1;
+                      paxByRole[r].push(p);
+                    });
+                    const getPrice = (role: 'male' | 'female_married' | 'female_single') =>
+                      Number(cap?.prices?.[role]?.discount_price || 0);
+                    const prices = { male: getPrice('male'), female_married: getPrice('female_married'), female_single: getPrice('female_single') };
+                    const hasRoleSetting = savedCounts && roleOrder.some(k => Number(savedCounts[k] || 0) > 0);
+                    const roleTotal = roleOrder.reduce((s, k) => s + Number(savedCounts?.[k] || 0) * prices[k], 0);
+                    const displayRoleTotal = roleTotal > 0 ? roleTotal : displayAmount;
+
                     return (
                       <>
-                        <tr key={it.id} className={`border-t border-gray-200 ${isCheckup ? 'cursor-pointer hover:bg-gray-50/60' : ''}`}
-                            onClick={() => isCheckup && hasFinalItems && toggleExpand(it.id)}>
+                        <tr
+                          key={it.id}
+                          className={`border-t border-gray-200 ${hasContent ? 'cursor-pointer hover:bg-gray-50/60' : ''}`}
+                          onClick={() => hasContent && toggleExpand(it.id)}
+                        >
                           <td className="px-2 py-1.5 whitespace-nowrap">
                             <span style={{ color: biz.color }}>{biz.icon}</span>{' '}
                             <span className="text-gray-700">{biz.label}</span>
-                            {isCheckup && hasFinalItems && (
+                            {hasContent && (
                               <ChevronDown
                                 size={12}
                                 className={`inline-block ml-1 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
@@ -687,36 +959,17 @@ function DetailModal({
                           </td>
                           <td className="px-2 py-1.5 text-gray-500">{itemDetail(it) || '-'}</td>
                         </tr>
-                        {/* 第5期：展开 finalItems 明细（按人分组显示项目快照） */}
-                        {isCheckup && hasFinalItems && expanded && (
-                          <tr key={`${it.id}_detail`} className="bg-sky-50/40 border-t-0">
+                        {/* 统一展开区：所有业务共用同一结构，高度上限内容内滚 */}
+                        {hasContent && expanded && (
+                          <tr key={`${it.id}_detail`} className="bg-gray-50/70 border-t-0">
                             <td colSpan={6} className="px-3 py-2">
-                              <div className="space-y-2">
-                                {/* 【改1】套餐胶囊 + 角色定价/人数 摘要块 */}
-                                {(() => {
-                                  const savedPkgId = (it.extra as any)?.selectedChkPkgId;
-                                  const savedCounts = (it.extra as any)?.roleCounts as { male?: number; female_married?: number; female_single?: number } | undefined;
-                                  const firstPkg = savedPkgId || paxList.find((p: any) => p?.package)?.package || '';
-                                  const cap = capsuleMap[firstPkg] || null;
-                                  const packageName = friendlyCapsuleName(cap) || (firstPkg ? `套餐${firstPkg}` : '未设置');
-                                  const getPrice = (role: 'male' | 'female_married' | 'female_single') =>
-                                    Number(cap?.prices?.[role]?.discount_price || 0);
-                                  const prices = { male: getPrice('male'), female_married: getPrice('female_married'), female_single: getPrice('female_single') };
-                                  const roleOrder: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
-                                  const imported = roleOrder.reduce((acc, k) => { acc[k] = 0; return acc; }, {} as Record<string, number>);
-                                  paxList.forEach((p: any) => {
-                                    const r = paxToRole(p.gender, p.married);
-                                    imported[r] = (imported[r] || 0) + 1;
-                                  });
-                                  const roleTotal = roleOrder.reduce((s, k) => {
-                                    const cnt = Number(savedCounts?.[k] || 0);
-                                    return s + cnt * prices[k];
-                                  }, 0);
-                                  const displayRoleTotal = roleTotal > 0 ? roleTotal : displayAmount;
-                                  const hasRoleSetting = savedCounts && roleOrder.some(k => Number(savedCounts[k] || 0) > 0);
-                                  return (
-                                    <div className="mb-2 p-3 bg-sky-50 rounded-lg border border-sky-100">
-                                      <div className="flex items-center justify-between gap-2 mb-2">
+                              <div className="max-h-[60vh] overflow-y-auto">
+                                {/* ============= 体检：三块（摘要+名单导出+套餐查看/导出）============= */}
+                                {isCheckup && (
+                                  <div className="space-y-3">
+                                    {/* 块1：三角色摘要（含设定/已导/待绑/角色胶囊姓名条）*/}
+                                    <div className="p-3 bg-sky-50 rounded-lg border border-sky-100">
+                                      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                                         <div className="flex items-center gap-2 min-w-0">
                                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-white border border-sky-200 text-sky-700">
                                             <ClipboardList size={11} /> 体检套餐
@@ -731,9 +984,10 @@ function DetailModal({
                                       <div className="grid grid-cols-3 gap-2 text-[11px]">
                                         {roleOrder.map(k => {
                                           const setN = Number(savedCounts?.[k] || 0);
-                                          const importedN = imported[k] || 0;
+                                          const importedN = importedCounts[k] || 0;
                                           const remain = hasRoleSetting ? Math.max(0, setN - importedN) : 0;
                                           const sub = (hasRoleSetting ? setN : importedN) * prices[k];
+                                          const list = paxByRole[k] || [];
                                           return (
                                             <div key={k} className="bg-white border border-sky-100 rounded p-2">
                                               <div className="flex items-center justify-between mb-1">
@@ -754,6 +1008,22 @@ function DetailModal({
                                                   <div className="text-amber-700">{remain}</div>
                                                 </div>
                                               </div>
+                                              {/* 姓名横滑清单（不占垂直空间）*/}
+                                              {list.length > 0 && (
+                                                <div className="mt-2 -mx-1 px-1">
+                                                  <div className="flex gap-1 overflow-x-auto whitespace-nowrap pb-0.5">
+                                                    {list.map((p, i) => (
+                                                      <span
+                                                        key={i}
+                                                        title={`${p.name || ''}  ${p.gender || ''} · 身份证 ${p.idCard || ''} · 手机 ${p.phone || ''}`}
+                                                        className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-100"
+                                                      >
+                                                        {p.name || `第${i + 1}人`}
+                                                      </span>
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                              )}
                                               <div className="text-right mt-1 text-green-700 font-mono font-medium">
                                                 小计 ¥{sub.toLocaleString()}
                                               </div>
@@ -762,103 +1032,322 @@ function DetailModal({
                                         })}
                                       </div>
                                     </div>
-                                  );
-                                })()}
 
-                                {paxList.map((p: any, pIdx: number) => {
-                                  const items: CustomPackageItem[] = Array.isArray(p.finalItems) ? p.finalItems : [];
-                                  const paxTotal = typeof p.finalAmount === 'number'
-                                    ? p.finalAmount
-                                    : items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
-                                  const isCustom = (p.customItems && p.customItems.length > 0);
-                                  if (items.length === 0) return null;
-                                  // 【改2】如果明细总价对不上单人价，按比例分摊，保证表中不再出现¥0
-                                  const rawSum = items.reduce((s, i) => s + Number(i.item_price || 0) * Number(i.quantity || 1), 0);
-                                  const scale = (rawSum > 0 && paxTotal > 0) ? paxTotal / rawSum : 1;
-                                  const role = paxToRole(p.gender, p.married);
-                                  const roleIcon = role === 'male' ? '👨' : (role === 'female_married' ? '👩‍💍' : '👩');
-                                  const roleCap = capsuleMap[p.package] || null;
-                                  const rolePrice = Number(roleCap?.prices?.[role]?.discount_price || 0);
-                                  return (
-                                    <div key={pIdx} className="border border-sky-100 rounded overflow-hidden bg-white">
-                                      <div className="bg-sky-50 px-3 py-1.5 text-[11px] flex items-center justify-between">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                          <Users size={11} className="text-sky-600 flex-shrink-0" />
-                                          <span className="font-medium text-gray-800 truncate">{p.name || `体检人${pIdx + 1}`}</span>
-                                          <span className="text-gray-400">·</span>
-                                          <span className="text-gray-500 whitespace-nowrap">{roleIcon} {ROLE_LABEL[role]}</span>
-                                          {p.idCard && (<>
-                                            <span className="text-gray-400">·</span>
-                                            <span className="text-gray-500 font-mono whitespace-nowrap">{maskIdCard(p.idCard)}</span>
-                                          </>)}
-                                          {p.phone && (<>
-                                            <span className="text-gray-400">·</span>
-                                            <span className="text-gray-500 font-mono whitespace-nowrap">{p.phone}</span>
-                                          </>)}
-                                          <span className="text-gray-400">·</span>
-                                          <span className={`truncate ${isCustom ? 'text-amber-600' : 'text-gray-500'}`}>
-                                            套餐{p.package || '-'}
-                                            {isCustom && ' ✎已定制'}
-                                          </span>
+                                    {/* 块2 & 块3：导出按钮组（名单 + 查看/导出套餐）*/}
+                                    <div className="p-3 bg-white rounded-lg border border-gray-200">
+                                      <div className="text-[11px] text-gray-500 mb-2 font-medium">数据导出 / 查看（导入体检系统使用）</div>
+                                      <div className="flex flex-wrap gap-2 items-center">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); exportCheckupPax(it, packageName); }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded border border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 font-medium"
+                                        >
+                                          <Download size={12} /> 导出体检名单.xlsx
+                                          <span className="text-[10px] ml-1 text-sky-500 bg-white px-1 rounded border border-sky-200">{paxList.length}人</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            viewCheckupPackage(cap?.id || firstPkg, cap, packageName);
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 font-medium"
+                                        >
+                                          <FileText size={12} /> 查看体检套餐（三角色）
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            // 直接导出 Excel：autoExport = true → 后台加载 → 自动下载并关闭 loading 层
+                                            viewCheckupPackage(cap?.id || firstPkg, cap, packageName, { autoExport: true });
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium"
+                                        >
+                                          <Download size={12} /> 导出体检套餐.xlsx
+                                          <span className="text-[10px] ml-1 text-green-600 bg-white px-1 rounded border border-green-200">3角色</span>
+                                        </button>
+                                      </div>
+                                      {/* 兜底提示：胶囊未加载时说明 */}
+                                      {!cap && firstPkg && !capsulesLoading && (
+                                        <div className="mt-2 text-[10px] text-amber-600">
+                                          提示：未获取到 {firstPkg} 对应的销售胶囊，套餐查看/导出将以 pax 最终项目快照兜底（如有名单数据）。
                                         </div>
-                                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                                          {rolePrice > 0 && (
-                                            <span className="text-[10px] text-sky-600 font-mono bg-sky-100 px-1.5 py-0.5 rounded">
-                                              角色价 ¥{rolePrice.toLocaleString()}
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* ============= 住宿：入住详情 ============= */}
+                                {it.itemType === 'lodging' && (
+                                  <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                                    <div className="text-[11px] text-purple-600 font-semibold mb-2 flex items-center gap-1">
+                                      <span>🛏</span> 住宿详情
+                                    </div>
+                                    <div className="bg-white rounded p-2.5 border border-purple-100">
+                                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                        <div><span className="text-gray-400">房型：</span><span className="font-medium text-gray-800">{roomName(it.extra.lodgingType || 'standard')}</span></div>
+                                        <div><span className="text-gray-400">入住：</span><span className="font-mono text-gray-800">{it.extra.dateCheckIn || '-'} {it.extra.arrivalTime ? ` ${it.extra.arrivalTime}` : ''}</span></div>
+                                        <div><span className="text-gray-400">间数：</span><span className="font-medium text-gray-800">{it.pax} 间</span></div>
+                                        <div><span className="text-gray-400">离店：</span><span className="font-mono text-gray-800">{it.extra.dateCheckOut || '-'}（{it.extra.nights || 0}晚）</span></div>
+                                        <div>
+                                          <span className="text-gray-400">每间每晚：</span>
+                                          {('customPrice' in it.extra && (it.extra as any).customPrice !== undefined) ? (
+                                            <span className="font-mono text-gray-800">
+                                              ¥{Number((it.extra as any).customPrice).toLocaleString()}
+                                              <span className="text-[9px] text-purple-600 border border-purple-200 rounded px-1 ml-1">议价</span>
+                                            </span>
+                                          ) : (
+                                            <span className="font-mono text-gray-800">
+                                              ¥{Number(((bizCfg.roomTypes||[]).find((r:any)=>r.code===it.extra.lodgingType)?.price) || (LODGING_TYPES[it.extra.lodgingType as keyof typeof LODGING_TYPES]?.price) || 0).toLocaleString()}
                                             </span>
                                           )}
-                                          <span className="font-mono font-semibold text-green-600">
-                                            ¥{paxTotal.toLocaleString()}
-                                          </span>
                                         </div>
-                                      </div>
-                                      <div className="overflow-x-auto">
-                                        <table className="w-full text-[11px]">
-                                          <thead className="text-gray-500 bg-sky-50/30 border-b border-sky-100">
-                                            <tr>
-                                              <th className="px-2 py-1 text-left font-medium w-6">#</th>
-                                              <th className="px-2 py-1 text-left font-medium">项目</th>
-                                              <th className="px-2 py-1 text-left font-medium w-24">备注</th>
-                                              <th className="px-2 py-1 text-right font-medium w-16">单价</th>
-                                              <th className="px-2 py-1 text-center font-medium w-12">数量</th>
-                                              <th className="px-2 py-1 text-right font-medium w-16">小计</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {items.map((itm, iIdx) => {
-                                              const qty = Number(itm.quantity || 1);
-                                              const rawPrice = Number(itm.item_price || 0);
-                                              // 改2：分摊兜底，避免 0 价/0 小计；scale=1 时等价于原值
-                                              const priceAdj = Math.round(rawPrice * scale * 100) / 100;
-                                              const subtotal = priceAdj > 0 || rawPrice > 0
-                                                ? Math.round(priceAdj * qty * 100) / 100
-                                                : 0;
-                                              return (
-                                                <tr key={iIdx} className="border-t border-sky-50">
-                                                  <td className="px-2 py-1 text-gray-400 font-mono">{iIdx + 1}</td>
-                                                  <td className="px-2 py-1 text-gray-700">
-                                                    {(itm as any).__temporary && (
-                                                      <span className="text-[9px] bg-cyan-500 text-white px-1 py-0.5 rounded mr-1 align-middle">追加</span>
-                                                    )}
-                                                    {itm.item_name_snapshot}
-                                                  </td>
-                                                  <td className="px-2 py-1 text-gray-500">{itm.remark || '-'}</td>
-                                                  <td className="px-2 py-1 text-right font-mono text-gray-600">
-                                                    ¥{(rawPrice > 0 ? rawPrice : priceAdj).toLocaleString()}
-                                                  </td>
-                                                  <td className="px-2 py-1 text-center text-gray-600">{qty}</td>
-                                                  <td className="px-2 py-1 text-right font-mono text-gray-700">
-                                                    ¥{subtotal.toLocaleString()}
-                                                  </td>
-                                                </tr>
-                                              );
-                                            })}
-                                          </tbody>
-                                        </table>
+                                        <div><span className="text-gray-400">小计：</span><span className="font-mono font-semibold text-green-700">¥{(it.amount||0).toLocaleString()}</span></div>
                                       </div>
                                     </div>
-                                  );
-                                })}
+                                  </div>
+                                )}
+
+                                {/* ============= 早餐（派生）============= */}
+                                {it.itemType === 'breakfast' && (
+                                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+                                    <div className="text-[11px] text-amber-600 font-semibold mb-2 flex items-center gap-1">
+                                      <span>🌅</span> 早餐（派生业务）
+                                    </div>
+                                    <div className="bg-white rounded p-2.5 border border-amber-100 text-[11px]">
+                                      <div className="grid grid-cols-3 gap-2 text-center">
+                                        <div className="bg-gray-50 rounded py-1.5">
+                                          <div className="text-gray-400 text-[10px]">来源-体检</div>
+                                          <div className="font-mono text-gray-800 text-sm font-semibold">{(it.extra as any).source?.checkup ?? 0} 人</div>
+                                        </div>
+                                        <div className="bg-gray-50 rounded py-1.5">
+                                          <div className="text-gray-400 text-[10px]">来源-住宿</div>
+                                          <div className="font-mono text-gray-800 text-sm font-semibold">{(it.extra as any).source?.lodging ?? 0} 间</div>
+                                        </div>
+                                        <div className="bg-green-50 rounded py-1.5">
+                                          <div className="text-green-600 text-[10px]">合计金额</div>
+                                          <div className="font-mono text-green-700 text-sm font-semibold">¥{(it.amount||0).toLocaleString()}</div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* ============= 午餐 / 晚餐 ============= */}
+                                {(it.itemType === 'lunch' || it.itemType === 'dinner') && (
+                                  <div className={`p-3 rounded-lg border ${it.itemType === 'lunch' ? 'bg-red-50 border-red-100' : 'bg-pink-50 border-pink-100'}`}>
+                                    <div className={`text-[11px] font-semibold mb-2 flex items-center gap-1 ${it.itemType === 'lunch' ? 'text-red-600' : 'text-pink-600'}`}>
+                                      <span>{it.itemType === 'lunch' ? '🍽' : '🌙'}</span> {BIZ_MAP[it.itemType].label}场次明细
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-[11px] bg-white rounded border border-gray-100">
+                                        <thead className="bg-gray-50 text-gray-500">
+                                          <tr>
+                                            <th className="px-2 py-1 text-left">#</th>
+                                            <th className="px-2 py-1 text-left">日期</th>
+                                            <th className="px-2 py-1 text-left">时间</th>
+                                            <th className="px-2 py-1 text-left">用餐标准</th>
+                                            <th className="px-2 py-1 text-left">计费</th>
+                                            <th className="px-2 py-1 text-right">数量</th>
+                                            <th className="px-2 py-1 text-right">单价</th>
+                                            <th className="px-2 py-1 text-right">小计</th>
+                                            <th className="px-2 py-1 text-left">备注</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(it.extra.sessions as any[] || []).map((s, i) => {
+                                            const isPerTable = s.pricingMode === 'per_table';
+                                            const qtyLabel = isPerTable ? `${s.tables || 0}桌 × ${s.perTable || 0}人/桌` : `${s.pax || 0}人`;
+                                            const sub = isPerTable
+                                              ? Number(s.tables || 0) * Number(s.unitPrice || 0)
+                                              : Number(s.pax || 0) * Number(s.unitPrice || 0);
+                                            return (
+                                              <tr key={i} className="border-t border-gray-50">
+                                                <td className="px-2 py-1 text-gray-400 font-mono">{i + 1}</td>
+                                                <td className="px-2 py-1 font-mono text-gray-700">{s.date || '-'}</td>
+                                                <td className="px-2 py-1 font-mono text-gray-700">{s.time || '-'}</td>
+                                                <td className="px-2 py-1 text-gray-800 font-medium">{mealName(s.mealType)}</td>
+                                                <td className="px-2 py-1 text-gray-500">{isPerTable ? '按桌' : '按人'}</td>
+                                                <td className="px-2 py-1 text-right text-gray-700">{qtyLabel}</td>
+                                                <td className="px-2 py-1 text-right font-mono text-gray-600">¥{Number(s.unitPrice||0).toLocaleString()}</td>
+                                                <td className="px-2 py-1 text-right font-mono text-green-700">¥{sub.toLocaleString()}</td>
+                                                <td className="px-2 py-1 text-gray-500">{s.remark || '-'}</td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                        <tfoot>
+                                          <tr className="bg-gray-50 border-t border-gray-100">
+                                            <td colSpan={7} className="px-2 py-1 text-right text-gray-500">合计</td>
+                                            <td className="px-2 py-1 text-right font-mono font-semibold text-green-700">¥{(it.amount||0).toLocaleString()}</td>
+                                            <td></td>
+                                          </tr>
+                                        </tfoot>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* ============= 会务 ============= */}
+                                {it.itemType === 'meeting' && (
+                                  <div className="p-3 bg-teal-50 rounded-lg border border-teal-100">
+                                    <div className="text-[11px] text-teal-600 font-semibold mb-2 flex items-center gap-1">
+                                      <span>📊</span> 会议场次明细
+                                    </div>
+                                    <table className="w-full text-[11px] bg-white rounded border border-gray-100">
+                                      <thead className="bg-gray-50 text-gray-500">
+                                        <tr>
+                                          <th className="px-2 py-1 text-left">#</th>
+                                          <th className="px-2 py-1 text-left">日期</th>
+                                          <th className="px-2 py-1 text-left">时段</th>
+                                          <th className="px-2 py-1 text-left">会议室</th>
+                                          <th className="px-2 py-1 text-center">场型</th>
+                                          <th className="px-2 py-1 text-right">人数</th>
+                                          <th className="px-2 py-1 text-right">单价</th>
+                                          <th className="px-2 py-1 text-right">小计</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(it.extra.sessions as any[] || []).map((s, i) => {
+                                          const row = (bizCfg.meetingHalls || []).find((r: any) => r.code === s.hall);
+                                          const unitPrice = s.slotType === 'full'
+                                            ? Number(row?.full_price || (MEETING_HALLS[s.hall as keyof typeof MEETING_HALLS]?.fullPrice) || 0)
+                                            : Number(row?.half_price || (MEETING_HALLS[s.hall as keyof typeof MEETING_HALLS]?.halfPrice) || 0);
+                                          return (
+                                            <tr key={i} className="border-t border-gray-50">
+                                              <td className="px-2 py-1 text-gray-400 font-mono">{i + 1}</td>
+                                              <td className="px-2 py-1 font-mono text-gray-700">{s.date || '-'}</td>
+                                              <td className="px-2 py-1 font-mono text-gray-700">{s.startTime || '-'}</td>
+                                              <td className="px-2 py-1 text-gray-800 font-medium">{hallName(s.hall)}</td>
+                                              <td className="px-2 py-1 text-center text-gray-500">{s.slotType === 'full' ? '全天' : '半天'}</td>
+                                              <td className="px-2 py-1 text-right text-gray-700">{s.pax || 0}</td>
+                                              <td className="px-2 py-1 text-right font-mono text-gray-600">¥{unitPrice.toLocaleString()}</td>
+                                              <td className="px-2 py-1 text-right font-mono text-green-700">¥{unitPrice.toLocaleString()}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                      <tfoot>
+                                        <tr className="bg-gray-50 border-t border-gray-100">
+                                          <td colSpan={7} className="px-2 py-1 text-right text-gray-500">合计</td>
+                                          <td className="px-2 py-1 text-right font-mono font-semibold text-green-700">¥{(it.amount||0).toLocaleString()}</td>
+                                        </tr>
+                                      </tfoot>
+                                    </table>
+                                  </div>
+                                )}
+
+                                {/* ============= 康乐 ============= */}
+                                {it.itemType === 'wellness' && (
+                                  <div className="p-3 bg-lime-50 rounded-lg border border-lime-100">
+                                    <div className="text-[11px] text-lime-700 font-semibold mb-2 flex items-center gap-1">
+                                      <span>🎯</span> 康乐场次明细
+                                    </div>
+                                    <table className="w-full text-[11px] bg-white rounded border border-gray-100">
+                                      <thead className="bg-gray-50 text-gray-500">
+                                        <tr>
+                                          <th className="px-2 py-1 text-left">#</th>
+                                          <th className="px-2 py-1 text-left">日期</th>
+                                          <th className="px-2 py-1 text-left">时间</th>
+                                          <th className="px-2 py-1 text-left">康乐项目</th>
+                                          <th className="px-2 py-1 text-right">时长</th>
+                                          <th className="px-2 py-1 text-right">人数</th>
+                                          <th className="px-2 py-1 text-right">单价</th>
+                                          <th className="px-2 py-1 text-right">小计</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(it.extra.sessions as any[] || []).map((s, i) => {
+                                          const forGuest = !!order.items.some(x => x.itemType === 'lodging');
+                                          const p = wellnessPrice(s.wellnessType, forGuest);
+                                          const mode = (bizCfg.wellnessTypes || []).find((r: any) => r.code === s.wellnessType)?.pricing_mode
+                                            || (WELLNESS_TYPES[s.wellnessType as keyof typeof WELLNESS_TYPES]?.pricingMode) || 'per_hour';
+                                          const unit = Number(s.hours || 0);
+                                          const unitPrice = mode === 'package' ? p : (p * unit);
+                                          const qty = Number(s.pax || 1);
+                                          const sub = unitPrice * qty;
+                                          return (
+                                            <tr key={i} className="border-t border-gray-50">
+                                              <td className="px-2 py-1 text-gray-400 font-mono">{i + 1}</td>
+                                              <td className="px-2 py-1 font-mono text-gray-700">{s.date || '-'}</td>
+                                              <td className="px-2 py-1 font-mono text-gray-700">{s.startTime || '-'}</td>
+                                              <td className="px-2 py-1 text-gray-800 font-medium">{wellnessName(s.wellnessType)}</td>
+                                              <td className="px-2 py-1 text-right text-gray-700">{unit}h</td>
+                                              <td className="px-2 py-1 text-right text-gray-700">{qty}</td>
+                                              <td className="px-2 py-1 text-right font-mono text-gray-600">
+                                                ¥{unitPrice.toLocaleString()}
+                                                {forGuest && <span className="text-[9px] text-lime-600 ml-1">住客</span>}
+                                              </td>
+                                              <td className="px-2 py-1 text-right font-mono text-green-700">¥{sub.toLocaleString()}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                      <tfoot>
+                                        <tr className="bg-gray-50 border-t border-gray-100">
+                                          <td colSpan={7} className="px-2 py-1 text-right text-gray-500">合计</td>
+                                          <td className="px-2 py-1 text-right font-mono font-semibold text-green-700">¥{(it.amount||0).toLocaleString()}</td>
+                                        </tr>
+                                      </tfoot>
+                                    </table>
+                                  </div>
+                                )}
+
+                                {/* ============= 用车 ============= */}
+                                {it.itemType === 'carpickup' && (
+                                  <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                    <div className="text-[11px] text-gray-600 font-semibold mb-2 flex items-center gap-1">
+                                      <span>🚗</span> 用车详情
+                                    </div>
+                                    {(() => {
+                                      const c = (it.extra as any).carpickup;
+                                      if (!c) return <div className="text-[11px] text-gray-400">无详情</div>;
+                                      const customers: any[] = c.customers || [];
+                                      const total = c.customAmount ?? customers.length * Number(c.pricePerCustomer || 0);
+                                      return (
+                                        <div className="space-y-2">
+                                          <div className="flex items-center justify-between bg-white rounded p-2.5 border border-gray-100 text-[11px]">
+                                            <div className="flex items-center gap-3">
+                                              <span className={`px-2 py-0.5 rounded ${c.shareRide ? 'bg-amber-50 text-amber-700 border border-amber-100' : 'bg-sky-50 text-sky-700 border border-sky-100'}`}>
+                                                {c.shareRide ? '拼车' : '专车'}
+                                              </span>
+                                              <span className="text-gray-500">客户数 <span className="font-mono text-gray-800">{customers.length}</span> 位</span>
+                                              <span className="text-gray-500">单价 <span className="font-mono text-gray-800">¥{Number(c.pricePerCustomer||0).toLocaleString()}/客户</span></span>
+                                              {c.customAmount !== undefined && (
+                                                <span className="text-[10px] text-purple-600 border border-purple-200 rounded px-1">议价覆盖</span>
+                                              )}
+                                            </div>
+                                            <span className="font-mono font-semibold text-green-700">¥{Number(total||0).toLocaleString()}</span>
+                                          </div>
+                                          <div className="space-y-1.5">
+                                            {customers.map((cu, i) => (
+                                              <div key={i} className="bg-white rounded p-2.5 border border-gray-100">
+                                                <div className="flex items-center justify-between mb-1 text-[11px]">
+                                                  <span className="font-semibold text-gray-800">客户 {i + 1}: {cu.contactName || '-'}</span>
+                                                  <span className="text-gray-500">
+                                                    {cu.contactPhone}{cu.paxCount ? ` · ${cu.paxCount}人` : ''}
+                                                  </span>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2 text-[10.5px]">
+                                                  <div className="bg-lime-50 rounded px-2 py-1">
+                                                    <div className="text-lime-600 font-medium mb-0.5">接 · {cu.pickupDate || '-'} {cu.pickupTime || ''}</div>
+                                                    <div className="text-gray-600 whitespace-pre-wrap leading-snug">{cu.pickupRoute || '-'}</div>
+                                                  </div>
+                                                  <div className="bg-rose-50 rounded px-2 py-1">
+                                                    <div className="text-rose-600 font-medium mb-0.5">送 · {cu.dropoffDate || '-'} {cu.dropoffTime || ''}</div>
+                                                    <div className="text-gray-600 whitespace-pre-wrap leading-snug">{cu.dropoffRoute || '-'}</div>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                          {c.remark && <div className="text-[11px] text-gray-500 bg-white rounded p-2 border border-gray-100">备注：{c.remark}</div>}
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -887,6 +1376,117 @@ function DetailModal({
             </div>
           )}
         </div>
+
+        {/* ===== 体检套餐查看：内嵌 Sub-Modal（同尺寸类），不要 PDF ===== */}
+        {viewingPkg && (
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-black/40 rounded-lg"
+            onClick={(e) => { e.stopPropagation(); /* 点击遮罩关闭 */ setViewingPkg(null); }}
+          >
+            <div
+              className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* 头部（与订单弹窗结构完全一致，保证观感统一）*/}
+              <div className="flex items-start justify-between px-5 py-3 border-b border-gray-200 sticky top-0 bg-white z-10">
+                <div className="min-w-0">
+                  <div className="text-[11px] text-gray-500">体检套餐详情（内嵌查看）</div>
+                  <div className="text-base font-bold text-gray-900 truncate">
+                    {viewingPkg.capId && capsuleMap[viewingPkg.capId]
+                      ? friendlyCapsuleName(capsuleMap[viewingPkg.capId])
+                      : (viewingPkg.capId || '体检套餐')}
+                    <span className="ml-2 text-[10px] text-gray-400 font-normal">订单 {order.id}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); exportCheckupPackageExcel(); }}
+                    disabled={!viewingPkg.sheets}
+                    className="px-2.5 py-1 text-[11px] rounded bg-green-500 hover:bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed font-medium inline-flex items-center gap-1"
+                  >
+                    <Download size={12} /> 导出三角色 Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setViewingPkg(null); }}
+                    className="text-gray-400 hover:text-gray-600 p-1"
+                    aria-label="关闭"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-5 py-3 space-y-3">
+                {viewingPkg.loading && (
+                  <div className="text-[11px] text-gray-500">正在加载三角色项目清单…</div>
+                )}
+                {viewingPkg.error && !viewingPkg.loading && (
+                  <div className="p-3 rounded bg-red-50 border border-red-100 text-[11px] text-red-600">
+                    {viewingPkg.error}。您仍可点击「导出三角色Excel」获取已有数据。
+                  </div>
+                )}
+                {viewingPkg.sheets && viewingPkg.sheets.map((sh: any, i: number) => {
+                  const rawTotal = sh.items.reduce((s: number, it: any) => s + it.price * it.qty, 0);
+                  return (
+                    <div key={i} className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className={`flex items-center justify-between px-3 py-1.5 ${
+                        sh.role === 'male' ? 'bg-blue-50 border-b border-blue-100'
+                        : sh.role === 'female_married' ? 'bg-pink-50 border-b border-pink-100'
+                        : 'bg-purple-50 border-b border-purple-100'
+                      }`}>
+                        <div className="font-semibold text-xs">
+                          {sh.role === 'male' ? '👨' : sh.role === 'female_married' ? '👩‍💍' : '👩'} {sh.label}
+                          <span className="ml-2 text-[10px] text-gray-500 font-normal">共 {sh.items.length} 项</span>
+                        </div>
+                        <div className="text-[11px] text-right">
+                          <div className="text-gray-500">原价合计 <span className="font-mono text-gray-700">¥{rawTotal.toLocaleString()}</span></div>
+                          <div className="font-mono font-semibold text-green-700">折扣合计 ¥{Number(sh.discountPrice||0).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto max-h-[50vh]">
+                        <table className="w-full text-[11px]">
+                          <thead className="bg-gray-50 text-gray-500 sticky top-0 z-[1]">
+                            <tr>
+                              <th className="px-2 py-1 text-left w-10">#</th>
+                              <th className="px-2 py-1 text-left w-24">分类</th>
+                              <th className="px-2 py-1 text-left">项目</th>
+                              <th className="px-2 py-1 text-right w-20">单价</th>
+                              <th className="px-2 py-1 text-center w-14">数量</th>
+                              <th className="px-2 py-1 text-right w-20">小计</th>
+                              <th className="px-2 py-1 text-left">备注</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sh.items.length === 0 && (
+                              <tr>
+                                <td colSpan={7} className="px-2 py-3 text-center text-gray-400 text-[11px]">暂无项目</td>
+                              </tr>
+                            )}
+                            {sh.items.map((it: any, idx: number) => (
+                              <tr key={idx} className="border-t border-gray-50">
+                                <td className="px-2 py-1 text-gray-400 font-mono">{idx + 1}</td>
+                                <td className="px-2 py-1 text-gray-500">{it.category}</td>
+                                <td className="px-2 py-1 text-gray-800">{it.name}</td>
+                                <td className="px-2 py-1 text-right font-mono text-gray-600">¥{Number(it.price||0).toLocaleString()}</td>
+                                <td className="px-2 py-1 text-center text-gray-700">{it.qty}</td>
+                                <td className="px-2 py-1 text-right font-mono text-gray-700">
+                                  ¥{Math.round(Number(it.price||0) * Number(it.qty||0) * 100) / 100}
+                                </td>
+                                <td className="px-2 py-1 text-gray-500">{it.remark || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 底部按钮 */}
         <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white">
