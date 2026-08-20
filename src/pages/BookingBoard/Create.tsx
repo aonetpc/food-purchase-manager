@@ -1841,6 +1841,45 @@ export default function BookingBoardCreate(props: {
     [draftGroup.items],
   );
 
+  // 体检改造：从胶囊获取指定角色的价格（必须在 drawerAmount 前声明，避免 TDZ）
+  function getCapsulePriceByRole(capsuleId: string, role: 'male' | 'female_married' | 'female_single'): number {
+    const cap = capsuleMap[capsuleId];
+    if (!cap) return 0;
+    const plan = cap.prices?.[role];
+    return Number(plan?.discount_price || 0);
+  }
+
+  // 体检改造：按角色人数计算合计金额
+  const roleBasedTotal = useMemo(() => {
+    if (!selectedChkPkg) return 0;
+    return (
+      roleCounts.male * getCapsulePriceByRole(selectedChkPkg, 'male') +
+      roleCounts.female_married * getCapsulePriceByRole(selectedChkPkg, 'female_married') +
+      roleCounts.female_single * getCapsulePriceByRole(selectedChkPkg, 'female_single')
+    );
+  }, [selectedChkPkg, roleCounts, capsuleMap]);
+
+  // 体检改造：统计已导入名单的角色人数
+  const importedRoleCounts = useMemo(() => {
+    const list = chkPax.filter(p => p.name.trim());
+    const counts = { male: 0, female_married: 0, female_single: 0 };
+    for (const p of list) {
+      if (p.gender === '男') counts.male++;
+      else if (p.gender === '女') {
+        if (p.married === '已婚') counts.female_married++;
+        else counts.female_single++;
+      }
+    }
+    return counts;
+  }, [chkPax]);
+
+  // 体检改造：剩余需绑定的各角色人数
+  const remainingRoleCounts = useMemo(() => ({
+    male: Math.max(0, roleCounts.male - importedRoleCounts.male),
+    female_married: Math.max(0, roleCounts.female_married - importedRoleCounts.female_married),
+    female_single: Math.max(0, roleCounts.female_single - importedRoleCounts.female_single),
+  }), [roleCounts, importedRoleCounts]);
+
   // 方案1：实时重算所有康乐项金额（含住宿状态变化时自动按入住/不住宿切换单价）
   useEffect(() => {
     setDraftGroup((g) => {
@@ -1893,7 +1932,7 @@ export default function BookingBoardCreate(props: {
         : Math.max(0, carSession.customers.length * Number(carSession.pricePerCustomer || 0));
     }
     return 0;
-  }, [drawer.itemType, chkPax, lgSessions, mlSessions, mtSessions, wlSessions, carSession, finalBizConfigForCalc]);
+  }, [drawer.itemType, chkPax, lgSessions, mlSessions, mtSessions, wlSessions, carSession, finalBizConfigForCalc, selectedChkPkg, roleBasedTotal, isGuest]);
 
   // ================================================
   // 抽屉操作
@@ -2134,45 +2173,6 @@ export default function BookingBoardCreate(props: {
   function calcCheckupEffective(paxList: PaxEntry[]): number {
     return paxList.reduce((s, p) => s + calcSinglePaxEffective(p), 0);
   }
-
-  // 体检改造：从胶囊获取指定角色的价格
-  function getCapsulePriceByRole(capsuleId: string, role: 'male' | 'female_married' | 'female_single'): number {
-    const cap = capsuleMap[capsuleId];
-    if (!cap) return 0;
-    const plan = cap.prices?.[role];
-    return Number(plan?.discount_price || 0);
-  }
-
-  // 体检改造：按角色人数计算合计金额
-  const roleBasedTotal = useMemo(() => {
-    if (!selectedChkPkg) return 0;
-    return (
-      roleCounts.male * getCapsulePriceByRole(selectedChkPkg, 'male') +
-      roleCounts.female_married * getCapsulePriceByRole(selectedChkPkg, 'female_married') +
-      roleCounts.female_single * getCapsulePriceByRole(selectedChkPkg, 'female_single')
-    );
-  }, [selectedChkPkg, roleCounts, capsuleMap]);
-
-  // 体检改造：统计已导入名单的角色人数
-  const importedRoleCounts = useMemo(() => {
-    const list = chkPax.filter(p => p.name.trim());
-    const counts = { male: 0, female_married: 0, female_single: 0 };
-    for (const p of list) {
-      if (p.gender === '男') counts.male++;
-      else if (p.gender === '女') {
-        if (p.married === '已婚') counts.female_married++;
-        else counts.female_single++;
-      }
-    }
-    return counts;
-  }, [chkPax]);
-
-  // 体检改造：剩余需绑定的各角色人数
-  const remainingRoleCounts = useMemo(() => ({
-    male: Math.max(0, roleCounts.male - importedRoleCounts.male),
-    female_married: Math.max(0, roleCounts.female_married - importedRoleCounts.female_married),
-    female_single: Math.max(0, roleCounts.female_single - importedRoleCounts.female_single),
-  }), [roleCounts, importedRoleCounts]);
 
   // 获取某套餐的共享项目（未设置共享版则返回套餐默认）
   function getSharedItems(pkgCode: string): CustomPackageItem[] {
