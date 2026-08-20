@@ -1585,7 +1585,6 @@ export default function BookingBoardCreate(props: {
   const [lgIn, setLgIn] = useState(todayStr());
   const [lgOut, setLgOut] = useState(fmt(addDays(new Date(), 1)));
   const [lgArr, setLgArr] = useState('14:00');
-  const [lgRooms, setLgRooms] = useState(1);
   const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
 
   // 用餐表单（多场次，每场含用餐标准/计价模式/特殊要求）
@@ -1977,7 +1976,6 @@ export default function BookingBoardCreate(props: {
       setLgIn(todayStr());
       setLgOut(fmt(addDays(new Date(), 1)));
       setLgArr('14:00');
-      setLgRooms(1);
       setLgSessions([]);
     } else if (type === 'lunch' || type === 'dinner') {
       setMlSessions([]);
@@ -2054,7 +2052,6 @@ export default function BookingBoardCreate(props: {
       setLgIn(item.extra.dateCheckIn || todayStr());
       setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
       setLgArr(item.extra.arrivalTime || '14:00');
-      setLgRooms(item.pax || 1);
       // 住宿：恢复单晚自定义单价 customPrice（有就带回，没有=undefined，继续用标准价）
       const cpRaw = (item.extra as any)?.customPrice;
       const hasCP = cpRaw !== undefined && cpRaw !== null && !Number.isNaN(Number(cpRaw));
@@ -3755,7 +3752,7 @@ export default function BookingBoardCreate(props: {
                 <div className="space-y-3">
                   <div>
                     <label className={labelCls}>默认日期/时间（点击添加房型时自动带入）</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       <div>
                         <input
                           type="date"
@@ -3783,16 +3780,6 @@ export default function BookingBoardCreate(props: {
                           title="默认到达时间"
                         />
                       </div>
-                      <div>
-                        <input
-                          type="number"
-                          min="1"
-                          value={lgRooms}
-                          onChange={(e) => setLgRooms(Math.max(1, parseInt(e.target.value) || 1))}
-                          className={`${inputCls} font-mono text-xs`}
-                          title="默认间数"
-                        />
-                      </div>
                     </div>
                   </div>
 
@@ -3809,8 +3796,8 @@ export default function BookingBoardCreate(props: {
                               const checkIn = lgIn || todayStr();
                               const checkOut = lgOut && parseDateLocal(lgOut) >= parseDateLocal(minOut) ? lgOut : minOut;
                               const arrivalTime = lgArr || '14:00';
-                              const addRooms = Math.max(1, lgRooms || 1);
-                              // 修复：同条件(房型+入住+离店+到达)合并累加间数，避免点击 13 次就拆成 13 条独立 1 间
+                              const addRooms = 1;
+                              // 合并：同条件(房型+入住+离店+到达)累加间数，避免点击多次拆成多条 1 间独立行
                               setLgSessions((prev) => {
                                 const sameIdx = prev.findIndex(s =>
                                   s.lodgingType === rt.code
@@ -3857,175 +3844,150 @@ export default function BookingBoardCreate(props: {
                     </div>
                   </div>
 
-                  {/* 已添加住宿明细 */}
+                  {/* 已添加住宿明细（卡片式两行 flex：每条 session 一张独立卡片，彻底没有横滚条） */}
                   {lgSessions.length > 0 && (
-                    // 容器：加纵向最大高度 44vh + 纵滚，避免顶出保存按钮；min-w-0 保证横滚在 flex 中生效
-                    <div className="overflow-x-auto overflow-y-auto max-h-[44vh] rounded-lg border border-gray-200 min-w-0">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50 text-gray-500 sticky top-0 z-10">
-                          <tr>
-                            <th className="px-2 py-2 text-left font-medium min-w-[9rem]">房型</th>
-                            <th className="px-2 py-2 text-left font-medium min-w-[7rem]">
-                              单价<span className="text-[9px] text-gray-400 block leading-tight">(元/间/晚)</span>
-                            </th>
-                            <th className="px-2 py-2 text-left font-medium min-w-[7.5rem]">入住</th>
-                            <th className="px-2 py-2 text-left font-medium min-w-[7.5rem]">离店</th>
-                            <th className="px-2 py-2 text-left font-medium min-w-[5.5rem]">到达</th>
-                            <th className="px-2 py-2 text-left font-medium min-w-[3.5rem]">间数</th>
-                            <th className="px-2 py-2 text-left font-medium min-w-[3.5rem]">晚数</th>
-                            <th className="px-2 py-2 text-right font-medium min-w-[5rem]">小计</th>
-                            <th className="px-2 py-2 min-w-[2.5rem]"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {lgSessions.map((s, idx) => {
-                            const nights = Math.max(0, daysBetween(s.dateCheckIn, s.dateCheckOut));
-                            const valid = s.dateCheckIn && s.dateCheckOut && nights >= 1;
-                            const info = getRoomInfo(s.lodgingType);
-                            const basePrice = Number(info.price || 0);
-                            const hasCustom = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
-                            const showPrice = hasCustom ? Number(s.customPrice) : basePrice;
-                            const isNegotiated = hasCustom && Number(s.customPrice) !== basePrice;
-                            const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice) : 0;
-                            return (
-                              // 一条 session → 两行 <tr>：房型卡/删除跨 2 行。React Fragment 不能有 key，用 <tbody> 或 key 包装；这里用数组扁平化并给两个 tr 各自独立 key
-                              [
-                                (
-                                  <tr key={`${s.id}-r1`} className="border-t border-gray-100">
-                                    <td className="px-1.5 py-1.5 align-middle" rowSpan={2}>
-                                      <div className="font-medium text-gray-700 whitespace-normal leading-tight">{info.name}</div>
-                                      <div className={`text-[10px] font-mono mt-0.5 ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
-                                        {hasCustom
-                                          ? (isNegotiated
-                                              ? `🔺 议价 ¥${showPrice.toLocaleString()}/晚（标准 ¥${basePrice.toLocaleString()}）`
-                                              : `¥${showPrice.toLocaleString()}/晚`)
-                                          : `¥${info.price.toLocaleString()}/晚`}
-                                      </div>
-                                    </td>
-                                    {/* 第 1 行：单价 / 入住 / 离店 / 到达 */}
-                                    <td className="px-1.5 py-1.5">
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        placeholder={`标准 ¥${basePrice.toLocaleString()}`}
-                                        value={hasCustom ? Number(s.customPrice) : ''}
-                                        onChange={(e) => {
-                                          const raw = e.target.value.trim();
-                                          setLgSessions((prev) => prev.map((x, i) => {
-                                            if (i !== idx) return x;
-                                            if (raw === '') {
-                                              const { customPrice: _drop, ...rest } = x;
-                                              return rest;
-                                            }
-                                            const n = Number(raw);
-                                            return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
-                                          }));
-                                        }}
-                                        className={`${cellInput} w-full font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
-                                      />
-                                    </td>
-                                    <td className="px-1.5 py-1.5">
-                                      <input
-                                        type="date"
-                                        value={s.dateCheckIn}
-                                        onChange={(e) => {
-                                          const newIn = e.target.value;
-                                          setLgSessions((prev) => prev.map((x, i) => {
-                                            if (i !== idx) return x;
-                                            let out = x.dateCheckOut;
-                                            if (newIn && out) {
-                                              const minOut = fmt(addDays(parseDateLocal(newIn), 1));
-                                              if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
-                                            }
-                                            return { ...x, dateCheckIn: newIn, dateCheckOut: out };
-                                          }));
-                                        }}
-                                        className={`${cellInput} w-full font-mono`}
-                                      />
-                                    </td>
-                                    <td className="px-1.5 py-1.5">
-                                      <input
-                                        type="date"
-                                        value={s.dateCheckOut}
-                                        onChange={(e) =>
-                                          setLgSessions((prev) => prev.map((x, i) =>
-                                            i === idx ? { ...x, dateCheckOut: e.target.value } : x
-                                          ))
+                    <div className="space-y-2">
+                      {lgSessions.map((s, idx) => {
+                        const nights = Math.max(0, daysBetween(s.dateCheckIn, s.dateCheckOut));
+                        const valid = s.dateCheckIn && s.dateCheckOut && nights >= 1;
+                        const info = getRoomInfo(s.lodgingType);
+                        const basePrice = Number(info.price || 0);
+                        const hasCustom = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
+                        const showPrice = hasCustom ? Number(s.customPrice) : basePrice;
+                        const isNegotiated = hasCustom && Number(s.customPrice) !== basePrice;
+                        const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice) : 0;
+                        return (
+                          <div
+                            key={s.id}
+                            className={`rounded-lg border text-xs overflow-hidden ${
+                              isNegotiated ? 'border-red-200 bg-red-50/20' : 'border-gray-200 bg-white'
+                            }`}
+                          >
+                            {/* 第 1 行：房型卡（左栏） + 单价/入住/离店/到达（右栏 grid） */}
+                            <div className="flex gap-3 items-start p-2.5">
+                              <div className="w-[130px] shrink-0 pr-2 border-r border-gray-100">
+                                <div className="font-semibold text-gray-800 leading-snug whitespace-normal break-words">
+                                  {info.name}
+                                </div>
+                                <div className={`mt-1 text-[11px] font-mono leading-tight ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                                  {hasCustom
+                                    ? (isNegotiated
+                                        ? <>🔺 议价 ¥{showPrice.toLocaleString()}<span className="text-gray-400 font-normal">/晚<br/>（标准 ¥{basePrice.toLocaleString()}）</span></>
+                                        : `¥${showPrice.toLocaleString()}/晚`)
+                                    : `¥${info.price.toLocaleString()}/晚`}
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <div>
+                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">单价 (元/间/晚)</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder={`标准 ¥${basePrice.toLocaleString()}`}
+                                    value={hasCustom ? Number(s.customPrice) : ''}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.trim();
+                                      setLgSessions((prev) => prev.map((x, i) => {
+                                        if (i !== idx) return x;
+                                        if (raw === '') {
+                                          const { customPrice: _drop, ...rest } = x;
+                                          return rest;
                                         }
-                                        className={`${cellInput} w-full font-mono`}
-                                      />
-                                    </td>
-                                    <td className="px-1.5 py-1.5">
-                                      <input
-                                        type="time"
-                                        value={s.arrivalTime}
-                                        onChange={(e) =>
-                                          setLgSessions((prev) => prev.map((x, i) =>
-                                            i === idx ? { ...x, arrivalTime: e.target.value } : x
-                                          ))
+                                        const n = Number(raw);
+                                        return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
+                                      }));
+                                    }}
+                                    className={`${cellInput} w-full font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">入住</label>
+                                  <input
+                                    type="date"
+                                    value={s.dateCheckIn}
+                                    onChange={(e) => {
+                                      const newIn = e.target.value;
+                                      setLgSessions((prev) => prev.map((x, i) => {
+                                        if (i !== idx) return x;
+                                        let out = x.dateCheckOut;
+                                        if (newIn && out) {
+                                          const minOut = fmt(addDays(parseDateLocal(newIn), 1));
+                                          if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
                                         }
-                                        className={`${cellInput} w-full font-mono`}
-                                      />
-                                    </td>
-                                    {/* 列 6-8 空占位 */}
-                                    <td className="px-1.5 py-1.5"></td>
-                                    <td className="px-1.5 py-1.5"></td>
-                                    <td className="px-1.5 py-1.5"></td>
-                                    <td className="px-1.5 py-1.5" rowSpan={2}>
-                                      <button
-                                        onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
-                                        className="text-red-400 hover:text-red-600"
-                                      >
-                                        <Trash2 size={14} />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ),
-                                (
-                                  <tr key={`${s.id}-r2`} className="border-b border-gray-100/70 bg-gray-50/40">
-                                    {/* 房型已跨掉（colspan 不是 td，已在上面 rowSpan=2） */}
-                                    <td className="px-1.5 py-1.5 text-[10px] text-gray-400 pl-3">
-                                      <span>→ 下方</span>
-                                    </td>
-                                    {/* 第 2 行：间数 / 晚数 / 小计  */}
-                                    <td className="px-1.5 py-1.5" colSpan={2}>
-                                      <div className="flex items-center gap-1">
-                                        <label className="text-[10px] text-gray-500 shrink-0">间数</label>
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          value={s.rooms}
-                                          onChange={(e) =>
-                                            setLgSessions((prev) => prev.map((x, i) =>
-                                              i === idx ? { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) } : x
-                                            ))
-                                          }
-                                          className={`${cellInput} w-20 font-mono`}
-                                        />
-                                      </div>
-                                    </td>
-                                    <td className="px-1.5 py-1.5">
-                                      <div className="flex items-center gap-1">
-                                        <label className="text-[10px] text-gray-500 shrink-0">晚数</label>
-                                        <span className={`font-mono ${valid ? 'text-green-600' : 'text-red-500'}`}>
-                                          {valid ? `${nights}晚` : '⚠️ 无效'}
-                                        </span>
-                                      </div>
-                                    </td>
-                                    <td className="px-1.5 py-1.5" colSpan={3}>
-                                      <div className="flex items-center justify-end gap-1 pr-1">
-                                        <label className="text-[10px] text-gray-500 shrink-0">小计</label>
-                                        <span className="font-mono text-green-600 font-semibold">¥{amt.toLocaleString()}</span>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ),
-                              ]
-                            );
-                          }).flat()}
-                        </tbody>
-                      </table>
+                                        return { ...x, dateCheckIn: newIn, dateCheckOut: out };
+                                      }));
+                                    }}
+                                    className={`${cellInput} w-full font-mono`}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">离店</label>
+                                  <input
+                                    type="date"
+                                    value={s.dateCheckOut}
+                                    onChange={(e) =>
+                                      setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, dateCheckOut: e.target.value } : x
+                                      ))
+                                    }
+                                    className={`${cellInput} w-full font-mono`}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">到达</label>
+                                  <input
+                                    type="time"
+                                    value={s.arrivalTime}
+                                    onChange={(e) =>
+                                      setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, arrivalTime: e.target.value } : x
+                                      ))
+                                    }
+                                    className={`${cellInput} w-full font-mono`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            {/* 第 2 行：间数 + 晚数 + 小计 + 删除 */}
+                            <div className="flex items-center gap-3 flex-wrap px-2.5 py-2 border-t border-gray-100 bg-gray-50/60">
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-[10px] text-gray-500 shrink-0">间数</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={s.rooms}
+                                  onChange={(e) =>
+                                    setLgSessions((prev) => prev.map((x, i) =>
+                                      i === idx ? { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) } : x
+                                    ))
+                                  }
+                                  className={`${cellInput} w-20 font-mono`}
+                                />
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-[10px] text-gray-500 shrink-0">晚数</label>
+                                <span className={`font-mono ${valid ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}`}>
+                                  {valid ? `${nights}晚` : '⚠️ 无效'}
+                                </span>
+                              </div>
+                              <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0">
+                                <label className="text-[10px] text-gray-500 shrink-0">小计</label>
+                                <span className="font-mono text-green-600 font-semibold text-sm">
+                                  ¥{amt.toLocaleString()}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
+                                className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50 shrink-0"
+                                title="删除"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
