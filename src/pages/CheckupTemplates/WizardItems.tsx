@@ -179,13 +179,13 @@ const summaryForRole = (r: Role) => {
   });
   Object.values(selected[r] || {}).forEach(si => merged.set(si.item_id, { ...si }));
   let total = 0, count = 0;
-  for (const si of merged.values()) { total += si.price_snapshot * si.quantity; count += 1; }
+  for (const si of merged.values()) { total += (si.price_snapshot + si.insurance_snapshot) * si.quantity; count += 1; }
   return { total, count };
 };
 // 公共项目汇总（仅 common）
 const summaryCommonTotal = () => {
   let total = 0;
-  for (const si of Object.values(selected.common || {})) { total += si.price_snapshot * si.quantity; }
+  for (const si of Object.values(selected.common || {})) { total += (si.price_snapshot + si.insurance_snapshot) * si.quantity; }
   return total;
 };
 
