@@ -137,6 +137,8 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
       map.set(c.item_id + '|common', { ...c, role });
     }
     for (const r of roleItems) {
+      // 角色级项目也需要可见性检查（防止历史脏数据：如盆腔错误存到male）
+      if (!isItemVisibleForRole(r, role)) continue;
       // 如果 common 里有相同 item_id，覆盖
       const commonKey = r.item_id + '|common';
       if (map.has(commonKey)) map.delete(commonKey);
