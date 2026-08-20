@@ -399,7 +399,21 @@ export const bookingApi = {
   async getConfig(): Promise<BookingConfig> {
     const res = await api.get<{ ok: boolean; data: any }>('/booking/config');
     return {
-      packages: (res.data?.packages || []).map(fromBackend),
+      // 套餐：fromBackend 转换后需将嵌套 items 还原为 snake_case（渲染代码使用 snake_case）
+      packages: (res.data?.packages || []).map((p: any) => {
+        const transformed = fromBackend(p);
+        if (transformed.items && Array.isArray(transformed.items)) {
+          transformed.items = transformed.items.map((it: any) => ({
+            item_id: it.itemId ?? it.item_id ?? '',
+            item_name_snapshot: it.itemNameSnapshot ?? it.item_name_snapshot ?? '',
+            item_price: it.itemPrice ?? it.item_price ?? 0,
+            quantity: it.quantity ?? 1,
+            remark: it.remark ?? '',
+            sort_order: it.sortOrder ?? it.sort_order ?? 0,
+          }));
+        }
+        return transformed;
+      }),
       roomTypes: (res.data?.roomTypes || []).map(fromBackend),
       meetingHalls: (res.data?.meetingHalls || []).map(fromBackend),
       wellnessTypes: (res.data?.wellnessTypes || []) as WellnessTypeRow[],
