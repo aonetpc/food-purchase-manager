@@ -665,22 +665,36 @@ function DetailModal({
       male: new Map(), female_married: new Map(), female_single: new Map(),
     };
 
+    // 兼容 camelCase (fromBackend 转换后) 和 snake_case (原始存储)
+    const getItemName = (it: any) =>
+      it.itemNameSnapshot || it.item_name_snapshot || it.name || '—';
+    const getItemPrice = (it: any) =>
+      Number(it.itemPrice ?? it.item_price ?? it.defaultPrice ?? it.default_price ?? it.price ?? 0);
+    const getItemId = (it: any) =>
+      it.itemId || it.item_id || '';
+    const getItemCategory = (it: any) =>
+      it.category || '—';
+    const getItemQty = (it: any) =>
+      Number(it.quantity ?? it.qty ?? 1);
+    const getItemRemark = (it: any) =>
+      it.remark ?? it.remarkText ?? '';
+
     paxList.forEach((p: any) => {
       const role = paxToRole(p.gender, p.married);
       const items: any[] = Array.isArray(p.finalItems) ? p.finalItems : [];
       items.forEach((it: any) => {
-        const key = it.item_id || it.item_name_snapshot || String(Math.random());
+        const key = getItemId(it) || getItemName(it) || String(Math.random());
         const existing = roleMaps[role].get(key);
         if (existing) {
           // 合并：取较大数量，价格不变
-          existing.qty = Math.max(existing.qty || 1, Number(it.quantity || 1));
+          existing.qty = Math.max(existing.qty || 1, getItemQty(it));
         } else {
           roleMaps[role].set(key, {
-            category: it.category || '—',
-            name: it.item_name_snapshot || it.name || '—',
-            price: Number(it.item_price || it.default_price || it.price || 0),
-            qty: Number(it.quantity || 1),
-            remark: (it.remark ?? ''),
+            category: getItemCategory(it),
+            name: getItemName(it),
+            price: getItemPrice(it),
+            qty: getItemQty(it),
+            remark: getItemRemark(it),
           });
         }
       });
