@@ -678,21 +678,31 @@ function DetailModal({
       Number(it.quantity ?? it.qty ?? 1);
     const getItemRemark = (it: any) =>
       it.remark ?? it.remarkText ?? '';
+    // 兼容 role 字段（可能经 fromBackend 转换）
+    const getItemRole = (it: any) =>
+      it.role ?? it.scope ?? 'common';
 
     paxList.forEach((p: any) => {
-      const role = paxToRole(p.gender, p.married);
+      const paxRole = paxToRole(p.gender, p.married);
       const items: any[] = Array.isArray(p.finalItems) ? p.finalItems : [];
       items.forEach((it: any) => {
         const name = getItemName(it);
-        // 方案：用 scopeVisible 按角色关键词过滤，确保各角色只看到适用项目
-        if (!scopeVisible({ name, applicable_roles: it.applicable_roles }, role)) return;
+        // 关键过滤：优先用 item 自带的 role 字段精确判断
+        const itemRole = getItemRole(it);
+        if (itemRole && itemRole !== 'common') {
+          // 项目有明确角色归属（如 female_married），只在该角色下显示
+          if (itemRole !== paxRole) return;
+        } else {
+          // 公共项目或无 role：用 scopeVisible 关键词过滤兜底
+          if (!scopeVisible({ name, applicable_roles: it.applicable_roles }, paxRole)) return;
+        }
         const key = getItemId(it) || name || String(Math.random());
-        const existing = roleMaps[role].get(key);
+        const existing = roleMaps[paxRole].get(key);
         if (existing) {
           // 合并：取较大数量，价格不变
           existing.qty = Math.max(existing.qty || 1, getItemQty(it));
         } else {
-          roleMaps[role].set(key, {
+          roleMaps[paxRole].set(key, {
             category: getItemCategory(it),
             name,
             price: getItemPrice(it),

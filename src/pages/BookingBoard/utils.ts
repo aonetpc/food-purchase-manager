@@ -1,5 +1,6 @@
 import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, MealPricingMode } from './types';
 import { BIZ_MAP } from './constants';
+import { scopeVisible } from '../CheckupTemplates/roleVisibility';
 
 // 为兼容旧调用保留硬编码兜底常量（仅后端无数据时使用）
 const FALLBACK_PACKAGES: Record<string, { name: string; price: number }> = {
@@ -94,23 +95,42 @@ function buildMap<T extends { code: string }>(rows?: T[]): Record<string, T> {
   return (rows || []).reduce((acc, r) => { acc[r.code] = r; return acc; }, {} as Record<string, T>);
 }
 
+// 根据 pax 的性别/婚姻计算角色
+function paxEntryToRole(p: PaxEntry): 'male' | 'female_married' | 'female_single' {
+  if (p.gender === '男') return 'male';
+  return p.married ? 'female_married' : 'female_single';
+}
+
 // 获取一个 pax 的最终体检项目列表（考虑 customItems 定制）
+// 修复：按 pax 角色过滤项目，确保只返回该角色适用的项目
 export function resolvePaxItems(p: PaxEntry, config?: BizConfigInput): CustomPackageItem[] {
-  // 有定制则直接用定制
+  const role = paxEntryToRole(p);
+  // 有定制则直接用定制（customItems 应已按角色过滤过）
   if (p.customItems && p.customItems.length > 0) {
-    return p.customItems;
+    return p.customItems.filter(it =>
+      scopeVisible({ name: it.item_name_snapshot || '', applicable_roles: undefined }, role)
+    );
   }
   const pkgMap = buildMap(config?.packages);
   const row = pkgMap[p.package];
   if (row && row.items && row.items.length > 0) {
-    return row.items.map(i => ({
-      item_id: i.item_id,
-      item_name_snapshot: i.item_name_snapshot,
-      item_price: Number(i.item_price || 0),
-      quantity: Number(i.quantity || 1),
-      remark: (i as any).remark || '',
-      __temporary: false,
-    }));
+    return row.items
+      .filter((i: any) => {
+        // 优先用 item 自带的 role 字段精确过滤
+        if (i.role && i.role !== 'common') {
+          return i.role === role;
+        }
+        // 公共项目或无 role 字段：用 scopeVisible 关键词判断
+        return scopeVisible({ name: i.item_name_snapshot || '', applicable_roles: undefined }, role);
+      })
+      .map(i => ({
+        item_id: i.item_id,
+        item_name_snapshot: i.item_name_snapshot,
+        item_price: Number(i.item_price || 0),
+        quantity: Number(i.quantity || 1),
+        remark: (i as any).remark || '',
+        __temporary: false,
+      }));
   }
   // 兜底：找不到套餐，显示为一个占位项目
   return [{

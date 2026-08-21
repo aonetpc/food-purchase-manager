@@ -67,6 +67,7 @@ import {
 } from './utils';
 import { bookingApi, type BookingSalesUser, type BookingConfig, type MealTypeRow } from '../../lib/api';
 import { checkupApi, type Role, CATEGORIES } from '@/pages/CheckupTemplates/api';
+import { scopeVisible } from '@/pages/CheckupTemplates/roleVisibility';
 import type { PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, CheckupItemRow } from './types';
 
 // ================================================
@@ -2245,6 +2246,7 @@ export default function BookingBoardCreate(props: {
         quantity: Number(i.quantity || 1),
         remark: (i as any).remark || '',
         __temporary: false,
+        role: i.role || 'common',
       }));
     }
     // fallback: 套餐表没返回 items，用 resolvePaxItems 传入一个假的 pax 来兜底
@@ -2344,7 +2346,16 @@ export default function BookingBoardCreate(props: {
       }
       // 为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
       const paxList = paxListRaw.map(p => {
-        const finalItems = resolvePaxItemsEffective(p);
+        const rawItems = resolvePaxItemsEffective(p);
+        // 保存时按 pax 角色过滤项目（方案C）：确保快照只存该角色适用的项目
+        const paxRole = paxToRole(p.gender, p.married);
+        const finalItems = rawItems.filter((it: any) => {
+          const itemRole = it.role ?? it.scope ?? 'common';
+          if (itemRole && itemRole !== 'common') {
+            return itemRole === paxRole;
+          }
+          return scopeVisible({ name: it.item_name_snapshot || '', applicable_roles: undefined }, paxRole);
+        });
         return {
           ...p,
           finalItems,

@@ -413,6 +413,7 @@ export const bookingApi = {
             quantity: it.quantity ?? 1,
             remark: it.remark ?? '',
             sort_order: it.sortOrder ?? it.sort_order ?? 0,
+            role: it.role ?? it.scope ?? 'common',
           }));
         }
         return transformed;
