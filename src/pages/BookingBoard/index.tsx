@@ -25,6 +25,7 @@ import {
 } from './utils';
 import { bookingApi, type BookingApiOrder } from '../../lib/api';
 import { checkupApi } from '@/pages/CheckupTemplates/api';
+import { scopeVisible } from '@/pages/CheckupTemplates/roleVisibility';
 import { useAuthStore } from '@/store/authStore';
 import { useToast } from '@/components/Toast';
 import CreateFormRaw from './Create';
@@ -650,6 +651,55 @@ function DetailModal({
     }
   }
 
+  // ======== 构建体检套餐 sheet 数据：优先订单快照，兜底模板 API ========
+  function buildSheetsFromPaxSnapshot(item: BookingItem, cap: any): any[] | null {
+    const paxList: any[] = (item.extra as any)?.paxList || [];
+    if (paxList.length === 0) return null;
+    // 检查是否有任何 pax 带 finalItems（快照数据）
+    const hasSnapshot = paxList.some((p: any) => Array.isArray(p.finalItems) && p.finalItems.length > 0);
+    if (!hasSnapshot) return null;
+
+    const displayRoles: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
+    // 按角色聚合 finalItems，用 Map 去重（同 item_id 合并取最大数量）
+    const roleMaps: Record<string, Map<string, any>> = {
+      male: new Map(), female_married: new Map(), female_single: new Map(),
+    };
+
+    paxList.forEach((p: any) => {
+      const role = paxToRole(p.gender, p.married);
+      const items: any[] = Array.isArray(p.finalItems) ? p.finalItems : [];
+      items.forEach((it: any) => {
+        const key = it.item_id || it.item_name_snapshot || String(Math.random());
+        const existing = roleMaps[role].get(key);
+        if (existing) {
+          // 合并：取较大数量，价格不变
+          existing.qty = Math.max(existing.qty || 1, Number(it.quantity || 1));
+        } else {
+          roleMaps[role].set(key, {
+            category: it.category || '—',
+            name: it.item_name_snapshot || it.name || '—',
+            price: Number(it.item_price || it.default_price || it.price || 0),
+            qty: Number(it.quantity || 1),
+            remark: (it.remark ?? ''),
+          });
+        }
+      });
+    });
+
+    return displayRoles.map(role => {
+      const items = Array.from(roleMaps[role].values());
+      // 按名称排序（快照无 category，用名称兜底）
+      items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh'));
+      const discountPrice = Number(cap?.prices?.[role]?.discount_price || 0);
+      return {
+        role,
+        label: ROLE_LABEL[role] || role,
+        discountPrice,
+        items,
+      };
+    });
+  }
+
   // ======== 导出/查看：三角色套餐项目（xlsx，用于导入体检系统） ========
   // 直接查看：内嵌 Sub-Modal（不要 PDF）
   const [viewingPkg, setViewingPkg] = useState<{ capId: string; loading: boolean; sheets?: any[]; error?: string; autoExport?: boolean } | null>(null);
@@ -664,27 +714,58 @@ function DetailModal({
       setViewingPkg(null);
     }
   }, [viewingPkg?.sheets, viewingPkg?.error, viewingPkg?.autoExport]);
-  async function viewCheckupPackage(capId: string, cap: any, fallbackPackageCodeName: string, opts?: { autoExport?: boolean }) {
+
+  async function viewCheckupPackage(capId: string, cap: any, fallbackPackageCodeName: string, opts?: { autoExport?: boolean; item?: BookingItem }) {
     setViewingPkg({ capId, loading: true, autoExport: !!opts?.autoExport });
     try {
+      // 方案A：优先用订单快照数据（paxList finalItems），保证和下单时使用的项目完全一致
+      let sheets: any[] | null = null;
+      if (opts?.item) {
+        sheets = buildSheetsFromPaxSnapshot(opts.item, cap);
+      }
+
+      if (sheets) {
+        // 快照数据可用，直接展示
+        setViewingPkg({ capId, loading: false, sheets, autoExport: !!opts?.autoExport });
+        return;
+      }
+
+      // 方案A兜底：没有快照（只设了人数没导入名单），用模板 API 数据
       const tpl = await loadTemplateForCapsule(capId, cap);
       const displayRoles: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
-      const sheets = displayRoles.map(role => {
+      sheets = displayRoles.map(role => {
         let items: any[] = [];
-        if (tpl?.items_by_role && typeof tpl.items_by_role === 'object') {
+        // 优先使用 role_items（后端 aggregateRoleItems 已通过 isItemVisibleForRole 过滤）
+        if (tpl?.role_items && typeof tpl.role_items === 'object' && tpl.role_items[role]) {
+          items = tpl.role_items[role].items || [];
+        } else if (tpl?.items_by_role && typeof tpl.items_by_role === 'object') {
+          // 兜底：items_by_role 未过滤，需用 scopeVisible 按角色过滤
           const common: any[] = Array.isArray(tpl.items_by_role.common) ? tpl.items_by_role.common : [];
           const roleItems: any[] = Array.isArray(tpl.items_by_role[role]) ? tpl.items_by_role[role] : [];
-          items = [...common, ...roleItems];
-        } else if (tpl?.role_items && typeof tpl.role_items === 'object') {
-          items = (tpl.role_items[role]?.items) || [];
+          items = [...common, ...roleItems].filter((it: any) => scopeVisible(
+            { name: it.item_name_snapshot || it.name || '', applicable_roles: it.applicable_roles },
+            role
+          ));
         } else if (tpl?.items && Array.isArray(tpl.items)) {
           const all: any[] = tpl.items;
-          items = all.filter((it: any) => it.role === 'common' || it.role === role);
+          items = all.filter((it: any) => {
+            if (it.role === role) return true;
+            if (!it.role || it.role === 'common') {
+              return scopeVisible({ name: it.item_name_snapshot || it.name || '', applicable_roles: it.applicable_roles }, role);
+            }
+            return false;
+          });
         } else if (cap?.items && Array.isArray(cap.items)) {
           const all: any[] = cap.items;
-          items = all.filter((it: any) => (!it.role) || it.role === 'common' || it.role === role);
+          items = all.filter((it: any) => {
+            if (it.role === role) return true;
+            if (!it.role || it.role === 'common') {
+              return scopeVisible({ name: it.item_name_snapshot || it.name || '', applicable_roles: it.applicable_roles }, role);
+            }
+            return false;
+          });
         }
-        const discountPrice = Number(cap?.prices?.[role]?.discount_price || tpl?.role_price_capsule?.[role]?.discount_price || tpl?.role_plans?.[role]?.discount_price || 0);
+        const discountPrice = Number(cap?.prices?.[role]?.discount_price || tpl?.role_plans?.[role]?.discount_price || 0);
         const CATEGORY_ORDER = ['体格检查', '实验室', '影像检查', '功能检查', '肿瘤筛查', '妇科专项', '特色加项'];
         items.sort((a, b) => {
           const sa = (Number(a.sort_order ?? 0) || 0) - (Number(b.sort_order ?? 0) || 0);
@@ -1073,7 +1154,7 @@ function DetailModal({
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            viewCheckupPackage(cap?.id || firstPkg, cap, packageName);
+                                            viewCheckupPackage(cap?.id || firstPkg, cap, packageName, { item: it });
                                           }}
                                           className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 font-medium"
                                         >
@@ -1084,7 +1165,7 @@ function DetailModal({
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             // 直接导出 Excel：autoExport = true → 后台加载 → 自动下载并关闭 loading 层
-                                            viewCheckupPackage(cap?.id || firstPkg, cap, packageName, { autoExport: true });
+                                            viewCheckupPackage(cap?.id || firstPkg, cap, packageName, { autoExport: true, item: it });
                                           }}
                                           className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium"
                                         >

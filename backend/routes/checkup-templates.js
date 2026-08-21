@@ -45,6 +45,27 @@ function isItemVisibleForRole(it, role) {
   return true;
 }
 
+// 根据项目名称关键词自动推断/纠正角色可见性（方案C）
+// 当前端传入 role='common' 但项目名命中男性专属/侵入性妇科关键字时，自动纠正为对应角色
+// 优先级：MALE_ONLY_KEYS → male，FM_ONLY_KEYS/SINGLE_FORBID_KEYS → female_married
+// FEMALE_KEYS 类项目保持 common（因 read-time isItemVisibleForRole 已正确过滤）
+function autoCorrectItemRole(item) {
+  const name = (item.item_name_snapshot || item.item_name || '').toLowerCase();
+  const currentRole = item.role || 'common';
+
+  // 仅当角色为 common 时才做自动纠正（前端显式指定 role 的保持不变）
+  if (currentRole !== 'common') return currentRole;
+
+  // 男性专属关键字 → 改为 male
+  if (nameHitKeys(name, MALE_ONLY_KEYS)) return 'male';
+  // 侵入性妇科关键字 → 改为 female_married
+  if (nameHitKeys(name, FM_ONLY_KEYS)) return 'female_married';
+  // 未婚禁用关键字 → 改为 female_married
+  if (nameHitKeys(name, SINGLE_FORBID_KEYS)) return 'female_married';
+
+  return currentRole; // 保持 common
+}
+
 // ---------- 路径常量 ----------
 const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
 if (!fs.existsSync(PDF_DIR)) {
@@ -848,8 +869,14 @@ router.put('/:id/items-batch', async (req, res) => {
           const priceSnap = it.item_price != null ? it.item_price : round2(ci.default_price || 0);
           const insSnap = it.insurance_price_snapshot != null
             ? it.insurance_price_snapshot : round2(ci.insurance_price || 0);
+          // 方案C：根据项目名称自动纠正角色可见性
+          const correctedRole = autoCorrectItemRole({
+            role: it.role,
+            item_name_snapshot: nameSnap,
+            item_name: ci.name,
+          });
           return [
-            it.id, pkg.id, it.item_id, it.role,
+            it.id, pkg.id, it.item_id, correctedRole,
             nameSnap, priceSnap, insSnap,
             it.quantity, it.remark, it.sort_order,
           ];
