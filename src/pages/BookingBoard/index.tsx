@@ -571,23 +571,30 @@ function DetailModal({
       }
       setTplCache(prev => ({ ...prev, [capId]: { loading: true } }));
       let tpl: any = null;
-      // 优先从胶囊字段取 items_by_role / role_items
-      if (cap && (cap.items_by_role || cap.role_items || (cap.items && cap.items.length))) {
+      // 销售胶囊已自带 prices（三角色折扣价），但不含 items。
+      // 用胶囊自身 id 作为 packageId，直接调 GET /checkup-templates/:id 获取完整模板
+      // （含 role_items / items_by_role / items 明细）
+      if (cap?.id) {
+        try {
+          const res = await checkupApi.get(cap.id);
+          if (res?.ok) tpl = res.data;
+        } catch { /* 忽略 */ }
+      }
+      // 兜底：如果模板接口没返回，尝试从胶囊自身字段取（极少数场景）
+      if (!tpl && cap && (cap.items_by_role || cap.role_items || (cap.items && cap.items.length))) {
         tpl = {
-          id: cap.template_id || cap.id,
+          id: cap.id,
           name: cap.name,
           code: cap.code,
           items_by_role: cap.items_by_role,
           role_items: cap.role_items,
           items: cap.items,
-          role_price_capsule: cap.prices,
+          role_plans: {
+            male: { discount_price: cap.prices?.male?.discount_price || 0 },
+            female_married: { discount_price: cap.prices?.female_married?.discount_price || 0 },
+            female_single: { discount_price: cap.prices?.female_single?.discount_price || 0 },
+          },
         };
-      }
-      if (!tpl && cap?.template_id) {
-        try {
-          const res = await checkupApi.get(cap.template_id);
-          if (res?.ok) tpl = res.data;
-        } catch { /* 忽略 */ }
       }
       setTplCache(prev => ({ ...prev, [capId]: { template: tpl || null, loading: false, error: !tpl } }));
       resolve(tpl || null);
@@ -897,7 +904,25 @@ function DetailModal({
                     const displayAmount = snapTotal > 0 ? snapTotal : (it.amount || 0);
 
                     const savedPkgId = (it.extra as any)?.selectedChkPkgId;
-                    const savedCounts = (it.extra as any)?.roleCounts as { male?: number; female_married?: number; female_single?: number } | undefined;
+                    // 注意：fromBackend 递归转换会把 female_married → femaleMarried
+                    // 这里统一做一次归一化，把 camelCase key 转回 snake_case
+                    const rawCounts = (it.extra as any)?.roleCounts;
+                    const savedCounts = (() => {
+                      if (!rawCounts) return undefined;
+                      const norm: any = {};
+                      for (const key of Object.keys(rawCounts)) {
+                        // camelCase → snake_case：femaleMarried → female_married
+                        const normalized = key.replace(/([A-Z])/g, (_m, c) => '_' + c.toLowerCase());
+                        norm[normalized] = Number(rawCounts[key]) || 0;
+                      }
+                      // 兜底：如果转换后为空（理论上不会），直接用原值
+                      if (!norm.female_married && !norm.female_single && !norm.male) {
+                        norm.male = Number(rawCounts.male) || 0;
+                        norm.female_married = Number(rawCounts.female_married ?? rawCounts.femaleMarried) || 0;
+                        norm.female_single = Number(rawCounts.female_single ?? rawCounts.femaleSingle) || 0;
+                      }
+                      return norm as { male?: number; female_married?: number; female_single?: number };
+                    })();
                     const firstPkg = savedPkgId || paxList.find((p: any) => p?.package)?.package || '';
                     const cap = capsuleMap[firstPkg] || null;
                     const packageName = friendlyCapsuleName(cap) || (firstPkg ? `套餐${firstPkg}` : '未设置');
