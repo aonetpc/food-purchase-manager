@@ -114,6 +114,8 @@ export const checkupApi = {
     api.post<any>('/booking/checkup-templates', body),
   get: (id: string) =>
     api.get<any>(`/booking/checkup-templates/${id}`),
+  preview: (id: string) =>
+    api.get<any>(`/booking/checkup-templates/${id}/preview`),
   update: (id: string, body: any) =>
     api.put<any>(`/booking/checkup-templates/${id}`, body),
   clone: (id: string, body?: any) =>

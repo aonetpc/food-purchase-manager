@@ -580,6 +580,25 @@ router.put('/sales-profile', async (req, res) => {
 });
 
 /**
+ * GET /api/booking/checkup-templates/:id/preview
+ *   预览端点：仅需登录，不做 canUserViewPackage 严格检查
+ *   用于订单详情/体检预览等场景，和 listSalesCapsules 保持一致的权限哲学
+ *   （预订功能本身已有权限控制，此处不重复检查）
+ */
+router.get('/:id/preview', async (req, res) => {
+  try {
+    const pkg = await readPackageFull(req.params.id);
+    if (!pkg) return res.status(404).json({ ok: false, error: '套餐不存在' });
+    // 仅需登录即可查看模板详情（用于订单详情/预览场景）
+    // 敏感字段（owner/分配等）在 readPackageFull 中已处理
+    res.json({ ok: true, data: pkg });
+  } catch (e) {
+    console.error('[checkup-templates preview] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
  * GET /api/booking/checkup-templates/:id
  */
 router.get('/:id', async (req, res) => {

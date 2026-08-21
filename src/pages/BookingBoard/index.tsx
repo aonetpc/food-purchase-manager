@@ -572,11 +572,10 @@ function DetailModal({
       setTplCache(prev => ({ ...prev, [capId]: { loading: true } }));
       let tpl: any = null;
       // 销售胶囊已自带 prices（三角色折扣价），但不含 items。
-      // 用胶囊自身 id 作为 packageId，直接调 GET /checkup-templates/:id 获取完整模板
-      // （含 role_items / items_by_role / items 明细）
+      // 用胶囊自身 id 作为 packageId，调 preview 端点获取完整模板（仅需登录，不做严格权限检查）
       if (cap?.id) {
         try {
-          const res = await checkupApi.get(cap.id);
+          const res = await checkupApi.preview(cap.id);
           if (res?.ok) tpl = res.data;
         } catch { /* 忽略 */ }
       }
