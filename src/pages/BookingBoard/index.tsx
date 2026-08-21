@@ -1589,7 +1589,7 @@ function DetailModal({
                           <div className="font-mono font-semibold text-green-700">折扣合计 ¥{Number(sh.discountPrice||0).toLocaleString()}</div>
                         </div>
                       </div>
-                      <div className="overflow-x-auto max-h-[50vh]">
+                      <div>
                         <table className="w-full text-[11px]">
                           <thead className="bg-gray-50 text-gray-500 sticky top-0 z-[1]">
                             <tr>
