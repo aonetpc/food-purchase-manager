@@ -230,6 +230,7 @@ export interface RoomTypeRow {
   price: number;
   status: number;
   sort_order: number;
+  pricing_mode?: 'per_room' | 'per_person';
 }
 
 export interface MeetingHallRow {
@@ -418,7 +419,7 @@ export const bookingApi = {
         }
         return transformed;
       }),
-      roomTypes:    (d.roomTypes    || d.room_types    || []).map(fromBackend),
+      roomTypes:    (d.roomTypes    || d.room_types    || []) as RoomTypeRow[],
       meetingHalls: (d.meetingHalls || d.meeting_halls || []).map(fromBackend),
       wellnessTypes:(d.wellnessTypes|| d.wellness_types|| []) as WellnessTypeRow[],
       mealTypes:    (d.mealTypes    || d.meal_types    || []) as MealTypeRow[],

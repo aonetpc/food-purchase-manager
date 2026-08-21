@@ -1580,7 +1580,11 @@ export default function BookingBoardCreate(props: {
     dateCheckOut: string;
     arrivalTime: string;
     rooms: number;
-    // 单晚自定义单价（单位：元/间/晚）。undefined = 用房型配置标准价；显式 0 = 免费接待
+    // 计价方式：per_room=按间计费，per_person=按人计费
+    pricingMode?: 'per_room' | 'per_person';
+    // 按人计费时的人数
+    pax?: number;
+    // 单晚自定义单价（单位：元/间/晚 或 元/人/晚，取决于 pricingMode）。undefined = 用房型配置标准价；显式 0 = 免费接待
     customPrice?: number;
   };
   const [lgIn, setLgIn] = useState(todayStr());
@@ -1748,10 +1752,10 @@ export default function BookingBoardCreate(props: {
         { id: 'fb_D', code: 'D', name: 'VIP体检套餐', price: 5888, status: 1, sort_order: 4 },
       ] as PackageRow[]);
   const finalRoomOptions = roomOptions.length > 0 ? roomOptions : ([
-    { id: 'fb_std', code: 'standard', name: '标准间', price: 480, status: 1, sort_order: 1 },
-    { id: 'fb_big', code: 'bigbed', name: '大床房', price: 520, status: 1, sort_order: 2 },
-    { id: 'fb_sui', code: 'suite', name: '套房', price: 880, status: 1, sort_order: 3 },
-    { id: 'fb_vip', code: 'vipsuite', name: 'VIP套房', price: 1880, status: 1, sort_order: 4 },
+    { id: 'fb_std', code: 'standard', name: '标准间', price: 480, pricing_mode: 'per_room', status: 1, sort_order: 1 },
+    { id: 'fb_big', code: 'bigbed', name: '大床房', price: 520, pricing_mode: 'per_room', status: 1, sort_order: 2 },
+    { id: 'fb_sui', code: 'suite', name: '套房', price: 880, pricing_mode: 'per_room', status: 1, sort_order: 3 },
+    { id: 'fb_vip', code: 'vipsuite', name: 'VIP套房', price: 1880, pricing_mode: 'per_room', status: 1, sort_order: 4 },
   ] as RoomTypeRow[]);
   const finalHallOptions = hallOptions.length > 0 ? hallOptions : ([
     { id: 'fb_sj', code: 'siji', name: '四季厅', capacity: 80, half_price: 2000, full_price: 3500, status: 1, sort_order: 1 },
@@ -1941,7 +1945,9 @@ export default function BookingBoardCreate(props: {
     if (t === 'lodging')
       return lgSessions.reduce((s, x) => {
         const n = Math.max(0, daysBetween(x.dateCheckIn, x.dateCheckOut));
-        return s + calcLodgingAmount(x.lodgingType, x.rooms, n, finalBizConfigForCalc, x.customPrice);
+        const pm = x.pricingMode || 'per_room';
+        const val = pm === 'per_person' ? (x.pax || 1) : x.rooms;
+        return s + calcLodgingAmount(x.lodgingType, val, n, finalBizConfigForCalc, x.customPrice, pm);
       }, 0);
     if (t === 'lunch' || t === 'dinner')
       return mlSessions.reduce((s, x) => s + calcMealAmount(x.pricingMode, x.unitPrice, x.tables, x.perTable, x.pax), 0);
@@ -2056,13 +2062,17 @@ export default function BookingBoardCreate(props: {
       // 住宿：恢复单晚自定义单价 customPrice（有就带回，没有=undefined，继续用标准价）
       const cpRaw = (item.extra as any)?.customPrice;
       const hasCP = cpRaw !== undefined && cpRaw !== null && !Number.isNaN(Number(cpRaw));
+      const pm = (item.extra as any)?.pricingMode || 'per_room';
+      const isPerPerson = pm === 'per_person';
       setLgSessions([{
         id: item.id,
         lodgingType: item.extra.lodgingType || 'standard',
         dateCheckIn: item.extra.dateCheckIn || todayStr(),
         dateCheckOut: item.extra.dateCheckOut || fmt(addDays(new Date(), 1)),
         arrivalTime: item.extra.arrivalTime || '14:00',
-        rooms: item.pax || 1,
+        rooms: isPerPerson ? 0 : (item.pax || 1),
+        pricingMode: pm,
+        pax: isPerPerson ? ((item.extra as any)?.pax || item.pax || 1) : undefined,
         ...(hasCP ? { customPrice: Number(cpRaw) } : {}),
       }]);
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
@@ -2394,8 +2404,10 @@ export default function BookingBoardCreate(props: {
       }
       const newItems: BookingItem[] = sessions.map((s, i) => {
         const nights = daysBetween(s.dateCheckIn, s.dateCheckOut);
+        const pm = s.pricingMode || 'per_room';
+        const val = pm === 'per_person' ? (s.pax || 1) : s.rooms;
         // 住宿：每条 session 支持单晚自定义单价（customPrice），用于按单位不同分别议价
-        const amt = calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice);
+        const amt = calcLodgingAmount(s.lodgingType, val, nights, finalBizConfigForCalc, s.customPrice, pm);
         // 决定 customPrice 是否写入 extra：有值（含显式 0）时写，未设置则不写（老数据兼容，字段体积更小）
         const hasCP = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
         return {
@@ -2403,13 +2415,15 @@ export default function BookingBoardCreate(props: {
           itemType,
           date: s.dateCheckIn,
           startTime: s.arrivalTime,
-          pax: s.rooms,
+          pax: val,
           extra: {
             lodgingType: s.lodgingType,
             dateCheckIn: s.dateCheckIn,
             dateCheckOut: s.dateCheckOut,
             arrivalTime: s.arrivalTime,
             nights,
+            pricingMode: pm,
+            ...(pm === 'per_person' ? { pax: (s.pax || 1) } : {}),
             ...(hasCP ? { customPrice: Number(s.customPrice) } : {}),
           },
           amount: amt,
@@ -2661,14 +2675,15 @@ export default function BookingBoardCreate(props: {
           const lodgingType = roomNameToCode[get('房型')] || LODGING_NAME_MAP[get('房型')] || 'standard';
           const rooms = parseInt(get('间数')) || 1;
           const nights = checkIn && checkOut ? Math.max(0, daysBetween(checkIn, checkOut)) : 0;
+          const pm = ((finalRoomOptions.find(r => r.code === lodgingType) as any)?.pricing_mode) || 'per_room';
           newItems.push({
             id: genItemId(),
             itemType: 'lodging',
             date: checkIn,
             startTime: arrivalTime,
             pax: rooms,
-            extra: { lodgingType, dateCheckIn: checkIn, dateCheckOut: checkOut, arrivalTime, nights },
-            amount: calcLodgingAmount(lodgingType, rooms, nights, finalBizConfigForCalc),
+            extra: { lodgingType, dateCheckIn: checkIn, dateCheckOut: checkOut, arrivalTime, nights, pricingMode: pm },
+            amount: calcLodgingAmount(lodgingType, rooms, nights, finalBizConfigForCalc, undefined, pm),
           });
         }
 
@@ -3798,7 +3813,8 @@ export default function BookingBoardCreate(props: {
                     <label className={labelCls}>房型（点击添加）</label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {finalRoomOptions.map((rt) => {
-                        const count = lgSessions.filter(s => s.lodgingType === rt.code).reduce((s, x) => s + x.rooms, 0);
+                        const pricingMode = (rt as any).pricing_mode as 'per_room' | 'per_person' || 'per_room';
+                        const count = lgSessions.filter(s => s.lodgingType === rt.code).reduce((s, x) => s + (pricingMode === 'per_person' ? (x.pax || 1) : x.rooms), 0);
                         return (
                           <button
                             key={rt.code}
@@ -3807,18 +3823,24 @@ export default function BookingBoardCreate(props: {
                               const checkIn = lgIn || todayStr();
                               const checkOut = lgOut && parseDateLocal(lgOut) >= parseDateLocal(minOut) ? lgOut : minOut;
                               const arrivalTime = lgArr || '14:00';
-                              const addRooms = 1;
-                              // 合并：同条件(房型+入住+离店+到达)累加间数，避免点击多次拆成多条 1 间独立行
+                              const isPerPerson = pricingMode === 'per_person';
+                              const defaultPax = 1;
+                              // 合并：同条件(房型+入住+离店+到达+计价方式)累加
                               setLgSessions((prev) => {
                                 const sameIdx = prev.findIndex(s =>
                                   s.lodgingType === rt.code
                                   && s.dateCheckIn === checkIn
                                   && s.dateCheckOut === checkOut
                                   && s.arrivalTime === arrivalTime
+                                  && (s.pricingMode || 'per_room') === pricingMode
                                 );
                                 if (sameIdx >= 0) {
                                   const next = prev.slice();
-                                  next[sameIdx] = { ...next[sameIdx], rooms: next[sameIdx].rooms + addRooms };
+                                  next[sameIdx] = {
+                                    ...next[sameIdx],
+                                    rooms: isPerPerson ? next[sameIdx].rooms : next[sameIdx].rooms + 1,
+                                    pax: isPerPerson ? (next[sameIdx].pax || 1) + defaultPax : next[sameIdx].pax,
+                                  };
                                   return next;
                                 }
                                 return [
@@ -3829,7 +3851,9 @@ export default function BookingBoardCreate(props: {
                                     dateCheckIn: checkIn,
                                     dateCheckOut: checkOut,
                                     arrivalTime,
-                                    rooms: addRooms,
+                                    rooms: isPerPerson ? 0 : 1,
+                                    pricingMode,
+                                    pax: isPerPerson ? defaultPax : undefined,
                                   },
                                 ];
                               });
@@ -3847,7 +3871,7 @@ export default function BookingBoardCreate(props: {
                             )}
                             <div className="font-medium truncate">{rt.name}</div>
                             <div className="text-[10px] opacity-70 font-mono">
-                              ¥{Number(rt.price || 0).toLocaleString()}
+                              ¥{Number(rt.price || 0).toLocaleString()}{pricingMode === 'per_person' ? '/人/晚' : '/间/晚'}
                             </div>
                           </button>
                         );
@@ -3866,7 +3890,10 @@ export default function BookingBoardCreate(props: {
                         const hasCustom = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
                         const showPrice = hasCustom ? Number(s.customPrice) : basePrice;
                         const isNegotiated = hasCustom && Number(s.customPrice) !== basePrice;
-                        const amt = valid ? calcLodgingAmount(s.lodgingType, s.rooms, nights, finalBizConfigForCalc, s.customPrice) : 0;
+                        const pricingMode = s.pricingMode || 'per_room';
+                        const isPerPerson = pricingMode === 'per_person';
+                        const roomsOrPax = isPerPerson ? (s.pax || 1) : s.rooms;
+                        const amt = valid ? calcLodgingAmount(s.lodgingType, roomsOrPax, nights, finalBizConfigForCalc, s.customPrice, pricingMode) : 0;
                         return (
                           <div
                             key={s.id}
@@ -3883,14 +3910,14 @@ export default function BookingBoardCreate(props: {
                                 <div className={`mt-1 text-[11px] font-mono leading-tight ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
                                   {hasCustom
                                     ? (isNegotiated
-                                        ? <>🔺 议价 ¥{showPrice.toLocaleString()}<span className="text-gray-400 font-normal">/晚<br/>（标准 ¥{basePrice.toLocaleString()}）</span></>
-                                        : `¥${showPrice.toLocaleString()}/晚`)
-                                    : `¥${info.price.toLocaleString()}/晚`}
+                                        ? <>🔺 议价 ¥{showPrice.toLocaleString()}<span className="text-gray-400 font-normal">/{isPerPerson ? '人' : '间'}/晚<br/>（标准 ¥{basePrice.toLocaleString()}）</span></>
+                                        : `¥${showPrice.toLocaleString()}/${isPerPerson ? '人' : '间'}/晚`)
+                                    : `¥${info.price.toLocaleString()}/${isPerPerson ? '人' : '间'}/晚`}
                                 </div>
                               </div>
                               <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-2">
                                 <div>
-                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">单价 (元/间/晚)</label>
+                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">单价 (元/{isPerPerson ? '人' : '间'}/晚)</label>
                                   <input
                                     type="number"
                                     min="0"
@@ -3960,17 +3987,21 @@ export default function BookingBoardCreate(props: {
                                 </div>
                               </div>
                             </div>
-                            {/* 第 2 行：间数 + 晚数 + 小计 + 删除 */}
+                            {/* 第 2 行：间数/人数 + 晚数 + 小计 + 删除 */}
                             <div className="flex items-center gap-3 flex-wrap px-2.5 py-2 border-t border-gray-100 bg-gray-50/60">
                               <div className="flex items-center gap-1.5">
-                                <label className="text-[10px] text-gray-500 shrink-0">间数</label>
+                                <label className="text-[10px] text-gray-500 shrink-0">{isPerPerson ? '人数' : '间数'}</label>
                                 <input
                                   type="number"
-                                  min="1"
-                                  value={s.rooms}
+                                  min={isPerPerson ? 0 : 1}
+                                  value={isPerPerson ? (s.pax ?? 1) : s.rooms}
                                   onChange={(e) =>
                                     setLgSessions((prev) => prev.map((x, i) =>
-                                      i === idx ? { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) } : x
+                                      i === idx
+                                        ? (isPerPerson
+                                            ? { ...x, pax: Math.max(0, parseInt(e.target.value) || 0) }
+                                            : { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) })
+                                        : x
                                     ))
                                   }
                                   className={`${cellInput} w-20 font-mono`}

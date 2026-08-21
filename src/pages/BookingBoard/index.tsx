@@ -162,7 +162,10 @@ function cardSummary(item: BookingItem, days: number): string {
     if (displayAmount) parts.push(`¥${displayAmount.toLocaleString()}`);
   } else if (item.itemType === 'lodging') {
     const lt = LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间', price: 0 };
-    parts.push(lt.name, `${item.pax}间`);
+    const pm = (item.extra as any)?.pricingMode || 'per_room';
+    const isPP = pm === 'per_person';
+    const qty = isPP ? ((item.extra as any)?.pax || item.pax) : item.pax;
+    parts.push(lt.name, `${qty}${isPP ? '人' : '间'}`);
     if (item.extra.nights) parts.push(`${item.extra.nights}晚`);
     if (item.amount) parts.push(`¥${item.amount}`);
   } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
@@ -1223,19 +1226,24 @@ function DetailModal({
                                 )}
 
                                 {/* ============= 住宿：入住详情 ============= */}
-                                {it.itemType === 'lodging' && (
+                                {it.itemType === 'lodging' && (() => {
+                                  const pm = (it.extra as any)?.pricingMode || 'per_room';
+                                  const isPerPerson = pm === 'per_person';
+                                  const unitLabel = isPerPerson ? '每人每晚' : '每间每晚';
+                                  const qtyLabel = isPerPerson ? '人数' : '间数';
+                                  return (
                                   <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
                                     <div className="text-[11px] text-purple-600 font-semibold mb-2 flex items-center gap-1">
-                                      <span>🛏</span> 住宿详情
+                                      <span>🛏</span> 住宿详情{isPerPerson && <span className="text-[9px] bg-purple-200 text-purple-700 rounded px-1 ml-1">按人计费</span>}
                                     </div>
                                     <div className="bg-white rounded p-2.5 border border-purple-100">
                                       <div className="grid grid-cols-2 gap-2 text-[11px]">
                                         <div><span className="text-gray-400">房型：</span><span className="font-medium text-gray-800">{roomName(it.extra.lodgingType || 'standard')}</span></div>
                                         <div><span className="text-gray-400">入住：</span><span className="font-mono text-gray-800">{it.extra.dateCheckIn || '-'} {it.extra.arrivalTime ? ` ${it.extra.arrivalTime}` : ''}</span></div>
-                                        <div><span className="text-gray-400">间数：</span><span className="font-medium text-gray-800">{it.pax} 间</span></div>
+                                        <div><span className="text-gray-400">{qtyLabel}：</span><span className="font-medium text-gray-800">{isPerPerson ? ((it.extra as any)?.pax || it.pax || 1) : it.pax} {isPerPerson ? '人' : '间'}</span></div>
                                         <div><span className="text-gray-400">离店：</span><span className="font-mono text-gray-800">{it.extra.dateCheckOut || '-'}（{it.extra.nights || 0}晚）</span></div>
                                         <div>
-                                          <span className="text-gray-400">每间每晚：</span>
+                                          <span className="text-gray-400">{unitLabel}：</span>
                                           {('customPrice' in it.extra && (it.extra as any).customPrice !== undefined) ? (
                                             <span className="font-mono text-gray-800">
                                               ¥{Number((it.extra as any).customPrice).toLocaleString()}
@@ -1251,7 +1259,8 @@ function DetailModal({
                                       </div>
                                     </div>
                                   </div>
-                                )}
+                                  );
+                                })()}
 
                                 {/* ============= 早餐（派生）============= */}
                                 {it.itemType === 'breakfast' && (

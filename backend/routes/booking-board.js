@@ -960,7 +960,7 @@ makeBizConfigCrud({
   basePath: '/config/room-types',
   table: 'booking_room_types',
   requiredFields: ['code', 'name', 'price'],
-  editableFields: ['status', 'sort_order'],
+  editableFields: ['status', 'sort_order', 'pricing_mode'],
   sortDefault: 1,
 });
 

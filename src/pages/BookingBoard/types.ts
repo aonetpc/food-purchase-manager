@@ -60,6 +60,7 @@ export interface RoomTypeRow {
   price: number;
   status: number;
   sort_order: number;
+  pricing_mode?: 'per_room' | 'per_person';
 }
 
 export interface MeetingHallRow {
@@ -113,6 +114,9 @@ export interface ItemExtra {
   dateCheckOut?: string;
   arrivalTime?: string;
   nights?: number;
+  pricingMode?: 'per_room' | 'per_person';  // 计价方式
+  pax?: number;                               // 按人计费时的人数
+  customPrice?: number;                      // 单晚自定义单价
 
   // 午餐/晚餐/会议/康乐 统一 sessions 字段（联合类型）
   dateStart?: string;

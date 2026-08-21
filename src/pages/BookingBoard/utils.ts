@@ -163,13 +163,16 @@ export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput):
   return paxList.reduce((sum, p) => sum + calcSinglePaxAmount(p, config), 0);
 }
 
-export function calcLodgingAmount(lodgingType: string, rooms: number, nights: number, config?: BizConfigInput, customPrice?: number): number {
+export function calcLodgingAmount(lodgingType: string, roomsOrPax: number, nights: number, config?: BizConfigInput, customPrice?: number, pricingMode?: 'per_room' | 'per_person'): number {
   const row = buildMap(config?.roomTypes)[lodgingType];
   const basePrice = row ? Number(row.price) : (FALLBACK_ROOMS[lodgingType]?.price || 0);
   // customPrice 允许显式 0 元（免费接待），只有 undefined/null/NaN 才退回标准价
   const useCustom = customPrice !== undefined && customPrice !== null && !Number.isNaN(Number(customPrice));
   const price = useCustom ? Number(customPrice) : basePrice;
-  return (price || 0) * Math.max(0, rooms) * Math.max(0, nights);
+  // pricing_mode: per_room=按间数, per_person=按人数
+  const mode = pricingMode || (row?.pricing_mode as 'per_room' | 'per_person') || 'per_room';
+  const multiplier = mode === 'per_person' ? Math.max(0, roomsOrPax) : Math.max(0, roomsOrPax);
+  return (price || 0) * multiplier * Math.max(0, nights);
 }
 
 export function calcMeetingAmount(hall: string, slotType: 'half' | 'full', config?: BizConfigInput): number {
