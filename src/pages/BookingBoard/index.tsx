@@ -659,6 +659,18 @@ function DetailModal({
     const hasSnapshot = paxList.some((p: any) => Array.isArray(p.finalItems) && p.finalItems.length > 0);
     if (!hasSnapshot) return null;
 
+    // 关键检测：旧订单的快照没有 role 字段，无法精确过滤被排除的项目
+    // 新订单（经修复后保存）的 finalItems 带有 role 字段
+    // 如果所有项目都没有 role 信息 → 返回 null 走模板 API 兜底路径（模板 API 数据有 role）
+    const allSnapshotItems = paxList.flatMap((p: any) =>
+      Array.isArray(p.finalItems) ? p.finalItems : []
+    );
+    const hasRoleInfo = allSnapshotItems.some((it: any) => {
+      const r = it.role ?? it.scope;
+      return r && r !== 'common';
+    });
+    if (!hasRoleInfo) return null; // 旧订单：无 role 信息，用模板 API 数据（有 role 字段）
+
     const displayRoles: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
     // 按角色聚合 finalItems，用 Map 去重（同 item_id 合并取最大数量）
     const roleMaps: Record<string, Map<string, any>> = {
