@@ -683,7 +683,10 @@ function DetailModal({
       const role = paxToRole(p.gender, p.married);
       const items: any[] = Array.isArray(p.finalItems) ? p.finalItems : [];
       items.forEach((it: any) => {
-        const key = getItemId(it) || getItemName(it) || String(Math.random());
+        const name = getItemName(it);
+        // 方案：用 scopeVisible 按角色关键词过滤，确保各角色只看到适用项目
+        if (!scopeVisible({ name, applicable_roles: it.applicable_roles }, role)) return;
+        const key = getItemId(it) || name || String(Math.random());
         const existing = roleMaps[role].get(key);
         if (existing) {
           // 合并：取较大数量，价格不变
@@ -691,7 +694,7 @@ function DetailModal({
         } else {
           roleMaps[role].set(key, {
             category: getItemCategory(it),
-            name: getItemName(it),
+            name,
             price: getItemPrice(it),
             qty: getItemQty(it),
             remark: getItemRemark(it),
