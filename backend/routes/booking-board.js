@@ -45,74 +45,78 @@ function addDays(dateStr, days) {
 // ------------------------------------------------------------
 // 工具：早餐派生（从同订单的体检 + 住宿日期推算）
 // 返回 BookingItem shape 的数组（仅客户端/详情渲染用，不入库）
+//
+// 日期规则（2026-08-22 修正）：
+//  - 体检当天早上 → 早餐
+//  - 住宿：入住第二天起 → 退房当天早上（不含入住当天）
+//    例：8/18入住 → 8/20退房（2晚）→ 早餐日期=8/19、8/20
+//
+// 人数规则：
+//  - 体检：早餐人数 = 体检 pax
+//  - 住宿按间模式：早餐人数 = rooms × beds_per_room
+//  - 住宿按人模式：早餐人数 = pax（人头数）
 // ------------------------------------------------------------
 function deriveBreakfastItems(items) {
   const checkups = items.filter(i => i.item_type === 'checkup');
   const lodgings = items.filter(i => i.item_type === 'lodging');
-  const result = [];
+  // dayMap: date → { checkupPax, lodgingPax }
+  const dayMap = {};
+  const ensure = (d) => dayMap[d] || (dayMap[d] = { checkupPax: 0, lodgingPax: 0 });
 
-  // 体检当天 => 早餐
+  // ① 体检当天：早餐人数 = 体检人数
   checkups.forEach(c => {
-    result.push({
-      id: 'bf-c-' + c.id,
+    ensure(c.date).checkupPax += Number(c.pax) || 0;
+  });
+
+  // ② 住宿：入住第二天起，到退房当天
+  lodgings.forEach(l => {
+    const extra = l.extra || {};
+    const checkIn = extra.dateCheckIn || l.date;
+    const checkOut = extra.dateCheckOut || l.date;
+    if (!checkIn || !checkOut) return;
+
+    // 计算晚数
+    const d1 = new Date(checkIn + 'T00:00:00');
+    const d2 = new Date(checkOut + 'T00:00:00');
+    const nights = Math.max(0, Math.round((d2 - d1) / 86400000));
+    if (nights <= 0) return;
+
+    const mode = extra.pricingMode || 'per_room';
+    const rooms = Number(extra.rooms) || 0;
+    const pax = Number(extra.pax) || 0;
+    const bedsSnapshot = Number(extra.bedsPerRoomSnapshot);
+    const beds = (bedsSnapshot > 0) ? bedsSnapshot : 2; // 兜底2床
+
+    let lodgingAdd = 0;
+    if (mode === 'per_person') {
+      lodgingAdd = Math.max(0, pax);
+    } else {
+      lodgingAdd = Math.max(0, rooms) * beds;
+    }
+
+    // 入住第二天起算（i=1），退房当天也有早餐
+    for (let i = 1; i <= nights; i++) {
+      const d = addDays(checkIn, i);
+      ensure(d).lodgingPax += lodgingAdd;
+    }
+  });
+
+  // 汇总输出
+  const result = Object.entries(dayMap)
+    .map(([date, v]) => ({
+      id: 'bf-' + date,
       item_type: 'breakfast',
-      date: c.date,
-      start_time: '07:00',
-      pax: c.pax,
+      date,
+      start_time: '07:30',
+      pax: (v.checkupPax || 0) + (v.lodgingPax || 0),
       extra: {
-        session: '自助',
-        menu: '常规',
-        packageCode: c.extra?.packageCode || null,
+        source: { checkup: v.checkupPax || 0, lodging: v.lodgingPax || 0 },
       },
       amount: 0,
       derived: true,
-      derived_from: { type: 'checkup', id: c.id, customerDate: `${c.date} 体检 ${c.pax}人` },
-    });
-  });
-
-  // 住宿入住日 → 第二天早餐，住几晚就派几天（入+次日~出+1日？按入住当晚住宿，次天早晨算）
-  // 文档：早餐=住宿入住当晚 + 住宿退房日的次天早晨？按照前端 utils 实现：
-  // 每个住宿项 item.extra.checkin/checkout 都会生成 [checkin, checkout) 每个日期的早餐
-  lodgings.forEach(l => {
-    const extra = l.extra || {};
-    const rooms = extra.rooms || [];
-    rooms.forEach(r => {
-      const { checkin, checkout } = r || {};
-      if (!checkin || !checkout) return;
-      let cursor = checkin;
-      let nights = 0;
-      const maxNights = 30;
-      while (cursor && cursor < checkout && nights < maxNights) {
-        // 住宿当天入住，第二天早餐
-        const nextDay = addDays(cursor, 1);
-        const roomPax = (r.adultCount || 0) + (r.childCount || 0);
-        if (roomPax > 0) {
-          result.push({
-            id: 'bf-l-' + l.id + '-' + cursor,
-            item_type: 'breakfast',
-            date: nextDay,
-            start_time: '07:00',
-            pax: roomPax,
-            extra: {
-              session: '自助',
-              menu: '常规',
-              roomTypeCode: r.roomTypeCode,
-              roomIndex: r.index,
-            },
-            amount: 0,
-            derived: true,
-            derived_from: {
-              type: 'lodging',
-              id: l.id,
-              customerDate: `${cursor} 入住 ${r.roomTypeName || r.roomTypeCode} ${roomPax}人`,
-            },
-          });
-        }
-        cursor = addDays(cursor, 1);
-        nights++;
-      }
-    });
-  });
+    }))
+    .filter(s => s.pax > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   return result;
 }

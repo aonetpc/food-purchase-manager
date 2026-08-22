@@ -347,7 +347,8 @@ export function deriveBreakfastSessions(
     const pax = Number(x.pax) || 0;
     const bedsSnapshot = x.bedsPerRoomSnapshot;
 
-    for (let i = 0; i < nights; i++) {
+    // 入住第二天起才有早餐（i=1 起算），退房当天早上也有
+    for (let i = 1; i <= nights; i++) {
       const d = fmt(addDays(parseDate(checkIn), i));
       let lodgingAdd = 0;
       if (mode === 'per_person') {
