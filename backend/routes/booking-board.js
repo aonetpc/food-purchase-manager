@@ -111,7 +111,8 @@ function deriveBreakfastItems(items) {
       item_type: 'breakfast',
       date,
       start_time: '07:30',
-      pax: (v.checkupPax || 0) + (v.lodgingPax || 0),
+      // 体检人数与住宿人数取较大值（体检的人通常就是住宿的人，不重复计数）
+      pax: Math.max(v.checkupPax || 0, v.lodgingPax || 0),
       extra: {
         source: { checkup: v.checkupPax || 0, lodging: v.lodgingPax || 0 },
       },
