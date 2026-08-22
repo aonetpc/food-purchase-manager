@@ -21,6 +21,8 @@ import {
   mergeConsecutiveItems,
   assignTracks,
   getItemDateRange,
+  getBedsPerRoom,
+  deriveBreakfastSessions,
   type FlatItem,
 } from './utils';
 import { bookingApi, type BookingApiOrder } from '../../lib/api';
@@ -87,7 +89,7 @@ const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周�
 // 后端字段：orderNo, paymentMethod, rejectionReason, rejectedByName
 // 前端字段：id(显示用orderNo), payment, rejectReason, rejectedBy
 // ================================================
-function adaptOrder(apiOrder: BookingApiOrder): BookingOrder {
+function adaptOrder(apiOrder: BookingApiOrder, cfg?: { roomTypes?: any[] }): BookingOrder {
   return {
     id: apiOrder.orderNo || apiOrder.id,
     customerName: apiOrder.customerName || '',
@@ -97,10 +99,44 @@ function adaptOrder(apiOrder: BookingApiOrder): BookingOrder {
     salesPersonId: apiOrder.salesPersonId || '',
     payment: apiOrder.paymentMethod || '',
     remark: apiOrder.remark || '',
-    items: (apiOrder.items || []).map((it: any) => ({
-      ...it,
-      extra: it.extra || {},
-    })),
+    items: (apiOrder.items || []).map((it: any) => {
+      const item = {
+        ...it,
+        extra: { ...(it.extra || {}) },
+      };
+      // 住宿：对 rooms/pax/bedsPerRoomSnapshot 做一致性兜底（兼容088迁移前/昨天部署产生的旧订单）
+      if (item.itemType === 'lodging' && item.extra) {
+        const ex = item.extra as any;
+        const pm: 'per_room' | 'per_person' = ex.pricingMode || 'per_room';
+        let rooms = Number(ex.rooms);
+        let pax = Number(ex.pax);
+        if (!Number.isFinite(rooms) || rooms <= 0) {
+          rooms = pm === 'per_room' ? (Number(item.pax) || 1) : 0;
+        }
+        if (!Number.isFinite(pax) || pax <= 0) {
+          if (pm === 'per_person') {
+            pax = (Number(ex.pax) > 0) ? Number(ex.pax) : (Number(item.pax) || 1);
+            if (rooms <= 0) {
+              // 老按人头订单：没有房间数，按床位推算
+              const beds = ex.lodgingType ? getBedsPerRoom(ex.lodgingType, cfg as any) : 2;
+              rooms = Math.max(1, Math.ceil(pax / beds || 1));
+            }
+          } else {
+            // 按间老订单：pax = rooms × beds
+            const beds = ex.lodgingType ? getBedsPerRoom(ex.lodgingType, cfg as any) : 2;
+            pax = rooms * beds;
+          }
+        }
+        if (!(ex.bedsPerRoomSnapshot > 0)) {
+          ex.bedsPerRoomSnapshot = ex.lodgingType
+            ? getBedsPerRoom(ex.lodgingType, cfg as any)
+            : 2;
+        }
+        ex.rooms = rooms;
+        ex.pax = pax;
+      }
+      return item;
+    }),
     status: (apiOrder.status as OrderStatus) || 'pending',
     createdAt: apiOrder.createdAt || '',
     confirmedAt: apiOrder.confirmedAt,
@@ -162,12 +198,14 @@ function cardSummary(item: BookingItem, days: number): string {
     if (displayAmount) parts.push(`¥${displayAmount.toLocaleString()}`);
   } else if (item.itemType === 'lodging') {
     const lt = LODGING_TYPES[item.extra.lodgingType || 'standard'] || { name: item.extra.lodgingType || '标准间', price: 0 };
-    const pm = (item.extra as any)?.pricingMode || 'per_room';
-    const isPP = pm === 'per_person';
-    const qty = isPP ? ((item.extra as any)?.pax || item.pax) : item.pax;
-    parts.push(lt.name, `${qty}${isPP ? '人' : '间'}`);
+    const ex = item.extra as any;
+    const pm: 'per_room' | 'per_person' = ex.pricingMode || 'per_room';
+    const rooms = Number(ex.rooms) || (pm === 'per_room' ? item.pax : 0);
+    const pax = Number(ex.pax) || (pm === 'per_person' ? item.pax : 0);
+    const modeLabel = pm === 'per_person' ? '🧍按人' : '💤按间';
+    parts.push(lt.name, `${rooms}间·${pax}人`, modeLabel);
     if (item.extra.nights) parts.push(`${item.extra.nights}晚`);
-    if (item.amount) parts.push(`¥${item.amount}`);
+    if (item.amount) parts.push(`¥${item.amount.toLocaleString()}`);
   } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
     parts.push(BIZ_MAP[item.itemType].label);
     const mealSess = item.extra.sessions || [];
@@ -1227,32 +1265,53 @@ function DetailModal({
 
                                 {/* ============= 住宿：入住详情 ============= */}
                                 {it.itemType === 'lodging' && (() => {
-                                  const pm = (it.extra as any)?.pricingMode || 'per_room';
+                                  const ex = it.extra as any;
+                                  const pm: 'per_room' | 'per_person' = ex.pricingMode || 'per_room';
                                   const isPerPerson = pm === 'per_person';
-                                  const unitLabel = isPerPerson ? '每人每晚' : '每间每晚';
-                                  const qtyLabel = isPerPerson ? '人数' : '间数';
+                                  const rooms = Number(ex.rooms) || (pm === 'per_room' ? (it.pax || 1) : 0);
+                                  const pax = Number(ex.pax) || (pm === 'per_person' ? (it.pax || 1) : 0);
+                                  const modeBadge = isPerPerson
+                                    ? <span className="text-[9px] bg-purple-200 text-purple-700 rounded px-1 ml-1">🧍按人计费</span>
+                                    : <span className="text-[9px] bg-blue-200 text-blue-700 rounded px-1 ml-1">💤按间计费</span>;
+                                  // 单价按口径取配置
+                                  const rt = (bizCfg.roomTypes || []).find((r: any) => r.code === it.extra.lodgingType) || {} as any;
+                                  const stdPrice = isPerPerson
+                                    ? (Number(rt.price_per_person) > 0 ? Number(rt.price_per_person) : (rt.pricing_mode === 'per_person' ? Number(rt.price) : 0))
+                                    : (Number(rt.price_per_room) > 0 ? Number(rt.price_per_room) : Number(rt.price));
+                                  const fb = LODGING_TYPES[it.extra.lodgingType as keyof typeof LODGING_TYPES];
+                                  const displayStd = stdPrice > 0 ? stdPrice : (fb?.price || 0);
+                                  const hasCustom = 'customPrice' in it.extra && ex.customPrice !== undefined && ex.customPrice !== null;
+                                  const unitPrice = hasCustom ? Number(ex.customPrice) : displayStd;
+                                  // 床位显示
+                                  const beds = Number(ex.bedsPerRoomSnapshot)
+                                    || getBedsPerRoom(it.extra.lodgingType || 'standard', bizCfg as any);
                                   return (
                                   <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
                                     <div className="text-[11px] text-purple-600 font-semibold mb-2 flex items-center gap-1">
-                                      <span>🛏</span> 住宿详情{isPerPerson && <span className="text-[9px] bg-purple-200 text-purple-700 rounded px-1 ml-1">按人计费</span>}
+                                      <span>🛏</span> 住宿详情{modeBadge}
                                     </div>
                                     <div className="bg-white rounded p-2.5 border border-purple-100">
                                       <div className="grid grid-cols-2 gap-2 text-[11px]">
                                         <div><span className="text-gray-400">房型：</span><span className="font-medium text-gray-800">{roomName(it.extra.lodgingType || 'standard')}</span></div>
                                         <div><span className="text-gray-400">入住：</span><span className="font-mono text-gray-800">{it.extra.dateCheckIn || '-'} {it.extra.arrivalTime ? ` ${it.extra.arrivalTime}` : ''}</span></div>
-                                        <div><span className="text-gray-400">{qtyLabel}：</span><span className="font-medium text-gray-800">{isPerPerson ? ((it.extra as any)?.pax || it.pax || 1) : it.pax} {isPerPerson ? '人' : '间'}</span></div>
+                                        <div>
+                                          <span className="text-gray-400">间数：</span>
+                                          <span className="font-medium text-gray-800">{rooms} 间</span>
+                                          <span className="text-gray-300 mx-1">·</span>
+                                          <span className="text-gray-400">人数：</span>
+                                          <span className="font-medium text-gray-800">{pax} 人</span>
+                                          <span className="text-[9px] text-gray-400 ml-1">（床位{beds}/间）</span>
+                                        </div>
                                         <div><span className="text-gray-400">离店：</span><span className="font-mono text-gray-800">{it.extra.dateCheckOut || '-'}（{it.extra.nights || 0}晚）</span></div>
                                         <div>
-                                          <span className="text-gray-400">{unitLabel}：</span>
-                                          {('customPrice' in it.extra && (it.extra as any).customPrice !== undefined) ? (
+                                          <span className="text-gray-400">{isPerPerson ? '每人每晚' : '每间每晚'}：</span>
+                                          {hasCustom ? (
                                             <span className="font-mono text-gray-800">
-                                              ¥{Number((it.extra as any).customPrice).toLocaleString()}
+                                              ¥{unitPrice.toLocaleString()}
                                               <span className="text-[9px] text-purple-600 border border-purple-200 rounded px-1 ml-1">议价</span>
                                             </span>
                                           ) : (
-                                            <span className="font-mono text-gray-800">
-                                              ¥{Number(((bizCfg.roomTypes||[]).find((r:any)=>r.code===it.extra.lodgingType)?.price) || (LODGING_TYPES[it.extra.lodgingType as keyof typeof LODGING_TYPES]?.price) || 0).toLocaleString()}
-                                            </span>
+                                            <span className="font-mono text-gray-800">¥{unitPrice.toLocaleString()}</span>
                                           )}
                                         </div>
                                         <div><span className="text-gray-400">小计：</span><span className="font-mono font-semibold text-green-700">¥{(it.amount||0).toLocaleString()}</span></div>
@@ -1272,11 +1331,18 @@ function DetailModal({
                                       <div className="grid grid-cols-3 gap-2 text-center">
                                         <div className="bg-gray-50 rounded py-1.5">
                                           <div className="text-gray-400 text-[10px]">来源-体检</div>
-                                          <div className="font-mono text-gray-800 text-sm font-semibold">{(it.extra as any).source?.checkup ?? 0} 人</div>
+                                          <div className="font-mono text-gray-800 text-sm font-semibold">
+                                            {(it.extra as any).source?.checkup ?? 0} 人
+                                          </div>
                                         </div>
                                         <div className="bg-gray-50 rounded py-1.5">
                                           <div className="text-gray-400 text-[10px]">来源-住宿</div>
-                                          <div className="font-mono text-gray-800 text-sm font-semibold">{(it.extra as any).source?.lodging ?? 0} 间</div>
+                                          <div className="font-mono text-gray-800 text-sm font-semibold">
+                                            {(it.extra as any).source?.lodging ?? 0} 人
+                                          </div>
+                                          <div className="text-[9px] text-gray-400 mt-0.5">
+                                            （按间=间数×床位/按人=人头）
+                                          </div>
                                         </div>
                                         <div className="bg-green-50 rounded py-1.5">
                                           <div className="text-green-600 text-[10px]">合计金额</div>
@@ -1724,6 +1790,10 @@ export default function BookingBoard() {
   const orderUuidMap = useRef<Record<string, string>>({});
   // 业务常量配置弹窗
   const [bizConfigOpen, setBizConfigOpen] = useState(false);
+  // 业务配置（早餐派生要用：beds_per_room / price_per_room / price_per_person）
+  const [bizCfg, setBizCfg] = useState<{ roomTypes: any[]; packages: any[]; meetingHalls: any[]; wellnessTypes: any[] }>({
+    roomTypes: [], packages: [], meetingHalls: [], wellnessTypes: [],
+  });
 
   // 权限：仅 admin / booker 可执行写操作（新建/编辑/复制/导入/模板等），其他角色仅查看
   const authUser = useAuthStore(s => s.user);
@@ -1741,12 +1811,24 @@ export default function BookingBoard() {
     const start = ws || weekStart;
     const weekStartStr = fmt(start);
     try {
-      const { data } = await bookingApi.getOrders({ weekStart: weekStartStr });
+      // 并行加载订单 + 业务配置（早餐派生要用到 beds_per_room）
+      const [ordersResp, cfgResp] = await Promise.all([
+        bookingApi.getOrders({ weekStart: weekStartStr }),
+        bookingApi.getConfig().catch(e => { console.warn('[BookingBoard] 加载业务配置失败:', e); return null; }),
+      ]);
+      if (cfgResp) {
+        setBizCfg({
+          roomTypes: (cfgResp.roomTypes || cfgResp.room_types || []) as any[],
+          packages: (cfgResp.packages || cfgResp.checkupPackages || []) as any[],
+          meetingHalls: (cfgResp.meetingHalls || cfgResp.meeting_halls || []) as any[],
+          wellnessTypes: (cfgResp.wellnessTypes || cfgResp.wellness_types || []) as any[],
+        });
+      }
       const map: Record<string, string> = {};
-      const adapted = data.map(apiOrder => {
+      const adapted = ordersResp.data.map(apiOrder => {
         const displayId = apiOrder.orderNo || apiOrder.id;
         map[displayId] = apiOrder.id;
-        return adaptOrder(apiOrder);
+        return adaptOrder(apiOrder, cfgResp ? { roomTypes: (cfgResp.roomTypes || cfgResp.room_types || []) as any[] } : undefined);
       });
       orderUuidMap.current = map;
       setOrders(adapted);
@@ -1779,7 +1861,7 @@ export default function BookingBoard() {
     const byBiz: Record<BizType, BoardCard[]> = {} as Record<BizType, BoardCard[]>;
     for (const biz of ALL_BIZ) byBiz[biz] = [];
 
-    const flat = flattenItems(orders, bizFilter, statusFilter);
+    const flat = flattenItems(orders, bizFilter, statusFilter, bizCfg);
     for (const biz of ALL_BIZ) {
       const bizFlat = flat.filter(f => f.item.itemType === biz);
       const merged = mergeConsecutiveItems(bizFlat, weekDates);

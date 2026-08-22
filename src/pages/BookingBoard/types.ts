@@ -57,10 +57,15 @@ export interface RoomTypeRow {
   id: string;
   code: string;
   name: string;
-  price: number;
+  price: number;                          // 旧字段（过渡期保留=默认口径的标准价）
   status: number;
   sort_order: number;
+  // 旧字段：per_room / per_person。过渡期同时用作「默认计价口径」。
   pricing_mode?: 'per_room' | 'per_person';
+  // ✅ 089迁移新增：一房双价+床位
+  beds_per_room?: number;                 // 每间床位数（按间模式早餐=间数×beds_per_room）
+  price_per_room?: number;                // 按间单价（元/间/晚）。0=不支持按间
+  price_per_person?: number;              // 按人单价（元/人/晚）。0=不支持按人
 }
 
 export interface MeetingHallRow {
@@ -114,9 +119,11 @@ export interface ItemExtra {
   dateCheckOut?: string;
   arrivalTime?: string;
   nights?: number;
-  pricingMode?: 'per_room' | 'per_person';  // 计价方式
-  pax?: number;                               // 按人计费时的人数
-  customPrice?: number;                      // 单晚自定义单价
+  pricingMode?: 'per_room' | 'per_person';  // 计价口径
+  rooms?: number;                             // ✅ 间数（两种模式都存，永不丢）
+  pax?: number;                               // ✅ 人数（两种模式都存；按人时算钱+早餐，按间时校验上限）
+  bedsPerRoomSnapshot?: number;               // 下单时的床位快照（避免配置后续改了影响历史）
+  customPrice?: number;                      // 单晚自定义单价（口径跟随 pricingMode）
 
   // 午餐/晚餐/会议/康乐 统一 sessions 字段（联合类型）
   dateStart?: string;

@@ -960,7 +960,8 @@ makeBizConfigCrud({
   basePath: '/config/room-types',
   table: 'booking_room_types',
   requiredFields: ['code', 'name', 'price'],
-  editableFields: ['status', 'sort_order', 'pricing_mode'],
+  // pricing_mode 旧字段保留；新字段支持一房两价+床位数
+  editableFields: ['status', 'sort_order', 'pricing_mode', 'beds_per_room', 'price_per_room', 'price_per_person'],
   sortDefault: 1,
 });
 

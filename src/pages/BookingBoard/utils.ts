@@ -163,16 +163,80 @@ export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput):
   return paxList.reduce((sum, p) => sum + calcSinglePaxAmount(p, config), 0);
 }
 
-export function calcLodgingAmount(lodgingType: string, roomsOrPax: number, nights: number, config?: BizConfigInput, customPrice?: number, pricingMode?: 'per_room' | 'per_person'): number {
+/**
+ * 住宿金额计算（方案A+：一房双价 + 会话永远同时存 rooms/pax）
+ *
+ * @param lodgingType  房型code
+ * @param rooms        间数（两种模式都必须传；即便按人计算也保留房间数不丢）
+ * @param pax          人数（两种模式都必须传；按人=算钱+早餐；按间=仅记录+校验上限）
+ * @param nights       晚数
+ * @param config       业务配置（读取 price_per_room / price_per_person / beds_per_room）
+ * @param customPrice  议价。按间模式=元/间/晚；按人模式=元/人/晚。允许显式0=免费
+ * @param pricingMode  计价口径：per_room=按间算钱；per_person=按人算钱
+ */
+export function calcLodgingAmount(
+  lodgingType: string,
+  rooms: number,
+  pax: number,
+  nights: number,
+  config?: BizConfigInput,
+  customPrice?: number,
+  pricingMode: 'per_room' | 'per_person' = 'per_room',
+): number {
   const row = buildMap(config?.roomTypes)[lodgingType];
-  const basePrice = row ? Number(row.price) : (FALLBACK_ROOMS[lodgingType]?.price || 0);
-  // customPrice 允许显式 0 元（免费接待），只有 undefined/null/NaN 才退回标准价
+
+  // ① 标准单价：取决于计价口径，优先读新列，fallback到老price列
+  let basePrice: number;
+  if (pricingMode === 'per_person') {
+    basePrice = row
+      ? (Number(row.price_per_person) > 0 ? Number(row.price_per_person) : (row.pricing_mode === 'per_person' ? Number(row.price) : 0))
+      : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+  } else {
+    basePrice = row
+      ? (Number(row.price_per_room) > 0 ? Number(row.price_per_room) : Number(row.price))
+      : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+  }
+
+  // ② 议价覆盖
   const useCustom = customPrice !== undefined && customPrice !== null && !Number.isNaN(Number(customPrice));
   const price = useCustom ? Number(customPrice) : basePrice;
-  // pricing_mode: per_room=按间数, per_person=按人数
-  const mode = pricingMode || (row?.pricing_mode as 'per_room' | 'per_person') || 'per_room';
-  const multiplier = mode === 'per_person' ? Math.max(0, roomsOrPax) : Math.max(0, roomsOrPax);
-  return (price || 0) * multiplier * Math.max(0, nights);
+
+  // ③ 乘数：按间取 rooms；按人取 pax
+  const multiplier = pricingMode === 'per_person' ? Math.max(0, Number(pax) || 0) : Math.max(0, Number(rooms) || 0);
+
+  return (price || 0) * multiplier * Math.max(0, Number(nights) || 0);
+}
+
+/**
+ * 读取某房型的床位数
+ */
+export function getBedsPerRoom(lodgingType: string, config?: BizConfigInput): number {
+  const row = buildMap(config?.roomTypes)[lodgingType];
+  const v = row?.beds_per_room;
+  if (v !== undefined && v !== null && Number.isFinite(Number(v)) && Number(v) > 0) return Number(v);
+  return 2; // 默认兜底=2床
+}
+
+/**
+ * 某房型是否支持指定口径（该口径对应的单价>0 才算支持）
+ */
+export function isRoomTypeModeSupported(
+  lodgingType: string,
+  mode: 'per_room' | 'per_person',
+  config?: BizConfigInput,
+): boolean {
+  const row = buildMap(config?.roomTypes)[lodgingType];
+  if (!row) return true; // 无配置时 fallback 用默认值，不拦截
+  if (mode === 'per_person') {
+    if (Number(row.price_per_person) > 0) return true;
+    // 兼容老数据：如果新列没值但老price列的pricing_mode是per_person，也算支持
+    if ((row.pricing_mode === 'per_person') && Number(row.price) > 0) return true;
+    return false;
+  }
+  // per_room
+  if (Number(row.price_per_room) > 0) return true;
+  if (Number(row.price) > 0) return true; // 老数据price默认=按间价
+  return false;
 }
 
 export function calcMeetingAmount(hall: string, slotType: 'half' | 'full', config?: BizConfigInput): number {
@@ -249,24 +313,68 @@ export function calcMealAmount(
 }
 
 // ================================================
-// 早餐派生
+// 早餐派生（2026-08-22 方案A+ 升级：正式接入住宿早餐）
+//
+// 规则：
+//  - 体检日：早餐 += 体检人数
+//  - 住宿的每一晚：
+//      * 如果会话 pricingMode === 'per_person' → 早餐 += 实际人头 pax
+//      * 如果会话 pricingMode === 'per_room'   → 早餐 += 间数 × 床位数
+//        （床位数优先读 bedsPerRoomSnapshot【快照】，避免后续配置变更影响历史；
+//          其次读配置表 beds_per_room；兜底=2）
 // ================================================
-export function deriveBreakfastSessions(group: BookingOrder): { date: string; startTime: string; pax: number; source: { checkup?: number; lodging?: number } }[] {
-  const dayMap: Record<string, { checkupPax?: number; lodging?: number }> = {};
+export function deriveBreakfastSessions(
+  group: BookingOrder,
+  config?: BizConfigInput,
+): { date: string; startTime: string; pax: number; source: { checkup?: number; lodging?: number } }[] {
+  const dayMap: Record<string, { checkupPax: number; lodgingPax: number }> = {};
+  const ensure = (d: string) => dayMap[d] || (dayMap[d] = { checkupPax: 0, lodgingPax: 0 });
 
-  // 体检当天：早餐人数 = 体检人数
+  // ① 体检当天：早餐人数 = 体检人数
   group.items.filter(it => it.itemType === 'checkup').forEach(it => {
-    const d = it.date;
-    if (!dayMap[d]) dayMap[d] = {};
-    dayMap[d].checkupPax = (dayMap[d].checkupPax || 0) + it.pax;
+    ensure(it.date).checkupPax += it.pax;
+  });
+
+  // ② 住宿的每一晚：按口径贡献早餐
+  group.items.filter(it => it.itemType === 'lodging').forEach(it => {
+    const x = it.extra || {};
+    const checkIn = x.dateCheckIn || it.date;
+    const checkOut = x.dateCheckOut || it.date;
+    const nights = Number(x.nights) || daysBetween(checkIn, checkOut);
+    const mode: 'per_room' | 'per_person' = (x.pricingMode as any) || 'per_room';
+
+    const rooms = Number(x.rooms) || Math.max(0, it.pax);  // 兼容：旧订单没rooms字段时，用 BookingItem.pax 当间数
+    const pax = Number(x.pax) || 0;
+    const bedsSnapshot = x.bedsPerRoomSnapshot;
+
+    for (let i = 0; i < nights; i++) {
+      const d = fmt(addDays(parseDate(checkIn), i));
+      let lodgingAdd = 0;
+      if (mode === 'per_person') {
+        // ✅ 按人：早餐 = 实际人头
+        lodgingAdd = Math.max(0, pax);
+      } else {
+        // ✅ 按间：早餐 = 间数 × 床位数
+        let beds: number;
+        if (bedsSnapshot && Number.isFinite(Number(bedsSnapshot))) {
+          beds = Number(bedsSnapshot);
+        } else if (x.lodgingType) {
+          beds = getBedsPerRoom(x.lodgingType as any, config);
+        } else {
+          beds = 2;
+        }
+        lodgingAdd = Math.max(0, rooms) * beds;
+      }
+      ensure(d).lodgingPax += lodgingAdd;
+    }
   });
 
   return Object.entries(dayMap)
     .map(([date, v]) => ({
       date,
       startTime: '07:30',
-      pax: v.checkupPax || 0,
-      source: { checkup: v.checkupPax },
+      pax: (v.checkupPax || 0) + (v.lodgingPax || 0),
+      source: { checkup: v.checkupPax, lodging: v.lodgingPax },
     }))
     .filter(s => s.pax > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -318,7 +426,7 @@ export interface FlatItem {
   isCheckInNight?: boolean;
 }
 
-export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, statusFilter: Set<string>): FlatItem[] {
+export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, statusFilter: Set<string>, config?: BizConfigInput): FlatItem[] {
   const result: FlatItem[] = [];
 
   for (const group of orders) {
@@ -345,7 +453,7 @@ export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, st
 
     // 早餐派生
     if (bizFilter.has('breakfast')) {
-      const breakfastSessions = deriveBreakfastSessions(group);
+      const breakfastSessions = deriveBreakfastSessions(group, config);
       for (const bs of breakfastSessions) {
         const fakeItem: BookingItem = {
           id: `${group.id}_breakfast`,

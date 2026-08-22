@@ -23,7 +23,11 @@ const TABS: { key: TabKey; label: string; color: string }[] = [
 ];
 
 // 新增默认值
-const DEFAULT_ROOM: Partial<RoomTypeRow> = { code: '', name: '', price: 0, pricing_mode: 'per_room', status: 1, sort_order: 100 };
+const DEFAULT_ROOM: Partial<RoomTypeRow> = {
+  code: '', name: '', price: 0, pricing_mode: 'per_room',
+  beds_per_room: 2, price_per_room: 0, price_per_person: 0,
+  status: 1, sort_order: 100,
+};
 const DEFAULT_HALL: Partial<MeetingHallRow> = { code: '', name: '', capacity: 20, half_price: 0, full_price: 0, status: 1, sort_order: 100 };
 const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: '', pricing_mode: 'per_hour', is_free: 0, status: 1, sort_order: 100 };
 const DEFAULT_MEAL: Partial<MealTypeRow> = { code: '', name: '', pricing_mode: 'per_table', unit_price: 0, default_time: '12:00', default_tables: 1, default_per_table: 10, default_pax: 0, status: 1, sort_order: 100 };
@@ -592,7 +596,10 @@ function RoomTypesTable(props: TableProps<RoomTypeRow>) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">共 {rows.length} 条配置，其中 <span className="text-blue-600 font-medium">{rows.filter(r => r.status === 1).length}</span> 条启用</div>
+        <div className="text-sm text-gray-600">
+          共 {rows.length} 条配置，其中 <span className="text-blue-600 font-medium">{rows.filter(r => r.status === 1).length}</span> 条启用
+          <span className="ml-4 text-[11px] text-gray-400">💡 单价设为 0 = 不支持该模式；订单会话可在两种模式间切换（若对应单价非0）</span>
+        </div>
         {!editing && <button onClick={onNew} className={btnGold}><Plus size={12}/> 新增房型</button>}
       </div>
       <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -601,8 +608,10 @@ function RoomTypesTable(props: TableProps<RoomTypeRow>) {
             <tr>
               <th className="px-3 py-2 text-left font-medium w-28">编码</th>
               <th className="px-3 py-2 text-left font-medium">名称</th>
-              <th className="px-3 py-2 text-center font-medium w-24">计价方式</th>
-              <th className="px-3 py-2 text-right font-medium w-32">单价(¥)</th>
+              <th className="px-3 py-2 text-center font-medium w-16" title="每间床位数（按间模式下早餐=间数×此值）">床位</th>
+              <th className="px-3 py-2 text-right font-medium w-32">按间单价(¥/间/晚)</th>
+              <th className="px-3 py-2 text-right font-medium w-32">按人单价(¥/人/晚)</th>
+              <th className="px-3 py-2 text-center font-medium w-24">默认口径</th>
               <th className="px-3 py-2 text-center font-medium w-16">排序</th>
               <th className="px-3 py-2 text-center font-medium w-16">状态</th>
               <th className="px-3 py-2 text-center font-medium w-36">操作</th>
@@ -610,16 +619,18 @@ function RoomTypesTable(props: TableProps<RoomTypeRow>) {
           </thead>
           <tbody>
             {isCreating && (
-              <tr className="bg-blue-50/50 border-b border-gray-100">
+              <tr className="bg-blue-50/50 border-b border-gray-100 align-middle">
                 <td className="px-2 py-1.5"><Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /></td>
                 <td className="px-2 py-1.5"><Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /></td>
+                <td className="px-2 py-1.5"><Upd type="number" min={1} step={1} value={editing!.data.beds_per_room ?? 2} onChange={(v) => setField('beds_per_room', v)} /></td>
+                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing!.data.price_per_room ?? 0} onChange={(v) => setField('price_per_room', v)} /></td>
+                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing!.data.price_per_person ?? 0} onChange={(v) => setField('price_per_person', v)} /></td>
                 <td className="px-2 py-1.5 text-center">
                   <select value={editing!.data.pricing_mode || 'per_room'} onChange={(e) => setField('pricing_mode', e.target.value)} className="w-full border border-gray-300 rounded px-1 py-1 text-xs">
-                    <option value="per_room">按间/晚</option>
-                    <option value="per_person">按人/晚</option>
+                    <option value="per_room">💤 按间</option>
+                    <option value="per_person">🧍 按人</option>
                   </select>
                 </td>
-                <td className="px-2 py-1.5"><Upd type="number" step="0.01" value={editing!.data.price} onChange={(v) => setField('price', v)} /></td>
                 <td className="px-2 py-1.5"><Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
                 <td className="px-2 py-1.5 text-center"><Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} /></td>
                 <td className="px-2 py-1.5 text-center space-x-1">
@@ -630,25 +641,53 @@ function RoomTypesTable(props: TableProps<RoomTypeRow>) {
             )}
             {rows.map(r => {
               const editRow = isEditingThis(r);
+              const ra = r as RoomTypeRow & { beds_per_room?: any; price_per_room?: any; price_per_person?: any };
               const pm = (r as any).pricing_mode || 'per_room';
-              const pmLabel = pm === 'per_person' ? '按人/晚' : '按间/晚';
-              const priceUnit = pm === 'per_person' ? '¥/人/晚' : '¥/间/晚';
+              // 显示：优先看新两列，0=不支持；老price列兜底
+              const priceRoom = (Number(ra.price_per_room) > 0)
+                ? Number(ra.price_per_room)
+                : (pm === 'per_room' ? Number(r.price) : 0);
+              const pricePerson = (Number(ra.price_per_person) > 0)
+                ? Number(ra.price_per_person)
+                : (pm === 'per_person' ? Number(r.price) : 0);
+              const beds = (Number(ra.beds_per_room) > 0) ? Number(ra.beds_per_room) : 2;
+              const pmLabel = pm === 'per_person' ? '🧍 按人' : '💤 按间';
               return (
                 <tr key={r.id} className="border-t border-gray-100 hover:bg-gray-50/50">
                   <td className="px-3 py-2 font-mono">{editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}</td>
                   <td className="px-3 py-2">{editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : r.name}</td>
+                  {/* 床位 */}
+                  <td className="px-3 py-2 text-center font-mono">
+                    {editRow
+                      ? <Upd type="number" min={1} step={1} value={editing!.data.beds_per_room ?? 2} onChange={(v) => setField('beds_per_room', v)} />
+                      : <span className="font-semibold">{beds}</span>}
+                  </td>
+                  {/* 按间单价 */}
+                  <td className="px-3 py-2 text-right font-mono">
+                    {editRow
+                      ? <Upd type="number" step="0.01" value={editing!.data.price_per_room ?? 0} onChange={(v) => setField('price_per_room', v)} />
+                      : (priceRoom > 0
+                          ? <>¥{priceRoom.toLocaleString()}<span className="text-[9px] text-gray-400 ml-0.5">/间</span></>
+                          : <span className="text-gray-300">— 不支持</span>)}
+                  </td>
+                  {/* 按人单价 */}
+                  <td className="px-3 py-2 text-right font-mono">
+                    {editRow
+                      ? <Upd type="number" step="0.01" value={editing!.data.price_per_person ?? 0} onChange={(v) => setField('price_per_person', v)} />
+                      : (pricePerson > 0
+                          ? <>¥{pricePerson.toLocaleString()}<span className="text-[9px] text-gray-400 ml-0.5">/人</span></>
+                          : <span className="text-gray-300">— 不支持</span>)}
+                  </td>
+                  {/* 默认口径 */}
                   <td className="px-3 py-2 text-center">
                     {editRow ? (
                       <select value={editing!.data.pricing_mode || 'per_room'} onChange={(e) => setField('pricing_mode', e.target.value)} className="w-full border border-gray-300 rounded px-1 py-1 text-xs">
-                        <option value="per_room">按间/晚</option>
-                        <option value="per_person">按人/晚</option>
+                        <option value="per_room">💤 按间</option>
+                        <option value="per_person">🧍 按人</option>
                       </select>
                     ) : (
                       <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${pm === 'per_person' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{pmLabel}</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {editRow ? <Upd type="number" step="0.01" value={editing!.data.price} onChange={(v) => setField('price', v)} /> : <>¥{Number(r.price).toLocaleString()}<span className="text-[9px] text-gray-400 ml-0.5">{priceUnit}</span></>}
                   </td>
                   <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
                   <td className="px-3 py-2 text-center">

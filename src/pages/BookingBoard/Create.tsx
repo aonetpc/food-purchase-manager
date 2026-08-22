@@ -57,6 +57,8 @@ import {
   calcSinglePaxAmount,
   resolvePaxItems,
   calcLodgingAmount,
+  getBedsPerRoom,
+  isRoomTypeModeSupported,
   calcMeetingAmount,
   calcWellnessAmount,
   calcMealAmount,
@@ -266,7 +268,10 @@ function copyItemsForCopy(src: BookingOrder): BookingItem[] {
       extra.arrivalTime = extra.arrivalTime || '';
       if (extra.dateCheckIn && extra.dateCheckOut) {
         extra.nights = daysBetween(extra.dateCheckIn, extra.dateCheckOut);
-        amount = calcLodgingAmount(extra.lodgingType, Number(it.pax) || 1, Number(extra.nights) || 0);
+        const pm: 'per_room' | 'per_person' = (extra as any).pricingMode || 'per_room';
+        const rooms = Number((extra as any).rooms) || (pm === 'per_room' ? (it.pax || 1) : 0);
+        const pax = Number((extra as any).pax) || (pm === 'per_person' ? (it.pax || 1) : 0);
+        amount = calcLodgingAmount(extra.lodgingType || 'standard', rooms, pax, extra.nights, undefined, (extra as any).customPrice, pm);
       } else {
         extra.nights = undefined;
         amount = 0;
@@ -382,9 +387,12 @@ function makeItemSummary(
       .join(' ')}`;
   } else if (item.itemType === 'lodging') {
     main = `${item.extra.dateCheckIn || '-'} → ${item.extra.dateCheckOut || '-'}`;
-    sub = `${helpers.getRoomInfo(item.extra.lodgingType || 'standard').name} ${item.pax}间 · ${
-      item.extra.nights || 0
-    }晚`;
+    const ex = item.extra as any;
+    const pm: 'per_room' | 'per_person' = ex.pricingMode || 'per_room';
+    const rooms = Number(ex.rooms) || (pm === 'per_room' ? (item.pax || 0) : 0);
+    const pax = Number(ex.pax) || (pm === 'per_person' ? (item.pax || 0) : 0);
+    const modeIcon = pm === 'per_person' ? '🧍' : '💤';
+    sub = `${helpers.getRoomInfo(ex.lodgingType || 'standard').name} ${rooms}间·${pax}人 · ${modeIcon} · ${item.extra.nights || 0}晚`;
   } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
     const ss = item.extra.sessions || [];
     main = `${ss[0]?.date || item.date} · ${ss.length}场`;
@@ -1946,8 +1954,9 @@ export default function BookingBoardCreate(props: {
       return lgSessions.reduce((s, x) => {
         const n = Math.max(0, daysBetween(x.dateCheckIn, x.dateCheckOut));
         const pm = x.pricingMode || 'per_room';
-        const val = pm === 'per_person' ? (x.pax || 1) : x.rooms;
-        return s + calcLodgingAmount(x.lodgingType, val, n, finalBizConfigForCalc, x.customPrice, pm);
+        const rooms = Number(x.rooms) || 0;
+        const pax = Number(x.pax) || 0;
+        return s + calcLodgingAmount(x.lodgingType, rooms, pax, n, finalBizConfigForCalc, x.customPrice, pm);
       }, 0);
     if (t === 'lunch' || t === 'dinner')
       return mlSessions.reduce((s, x) => s + calcMealAmount(x.pricingMode, x.unitPrice, x.tables, x.perTable, x.pax), 0);
@@ -2059,20 +2068,36 @@ export default function BookingBoardCreate(props: {
       setLgIn(item.extra.dateCheckIn || todayStr());
       setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
       setLgArr(item.extra.arrivalTime || '14:00');
-      // 住宿：恢复单晚自定义单价 customPrice（有就带回，没有=undefined，继续用标准价）
+
+      // 单晚自定义单价回显
       const cpRaw = (item.extra as any)?.customPrice;
       const hasCP = cpRaw !== undefined && cpRaw !== null && !Number.isNaN(Number(cpRaw));
-      const pm = (item.extra as any)?.pricingMode || 'per_room';
-      const isPerPerson = pm === 'per_person';
+
+      // 计价口径
+      const pm: 'per_room' | 'per_person' = (item.extra as any)?.pricingMode || 'per_room';
+
+      // 房间数和人数（优先读extra新双字段，没有就按旧字段和床位推算）
+      const typeCode = item.extra.lodgingType || 'standard';
+      const beds = getBedsPerRoom(typeCode, finalBizConfigForCalc);
+      let rooms = Number((item.extra as any).rooms);
+      let pax = Number((item.extra as any).pax);
+      if (!rooms || !Number.isFinite(rooms)) {
+        // 旧版：按间模式 item.pax=间数；按人模式 item.pax=人数
+        rooms = pm === 'per_room' ? Math.max(0, item.pax || 1) : Math.max(0, Math.ceil((item.pax || 1) / beds || 1));
+      }
+      if (!pax || !Number.isFinite(pax)) {
+        pax = pm === 'per_person' ? Math.max(0, item.pax || 1) : Math.max(0, rooms * beds);
+      }
+
       setLgSessions([{
         id: item.id,
-        lodgingType: item.extra.lodgingType || 'standard',
+        lodgingType: typeCode,
         dateCheckIn: item.extra.dateCheckIn || todayStr(),
         dateCheckOut: item.extra.dateCheckOut || fmt(addDays(new Date(), 1)),
         arrivalTime: item.extra.arrivalTime || '14:00',
-        rooms: isPerPerson ? 0 : (item.pax || 1),
+        rooms,
+        pax,
         pricingMode: pm,
-        pax: isPerPerson ? ((item.extra as any)?.pax || item.pax || 1) : undefined,
         ...(hasCP ? { customPrice: Number(cpRaw) } : {}),
       }]);
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
@@ -2405,17 +2430,20 @@ export default function BookingBoardCreate(props: {
       const newItems: BookingItem[] = sessions.map((s, i) => {
         const nights = daysBetween(s.dateCheckIn, s.dateCheckOut);
         const pm = s.pricingMode || 'per_room';
-        const val = pm === 'per_person' ? (s.pax || 1) : s.rooms;
-        // 住宿：每条 session 支持单晚自定义单价（customPrice），用于按单位不同分别议价
-        const amt = calcLodgingAmount(s.lodgingType, val, nights, finalBizConfigForCalc, s.customPrice, pm);
-        // 决定 customPrice 是否写入 extra：有值（含显式 0）时写，未设置则不写（老数据兼容，字段体积更小）
+        const rooms = Math.max(0, Number(s.rooms) || 0);
+        const pax = Math.max(0, Number(s.pax) || 0);
+        const amt = calcLodgingAmount(s.lodgingType, rooms, pax, nights, finalBizConfigForCalc, s.customPrice, pm);
         const hasCP = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
+        // BookingItem.pax：口径决定显示（按间=间数显示，按人=人数显示）
+        const displayPax = pm === 'per_person' ? pax : rooms;
+        // 床位快照（早餐历史一致性）
+        const bedsSnapshot = getBedsPerRoom(s.lodgingType, finalBizConfigForCalc);
         return {
           id: i === 0 ? keepId : (s.id && s.id.startsWith('lg_') ? s.id : genItemId()),
           itemType,
           date: s.dateCheckIn,
           startTime: s.arrivalTime,
-          pax: val,
+          pax: displayPax,
           extra: {
             lodgingType: s.lodgingType,
             dateCheckIn: s.dateCheckIn,
@@ -2423,7 +2451,11 @@ export default function BookingBoardCreate(props: {
             arrivalTime: s.arrivalTime,
             nights,
             pricingMode: pm,
-            ...(pm === 'per_person' ? { pax: (s.pax || 1) } : {}),
+            // ✅ 两种模式都写入 rooms+pax（永不丢）
+            rooms,
+            pax,
+            // ✅ 床位快照，后续配置变更不影响历史早餐
+            bedsPerRoomSnapshot: bedsSnapshot,
             ...(hasCP ? { customPrice: Number(s.customPrice) } : {}),
           },
           amount: amt,
@@ -2673,17 +2705,38 @@ export default function BookingBoardCreate(props: {
           const checkOut = get('离店日期');
           const arrivalTime = get('到达时间') || '14:00';
           const lodgingType = roomNameToCode[get('房型')] || LODGING_NAME_MAP[get('房型')] || 'standard';
-          const rooms = parseInt(get('间数')) || 1;
+          const rooms = Math.max(0, parseInt(get('间数')) || 0);
+          const csvPax = Math.max(0, parseInt(get('人数')) || 0);
           const nights = checkIn && checkOut ? Math.max(0, daysBetween(checkIn, checkOut)) : 0;
-          const pm = ((finalRoomOptions.find(r => r.code === lodgingType) as any)?.pricing_mode) || 'per_room';
+          const rt = finalRoomOptions.find(r => r.code === lodgingType);
+          const rta = rt as any as RoomTypeRow | undefined;
+          // 口径：先按CSV字段"计价方式"；否则按配置默认
+          const csvMode = get('计价方式')?.toString();
+          const defaultMode: 'per_room' | 'per_person' =
+            (csvMode === '按人' || csvMode === '按人/晚' || csvMode === 'per_person') ? 'per_person'
+            : (csvMode === '按间' || csvMode === '按间/晚' || csvMode === 'per_room') ? 'per_room'
+            : ((rta?.pricing_mode as any) || 'per_room');
+          const beds = getBedsPerRoom(lodgingType, finalBizConfigForCalc);
+          // 人数优先用CSV的人数列，否则=间数×床位
+          const paxFinal = csvPax > 0 ? csvPax : (rooms > 0 ? rooms * beds : 0);
+          const customPriceRaw = get('单价') && parseFloat(get('单价'));
+          const customPrice = (customPriceRaw !== undefined && !Number.isNaN(customPriceRaw))
+            ? customPriceRaw : undefined;
           newItems.push({
             id: genItemId(),
             itemType: 'lodging',
             date: checkIn,
             startTime: arrivalTime,
-            pax: rooms,
-            extra: { lodgingType, dateCheckIn: checkIn, dateCheckOut: checkOut, arrivalTime, nights, pricingMode: pm },
-            amount: calcLodgingAmount(lodgingType, rooms, nights, finalBizConfigForCalc, undefined, pm),
+            pax: defaultMode === 'per_person' ? paxFinal : rooms,  // 显示字段
+            extra: {
+              lodgingType, dateCheckIn: checkIn, dateCheckOut: checkOut, arrivalTime, nights,
+              pricingMode: defaultMode,
+              rooms,
+              pax: paxFinal,
+              bedsPerRoomSnapshot: beds,
+              ...(customPrice !== undefined ? { customPrice } : {}),
+            },
+            amount: calcLodgingAmount(lodgingType, rooms, paxFinal, nights, finalBizConfigForCalc, customPrice, defaultMode),
           });
         }
 
@@ -3813,8 +3866,26 @@ export default function BookingBoardCreate(props: {
                     <label className={labelCls}>房型（点击添加）</label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {finalRoomOptions.map((rt) => {
-                        const pricingMode = (rt as any).pricing_mode as 'per_room' | 'per_person' || 'per_room';
-                        const count = lgSessions.filter(s => s.lodgingType === rt.code).reduce((s, x) => s + (pricingMode === 'per_person' ? (x.pax || 1) : x.rooms), 0);
+                        const ra = rt as any as RoomTypeRow;
+                        // 默认计价口径
+                        const defaultMode: 'per_room' | 'per_person' = (ra.pricing_mode as any) || 'per_room';
+                        // 两种模式是否支持（按对应单价>0判定）
+                        const supportRoom = isRoomTypeModeSupported(rt.code, 'per_room', finalBizConfigForCalc);
+                        const supportPerson = isRoomTypeModeSupported(rt.code, 'per_person', finalBizConfigForCalc);
+                        // 胶囊角标数字：汇总"间数+人数"（因为两种模式同时保存两个值）
+                        const totalRooms = lgSessions.filter(s => s.lodgingType === rt.code)
+                          .reduce((s, x) => s + Math.max(0, x.rooms || 0), 0);
+                        const totalPax = lgSessions.filter(s => s.lodgingType === rt.code)
+                          .reduce((s, x) => s + Math.max(0, x.pax || 0), 0);
+                        // 胶囊展示的价格：优先按默认口径展示
+                        const priceRoom = Number(ra.price_per_room) > 0 ? Number(ra.price_per_room) : Number(ra.price) || 0;
+                        const pricePerson = Number(ra.price_per_person) > 0 ? Number(ra.price_per_person) : 0;
+                        const primaryPrice = defaultMode === 'per_person' ? pricePerson : priceRoom;
+                        const secondaryPrice = defaultMode === 'per_person' ? priceRoom : pricePerson;
+                        const primaryUnit = defaultMode === 'per_person' ? '人' : '间';
+                        const hasSecondary = secondaryPrice > 0 && secondaryPrice !== primaryPrice;
+                        const countBadge = defaultMode === 'per_person' ? totalPax : totalRooms;
+
                         return (
                           <button
                             key={rt.code}
@@ -3823,26 +3894,31 @@ export default function BookingBoardCreate(props: {
                               const checkIn = lgIn || todayStr();
                               const checkOut = lgOut && parseDateLocal(lgOut) >= parseDateLocal(minOut) ? lgOut : minOut;
                               const arrivalTime = lgArr || '14:00';
-                              const isPerPerson = pricingMode === 'per_person';
-                              const defaultPax = 1;
-                              // 合并：同条件(房型+入住+离店+到达+计价方式)累加
+                              const beds = getBedsPerRoom(rt.code, finalBizConfigForCalc);
+
+                              // 合并：同房型+入住+离店+到达+**口径相同**时累加；否则新建
                               setLgSessions((prev) => {
                                 const sameIdx = prev.findIndex(s =>
                                   s.lodgingType === rt.code
                                   && s.dateCheckIn === checkIn
                                   && s.dateCheckOut === checkOut
                                   && s.arrivalTime === arrivalTime
-                                  && (s.pricingMode || 'per_room') === pricingMode
+                                  && (s.pricingMode || 'per_room') === defaultMode
                                 );
                                 if (sameIdx >= 0) {
                                   const next = prev.slice();
+                                  const cur = next[sameIdx];
+                                  const addRooms = 1;
+                                  const addPax = beds; // 默认 = 1间×床位数，用户可改
                                   next[sameIdx] = {
-                                    ...next[sameIdx],
-                                    rooms: isPerPerson ? next[sameIdx].rooms : next[sameIdx].rooms + 1,
-                                    pax: isPerPerson ? (next[sameIdx].pax || 1) + defaultPax : next[sameIdx].pax,
+                                    ...cur,
+                                    rooms: (cur.rooms || 0) + addRooms,
+                                    pax: (cur.pax || 0) + addPax,
                                   };
                                   return next;
                                 }
+                                const startRooms = 1;
+                                const startPax = beds;
                                 return [
                                   ...prev,
                                   {
@@ -3851,27 +3927,47 @@ export default function BookingBoardCreate(props: {
                                     dateCheckIn: checkIn,
                                     dateCheckOut: checkOut,
                                     arrivalTime,
-                                    rooms: isPerPerson ? 0 : 1,
-                                    pricingMode,
-                                    pax: isPerPerson ? defaultPax : undefined,
+                                    rooms: startRooms,
+                                    pax: startPax,
+                                    pricingMode: defaultMode,
                                   },
                                 ];
                               });
                             }}
-                            className={`px-2 py-2 rounded-lg text-xs border transition-colors relative ${
-                              count > 0
+                            className={`px-2 py-2 rounded-lg text-xs border transition-colors relative text-left ${
+                              (totalRooms + totalPax) > 0
                                 ? 'bg-green-500/15 border-green-500 text-green-600'
                                 : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300'
                             }`}
                           >
-                            {count > 0 && (
-                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-medium shadow">
-                                {count}
+                            {(totalRooms + totalPax) > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[10px] rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center font-medium shadow whitespace-nowrap">
+                                {totalRooms > 0 && `${totalRooms}🛏️`}
+                                {totalRooms > 0 && totalPax > 0 && '·'}
+                                {totalPax > 0 && `${totalPax}🧍`}
                               </span>
                             )}
                             <div className="font-medium truncate">{rt.name}</div>
-                            <div className="text-[10px] opacity-70 font-mono">
-                              ¥{Number(rt.price || 0).toLocaleString()}{pricingMode === 'per_person' ? '/人/晚' : '/间/晚'}
+                            <div className="text-[10px] opacity-70 font-mono leading-tight">
+                              ¥{primaryPrice.toLocaleString()}/{primaryUnit}晚
+                              {hasSecondary && (
+                                <>
+                                  <br />
+                                  <span className="opacity-60">¥{secondaryPrice.toLocaleString()}/{defaultMode === 'per_person' ? '间' : '人'}晚</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="mt-0.5 flex gap-1 flex-wrap">
+                              {supportRoom && supportPerson ? (
+                                <>
+                                  <span className={`text-[9px] px-1 rounded ${defaultMode === 'per_room' ? 'bg-blue-200 text-blue-700 font-medium' : 'bg-blue-50 text-blue-600'}`}>💤按间</span>
+                                  <span className={`text-[9px] px-1 rounded ${defaultMode === 'per_person' ? 'bg-purple-200 text-purple-700 font-medium' : 'bg-purple-50 text-purple-600'}`}>🧍按人</span>
+                                </>
+                              ) : (
+                                <span className={`text-[9px] px-1 rounded ${defaultMode === 'per_person' ? 'bg-purple-200 text-purple-700 font-medium' : 'bg-blue-200 text-blue-700 font-medium'}`}>
+                                  {defaultMode === 'per_person' ? '仅🧍按人' : '仅💤按间'}
+                                </span>
+                              )}
                             </div>
                           </button>
                         );
@@ -3886,146 +3982,257 @@ export default function BookingBoardCreate(props: {
                         const nights = Math.max(0, daysBetween(s.dateCheckIn, s.dateCheckOut));
                         const valid = s.dateCheckIn && s.dateCheckOut && nights >= 1;
                         const info = getRoomInfo(s.lodgingType);
-                        const basePrice = Number(info.price || 0);
+                        const ra = roomMap[s.lodgingType] ?? finalRoomOptions.find(p => p.code === s.lodgingType) as any as RoomTypeRow | undefined;
+                        const beds = getBedsPerRoom(s.lodgingType, finalBizConfigForCalc);
+
+                        // 计价口径
+                        const pricingMode: 'per_room' | 'per_person' = (s.pricingMode || (ra?.pricing_mode as any) || 'per_room');
+                        const isPerPerson = pricingMode === 'per_person';
+
+                        // 切换口径时的标准单价（双列）
+                        const stdPriceRoom = ra
+                          ? (Number(ra.price_per_room) > 0 ? Number(ra.price_per_room) : Number(ra.price))
+                          : Number(info.price || 0);
+                        const stdPricePerson = ra
+                          ? (Number(ra.price_per_person) > 0
+                              ? Number(ra.price_per_person)
+                              : ((ra.pricing_mode === 'per_person' && Number(ra.price) > 0) ? Number(ra.price) : 0))
+                          : 0;
+                        const basePrice = isPerPerson ? stdPricePerson : stdPriceRoom;
+
+                        // 议价
                         const hasCustom = s.customPrice !== undefined && s.customPrice !== null && !Number.isNaN(Number(s.customPrice));
                         const showPrice = hasCustom ? Number(s.customPrice) : basePrice;
                         const isNegotiated = hasCustom && Number(s.customPrice) !== basePrice;
-                        const pricingMode = s.pricingMode || 'per_room';
-                        const isPerPerson = pricingMode === 'per_person';
-                        const roomsOrPax = isPerPerson ? (s.pax || 1) : s.rooms;
-                        const amt = valid ? calcLodgingAmount(s.lodgingType, roomsOrPax, nights, finalBizConfigForCalc, s.customPrice, pricingMode) : 0;
+
+                        // 模式切换是否允许
+                        const canSwitchToRoom = isRoomTypeModeSupported(s.lodgingType, 'per_room', finalBizConfigForCalc);
+                        const canSwitchToPerson = isRoomTypeModeSupported(s.lodgingType, 'per_person', finalBizConfigForCalc);
+
+                        // 实际 rooms/pax（双字段都读，0 兜底）
+                        const rooms = Number(s.rooms) || 0;
+                        const pax = Number(s.pax) || 0;
+                        // 人数上限校验：pax <= rooms × beds
+                        const maxPax = rooms > 0 ? rooms * beds * 4 : 9999;
+                        const overcrowding = rooms > 0 && pax > maxPax;
+                        const underPax = rooms > 0 && pax < rooms; // 人数不能小于间数（起码1人1间）
+
+                        // 金额（双字段都传入）
+                        const amt = valid ? calcLodgingAmount(s.lodgingType, rooms, pax, nights, finalBizConfigForCalc, s.customPrice, pricingMode) : 0;
+
+                        const amtCountStr = isPerPerson
+                          ? `¥${showPrice.toLocaleString()} × ${pax}人 × ${nights}晚`
+                          : `¥${showPrice.toLocaleString()} × ${rooms}间 × ${nights}晚`;
+
                         return (
                           <div
                             key={s.id}
                             className={`rounded-lg border text-xs overflow-hidden ${
                               isNegotiated ? 'border-red-200 bg-red-50/20' : 'border-gray-200 bg-white'
-                            }`}
+                            } ${overcrowding || underPax ? 'ring-2 ring-red-200' : ''}`}
                           >
-                            {/* 第 1 行：房型卡（左栏） + 单价/入住/离店/到达（右栏 grid） */}
-                            <div className="flex gap-3 items-start p-2.5">
+                            {/* 第 1 行：房型卡 + 右上角【💤/🧍】切换按钮 */}
+                            <div className="flex gap-2 items-start p-2.5">
                               <div className="w-[130px] shrink-0 pr-2 border-r border-gray-100">
                                 <div className="font-semibold text-gray-800 leading-snug whitespace-normal break-words">
                                   {info.name}
                                 </div>
-                                <div className={`mt-1 text-[11px] font-mono leading-tight ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                                <div className="mt-1 text-[10px] text-gray-400">
+                                  {beds > 0 && `床位 ${beds} / 间`}
+                                </div>
+                                <div className={`mt-0.5 text-[11px] font-mono leading-tight ${isNegotiated ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
                                   {hasCustom
                                     ? (isNegotiated
                                         ? <>🔺 议价 ¥{showPrice.toLocaleString()}<span className="text-gray-400 font-normal">/{isPerPerson ? '人' : '间'}/晚<br/>（标准 ¥{basePrice.toLocaleString()}）</span></>
                                         : `¥${showPrice.toLocaleString()}/${isPerPerson ? '人' : '间'}/晚`)
-                                    : `¥${info.price.toLocaleString()}/${isPerPerson ? '人' : '间'}/晚`}
+                                    : `¥${basePrice.toLocaleString()}/${isPerPerson ? '人' : '间'}/晚`}
                                 </div>
                               </div>
-                              <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                <div>
-                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">单价 (元/{isPerPerson ? '人' : '间'}/晚)</label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    placeholder={`标准 ¥${basePrice.toLocaleString()}`}
-                                    value={hasCustom ? Number(s.customPrice) : ''}
-                                    onChange={(e) => {
-                                      const raw = e.target.value.trim();
-                                      setLgSessions((prev) => prev.map((x, i) => {
-                                        if (i !== idx) return x;
-                                        if (raw === '') {
-                                          const { customPrice: _drop, ...rest } = x;
-                                          return rest;
-                                        }
-                                        const n = Number(raw);
-                                        return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
-                                      }));
-                                    }}
-                                    className={`${cellInput} w-full font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
-                                  />
+                              {/* 右上：模式切换按钮 + 入住/离店/到达/单价 */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                                  {/* 单价输入 */}
+                                  <div className="flex-1 min-w-[140px]">
+                                    <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">单价 (元/{isPerPerson ? '人' : '间'}/晚)</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      placeholder={`标准 ¥${basePrice.toLocaleString()}`}
+                                      value={hasCustom ? Number(s.customPrice) : ''}
+                                      onChange={(e) => {
+                                        const raw = e.target.value.trim();
+                                        setLgSessions((prev) => prev.map((x, i) => {
+                                          if (i !== idx) return x;
+                                          if (raw === '') {
+                                            const { customPrice: _drop, ...rest } = x;
+                                            return rest;
+                                          }
+                                          const n = Number(raw);
+                                          return { ...x, customPrice: Number.isNaN(n) ? 0 : n };
+                                        }));
+                                      }}
+                                      className={`${cellInput} w-full font-mono ${isNegotiated ? 'ring-1 ring-red-400/60 bg-red-50/40' : ''}`}
+                                    />
+                                  </div>
+                                  {/* 【💤 按间 / 🧍 按人】切换按钮 */}
+                                  <div className="inline-flex items-center rounded-lg border border-gray-200 p-0.5 bg-gray-50 shrink-0">
+                                    <button
+                                      type="button"
+                                      disabled={!canSwitchToRoom}
+                                      onClick={() => setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, pricingMode: 'per_room' } : x
+                                      ))}
+                                      className={`px-2 py-1 rounded-md text-[11px] font-medium transition ${
+                                        pricingMode === 'per_room'
+                                          ? 'bg-white text-blue-600 shadow-sm border border-blue-200'
+                                          : canSwitchToRoom
+                                          ? 'text-gray-500 hover:bg-white hover:text-blue-600'
+                                          : 'text-gray-300 cursor-not-allowed line-through'
+                                      }`}
+                                      title={canSwitchToRoom ? '' : '该房型未配置按间单价（price_per_room=0）'}
+                                    >💤 按间</button>
+                                    <button
+                                      type="button"
+                                      disabled={!canSwitchToPerson}
+                                      onClick={() => setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, pricingMode: 'per_person' } : x
+                                      ))}
+                                      className={`px-2 py-1 rounded-md text-[11px] font-medium transition ${
+                                        pricingMode === 'per_person'
+                                          ? 'bg-white text-purple-600 shadow-sm border border-purple-200'
+                                          : canSwitchToPerson
+                                          ? 'text-gray-500 hover:bg-white hover:text-purple-600'
+                                          : 'text-gray-300 cursor-not-allowed line-through'
+                                      }`}
+                                      title={canSwitchToPerson ? '' : '该房型未配置按人单价（price_per_person=0）'}
+                                    >🧍 按人</button>
+                                  </div>
                                 </div>
-                                <div>
-                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">入住</label>
-                                  <input
-                                    type="date"
-                                    value={s.dateCheckIn}
-                                    onChange={(e) => {
-                                      const newIn = e.target.value;
-                                      setLgSessions((prev) => prev.map((x, i) => {
-                                        if (i !== idx) return x;
-                                        let out = x.dateCheckOut;
-                                        if (newIn && out) {
-                                          const minOut = fmt(addDays(parseDateLocal(newIn), 1));
-                                          if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
-                                        }
-                                        return { ...x, dateCheckIn: newIn, dateCheckOut: out };
-                                      }));
-                                    }}
-                                    className={`${cellInput} w-full font-mono`}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">离店</label>
-                                  <input
-                                    type="date"
-                                    value={s.dateCheckOut}
-                                    onChange={(e) =>
-                                      setLgSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, dateCheckOut: e.target.value } : x
-                                      ))
-                                    }
-                                    className={`${cellInput} w-full font-mono`}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">到达</label>
-                                  <input
-                                    type="time"
-                                    value={s.arrivalTime}
-                                    onChange={(e) =>
-                                      setLgSessions((prev) => prev.map((x, i) =>
-                                        i === idx ? { ...x, arrivalTime: e.target.value } : x
-                                      ))
-                                    }
-                                    className={`${cellInput} w-full font-mono`}
-                                  />
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div>
+                                    <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">入住</label>
+                                    <input
+                                      type="date"
+                                      value={s.dateCheckIn}
+                                      onChange={(e) => {
+                                        const newIn = e.target.value;
+                                        setLgSessions((prev) => prev.map((x, i) => {
+                                          if (i !== idx) return x;
+                                          let out = x.dateCheckOut;
+                                          if (newIn && out) {
+                                            const minOut = fmt(addDays(parseDateLocal(newIn), 1));
+                                            if (parseDateLocal(out) < parseDateLocal(minOut)) out = minOut;
+                                          }
+                                          return { ...x, dateCheckIn: newIn, dateCheckOut: out };
+                                        }));
+                                      }}
+                                      className={`${cellInput} w-full font-mono`}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">离店</label>
+                                    <input
+                                      type="date"
+                                      value={s.dateCheckOut}
+                                      onChange={(e) =>
+                                        setLgSessions((prev) => prev.map((x, i) =>
+                                          i === idx ? { ...x, dateCheckOut: e.target.value } : x
+                                        ))
+                                      }
+                                      className={`${cellInput} w-full font-mono`}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-gray-500 shrink-0 block mb-0.5">到达</label>
+                                    <input
+                                      type="time"
+                                      value={s.arrivalTime}
+                                      onChange={(e) =>
+                                        setLgSessions((prev) => prev.map((x, i) =>
+                                          i === idx ? { ...x, arrivalTime: e.target.value } : x
+                                        ))
+                                      }
+                                      className={`${cellInput} w-full font-mono`}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                            {/* 第 2 行：间数/人数 + 晚数 + 小计 + 删除 */}
-                            <div className="flex items-center gap-3 flex-wrap px-2.5 py-2 border-t border-gray-100 bg-gray-50/60">
-                              <div className="flex items-center gap-1.5">
-                                <label className="text-[10px] text-gray-500 shrink-0">{isPerPerson ? '人数' : '间数'}</label>
-                                <input
-                                  type="number"
-                                  min={isPerPerson ? 0 : 1}
-                                  value={isPerPerson ? (s.pax ?? 1) : s.rooms}
-                                  onChange={(e) =>
-                                    setLgSessions((prev) => prev.map((x, i) =>
-                                      i === idx
-                                        ? (isPerPerson
-                                            ? { ...x, pax: Math.max(0, parseInt(e.target.value) || 0) }
-                                            : { ...x, rooms: Math.max(1, parseInt(e.target.value) || 1) })
-                                        : x
-                                    ))
-                                  }
-                                  className={`${cellInput} w-20 font-mono`}
-                                />
+                            {/* 第 2 行：间数 + 人数 + 晚数 + 小计 + 删除 */}
+                            <div className="px-2.5 py-2 border-t border-gray-100 bg-gray-50/60">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-[10px] text-gray-500 shrink-0">间数</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={rooms}
+                                    onChange={(e) => {
+                                      const raw = parseInt(e.target.value);
+                                      const rVal = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+                                      setLgSessions((prev) => prev.map((x, i) => {
+                                        if (i !== idx) return x;
+                                        const curPax = Number(x.pax) || 0;
+                                        // 如果 rooms 增加且当前 pax < newRooms*beds，自动按 beds 补齐 pax
+                                        const expectedMin = rVal;           // 1 间最少 1 人
+                                        const suggested = rVal * beds;
+                                        const nextPax = rVal > (Number(x.rooms) || 0) && curPax < expectedMin
+                                          ? suggested
+                                          : (curPax < rVal ? rVal : curPax);
+                                        return { ...x, rooms: rVal, pax: nextPax };
+                                      }));
+                                    }}
+                                    className={`${cellInput} w-20 font-mono`}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-[10px] text-gray-500 shrink-0">人数</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={pax}
+                                    onChange={(e) => {
+                                      const raw = parseInt(e.target.value);
+                                      const pVal = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+                                      setLgSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, pax: pVal } : x
+                                      ));
+                                    }}
+                                    className={`${cellInput} w-20 font-mono ${overcrowding || underPax ? 'ring-1 ring-red-400 bg-red-50/60 text-red-600 font-semibold' : ''}`}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-[10px] text-gray-500 shrink-0">晚数</label>
+                                  <span className={`font-mono ${valid ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}`}>
+                                    {valid ? `${nights}晚` : '⚠️ 无效'}
+                                  </span>
+                                </div>
+                                {(overcrowding || underPax) && (
+                                  <div className="flex items-center gap-1 text-[10px] text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                                    {underPax && <span>⚠️ 人数不能小于间数</span>}
+                                    {overcrowding && <span>⚠️ 超员（上限 {beds*4}人/间 × {rooms}间 = {maxPax}人）</span>}
+                                  </div>
+                                )}
+                                <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0 flex-wrap">
+                                  <div className="text-[10px] text-gray-500 font-mono truncate" title={amtCountStr}>
+                                    {amtCountStr}
+                                  </div>
+                                  <label className="text-[10px] text-gray-500 shrink-0 ml-1">小计</label>
+                                  <span className="font-mono text-green-600 font-semibold text-sm">
+                                    ¥{amt.toLocaleString()}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
+                                  className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50 shrink-0"
+                                  title="删除"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
                               </div>
-                              <div className="flex items-center gap-1.5">
-                                <label className="text-[10px] text-gray-500 shrink-0">晚数</label>
-                                <span className={`font-mono ${valid ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}`}>
-                                  {valid ? `${nights}晚` : '⚠️ 无效'}
-                                </span>
-                              </div>
-                              <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0">
-                                <label className="text-[10px] text-gray-500 shrink-0">小计</label>
-                                <span className="font-mono text-green-600 font-semibold text-sm">
-                                  ¥{amt.toLocaleString()}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => setLgSessions((prev) => prev.filter((_, i) => i !== idx))}
-                                className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50 shrink-0"
-                                title="删除"
-                              >
-                                <Trash2 size={14} />
-                              </button>
                             </div>
                           </div>
                         );
