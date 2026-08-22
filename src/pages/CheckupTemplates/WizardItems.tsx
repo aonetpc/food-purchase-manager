@@ -540,27 +540,15 @@ const cardClass = isExcluded
   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-400 text-amber-900 shadow-sm'
   : 'bg-white border-gray-200 text-gray-800 shadow-sm hover:border-emerald-300 hover:shadow-md';
 
-// 项目名渲染：前 4 字加粗加深，后续字稍浅（手机小屏 2 列下减少首字加粗占比，保证整名 2-3 行内读完）
+// 项目名渲染：整名字重+颜色统一，只区分 选中/未选中/已排除 三态
 function renderItemName(name: string, selected: boolean, isExcluded: boolean) {
   const text = name || '';
-  const head = text.slice(0, 4);
-  const tail = text.slice(4);
-  const headCls = isExcluded
-    ? 'font-bold text-gray-500'
+  const cls = isExcluded
+    ? 'text-gray-500 font-medium'
     : selected
-    ? 'font-extrabold text-white'
-    : 'font-extrabold text-gray-900';
-  const tailCls = isExcluded
-    ? 'text-gray-400'
-    : selected
-    ? 'text-white/90'
-    : 'text-gray-600';
-  return (
-    <>
-      <span className={headCls}>{head}</span>
-      {tail && <span className={tailCls}>{tail}</span>}
-    </>
-  );
+    ? 'text-white font-semibold'
+    : 'text-gray-800 font-medium';
+  return <span className={cls}>{text}</span>;
 }
 
 return (
