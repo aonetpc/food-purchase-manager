@@ -420,7 +420,7 @@ export const bookingApi = {
         return transformed;
       }),
       roomTypes:    (d.roomTypes    || d.room_types    || []) as RoomTypeRow[],
-      meetingHalls: (d.meetingHalls || d.meeting_halls || []).map(fromBackend),
+      meetingHalls: (d.meetingHalls || d.meeting_halls || []) as MeetingHallRow[],
       wellnessTypes:(d.wellnessTypes|| d.wellness_types|| []) as WellnessTypeRow[],
       mealTypes:    (d.mealTypes    || d.meal_types    || []) as MealTypeRow[],
       // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
@@ -518,33 +518,35 @@ export const bookingApi = {
     return (res.data || []).map(fromBackend) as PackageItemRow[];
   },
 
+  // 房型 CRUD（不走 fromBackend，保持 snake_case，与 wellnessTypes/mealTypes 一致）
   async listRoomTypes(): Promise<RoomTypeRow[]> {
     const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/room-types');
-    return (res.data || []).map(fromBackend) as RoomTypeRow[];
+    return (res.data || []) as RoomTypeRow[];
   },
   async createRoomType(payload: Partial<RoomTypeRow>): Promise<RoomTypeRow> {
     const res = await api.post<{ ok: boolean; data: any }>('/booking/config/room-types', payload);
-    return fromBackend(res.data) as RoomTypeRow;
+    return res.data as RoomTypeRow;
   },
   async updateRoomType(id: string, payload: Partial<RoomTypeRow>): Promise<RoomTypeRow> {
     const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/room-types/${id}`, payload);
-    return fromBackend(res.data) as RoomTypeRow;
+    return res.data as RoomTypeRow;
   },
   async deleteRoomType(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/room-types/${id}`);
   },
 
+  // 会议厅 CRUD（不走 fromBackend，保持 snake_case）
   async listMeetingHalls(): Promise<MeetingHallRow[]> {
     const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/meeting-halls');
-    return (res.data || []).map(fromBackend) as MeetingHallRow[];
+    return (res.data || []) as MeetingHallRow[];
   },
   async createMeetingHall(payload: Partial<MeetingHallRow>): Promise<MeetingHallRow> {
     const res = await api.post<{ ok: boolean; data: any }>('/booking/config/meeting-halls', payload);
-    return fromBackend(res.data) as MeetingHallRow;
+    return res.data as MeetingHallRow;
   },
   async updateMeetingHall(id: string, payload: Partial<MeetingHallRow>): Promise<MeetingHallRow> {
     const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/meeting-halls/${id}`, payload);
-    return fromBackend(res.data) as MeetingHallRow;
+    return res.data as MeetingHallRow;
   },
   async deleteMeetingHall(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/meeting-halls/${id}`);
