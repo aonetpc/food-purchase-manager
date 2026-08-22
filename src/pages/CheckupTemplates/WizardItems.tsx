@@ -454,7 +454,7 @@ return (
       {!loading && filteredItems.length === 0 && (
         <div className="text-center py-12 text-gray-400 text-xs">没有匹配的项目</div>
       )}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {filteredItems.map(it => {
           const isExcluded = scope !== 'common' && isSelectedInScope(it.id, 'common') && excluded[scope as Role]?.has(it.id);
           return (
@@ -540,16 +540,41 @@ const cardClass = isExcluded
   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-400 text-amber-900 shadow-sm'
   : 'bg-white border-gray-200 text-gray-800 shadow-sm hover:border-emerald-300 hover:shadow-md';
 
+// 项目名渲染：前 6 字加粗加深，后续字稍浅（避免长名截断后"HPV16/…/HPV23"分不清）
+function renderItemName(name: string, selected: boolean, isExcluded: boolean) {
+  const text = name || '';
+  const head = text.slice(0, 6);
+  const tail = text.slice(6);
+  const headCls = isExcluded
+    ? 'font-semibold text-gray-500'
+    : selected
+    ? 'font-bold text-white'
+    : 'font-bold text-gray-900';
+  const tailCls = isExcluded
+    ? 'text-gray-400'
+    : selected
+    ? 'text-white/90 font-medium'
+    : 'text-gray-600 font-medium';
+  return (
+    <>
+      <span className={headCls}>{head}</span>
+      {tail && <span className={tailCls}>{tail}</span>}
+    </>
+  );
+}
+
 return (
   <button onClick={onToggle}
-    className={`w-full h-16 text-left rounded-2xl border px-2.5 py-2 transition-all active:scale-[0.98] ${cardClass}`}>
-    <div className="flex items-center gap-1.5 h-full">
+    className={`w-full min-h-[72px] text-left rounded-2xl border px-2.5 py-2 transition-all active:scale-[0.98] ${cardClass}`}>
+    <div className="flex items-start gap-1.5 h-full">
       {/* 左侧分类 emoji */}
-      <span className="text-base leading-none shrink-0">{catEmoji}</span>
+      <span className="text-base leading-none shrink-0 mt-0.5">{catEmoji}</span>
       {/* 中间项目名 */}
-      <div className="flex-1 min-w-0 flex flex-col justify-center">
-        <div className={`truncate text-[13px] font-semibold leading-tight ${isExcluded ? 'line-through' : ''}`}>{item.name}</div>
-        <div className="mt-0.5 flex items-center gap-1 flex-wrap">
+      <div className="flex-1 min-w-0 flex flex-col justify-start">
+        <div className={`text-[13px] leading-snug line-clamp-2 ${isExcluded ? 'line-through' : ''}`}>
+          {renderItemName(item.name, selected, isExcluded)}
+        </div>
+        <div className="mt-1 flex items-center gap-1 flex-wrap">
           {isCombo && (
             <span className={`text-[9px] px-1 py-0 rounded ${
               isExcluded ? 'bg-gray-300 text-gray-500' :
