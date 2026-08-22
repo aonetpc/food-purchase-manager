@@ -51,10 +51,10 @@ function addDays(dateStr, days) {
 //  - 住宿：入住第二天起 → 退房当天早上（不含入住当天）
 //    例：8/18入住 → 8/20退房（2晚）→ 早餐日期=8/19、8/20
 //
-// 人数规则：
-//  - 体检：早餐人数 = 体检 pax
-//  - 住宿按间模式：早餐人数 = rooms × beds_per_room
-//  - 住宿按人模式：早餐人数 = pax（人头数）
+// 人数规则（2026-08-22 修正v2）：
+  //  - 体检：早餐人数 = 体检 pax
+  //  - 住宿：优先用实际 pax（人头数），仅当 pax=0 时按 rooms×beds 兜底
+  //    （按间模式房间可能不满床，用实际 pax 更准确）
 // ------------------------------------------------------------
 function deriveBreakfastItems(items) {
   const checkups = items.filter(i => i.item_type === 'checkup');
@@ -88,11 +88,14 @@ function deriveBreakfastItems(items) {
     const beds = (bedsSnapshot > 0) ? bedsSnapshot : 2; // 兜底2床
 
     let lodgingAdd = 0;
-    if (mode === 'per_person') {
-      lodgingAdd = Math.max(0, pax);
-    } else {
+    if (pax > 0) {
+      // ✅ 优先用实际人头数（两种模式都适用）
+      lodgingAdd = pax;
+    } else if (mode === 'per_room') {
+      // 兜底：旧订单没有 pax 时按 rooms×beds 推算
       lodgingAdd = Math.max(0, rooms) * beds;
     }
+    // 按人模式 pax=0 时不贡献早餐
 
     // 入住第二天起算（i=1），退房当天也有早餐
     for (let i = 1; i <= nights; i++) {

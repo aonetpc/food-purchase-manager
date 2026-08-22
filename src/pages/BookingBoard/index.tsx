@@ -1341,7 +1341,7 @@ function DetailModal({
                                             {(it.extra as any).source?.lodging ?? 0} 人
                                           </div>
                                           <div className="text-[9px] text-gray-400 mt-0.5">
-                                            （按间=间数×床位/按人=人头）
+                                            （优先按实际人头，无则按间数×床位）
                                           </div>
                                         </div>
                                         <div className="bg-green-50 rounded py-1.5">

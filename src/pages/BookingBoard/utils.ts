@@ -351,11 +351,13 @@ export function deriveBreakfastSessions(
     for (let i = 1; i <= nights; i++) {
       const d = fmt(addDays(parseDate(checkIn), i));
       let lodgingAdd = 0;
-      if (mode === 'per_person') {
-        // ✅ 按人：早餐 = 实际人头
-        lodgingAdd = Math.max(0, pax);
+      if (pax > 0) {
+        // ✅ 优先用实际人头数（两种模式都适用）
+        lodgingAdd = pax;
+      } else if (mode === 'per_person') {
+        lodgingAdd = 0;
       } else {
-        // ✅ 按间：早餐 = 间数 × 床位数
+        // 兜底：旧订单没有 pax 时按 rooms×beds 推算
         let beds: number;
         if (bedsSnapshot && Number.isFinite(Number(bedsSnapshot))) {
           beds = Number(bedsSnapshot);
