@@ -36,6 +36,13 @@ export default function SharePage() {
   const [loading, setLoading] = useState(true);
   const [expireAt, setExpireAt] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
+  // 方案A：组合项目默认折叠。key = package_item_id（即明细行的唯一主键）。
+  // 不写入 localStorage，刷新页面重新进入就恢复默认折叠。
+  const [expandedCombos, setExpandedCombos] = useState<Record<string, boolean>>({});
+  const toggleCombo = (itemId: string, e: React.MouseEvent) => {
+    e.stopPropagation();   // 关键：防止冒泡到父按钮（父按钮是展开/收起整份角色方案卡片）
+    setExpandedCombos(s => ({ ...s, [itemId]: !s[itemId] }));
+  };
 
   useEffect(() => {
     if (!token) return;
@@ -343,15 +350,28 @@ export default function SharePage() {
                           const subList = Array.isArray((it as any).sub_item_names) && (it as any).sub_item_names.length > 0
                             ? (it as any).sub_item_names as string[]
                             : null;
+                          const isCombo = !!subList;
+                          const open = isCombo && !!expandedCombos[it.id || idx];
                           return (
-                            <div key={it.id || idx} className="flex items-start gap-2 px-3 py-2.5 last:border-b-0">
+                            <div
+                              key={it.id || idx}
+                              className={`flex items-start gap-2 px-3 py-2.5 last:border-b-0 ${isCombo ? 'cursor-pointer active:bg-gray-50' : ''}`}
+                              onClick={isCombo ? (e) => toggleCombo(it.id || String(idx), e) : undefined}
+                            >
                               <span className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2 ml-1.5" />
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[13px] text-gray-800 font-medium truncate">{it.item_name_snapshot}</span>
-                                  {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
+                                <div className="flex items-start gap-2 flex-wrap">
+                                  <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                                    <span className="text-[13px] text-gray-800 font-medium truncate">{it.item_name_snapshot}</span>
+                                    {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
+                                  </div>
+                                  {isCombo && (
+                                    <span className={`shrink-0 text-xs text-gray-400 w-4 text-center leading-6 mt-[-2px] transition-transform duration-150 inline-block ${open ? 'rotate-90' : ''}`}>
+                                      ▶
+                                    </span>
+                                  )}
                                 </div>
-                                {subList && (
+                                {subList && open && (
                                   <div className="mt-0.5 ml-3 space-y-0.5">
                                     {subList.map(name => (
                                       <div key={name} className="text-[11px] text-gray-400 leading-snug">· {name}</div>

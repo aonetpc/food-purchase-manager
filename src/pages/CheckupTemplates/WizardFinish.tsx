@@ -16,6 +16,12 @@ const [pkg, setPkg] = useState<CheckupTemplate | null>(null);
 const [loading, setLoading] = useState(true);
 const [saving, setSaving] = useState(false);
 const [expanded, setExpanded] = useState<Record<Role, boolean>>({ male: true, female_married: false, female_single: false });
+// 方案A：组合项目默认折叠，点击组合行展开/收起（不记忆 localStorage，刷新重置）
+const [expandedCombos, setExpandedCombos] = useState<Record<string, boolean>>({});
+const toggleCombo = (itemId: string, e?: React.MouseEvent) => {
+  e?.stopPropagation();
+  setExpandedCombos(s => ({ ...s, [itemId]: !s[itemId] }));
+};
 const [shareResult, setShareResult] = useState<ShareResult | null>(null);
 const [shareExpireDays, setShareExpireDays] = useState<number>(7);
 
@@ -200,12 +206,25 @@ return (
                         const subList = Array.isArray((it as any).sub_item_names) && (it as any).sub_item_names.length > 0
                           ? (it as any).sub_item_names as string[]
                           : null;
+                        const isCombo = !!subList;
+                        const open = isCombo && !!expandedCombos[it.id];
                         return (
-                          <div key={it.id} className="flex items-start gap-2 py-2 border-b border-dashed border-gray-100 last:border-b-0">
+                          <div
+                            key={it.id}
+                            className={`flex items-start gap-2 py-2 border-b border-dashed border-gray-100 last:border-b-0 ${isCombo ? 'cursor-pointer active:bg-gray-50/60' : ''}`}
+                            onClick={isCombo ? (e) => toggleCombo(it.id, e) : undefined}
+                          >
                             <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2 ml-1.5" />
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm text-gray-800 font-medium truncate">{it.item_name_snapshot}</div>
-                              {subList && (
+                              <div className="flex items-start gap-2 flex-wrap">
+                                <div className="text-sm text-gray-800 font-medium truncate flex-1 min-w-0">{it.item_name_snapshot}</div>
+                                {isCombo && (
+                                  <span className={`shrink-0 text-xs text-gray-400 w-4 text-center leading-6 mt-[-1px] transition-transform duration-150 inline-block ${open ? 'rotate-90' : ''}`}>
+                                    ▶
+                                  </span>
+                                )}
+                              </div>
+                              {subList && open && (
                                 <div className="mt-0.5 ml-3 space-y-0.5">
                                   {subList.map(name => (
                                     <div key={name} className="text-[11px] text-gray-500 leading-snug">· {name}</div>
