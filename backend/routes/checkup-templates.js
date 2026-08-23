@@ -20,12 +20,30 @@ function nameHitKeys(name, keys) {
   const n = (name || '').toLowerCase();
   return keys.some(k => n.includes(k.toLowerCase()));
 }
+// 识别 (男)/(女) / （男）/（女） 后缀模式：判断是否是单性别专属（只含一种性别标记）
+// 例："肿瘤标志11项（男）" → male-only；"肿瘤5项（男）/（女）" → 两者都有 非专属
+function genderTagMode(name) {
+  const n = name || '';
+  const hasM = /[（(]男[)）]/.test(n) || n.includes('男士') || n.includes('男性专用') || n.includes('男专用') || (n.includes('男性') && !n.includes('女性'));
+  const hasF = /[（(]女[)）]/.test(n) || n.includes('女士') || n.includes('女性专用') || n.includes('女专用') || (n.includes('女性') && !n.includes('男性'));
+  if (hasM && !hasF) return 'M';
+  if (hasF && !hasM) return 'F';
+  return 'N';
+}
 // 判断 common 区某项目是否对指定角色适用（与前端 scopeVisible 逻辑一致）
 function isItemVisibleForRole(it, role) {
   const name = it.item_name_snapshot || it.item_name || '';
   const roles = it.applicable_roles ? (typeof it.applicable_roles === 'string' ? (() => { try { return JSON.parse(it.applicable_roles); } catch(_) { return null; } })() : it.applicable_roles) : null;
   if (roles && Array.isArray(roles) && roles.length > 0) {
     return roles.includes(role);
+  }
+  // (男)/(女) 后缀模式兜底（适用于 applicable_roles 未填充的老项目，如肿瘤11项（男）/（女））
+  const gMode = genderTagMode(name);
+  if (gMode === 'M') {
+    return role === 'male';
+  }
+  if (gMode === 'F') {
+    return role === 'female_married' || role === 'female_single';
   }
   if (role === 'male') {
     if (nameHitKeys(name, FM_ONLY_KEYS)) return false;
@@ -51,10 +69,21 @@ function isItemVisibleForRole(it, role) {
 // FEMALE_KEYS 类项目保持 common（因 read-time isItemVisibleForRole 已正确过滤）
 function autoCorrectItemRole(item) {
   const name = (item.item_name_snapshot || item.item_name || '').toLowerCase();
+  const origName = item.item_name_snapshot || item.item_name || '';
   const currentRole = item.role || 'common';
 
   // 仅当角色为 common 时才做自动纠正（前端显式指定 role 的保持不变）
   if (currentRole !== 'common') return currentRole;
+
+  // (男)/(女) 后缀识别：命中单性别 → 纠正到对应 role
+  const gMode = genderTagMode(origName);
+  if (gMode === 'M') return 'male';
+  if (gMode === 'F') {
+    // 女性专属再看是否是侵入性检查
+    if (nameHitKeys(name, FM_ONLY_KEYS) || nameHitKeys(name, SINGLE_FORBID_KEYS)) return 'female_married';
+    // 非侵入性的保持 common（isItemVisibleForRole 读时就会排除男性视角）
+    return currentRole;
+  }
 
   // 男性专属关键字 → 改为 male
   if (nameHitKeys(name, MALE_ONLY_KEYS)) return 'male';
@@ -130,7 +159,7 @@ async function listPackageItems(packageId) {
             CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
             CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0) THEN ci.default_price ELSE pi.item_price END AS item_price,
             CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
-            ci.category, ci.item_type, ${csSelect}
+            ci.category, ci.item_type, ${csSelect}, ci.applicable_roles
      FROM booking_package_items AS pi
      LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
      WHERE pi.package_id = ?
