@@ -1058,7 +1058,7 @@ router.get('/orders/search', requireAuth, async (req, res) => {
 
     const [rows] = await pool.query(`
       SELECT o.*,
-             (SELECT SUM(bi.quantity * bi.unit_price) FROM booking_items bi WHERE bi.order_id = o.id) AS total_amount
+             (SELECT COALESCE(SUM(bi.pax * bi.amount), 0) FROM booking_items bi WHERE bi.order_id = o.id) AS calc_total
       FROM booking_orders o
       ${whereSql}
       ORDER BY o.created_at DESC
@@ -1073,10 +1073,15 @@ router.get('/orders/search', requireAuth, async (req, res) => {
       );
       const bizTypesArr = typeRows.map(t => t.item_type);
       const [paxRow] = await pool.query(
-        'SELECT COALESCE(SUM(quantity), 0) AS total FROM booking_items WHERE order_id = ? AND item_type = "checkup"',
+        'SELECT COALESCE(SUM(pax), 0) AS total FROM booking_items WHERE order_id = ? AND item_type = "checkup"',
         [o.id]
       );
       const totalPeople = Number(paxRow[0]?.total) || 0;
+
+      // 优先使用订单自身的 total_amount，其次用子查询计算值
+      const totalAmount = Number(o.total_amount) > 0
+        ? Number(o.total_amount)
+        : Number(o.calc_total) || 0;
 
       result.push({
         id: o.id,
@@ -1089,7 +1094,7 @@ router.get('/orders/search', requireAuth, async (req, res) => {
         biz_label: bizTypesArr.map(t => BIZ_MAP[t]?.label || t).join(' / '),
         status: o.status,
         total_people: totalPeople,
-        total_amount: Number(o.total_amount) || 0,
+        total_amount: totalAmount,
         created_at: o.created_at,
         appointment_date: o.created_at ? o.created_at.slice(0, 10) : null,
         remark: o.remark || null,
