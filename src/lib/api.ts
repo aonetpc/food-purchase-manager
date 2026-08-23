@@ -164,6 +164,22 @@ export interface BookingApiOrder {
   derivedBreakfasts?: any[];
 }
 
+export interface BookingSearchResult {
+  id: string;
+  customer_name: string;
+  contact_phone: string | null;
+  order_no: string | null;
+  biz_types: string[];
+  biz_label: string;
+  status: string;
+  total_people: number;
+  total_amount: number;
+  created_at: string;
+  appointment_date: string | null;
+  remark: string | null;
+  sales_person: string | null;
+}
+
 export interface BookingSalesUser {
   id: string;
   name: string;
@@ -306,6 +322,29 @@ export const bookingApi = {
   async getOrder(id: string): Promise<BookingApiOrder> {
     const res = await api.get<{ ok: boolean; data: any }>(`/booking/orders/${id}`);
     return fromBackend(res.data);
+  },
+
+  // 历史订单搜索（无日期限制）
+  async searchOrders(params: {
+    keyword?: string;
+    bizTypes?: string;
+    statuses?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{
+    total: number;
+    page: number;
+    pageSize: number;
+    orders: BookingSearchResult[];
+  }> {
+    const res = await api.get<{ ok: boolean; data: any }>('/booking/orders/search', { params });
+    const d = res.data || {};
+    return {
+      total: d.total || 0,
+      page: d.page || 1,
+      pageSize: d.page_size || 20,
+      orders: (d.orders || []) as BookingSearchResult[],
+    };
   },
 
   // 新建订单

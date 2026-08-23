@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, OrderStatus, PaxEntry, CustomPackageItem } from './types';
 import {
   BUSINESS,
@@ -25,7 +25,7 @@ import {
   deriveBreakfastSessions,
   type FlatItem,
 } from './utils';
-import { bookingApi, type BookingApiOrder } from '../../lib/api';
+import { bookingApi, type BookingApiOrder, type BookingSearchResult } from '../../lib/api';
 import { checkupApi } from '@/pages/CheckupTemplates/api';
 import { scopeVisible } from '@/pages/CheckupTemplates/roleVisibility';
 import { useAuthStore } from '@/store/authStore';
@@ -1773,9 +1773,65 @@ export default function BookingBoard() {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
   const [tplLoading, setTplLoading] = useState(false);
+  // 历史订单搜索 Modal
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [searchBizTypes, setSearchBizTypes] = useState<Set<string>>(new Set());
+  const [searchStatuses, setSearchStatuses] = useState<Set<string>>(new Set());
+  const [searchResults, setSearchResults] = useState<BookingSearchResult[]>([]);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchHasSearched, setSearchHasSearched] = useState(false);
   // 设为模板弹窗
   const [showSetTemplate, setShowSetTemplate] = useState<null | string>(null);
   const [templateNameInput, setTemplateNameInput] = useState('');
+
+  // ============ 历史订单搜索辅助函数 ============
+  const doSearch = useCallback(async (page: number = 1) => {
+    setSearchLoading(true);
+    try {
+      const bizTypes = searchBizTypes.size > 0 ? Array.from(searchBizTypes).join(',') : undefined;
+      const statuses = searchStatuses.size > 0 ? Array.from(searchStatuses).join(',') : undefined;
+      const result = await bookingApi.searchOrders({
+        keyword: searchKeyword || undefined,
+        bizTypes,
+        statuses,
+        page,
+        pageSize: 20,
+      });
+      setSearchResults(result.orders);
+      setSearchTotal(result.total);
+      setSearchPage(page);
+      setSearchHasSearched(true);
+    } catch (e) {
+      console.error('[BookingBoard] search error:', e);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [searchKeyword, searchBizTypes, searchStatuses]);
+
+  // 查看历史订单详情（打开已有订单详情抽屉）
+  const viewOrder = useCallback(async (row: BookingSearchResult) => {
+    try {
+      const detail = await bookingApi.getOrder(row.id);
+      setSelectedOrder(detail as unknown as BookingOrder);
+    } catch (e) {
+      console.error('[BookingBoard] view order error:', e);
+    }
+  }, []);
+
+  // 复制历史订单为新单
+  const copyOrder = useCallback(async (row: BookingSearchResult) => {
+    try {
+      const detail = await bookingApi.getOrder(row.id);
+      setSelectedOrder(null);
+      setCreateDrawer({ mode: 'copy', order: detail as unknown as BookingOrder });
+    } catch (e) {
+      console.error('[BookingBoard] copy order error:', e);
+    }
+  }, []);
+
   // 通用确认弹窗（替代原生 confirm）
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -2110,6 +2166,13 @@ export default function BookingBoard() {
                   className="px-3 py-1.5 text-xs rounded border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 font-medium flex items-center gap-1"
                 >
                   <Upload size={12} /> 导入Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  className="px-3 py-1.5 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium flex items-center gap-1"
+                >
+                  <Search size={12} /> 历史搜索
                 </button>
                 <div className="relative">
                   <button
@@ -2743,6 +2806,216 @@ export default function BookingBoard() {
                     确定设为模板
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============ 历史订单搜索 Modal ============ */}
+        {searchOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center" onClick={() => setSearchOpen(false)}>
+            <div className="absolute inset-0 bg-black/40" />
+            <div
+              className="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                  <Search size={16} className="text-indigo-500" /> 搜索历史订单
+                </h3>
+                <button onClick={() => setSearchOpen(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Search Form */}
+              <div className="px-5 py-4 border-b border-gray-100 space-y-3">
+                {/* Keyword */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">关键词</label>
+                  <input
+                    type="text"
+                    value={searchKeyword}
+                    onChange={e => setSearchKeyword(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') doSearch(); }}
+                    placeholder="客户姓名 / 手机号 / 订单号（模糊匹配）"
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                </div>
+                {/* Biz Types */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">业务类型</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {BUSINESS.map(b => {
+                      const active = searchBizTypes.has(b.type);
+                      return (
+                        <button
+                          key={b.type}
+                          onClick={() => {
+                            setSearchBizTypes(prev => {
+                              const n = new Set(prev);
+                              if (n.has(b.type)) n.delete(b.type); else n.add(b.type);
+                              return n;
+                            });
+                          }}
+                          className={`px-2.5 py-1 text-xs rounded-full border font-medium transition ${
+                            active
+                              ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+                              : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          {b.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Statuses */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">订单状态</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ALL_STATUS.map(s => {
+                      const active = searchStatuses.has(s);
+                      const label = STATUS_MAP[s]?.label || s;
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => {
+                            setSearchStatuses(prev => {
+                              const n = new Set(prev);
+                              if (n.has(s)) n.delete(s); else n.add(s);
+                              return n;
+                            });
+                          }}
+                          className={`px-2.5 py-1 text-xs rounded-full border font-medium transition ${
+                            active
+                              ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+                              : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Buttons */}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      setSearchKeyword('');
+                      setSearchBizTypes(new Set());
+                      setSearchStatuses(new Set());
+                      setSearchResults([]);
+                      setSearchHasSearched(false);
+                      setSearchPage(1);
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+                  >
+                    重置
+                  </button>
+                  <button
+                    onClick={() => doSearch()}
+                    disabled={searchLoading}
+                    className="px-4 py-1.5 text-xs rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white font-medium disabled:opacity-50 flex items-center gap-1"
+                  >
+                    <Search size={12} /> {searchLoading ? '搜索中...' : '搜索'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Results */}
+              <div className="flex-1 overflow-auto">
+                {!searchHasSearched ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-gray-400 text-sm">
+                    <Search size={32} className="mb-3 opacity-40" />
+                    输入关键词或选择条件后点击「搜索」查找历史订单
+                  </div>
+                ) : searchLoading ? (
+                  <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
+                    加载中...
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-gray-400 text-sm">
+                    未找到匹配的历史订单
+                  </div>
+                ) : (
+                  <>
+                    <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
+                      共找到 {searchTotal} 条历史订单
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-500 bg-gray-50">
+                          <th className="px-4 py-2 font-medium">日期</th>
+                          <th className="px-4 py-2 font-medium">客户名</th>
+                          <th className="px-4 py-2 font-medium">业务</th>
+                          <th className="px-4 py-2 font-medium">人数</th>
+                          <th className="px-4 py-2 font-medium">金额</th>
+                          <th className="px-4 py-2 font-medium">状态</th>
+                          <th className="px-4 py-2 font-medium text-center">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {searchResults.map(o => (
+                          <tr
+                            key={o.id}
+                            onClick={() => { setSearchOpen(false); viewOrder(o); }}
+                            className="border-b border-gray-50 hover:bg-indigo-50 cursor-pointer transition-colors"
+                          >
+                            <td className="px-4 py-2.5 text-xs text-gray-600">{o.appointment_date || '-'}</td>
+                            <td className="px-4 py-2.5 text-sm font-medium">
+                              <span className="text-indigo-600 hover:text-indigo-800 hover:underline">{o.customer_name}</span>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-gray-600">{o.biz_label || '-'}</td>
+                            <td className="px-4 py-2.5 text-xs text-gray-600">{o.total_people > 0 ? `${o.total_people}人` : '-'}</td>
+                            <td className="px-4 py-2.5 text-xs text-gray-600">{o.total_amount > 0 ? `¥${o.total_amount.toLocaleString()}` : '-'}</td>
+                            <td className="px-4 py-2.5">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_MAP[o.status]?.bg || 'bg-gray-100'} ${STATUS_MAP[o.status]?.text || 'text-gray-600'}`}>
+                                {STATUS_MAP[o.status]?.label || o.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                                <button
+                                  onClick={() => { setSearchOpen(false); viewOrder(o); }}
+                                  className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center gap-1"
+                                >
+                                  <Eye size={11} /> 查看
+                                </button>
+                                <button
+                                  onClick={() => { setSearchOpen(false); copyOrder(o); }}
+                                  className="px-2 py-1 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 flex items-center gap-1"
+                                >
+                                  <Copy size={11} /> 复制
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {/* Pagination */}
+                    {searchTotal > 20 && (
+                      <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                        <span>第 {searchPage} / {Math.ceil(searchTotal / 20)} 页</span>
+                        <div className="flex gap-2">
+                          <button
+                            disabled={searchPage <= 1}
+                            onClick={() => { setSearchPage(p => Math.max(1, p - 1)); doSearch(Math.max(1, searchPage - 1)); }}
+                            className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                          >上一页</button>
+                          <button
+                            disabled={searchPage >= Math.ceil(searchTotal / 20)}
+                            onClick={() => { const np = searchPage + 1; setSearchPage(np); doSearch(np); }}
+                            className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                          >下一页</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>

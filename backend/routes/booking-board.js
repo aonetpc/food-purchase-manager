@@ -196,6 +196,18 @@ async function insertItems(conn, orderId, items) {
   `, values.flat());
 }
 
+// 业务类型映射（用于搜索结果展示 biz_label）
+const BIZ_MAP = {
+  checkup:   { label: '体检' },
+  lodging:   { label: '住宿' },
+  breakfast: { label: '早餐' },
+  lunch:     { label: '午餐' },
+  dinner:    { label: '晚餐' },
+  meeting:   { label: '会务' },
+  wellness:  { label: '康乐' },
+  carpickup: { label: '用车' },
+};
+
 const EDITABLE_STATUS = ['pending', 'reviewing', 'confirmed'];
 
 // ============================================================
@@ -996,6 +1008,103 @@ makeBizConfigCrud({
   editableFields: ['default_time', 'default_tables', 'default_per_table', 'default_pax', 'description', 'status', 'sort_order'],
   sortDefault: 1,
   autoIncrementId: true,
+});
+
+// ============================================================
+// GET /api/booking/orders/search
+// 历史订单搜索（无日期范围限制，支持关键词 + 业务类型 + 状态）
+// 用于"🔍 历史搜索" Modal，快速找到历史订单进行查看/复制
+// 参数：keyword=xxx（客户名/手机号/订单号，模糊 OR）
+//       bizTypes=checkup,lunch（可选，逗号分隔）
+//       statuses=pending,confirmed（可选，逗号分隔）
+//       page=1&page_size=20（可选）
+// ============================================================
+router.get('/orders/search', requireAuth, async (req, res) => {
+  try {
+    const { keyword, bizTypes, statuses, page = 1, page_size = 20 } = req.query;
+    const kw = String(keyword || '').trim();
+    const p = Math.max(1, Math.min(1000, Number(page) || 1));
+    const ps = Math.max(1, Math.min(100, Number(page_size) || 20));
+    const offset = (p - 1) * ps;
+
+    const wheres = ['o.is_template = 0'];
+    const params = [];
+
+    if (kw) {
+      wheres.push('(o.customer_name LIKE ? OR o.order_no LIKE ? OR o.contact_phone LIKE ?)');
+      params.push(`%${kw}%`, `%${kw}%`, `%${kw}%`);
+    }
+
+    if (bizTypes) {
+      const list = String(bizTypes).split(',').map(s => s.trim()).filter(Boolean);
+      if (list.length) {
+        wheres.push(`o.id IN (SELECT DISTINCT order_id FROM booking_items WHERE item_type IN (${list.map(() => '?').join(',')}))`);
+        params.push(...list);
+      }
+    }
+
+    if (statuses) {
+      const list = String(statuses).split(',').map(s => s.trim()).filter(Boolean);
+      if (list.length) {
+        wheres.push(`o.status IN (${list.map(() => '?').join(',')})`);
+        params.push(...list);
+      }
+    }
+
+    const whereSql = `WHERE ${wheres.join(' AND ')}`;
+
+    const [countRows] = await pool.query(`SELECT COUNT(*) AS cnt FROM booking_orders o ${whereSql}`, params);
+    const total = Number(countRows[0]?.cnt) || 0;
+
+    const [rows] = await pool.query(`
+      SELECT o.*,
+             (SELECT SUM(bi.quantity * bi.unit_price) FROM booking_items bi WHERE bi.order_id = o.id) AS total_amount
+      FROM booking_orders o
+      ${whereSql}
+      ORDER BY o.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, ps, offset]);
+
+    const result = [];
+    for (const o of rows) {
+      const [typeRows] = await pool.query(
+        'SELECT DISTINCT item_type FROM booking_items WHERE order_id = ?',
+        [o.id]
+      );
+      const bizTypesArr = typeRows.map(t => t.item_type);
+      const [paxRow] = await pool.query(
+        'SELECT COALESCE(SUM(quantity), 0) AS total FROM booking_items WHERE order_id = ? AND item_type = "checkup"',
+        [o.id]
+      );
+      const totalPeople = Number(paxRow[0]?.total) || 0;
+
+      result.push({
+        id: o.id,
+        customer_name: o.customer_name || '-',
+        contact_phone: o.contact_phone
+          ? String(o.contact_phone).replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
+          : null,
+        order_no: o.order_no || null,
+        biz_types: bizTypesArr,
+        biz_label: bizTypesArr.map(t => BIZ_MAP[t]?.label || t).join(' / '),
+        status: o.status,
+        total_people: totalPeople,
+        total_amount: Number(o.total_amount) || 0,
+        created_at: o.created_at,
+        appointment_date: o.created_at ? o.created_at.slice(0, 10) : null,
+        remark: o.remark || null,
+        sales_person: o.sales_person || null,
+      });
+    }
+
+    res.json({
+      ok: true,
+      data: { total, page: p, page_size: ps, orders: result },
+    });
+  } catch (e) {
+    console.error('[booking search] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ============================================================
