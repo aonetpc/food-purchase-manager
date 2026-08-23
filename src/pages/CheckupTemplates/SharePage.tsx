@@ -340,6 +340,9 @@ export default function SharePage() {
                       <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50 overflow-hidden">
                         {g.items.map((it, idx) => {
                           const qty = Math.max(1, Number(it.quantity) || 1);
+                          const subList = Array.isArray((it as any).sub_item_names) && (it as any).sub_item_names.length > 0
+                            ? (it as any).sub_item_names as string[]
+                            : null;
                           return (
                             <div key={it.id || idx} className="flex items-start gap-2 px-3 py-2.5 last:border-b-0">
                               <span className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2 ml-1.5" />
@@ -348,9 +351,11 @@ export default function SharePage() {
                                   <span className="text-[13px] text-gray-800 font-medium truncate">{it.item_name_snapshot}</span>
                                   {qty > 1 && <span className="text-[10px] text-gray-400 shrink-0">×{qty}</span>}
                                 </div>
-                                {(it as any).clinical_significance && (
-                                  <div className="text-[11px] text-gray-400 mt-0.5 leading-snug line-clamp-2">
-                                    {(it as any).clinical_significance}
+                                {subList && (
+                                  <div className="mt-0.5 ml-3 space-y-0.5">
+                                    {subList.map(name => (
+                                      <div key={name} className="text-[11px] text-gray-400 leading-snug">· {name}</div>
+                                    ))}
                                   </div>
                                 )}
                               </div>

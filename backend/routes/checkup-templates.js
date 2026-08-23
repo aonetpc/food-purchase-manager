@@ -166,6 +166,36 @@ async function listPackageItems(packageId) {
      ORDER BY pi.role ASC, pi.sort_order ASC, pi.id ASC`,
     [packageId]
   );
+  // 组合项目：批量查 booking_item_sub_items 里的真实子项配置（用户要求只读取后台已配置好的关系，不用兜底）
+  // 只要 combo_item_id 在本次套餐项目的 item_id 集合里，就按 sort_order + 子项id 排序返回子项目名
+  const itemIds = rows.map(r => r.item_id).filter(Boolean);
+  if (itemIds.length > 0) {
+    const placeholders = itemIds.map(() => '?').join(',');
+    try {
+      const [subRows] = await pool.query(
+        `SELECT sub.combo_item_id, ci.name AS sub_name
+           FROM booking_item_sub_items AS sub
+           LEFT JOIN booking_checkup_items AS ci ON ci.id = sub.sub_item_id
+          WHERE sub.combo_item_id IN (${placeholders})
+          ORDER BY sub.combo_item_id, sub.sort_order ASC, sub.id ASC`,
+        itemIds
+      );
+      const subMap = new Map();
+      for (const s of subRows) {
+        if (!s || !s.sub_name) continue;
+        if (!subMap.has(s.combo_item_id)) subMap.set(s.combo_item_id, []);
+        subMap.get(s.combo_item_id).push(s.sub_name);
+      }
+      for (const r of rows) {
+        if (subMap.has(r.item_id)) {
+          r.sub_item_names = subMap.get(r.item_id);
+        }
+      }
+    } catch (err) {
+      // booking_item_sub_items 表不存在（极旧库）时静默忽略，不影响主流程
+      if (!/Table.*doesn.*exist/i.test(String(err.message || ''))) throw err;
+    }
+  }
   return rows;
 }
 
@@ -1296,6 +1326,51 @@ function findChineseBoldFont() {
   return null;
 }
 
+/** PDF 明细渲染 helper：按分类输出项目 + 组合子项缩进灰字。
+ *  用户要求：
+ *    - 不显示数量 / 单价 / 小计三列（不输出表头，只输出项目名单列），
+ *      套餐顶部的"原价 / 折后价"与底部"合计"金额保持不变。
+ *    - 组合项目若 booking_item_sub_items 配过子项 → 项目名下方灰字缩进逐行显示子项目名（· 前缀）；
+ *      没配子项 → 不显示任何灰色字。
+ *    - 除了这些变化，其他页面 / 页眉页脚 / 合计样式完全保持，不做任何改动。
+ */
+function renderPdfItemsSection(doc, items, ctx) {
+  const { FONT_REG, FONT_BOLD } = ctx;
+  const byCat = new Map();
+  for (const it of items) {
+    const c = it.category || '其他';
+    if (!byCat.has(c)) byCat.set(c, []);
+    byCat.get(c).push(it);
+  }
+  for (const [cat, catItems] of byCat.entries()) {
+    if (doc.y + 3 * 18 > 800) doc.addPage();
+    doc.fontSize(11).font(FONT_BOLD).fillColor('#1f2937').text(`【${cat}】`);
+    doc.font(FONT_REG);
+    // 按用户要求：去掉数量/单价/小计表头，只保留项目名列表
+    // 分隔横线 + 项目 + 子项灰字缩进逐行
+    let y = doc.y + 2;
+    for (const it of catItems) {
+      const name = it.item_name_snapshot || it.item_id || '-';
+      const subs = Array.isArray(it.sub_item_names) ? it.sub_item_names : null;
+      doc.moveTo(40, y).lineTo(560, y).strokeColor('#eee').stroke();
+      doc.fontSize(10).fillColor('#000').font(FONT_REG)
+         .text(name, 40, y + 3, { width: 510 });
+      y = doc.y + 4;
+      if (subs && subs.length > 0) {
+        doc.fontSize(8).fillColor('#888').font(FONT_REG);
+        for (const s of subs) {
+          if (y > 798) { doc.addPage(); y = 60; }
+          doc.text(`· ${s}`, 58, y, { width: 490 });
+          y = doc.y + 2;
+        }
+        y += 2;
+      }
+      if (y > 800) { doc.addPage(); y = 60; }
+    }
+    doc.y = Math.max(doc.y, y + 5);
+  }
+}
+
 router.get('/:id/pdf', async (req, res) => {
   try {
     const { role = 'all' } = req.query;
@@ -1353,38 +1428,8 @@ router.get('/:id/pdf', async (req, res) => {
       if (plan.remark) doc.text(`备注：${plan.remark}`);
       doc.moveDown(0.2);
 
-      // 按 category 分组
-      const byCat = new Map();
-      for (const it of items) {
-        const c = it.category || '其他';
-        if (!byCat.has(c)) byCat.set(c, []);
-        byCat.get(c).push(it);
-      }
-      for (const [cat, catItems] of byCat.entries()) {
-        doc.fontSize(11).font(FONT_BOLD).fillColor('#1f2937').text(`【${cat}】`);
-        doc.font(FONT_REG);
-        // 表头
-        const yH = doc.y;
-        doc.fontSize(9).fillColor('#555').text('项目名称', 40, yH, { width: 300, continued: false });
-        doc.text('数量', 340, yH, { width: 60 });
-        doc.text('单价', 400, yH, { width: 70 });
-        doc.text('小计', 470, yH, { width: 70 });
-        let y = doc.y + 2;
-        for (const it of catItems) {
-          const qty = Math.max(1, toNum(it.quantity) || 1);
-          const unit = toNum(it.item_price);
-          const sub = round2(qty * unit);
-          doc.moveTo(40, y).lineTo(560, y).strokeColor('#eee').stroke();
-          doc.fontSize(10).fillColor('#000')
-             .text(it.item_name_snapshot || it.item_id || '-', 40, y + 3, { width: 295 });
-          doc.text(`x${qty}`, 340, y + 3, { width: 55 });
-          doc.text(`¥${unit.toFixed(2)}`, 400, y + 3, { width: 65 });
-          doc.text(`¥${sub.toFixed(2)}`, 470, y + 3, { width: 80, align: 'right' });
-          y += 18;
-          if (y > 800) { doc.addPage(); y = 60; }
-        }
-        doc.y = y + 5;
-      }
+      // 按 category 分组 + 项目明细渲染
+      renderPdfItemsSection(doc, items, { FONT_REG, FONT_BOLD });
       // 该角色合计
       doc.moveDown(0.3);
       doc.fontSize(11).font(FONT_BOLD).fillColor('#b91c1c')

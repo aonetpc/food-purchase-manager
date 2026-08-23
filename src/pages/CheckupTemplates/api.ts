@@ -66,6 +66,9 @@ export interface CheckupItemRef {
   category?: string;
   item_type?: 'item' | 'combo';
   clinical_significance?: string;
+  /** 组合项目：booking_item_sub_items 里配置的真实子项目名（按 sort_order 排序）。
+   *  没配置子项或不是 combo 则此字段不存在 / 为空数组。*/
+  sub_item_names?: string[];
 }
 export interface CheckupTemplate {
   id: string;

@@ -197,12 +197,20 @@ return (
                     </div>
                     <div className="space-y-1">
                       {g.items.map(it => {
+                        const subList = Array.isArray((it as any).sub_item_names) && (it as any).sub_item_names.length > 0
+                          ? (it as any).sub_item_names as string[]
+                          : null;
                         return (
-                          <div key={it.id} className="flex items-center gap-2 py-2 border-b border-dashed border-gray-100 last:border-b-0">
+                          <div key={it.id} className="flex items-start gap-2 py-2 border-b border-dashed border-gray-100 last:border-b-0">
+                            <div className="w-1 h-1 rounded-full bg-gray-300 shrink-0 mt-2 ml-1.5" />
                             <div className="flex-1 min-w-0">
                               <div className="text-sm text-gray-800 font-medium truncate">{it.item_name_snapshot}</div>
-                              {it.clinical_significance && (
-                                <div className="text-[11px] text-gray-400 truncate mt-0.5">{it.clinical_significance}</div>
+                              {subList && (
+                                <div className="mt-0.5 ml-3 space-y-0.5">
+                                  {subList.map(name => (
+                                    <div key={name} className="text-[11px] text-gray-500 leading-snug">· {name}</div>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           </div>
