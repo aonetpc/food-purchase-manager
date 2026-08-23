@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Plus, Search, Save, ChevronLeft, ChevronRight, Check, Sparkles, AlertTriangle } from 'lucide-react';
 import {
-  checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, ROLE_HINT, CATEGORIES,
+  checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, ROLE_HINT, CATEGORIES, displayCategory,
   type Role, type CheckupTemplate, type CheckupItem, type CheckupItemRef, type RolePlan
 } from './api';
 import { scopeVisible, isRoleSpecific, type Scope } from '@/pages/CheckupTemplates/roleVisibility';
@@ -134,7 +134,7 @@ export default function PackageDrawer({
     const matchKw = (it: CheckupItem) =>
       !kw || (it.name || '').toLowerCase().includes(kw) || (it.code || '').toLowerCase().includes(kw);
     const matchCat = (it: CheckupItem) =>
-      category === '全部' || it.category === category;
+      category === '全部' || displayCategory(it.category) === category;
 
     if (scope === 'common') {
       return items.filter(it => it.status === 1 && matchKw(it) && matchCat(it));
@@ -762,7 +762,7 @@ function ItemCard({ item, selected, shadow, qty, onToggle, onQty }: {
             {item.description || (isCombo ? '组合项目，包含多个子项' : '单项检查')}
           </div>
           <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-100">{item.category}</span>
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-100">{displayCategory(item.category)}</span>
             <span className="text-[11px] text-gray-400">{item.unit}</span>
             {isCombo && (
               <button onClick={() => setExpanded(x => !x)} className="text-[11px] text-emerald-700 flex items-center gap-0.5">

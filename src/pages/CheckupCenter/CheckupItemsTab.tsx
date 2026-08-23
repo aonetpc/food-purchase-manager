@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Save, Search, AlertTriangle, FileSpreadsheet, ChevronDown, ChevronUp, X, Sparkles } from 'lucide-react';
 import { bookingApi, type CheckupItemRow } from '@/lib/api';
-import { CATEGORIES } from './api';
+import { CATEGORIES, displayCategory } from './api';
 import { useToast } from '@/components/Toast';
 import { useAuthStore } from '@/store/authStore';
 
@@ -45,26 +45,82 @@ function RowBtn({ children, onClick, cls }: { children: React.ReactNode; onClick
   );
 }
 
-// ===== 体检项目分类+类型 自动推断（7大类 + combo/普通）=====
-// 【分类规则 v2】
+// ===== 体检项目分类+类型 自动推断（新8大类客户视角 + combo/普通）=====
+// 【分类规则 v3】客户健康关注点视角
 // 1) 先命中先归类，命中优先级从上到下
-// 2) 体格检查关键词严格只保留"科室/器官触诊类"，移除了之前抢词的 前列腺/甲状腺/腹部/血压/人体成分/动脉硬化检测
-// 3) 特色加项关键词只保留明确的：基因甲基化/早筛基因/过敏原检测
-//    - 脂联素、25-羟基维D、LP-PLA2、SdLDL-C、胸苷激酶…等一律走 LAB_KEYWORDS 归实验室
-//    - 删除了 '外)' 这种过宽关键词，避免叶酸(外)等被误判为特色加项
-// 4) 第7类存库名改为「实验室」与 CATEGORIES 常量严格一致（原来写"实验室检查"导致UI分类tab过滤为空！）
+// 2) 性别专属最优先，避免妇科/男科项目被宽泛关键词误判
+// 3) 肿瘤标志物筛查第二优先，覆盖所有肿瘤相关项目
+// 4) 肝胆功能、心脑血管与血脂、糖代谢与肾功能、基础体检、专项功能与系统、影像检查
 const CATEGORY_RULES: Array<{ cat: string; keywords: string[] }> = [
-  { cat: '体格检查', keywords: [
-    '一般检查','内科','外科','眼科','耳鼻喉科','口腔科','妇科常规','裂隙灯检查','眼压','身高','体重','bmi','听诊','触诊','宫颈脱落细胞检查','白带常规','视力','辨色','口腔常规','牙周','内诊','全身体格','既往史','家族史','心率','心律','杂音','肺部听诊','腹部触诊','肝脏触诊','脾脏触诊','双肾区','淋巴结','脊柱','四肢关节','皮肤','肛诊','外生殖器检查','乳房检查','眼科常规','血压'
+  // 性别专属（最优先）
+  { cat: '性别专属', keywords: [
+    '妇科常规','白带常规','宫颈脱落细胞检查','tct','液基薄层','人乳头瘤病毒','hpv','阴道镜','阴超','宫颈','阴道','妇科',
+    '激素水平测定','抗缪勒管','β-hcg','β-绒毛膜促性腺激素','卵巢','乳腺','盆腔','子宫','附件',
+    '男科','前列腺','睾丸','阴囊','精液','人乳头瘤病毒hp'
   ]},
-  { cat: '肿瘤筛查', keywords: ['肿瘤指标','蛋白芯片','肿瘤5项','肿瘤6项','肿瘤11项','肿瘤全套','前列腺肿瘤两项筛选','肿瘤筛查','肿瘤组合','早筛','肿瘤（男）','肿瘤（女）','肿瘤相关抗原','非小细胞肺癌相关抗原','鳞状细胞癌相关抗原','胃泌素释放前体','progrp','恶性肿瘤特异性生长因子','tsgf','septin9','shox2','rassf1a','ptger4','rnf180','reprimo','sdc2','tcf4','三基因甲基化','肠癌基因','胃癌三基因','基因甲基化检测'] },
-  { cat: '妇科专项', keywords: ['tct','液基','hpv','阴道镜','阴超','宫颈','白带','妇科','激素水平测定','抗缪勒管','β-hcg','人乳头瘤病毒','女性激素','卵巢','乳腺彩超','电子阴道镜','激素水平','β-绒毛膜促性腺激素'] },
-  { cat: '影像检查', keywords: ['彩超','dr摄片','数字dr','ct','磁共振','x线','摄片','出片费','拷片','超声','b超','彩色多普勒','钼靶','拍片','dr/ct','ct动态','部位（不含片）'] },
-  { cat: '功能检查', keywords: ['心电图','动态心电','动态血压','经颅多普勒','tcd','肺功能检查','c13呼气','c14呼气','呼气试验','电子直乙肠镜','肠镜','胃镜','人体成分分析','动脉硬化检测','骨密度','经颅','脑血流图','脑电图','肌电图','诱发电位'] },
-  { cat: '特色加项', keywords: ['基因甲基化检测(外）','过敏源检测','过敏原检测','基因甲基化','肺癌shox2/rassf1a/ptger4基因甲基化','septin9肠癌基因检测','rnf180/septin9基因甲基化','reprimo/sdc2/tcf4胃癌三基因甲基化'] },
+  // 肿瘤标志物筛查
+  { cat: '肿瘤标志物筛查', keywords: [
+    '肿瘤指标','蛋白芯片','肿瘤5项','肿瘤6项','肿瘤11项','肿瘤全套','前列腺肿瘤','肿瘤筛查','肿瘤组合','早筛',
+    '肿瘤相关抗原','非小细胞肺癌相关抗原','鳞状细胞癌相关抗原','胃泌素释放前体','progrp',
+    '恶性肿瘤特异性生长因子','tsgf','septin9','shox2','rassf1a','ptger4','rnf180','reprimo','sdc2','tcf4',
+    '三基因甲基化','肠癌基因','胃癌三基因','基因甲基化检测','肿瘤（男）','肿瘤（女）',
+    '癌胚抗原','cea','甲胎蛋白','afp','ca199','ca724','ca153','ca125','ca211','ca50','ca242','he4',
+    '神经元特异性烯醇化酶','nse','鳞状细胞癌相关抗原','scc','cyfra21-1','胃幽门螺杆菌',
+    '血管内皮生长因子','vegf','胸苷激酶','tki','降钙素','人附睾蛋白','ost','骨钙素'
+  ]},
+  // 肝胆功能
+  { cat: '肝胆功能', keywords: [
+    '肝功能','肝功','谷丙转氨酶','alt','谷草转氨酶','ast','ggt','谷氨酰','总蛋白','白蛋白','球蛋白','白球比例',
+    '总胆红素','直接胆红素','总胆汁酸','碱性磷酸酶','alp','前白蛋白','pa','胆碱酯酶','che','谷胱甘肽还原酶','肝纤维化',
+    '彩超-腹部'
+  ]},
+  // 心脑血管与血脂
+  { cat: '心脑血管与血脂', keywords: [
+    '血脂','胆固醇','甘油三','载脂蛋白','脂联素','心肌酶','肌酸激酶','ck-mb','乳酸脱氢酶','ldh','肌钙蛋白','肌红蛋白',
+    '钠尿肽','pro-bnp','b型钠尿肽','同型半胱氨酸','crp','c反应蛋白','d-二聚体','心电图','心脏彩超','颈动脉',
+    '动脉硬化','tcd','经颅多普勒','血压','动态心电','动态血压','lp-pla2','sdldl','lpa','脂蛋白a',
+    '超敏肌钙蛋白','超敏crp'
+  ]},
+  // 基础体检
+  { cat: '基础体检', keywords: [
+    '一般检查','内科','外科','眼科','耳鼻喉科','口腔科','裂隙灯检查','眼压','身高','体重','bmi','视力','辨色',
+    '口腔常规','牙周','血压','血常规','尿常规','尿沉渣','血型','血沉','大便隐血','血流变',
+    '全身体格','心率','心律','杂音','肺部听诊','腹部触诊'
+  ]},
+  // 专项功能与系统
+  { cat: '专项功能与系统', keywords: [
+    '甲状腺','tsh','ft3','ft4','t3','t4','甲状腺球蛋白','tpo','甲状腺过氧化物酶','甲状腺球蛋白抗体',
+    '胃蛋白酶','胃幽门','胃泌素','呼气试验','c13','c14','肠镜','直乙','胃镜',
+    '肺功能','骨密度','类风湿','免疫球蛋白','过敏原','梅毒','艾滋病','肝炎','eb病毒',
+    '维生素d','叶酸','铁蛋白','转铁蛋白','微量元素','电解质','凝血','凝血四项',
+    '脑电图','肌电图','诱发电位','人体成分','动脉硬化检测'
+  ]},
+  // 影像检查
+  { cat: '影像检查', keywords: [
+    'dr','ct','磁共振','x线','摄片','出片费','拷片','超声','b超','彩色多普勒','钼靶','拍片',
+    '数字dr','dr摄片','ct动态'
+  ]},
 ];
-// 实验室检查（没命中上面6类，但属于化验/抽血/尿检/粪便类的）
-const LAB_KEYWORDS = ['血常规','血型','血沉','尿常规','尿沉渣','大便隐血','血流变','谷丙','谷草','肝功','肝功能','肾功能','尿素氮','肌酐','尿酸','血糖','糖化血红蛋白','糖化','血脂','胆固醇','甘油三脂','甘油三酯','总蛋白','白蛋白','球蛋白','总胆红素','直接胆红素','胆汁酸','转氨酶','淀粉酶','脂肪酶','心肌酶','肌酸激酶','乳酸脱氢酶','肌钙蛋白','肌红蛋白','bnp','pro-bnp','b型钠尿肽','d-二聚体','凝血','c反应蛋白','crp','同型半胱氨酸','胱抑素','β2-微球蛋白','前白蛋白','胆碱酯酶','叶酸','维生素d','铁蛋白','转铁蛋白','甲胎蛋白','afp','cea','癌胚抗原','糖类抗原','ca199','ca724','ca153','ca125','ca211','ca50','ca242','he4','人附睾蛋白','ost','骨钙素','hcg','ferr','c-肽','胃泌素','胃蛋白酶原','pg','免疫球蛋白','肝纤维化','电解质','微量元素','eb病毒','ea-iga','vca-iga','vca-igm','丙型肝炎','甲型肝炎','梅毒筛查','anti-tp','艾滋病筛查','anti-hiv','促甲状腺素','tsh','游离三碘甲状原氨酸','ft3','ft4','游离甲状腺素','甲状腺素','t4','三碘甲状原氨酸','t3','甲状腺球蛋白','抗甲状腺球蛋白抗体','tg-ab','抗甲状腺过氧化物酶抗体','tpo-ab','促甲状腺激素受体抗体','tp-ab','载脂蛋白','apoa1','apob','脂联素','谷胱甘肽还原酶','gr','肌酸激酶同工酶','ck-mb','vegf','血管内皮生长因子','胃幽门螺杆菌抗体','血清肌红蛋白','nse','神经元特异性烯醇化酶','t-psa','f-psa','游离前列腺特异性抗原','总前列腺特异性抗原','前列腺特异性抗原','tnt-hs','超敏肌钙蛋白','malb','尿微量白蛋白','nag','n-β-葡萄糖苷酶','afu','α-l糖苷岩藻酶','高密度胆固醇','低密度胆固醇','脂蛋白a','lpa','出凝血','凝血四项','类风湿因子','aso','抗链球菌溶血素','超敏crp','感染四项','hcv','hav','igm','igg','小而密低密度脂蛋白','sdldl-c','sdl','脂蛋白相关磷脂酶a2','lp-pla2','胸苷激酶1','tki','25-羟基维生素d','降钙素','血清肌钙蛋白（外）','淀粉酶测定','纤维蛋白原','血空腹胰岛素','生化全套','总胆汁酸','谷丙转氨酶','丙氨酸氨基转移酶','天门冬氨酸氨基转移酶','γ-谷氨酰转移酶','碱性磷酸酶','白球比例','鳞状细胞癌相关抗原','scc'] ;
+// 糖代谢与肾功能 + 实验室类（没命中上面分类但属于化验/抽血/尿检/粪便类的）
+const LAB_KEYWORDS = [
+  '血糖','糖化血红蛋白','糖化','胰岛素','c-肽','肾功能','尿素氮','肌酐','尿酸','bun','ua','cre',
+  '微量白蛋白','nag','β2-微球蛋白','胱抑素','甲胎蛋白','afp','cea','癌胚抗原','糖类抗原',
+  'ca199','ca724','ca153','ca125','ca211','ca50','ca242','he4','人附睾蛋白','ost','骨钙素',
+  'hcg','ferr','胃泌素','胃蛋白酶原','pg','免疫球蛋白','肝纤维化','电解质','微量元素',
+  'eb病毒','ea-iga','vca-iga','vca-igm','丙型肝炎','甲型肝炎','梅毒筛查','anti-tp','艾滋病筛查','anti-hiv',
+  '促甲状腺素','tsh','游离三碘甲状原氨酸','ft3','ft4','游离甲状腺素','甲状腺素','t4','三碘甲状原氨酸','t3',
+  '甲状腺球蛋白','抗甲状腺球蛋白抗体','tg-ab','抗甲状腺过氧化物酶抗体','tpo-ab','促甲状腺激素受体抗体','tp-ab',
+  '载脂蛋白','apoa1','apob','脂联素','谷胱甘肽还原酶','gr','肌酸激酶同工酶','ck-mb','vegf','血管内皮生长因子',
+  '胃幽门螺杆菌抗体','血清肌红蛋白','nse','神经元特异性烯醇化酶','t-psa','f-psa','游离前列腺特异性抗原','总前列腺特异性抗原',
+  '前列腺特异性抗原','malb','尿微量白蛋白','nag','n-β-葡萄糖苷酶','afu','α-l糖苷岩藻酶',
+  '高密度胆固醇','低密度胆固醇','脂蛋白a','lpa','出凝血','凝血四项','类风湿因子','aso','抗链球菌溶血素',
+  '超敏crp','感染四项','hcv','hav','igm','igg','小而密低密度脂蛋白','sdldl-c','sdl',
+  '脂蛋白相关磷脂酶a2','lp-pla2','胸苷激酶1','tki','25-羟基维生素d','降钙素',
+  '血清肌钙蛋白（外）','淀粉酶测定','纤维蛋白原','血空腹胰岛素','生化全套','总胆汁酸',
+  '谷丙转氨酶','丙氨酸氨基转移酶','天门冬氨酸氨基转移酶','γ-谷氨酰转移酶','碱性磷酸酶','白球比例',
+  '鳞状细胞癌相关抗原','scc','淀粉酶','脂肪酶','肌酐','尿素','尿酸','血糖','糖化','胰岛素','c肽',
+  '血常规','尿常规','大便隐血','血沉','血型','血流变','凝血','生化','化验','抽血','尿检'
+];
 
 function inferCategory(name: string): string {
   const n = (name || '').toLowerCase();
@@ -72,10 +128,10 @@ function inferCategory(name: string): string {
     const hit = rule.keywords.find(k => n.includes(k.toLowerCase()));
     if (hit) return rule.cat;
   }
-  if (LAB_KEYWORDS.some(k => n.includes(k.toLowerCase()))) return '实验室';
-  // 特殊兜底："（外）"结尾但没命中特色加项的，一律实验室（避免走最后兜底到特色加项）
-  if (/（外）|\(外\)|\(外）|（外\)$/.test(n)) return '实验室';
-  return '实验室';
+  if (LAB_KEYWORDS.some(k => n.includes(k.toLowerCase()))) return '糖代谢与肾功能';
+  // 特殊兜底："（外）"结尾但没命中的，一律糖代谢与肾功能（实验室类）
+  if (/（外）|\(外\)|\(外）|（外\)$/.test(n)) return '糖代谢与肾功能';
+  return '糖代谢与肾功能';
 }
 // 判断是否为"组合项目 combo"：含N项/全套/两项/三项/组合/筛选/芯片/指标 等
 function inferItemType(name: string): 'combo' | 'item' {
@@ -104,7 +160,7 @@ function generateCode(existing: { code?: string }[]): string {
   return `T${String(maxNum + 1).padStart(5, '0')}`;
 }
 
-const DEFAULT_CATEGORY = CATEGORIES[0]; // '体格检查'
+const DEFAULT_CATEGORY = CATEGORIES[0]; // '基础体检'
 
 type AppRole = 'male' | 'female_married' | 'female_single';
 const APPLICABLE_ROLES: Array<{ key: AppRole; label: string }> = [
@@ -251,7 +307,7 @@ export default function CheckupItemsTab() {
   const filteredRows = rows.filter(r => {
     const kw = search.trim();
     if (kw && !`${r.name}${r.code}`.toLowerCase().includes(kw.toLowerCase())) return false;
-    if (catFilter !== '全部' && r.category !== catFilter) return false;
+    if (catFilter !== '全部' && displayCategory(r.category) !== catFilter) return false;
     return true;
   });
 
@@ -378,7 +434,7 @@ export default function CheckupItemsTab() {
     // 按分类分组（普通函数内不能用 useMemo，改为即时计算）
     const map = new Map<string, CheckupItemRow[]>();
     filtered.forEach(r => {
-      const cat = r.category || '其他';
+      const cat = displayCategory(r.category);
       if (!map.has(cat)) map.set(cat, []);
       map.get(cat)!.push(r);
     });
@@ -785,7 +841,7 @@ export default function CheckupItemsTab() {
                   if (!r.id) continue;
                   const category = inferCategory(r.name);
                   const item_type = inferItemType(r.name);
-                  if (category === r.category && item_type === r.item_type) continue;
+                  if (category === displayCategory(r.category) && item_type === r.item_type) continue;
                   try {
                     await bookingApi.updateCheckupItem(r.id, { category, item_type });
                     updated++;
@@ -827,7 +883,7 @@ export default function CheckupItemsTab() {
         {allCategories.extensions.length > 0 && (
           <div className="flex items-center gap-1 text-[11px] text-amber-600 ml-auto px-2 py-0.5 rounded bg-amber-50 border border-amber-200">
             <AlertTriangle size={11} />
-            另有 {allCategories.extensions.length} 个扩展分类（{allCategories.extensions.join('、')}），建议并入 7 大类
+            另有 {allCategories.extensions.length} 个扩展分类（{allCategories.extensions.join('、')}），建议并入 8 大类
           </div>
         )}
       </div>
@@ -1133,7 +1189,7 @@ export default function CheckupItemsTab() {
                                     {(() => {
                                       const grouped = new Map<string, CheckupItemRow[]>();
                                       compare.dbRows.forEach(r => {
-                                        const cat = r.category || '未分类';
+                                        const cat = displayCategory(r.category) || '未分类';
                                         if (!grouped.has(cat)) grouped.set(cat, []);
                                         grouped.get(cat)!.push(r);
                                       });
@@ -1253,7 +1309,7 @@ export default function CheckupItemsTab() {
                             <tr key={r.id} className={`border-t border-gray-100 ${missIns ? 'bg-amber-50/60' : ''}`}>
                               <td className="px-2 py-1 text-gray-600">{r.code}</td>
                               <td className="px-2 py-1 text-gray-800">{r.name}</td>
-                              <td className="px-2 py-1 text-gray-600">{r.category || '-'}</td>
+                              <td className="px-2 py-1 text-gray-600">{displayCategory(r.category) || '-'}</td>
                               <td className="px-2 py-1 text-right font-mono">¥{Number(r.default_price) || 0}</td>
                               <td className="px-2 py-1 text-right font-mono">
                                 {missIns ? <span className="text-amber-700">⚠未录入</span> : `¥${Number(r.insurance_price) || 0}`}
@@ -1429,7 +1485,7 @@ export default function CheckupItemsTab() {
                             className={inputCls + ' text-xs !py-1'}>
                             {categoryTabs.filter(c => c !== '全部').concat(allCategories.extensions).map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
-                        ) : r.category}
+                        ) : displayCategory(r.category)}
                       </td>
                       <td className="px-3 py-2 text-right font-mono">
                         {editRow ? <Upd type="number" step="0.01" value={editing!.data.default_price} onChange={(v) => setField('default_price', v)} />

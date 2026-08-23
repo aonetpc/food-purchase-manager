@@ -18,14 +18,33 @@ export const ROLE_HINT: Record<Role, string> = {
   female_single: '无妇科侵入',
 };
 export const CATEGORIES = [
-  '体格检查',
-  '实验室',
+  '基础体检',
+  '肝胆功能',
+  '心脑血管与血脂',
+  '糖代谢与肾功能',
+  '肿瘤标志物筛查',
+  '专项功能与系统',
   '影像检查',
-  '功能检查',
-  '肿瘤筛查',
-  '妇科专项',
-  '特色加项',
+  '性别专属',
 ];
+
+// 旧分类 → 新分类 映射（兜底，防止未迁移时前端空白）
+export const OLD_TO_NEW: Record<string, string> = {
+  '体格检查': '基础体检',
+  '实验室': '糖代谢与肾功能',
+  '实验室检查': '糖代谢与肾功能',
+  '功能检查': '专项功能与系统',
+  '肿瘤筛查': '肿瘤标志物筛查',
+  '妇科专项': '性别专属',
+  '特色加项': '专项功能与系统',
+  '男科专项': '性别专属',
+};
+
+// 将项目的实际分类（可能是旧值）映射为显示用的新分类
+export function displayCategory(cat?: string): string {
+  if (!cat) return '其他';
+  return OLD_TO_NEW[cat] || cat;
+}
 
 export interface RolePlan {
   original_total: number;

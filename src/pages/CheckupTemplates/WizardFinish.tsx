@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
-checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
+checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES, displayCategory,
 type Role, type CheckupTemplate, type CheckupItemRef, type RolePlan, type ShareResult
 } from './api';
 import { useToast } from '@/components/Toast';
@@ -48,7 +48,7 @@ const applicable: Role[] = useMemo(() => {
 const groupByCategory = (items: CheckupItemRef[]) => {
   const groups: Record<string, CheckupItemRef[]> = {};
   for (const it of items) {
-    const c = it.category || '其他';
+    const c = displayCategory(it.category);
     if (!groups[c]) groups[c] = [];
     groups[c].push(it);
   }

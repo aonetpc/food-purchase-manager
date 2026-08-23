@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
+  ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES, displayCategory,
   type Role, type CheckupTemplate, type CheckupItemRef
 } from './api';
 import { useToast } from '@/components/Toast';
@@ -145,7 +145,7 @@ export default function SharePage() {
   const groupByCategory = (items: CheckupItemRef[]) => {
     const groups: Record<string, CheckupItemRef[]> = {};
     for (const it of items) {
-      const c = it.category || '其他';
+      const c = displayCategory(it.category);
       if (!groups[c]) groups[c] = [];
       groups[c].push(it);
     }

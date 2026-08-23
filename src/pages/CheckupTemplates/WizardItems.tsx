@@ -26,21 +26,49 @@ const EMPTY_SCOPE: SelectedState = {
 common: {}, male: {}, female_married: {}, female_single: {},
 };
 
-// 分类 → emoji 映射（胶囊美化：左侧小图标增加可识别度）
+// 分类 → emoji 映射（新8类客户视角 + 旧分类名兜底映射）
 const CATEGORY_EMOJI: Record<string, string> = {
-  '体格检查': '🩺',
+  // 新8类（客户健康关注点视角）
+  '基础体检': '📋',
+  '肝胆功能': '🍖',
+  '心脑血管与血脂': '❤️',
+  '糖代谢与肾功能': '🩸',
+  '肿瘤标志物筛查': '🫁',
+  '专项功能与系统': '🔬',
+  '影像检查': '🦴',
+  '性别专属': '👩‍⚕️',
+  // 旧分类名兜底（迁移未执行时仍可显示）
+  '体格检查': '📋',
+  '实验室': '🔬',
   '实验室检查': '🔬',
-  '影像检查': '📸',
-  '功能检查': '💓',
-  '肿瘤筛查': '🎗️',
-  '妇科专项': '🌸',
+  '功能检查': '🔬',
+  '肿瘤筛查': '🫁',
+  '妇科专项': '👩‍⚕️',
+  '特色加项': '🔬',
   '男科专项': '♂️',
-  '特色加项': '⭐',
   '其他': '📌',
+};
+// 旧分类 → 新分类 映射（兜底，防止未迁移时前端空白）
+const OLD_TO_NEW: Record<string, string> = {
+  '体格检查': '基础体检',
+  '实验室': '糖代谢与肾功能',  // 实验室大部分项目会在前端分组时再细分
+  '实验室检查': '糖代谢与肾功能',
+  '功能检查': '专项功能与系统',
+  '肿瘤筛查': '肿瘤标志物筛查',
+  '妇科专项': '性别专属',
+  '特色加项': '专项功能与系统',
+  '男科专项': '性别专属',
 };
 function categoryEmoji(cat?: string): string {
   if (!cat) return '📌';
-  return CATEGORY_EMOJI[cat] || '📌';
+  const mapped = OLD_TO_NEW[cat] || cat;
+  return CATEGORY_EMOJI[mapped] || CATEGORY_EMOJI[cat] || '📌';
+}
+
+// 将项目的实际分类（可能是旧值）映射为显示用的新分类
+function displayCategory(cat?: string): string {
+  if (!cat) return '其他';
+  return OLD_TO_NEW[cat] || cat;
 }
 
 // 胶囊标记：非通用项目显示适用范围（如「仅男性」「仅女性」）
@@ -183,7 +211,7 @@ const filteredItems = useMemo(() => {
   const matchKw = (it: CheckupItem) =>
     !kw || (it.name || '').toLowerCase().includes(kw) || (it.code || '').toLowerCase().includes(kw);
   const matchCat = (it: CheckupItem) =>
-    category === '全部' || it.category === category;
+    category === '全部' || displayCategory(it.category) === category;
 
   // 公共tab：全部项目
   if (scope === 'common') {
