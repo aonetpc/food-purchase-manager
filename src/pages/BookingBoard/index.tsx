@@ -1783,6 +1783,7 @@ export default function BookingBoard() {
   const [searchPage, setSearchPage] = useState(1);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchHasSearched, setSearchHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   // 设为模板弹窗
   const [showSetTemplate, setShowSetTemplate] = useState<null | string>(null);
   const [templateNameInput, setTemplateNameInput] = useState('');
@@ -1790,6 +1791,7 @@ export default function BookingBoard() {
   // ============ 历史订单搜索辅助函数 ============
   const doSearch = useCallback(async (page: number = 1) => {
     setSearchLoading(true);
+    setSearchError(null);
     try {
       const bizTypes = searchBizTypes.size > 0 ? Array.from(searchBizTypes).join(',') : undefined;
       const statuses = searchStatuses.size > 0 ? Array.from(searchStatuses).join(',') : undefined;
@@ -1804,8 +1806,9 @@ export default function BookingBoard() {
       setSearchTotal(result.total);
       setSearchPage(page);
       setSearchHasSearched(true);
-    } catch (e) {
+    } catch (e: any) {
       console.error('[BookingBoard] search error:', e);
+      setSearchError(e?.message || '搜索请求失败，请稍后重试');
     } finally {
       setSearchLoading(false);
     }
@@ -2144,6 +2147,15 @@ export default function BookingBoard() {
             >
               <Calendar size={12} /> 今天
             </button>
+            {/* 历史搜索 - 所有登录用户可用 */}
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="px-3 py-1.5 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium flex items-center gap-1"
+            >
+              <Search size={12} /> 历史搜索
+            </button>
+
             {isBookingOperator && (
               <>
                 <button
@@ -2166,13 +2178,6 @@ export default function BookingBoard() {
                   className="px-3 py-1.5 text-xs rounded border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 font-medium flex items-center gap-1"
                 >
                   <Upload size={12} /> 导入Excel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSearchOpen(true)}
-                  className="px-3 py-1.5 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium flex items-center gap-1"
-                >
-                  <Search size={12} /> 历史搜索
                 </button>
                 <div className="relative">
                   <button
@@ -2910,6 +2915,7 @@ export default function BookingBoard() {
                       setSearchResults([]);
                       setSearchHasSearched(false);
                       setSearchPage(1);
+                      setSearchError(null);
                     }}
                     className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
                   >
@@ -2935,6 +2941,18 @@ export default function BookingBoard() {
                 ) : searchLoading ? (
                   <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
                     加载中...
+                  </div>
+                ) : searchError ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-sm text-red-500 px-6 text-center">
+                    <span className="text-2xl mb-2">⚠️</span>
+                    <div className="font-medium mb-1">搜索失败</div>
+                    <div className="text-xs text-red-400">{searchError}</div>
+                    <button
+                      onClick={() => doSearch()}
+                      className="mt-4 px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 font-medium"
+                    >
+                      重试
+                    </button>
                   </div>
                 ) : searchResults.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-gray-400 text-sm">
@@ -2984,12 +3002,14 @@ export default function BookingBoard() {
                                 >
                                   <Eye size={11} /> 查看
                                 </button>
-                                <button
-                                  onClick={() => { setSearchOpen(false); copyOrder(o); }}
-                                  className="px-2 py-1 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 flex items-center gap-1"
-                                >
-                                  <Copy size={11} /> 复制
-                                </button>
+                                {isBookingOperator && (
+                                  <button
+                                    onClick={() => { setSearchOpen(false); copyOrder(o); }}
+                                    className="px-2 py-1 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 flex items-center gap-1"
+                                  >
+                                    <Copy size={11} /> 复制
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
