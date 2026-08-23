@@ -1818,7 +1818,8 @@ export default function BookingBoard() {
   const viewOrder = useCallback(async (row: BookingSearchResult) => {
     try {
       const detail = await bookingApi.getOrder(row.id);
-      setSelectedOrder(detail as unknown as BookingOrder);
+      // 用 adaptOrder 转换为 BookingOrder，使 id 显示业务订单号（BB+日期+序号）而非 UUID
+      setSelectedOrder(adaptOrder(detail));
     } catch (e) {
       console.error('[BookingBoard] view order error:', e);
     }
@@ -1828,8 +1829,9 @@ export default function BookingBoard() {
   const copyOrder = useCallback(async (row: BookingSearchResult) => {
     try {
       const detail = await bookingApi.getOrder(row.id);
+      const adapted = adaptOrder(detail);
       setSelectedOrder(null);
-      setCreateDrawer({ mode: 'copy', order: detail as unknown as BookingOrder });
+      setCreateDrawer({ mode: 'copy', order: adapted });
     } catch (e) {
       console.error('[BookingBoard] copy order error:', e);
     }
