@@ -265,10 +265,18 @@ export default function SharePage() {
         {/* ===================== 角色方案卡片 ===================== */}
         {applicable.map(r => {
           const plan: any = pkg.role_plans?.[r] || {};
-          const roleItems = (pkg.role_items as any)?.[r]?.items || [];
-          const total = Number(plan.original_total) || 0;
+          const roleAgg = (pkg.role_items as any)?.[r] || { items: [], total: 0, item_count: 0 };
+          const roleItems = roleAgg.items || [];
+          // 原价分母：用 role_items[r].total（按当前实际展示给客户看的明细 + 角色可见性重算出来的值），
+          // 而不是 role_plans 里存的旧快照 —— 保证 "展示项目数 × 单价 = 原价 = 折扣分母" 三角对齐。
+          const calcTotal = Number(roleAgg.total) || 0;
+          const planOrig = Number(plan.original_total) || 0;
+          const total = calcTotal > 0 ? calcTotal : planOrig;      // 优先取重算值，兜底老快照
           const disc = Number(plan.discount_price) || 0;
-          const rate = Number(plan.discount_rate) || 100;
+          // 折扣率：以"保持折扣价不变"原则，用新分母反推折扣率
+          const rate = (total > 0 && disc > 0)
+            ? Math.round((disc / total) * 10000) / 100              // 保留2位小数
+            : (Number(plan.discount_rate) || 100);
           const saved = total - disc;
           const isOpen = expanded[r];
           const groups = groupByCategory(roleItems);
@@ -297,7 +305,7 @@ export default function SharePage() {
                       {total > 0 && total !== disc ? (
                         <span className="text-gray-400 line-through">原价 ¥{total.toFixed(0)}</span>
                       ) : (
-                        rate < 100 && <span className="text-gray-400">{rate.toFixed(1)}折</span>
+                        rate < 100 && <span className="text-gray-400">{(rate/10).toFixed(1)}折</span>
                       )}
                     </div>
                   </div>
@@ -309,7 +317,7 @@ export default function SharePage() {
                   {total > 0 && total !== disc ? (
                     <div className="text-[11px] text-orange-500 font-medium mt-0.5">🎁 折扣 {rate.toFixed(1)}%</div>
                   ) : (
-                    rate < 100 && <div className="text-[11px] text-orange-500 font-medium mt-0.5">🎁 {rate.toFixed(1)}折</div>
+                    rate < 100 && <div className="text-[11px] text-orange-500 font-medium mt-0.5">🎁 {(rate/10).toFixed(1)}折</div>
                   )}
                 </div>
                 <svg className={`ml-2 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2.5">
@@ -501,7 +509,7 @@ export default function SharePage() {
           <div className="grid grid-cols-5 gap-2 max-w-[620px] mx-auto">
             {/* 左：2个快捷联系按钮 */}
             <button
-              onClick={() => (ownerPhone && tel(ownerPhone)) || (company?.phone && tel(company.phone))}
+              onClick={() => { if (ownerPhone) tel(ownerPhone); else if (company?.phone) tel(company.phone); }}
               disabled={!ownerPhone && !company?.phone}
               className="col-span-1 h-[52px] rounded-2xl bg-white border border-gray-200 text-gray-700 shadow-sm flex flex-col items-center justify-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-transform"
             >
@@ -509,7 +517,7 @@ export default function SharePage() {
               <span className="text-[10px] font-medium">联系咨询</span>
             </button>
             <button
-              onClick={() => (ownerPhone && copyText(ownerPhone, '手机号已复制')) || (company?.phone && copyText(company.phone, '电话已复制'))}
+              onClick={() => { if (ownerPhone) copyText(ownerPhone, '手机号已复制'); else if (company?.phone) copyText(company.phone, '电话已复制'); }}
               disabled={!ownerPhone && !company?.phone}
               className="col-span-1 h-[52px] rounded-2xl bg-white border border-gray-200 text-gray-700 shadow-sm flex flex-col items-center justify-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-transform"
             >

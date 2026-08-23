@@ -245,6 +245,27 @@ async function readPackageFull(packageId) {
   pkg.role_items = {};
   for (const r of ROLES) pkg.role_items[r] = agg[r];
   pkg.item_count = Math.max(...ROLES.map(r => agg[r].item_count));
+
+  // ====== 价格对齐（关键修复）======
+  // DB 里存的 role_plans.original_total 可能是历史bug期间的快照（含跨角色项目），
+  // 而现在 role_items[r].total 是基于"修好的可见性 + 当前套餐明细"动态重算的正确值。
+  // 保证前端读 role_plans 或 role_items.total 都得到一致的原价：
+  //   以 role_items[r].total 为 original_total 基准，discount_price 保持不变（销售谈判价），
+  //   discount_rate = discount_price / new_original_total × 100 重算。
+  for (const r of ROLES) {
+    const computedTotal = round2(pkg.role_items[r]?.total || 0);
+    if (computedTotal <= 0) continue;
+    const plan = pkg.role_plans[r] || {};
+    const price = round2(plan.discount_price) || 0;
+    const newRate = price > 0 ? round2(price / computedTotal * 100) : round2(plan.discount_rate) || 100;
+    pkg.role_plans[r] = {
+      ...plan,
+      original_total: computedTotal,
+      discount_rate: newRate,
+      discount_price: price,
+    };
+  }
+
   // 原始明细（前端编辑用，按 role 分组）
   const byRole = { common: [], male: [], female_married: [], female_single: [] };
   for (const it of allItems) {
