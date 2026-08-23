@@ -1,4 +1,4 @@
-import type { BizConfig, BizType, OrderStatus, PackageCode, LodgingType, MeetingHall, WellnessType } from './types';
+import type { BizConfig, BizType, DisplayStatus, OrderStatus, PackageCode, LodgingType, MeetingHall, WellnessType } from './types';
 
 // 业务常量
 export const BUSINESS: BizConfig[] = [
@@ -25,14 +25,35 @@ export function hexAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// 订单状态
+// 订单状态（实际存储仍为 5 个状态，但 UI 展示归为 3 类）
 export const STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg: string }> = {
-  pending:   { label: '待确认', color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
-  reviewing: { label: '待审核', color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
+  pending:   { label: '预测单', color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
+  reviewing: { label: '审批中', color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
   confirmed: { label: '已确认', color: '#10B981', bg: 'rgba(16,185,129,.12)' },
-  rejected:  { label: '已驳回', color: '#EF4444', bg: 'rgba(239,68,68,.12)' },
-  completed: { label: '已完成', color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
+  rejected:  { label: '审批中', color: '#EF4444', bg: 'rgba(239,68,68,.12)' },
+  completed: { label: '已确认', color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
 };
+
+// UI 展示用的 3 类状态（预测单、审批中、已确认）
+export const DISPLAY_STATUSES: { key: DisplayStatus; label: string; color: string; bg: string }[] = [
+  { key: 'pending',    label: '预测单', color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
+  { key: 'reviewing',  label: '审批中', color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
+  { key: 'confirmed',  label: '已确认', color: '#10B981', bg: 'rgba(16,185,129,.12)' },
+];
+
+// 展示状态 → 实际状态分组
+export const STATUS_GROUP: Record<DisplayStatus, OrderStatus[]> = {
+  pending:   ['pending'],
+  reviewing: ['reviewing', 'rejected'],
+  confirmed: ['confirmed', 'completed'],
+};
+
+// 实际状态 → 展示状态
+export function getDisplayStatus(s: OrderStatus): DisplayStatus {
+  if (s === 'pending') return 'pending';
+  if (s === 'reviewing' || s === 'rejected') return 'reviewing';
+  return 'confirmed';
+}
 
 /**
  * @deprecated 第5期起废弃静态套餐常量。仅作为后端数据库未初始化（尚未执行迁移）时的兜底保底。

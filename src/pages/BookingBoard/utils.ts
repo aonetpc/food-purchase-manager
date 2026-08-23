@@ -1,5 +1,5 @@
 import type { BookingOrder, BookingItem, BizType, RenderCard, PaxEntry, PackageRow, RoomTypeRow, MeetingHallRow, WellnessTypeRow, CustomPackageItem, MealPricingMode } from './types';
-import { BIZ_MAP } from './constants';
+import { BIZ_MAP, getDisplayStatus } from './constants';
 import { scopeVisible } from '../CheckupTemplates/roleVisibility';
 
 // 为兼容旧调用保留硬编码兜底常量（仅后端无数据时使用）
@@ -434,7 +434,7 @@ export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, st
   const result: FlatItem[] = [];
 
   for (const group of orders) {
-    if (!statusFilter.has(group.status)) continue;
+    if (!statusFilter.has(getDisplayStatus(group.status))) continue;
 
     // 收集该订单所有展开后的 items
     const expanded: { item: BookingItem; date: string }[] = [];

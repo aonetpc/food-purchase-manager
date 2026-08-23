@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy } from 'lucide-react';
-import type { BookingOrder, BookingItem, BizType, OrderStatus, PaxEntry, CustomPackageItem } from './types';
+import type { BookingOrder, BookingItem, BizType, DisplayStatus, OrderStatus, PaxEntry, CustomPackageItem } from './types';
 import {
   BUSINESS,
   BIZ_MAP,
   STATUS_MAP,
+  DISPLAY_STATUSES,
+  STATUS_GROUP,
+  getDisplayStatus,
   LODGING_TYPES,
   MEETING_HALLS,
   WELLNESS_TYPES,
@@ -81,7 +84,7 @@ interface BoardCard {
 }
 
 const ALL_BIZ: BizType[] = BUSINESS.map(b => b.type);
-const ALL_STATUS: OrderStatus[] = ['pending', 'reviewing', 'confirmed', 'rejected', 'completed'];
+const ALL_STATUS: DisplayStatus[] = ['pending', 'reviewing', 'confirmed'];
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
 // ================================================
@@ -991,19 +994,14 @@ function DetailModal({
             <div className="space-y-1.5">
               <TimelineItem label="提交订单" time={order.createdAt} state="done" />
               {order.status === 'pending' && (
-                <TimelineItem label="待确认" time="等待中" state="active" />
+                <TimelineItem label="预测单" time="等待中" state="active" />
               )}
-              {(order.status === 'reviewing' ||
-                order.status === 'confirmed' ||
-                order.status === 'completed') && (
-                <TimelineItem label="待审核 → 审核通过" time="已审核" state="done" />
-              )}
-              {order.status === 'rejected' && (
+              {(order.status === 'reviewing' || order.status === 'rejected') && (
                 <TimelineItem
-                  label="已驳回"
-                  time={order.rejectedBy || '审核人'}
-                  state="danger"
-                  note={order.rejectReason}
+                  label={order.status === 'rejected' ? '审批中（已驳回）' : '审批中'}
+                  time={order.status === 'rejected' ? `审核人：${order.rejectedBy || '-'}` : '等待审批'}
+                  state={order.status === 'rejected' ? 'danger' : 'active'}
+                  note={order.status === 'rejected' ? order.rejectReason : undefined}
                 />
               )}
               {(order.status === 'confirmed' || order.status === 'completed') && (
@@ -1012,9 +1010,6 @@ function DetailModal({
                   time={order.confirmedAt || '已确认'}
                   state="done"
                 />
-              )}
-              {order.status === 'completed' && (
-                <TimelineItem label="已完成" time="已完结" state="done" />
               )}
             </div>
           </div>
@@ -1794,7 +1789,13 @@ export default function BookingBoard() {
     setSearchError(null);
     try {
       const bizTypes = searchBizTypes.size > 0 ? Array.from(searchBizTypes).join(',') : undefined;
-      const statuses = searchStatuses.size > 0 ? Array.from(searchStatuses).join(',') : undefined;
+      // 将展示状态（3 类）展开为实际状态（5 个）传给后端
+      const actualStatuses = new Set<string>();
+      for (const ds of searchStatuses) {
+        const group = STATUS_GROUP[ds as DisplayStatus];
+        if (group) group.forEach(s => actualStatuses.add(s));
+      }
+      const statuses = actualStatuses.size > 0 ? Array.from(actualStatuses).join(',') : undefined;
       const result = await bookingApi.searchOrders({
         keyword: searchKeyword || undefined,
         bizTypes,
@@ -2025,12 +2026,12 @@ export default function BookingBoard() {
     });
   };
 
-  // 统计卡片
+  // 统计卡片（3 类：预测单、审批中、已确认）
   const stats = useMemo(() => {
     const total = orders.length;
-    const pending = orders.filter(o => o.status === 'pending').length;
-    const reviewing = orders.filter(o => o.status === 'reviewing').length;
-    const confirmed = orders.filter(o => o.status === 'confirmed').length;
+    const pending = orders.filter(o => getDisplayStatus(o.status) === 'pending').length;
+    const reviewing = orders.filter(o => getDisplayStatus(o.status) === 'reviewing').length;
+    const confirmed = orders.filter(o => getDisplayStatus(o.status) === 'confirmed').length;
     const amount = orders.reduce((s, o) => s + groupTotal(o), 0);
     return { total, pending, reviewing, confirmed, amount };
   }, [orders]);
@@ -2050,8 +2051,8 @@ export default function BookingBoard() {
   const statCards = useMemo(
     () => [
       { label: '总订单数', value: String(stats.total), color: '#1a5c3a' },
-      { label: '待确认', value: String(stats.pending), color: STATUS_MAP.pending.color },
-      { label: '待审核', value: String(stats.reviewing), color: STATUS_MAP.reviewing.color },
+      { label: '预测单', value: String(stats.pending), color: STATUS_MAP.pending.color },
+      { label: '审批中', value: String(stats.reviewing), color: STATUS_MAP.reviewing.color },
       { label: '已确认', value: String(stats.confirmed), color: STATUS_MAP.confirmed.color },
       { label: '总金额', value: `¥${stats.amount.toLocaleString()}`, color: '#1a5c3a' },
     ],
