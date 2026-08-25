@@ -2608,16 +2608,56 @@ async function sendBookingNotification(type, order, extra = {}) {
   const customerName = order.customer_name || '未知客户';
   const bizSummary = buildBizSummary(order.items);
   const salesPerson = order.sales_person || '';
+  const remark = order.remark || '';
+  const remarkLine = remark ? `> 备注：${remark}\n` : '';
   const frontEndBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL || '';
+
+  // 查找销售员企微userid（内部函数，各 case 复用）
+  const findSalesUserid = async () => {
+    if (!order.sales_person_id) return null;
+    try {
+      const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
+      if (userRows.length > 0 && userRows[0].wecom_userid) return userRows[0].wecom_userid;
+    } catch (e) {
+      console.warn('[sendBookingNotification] 查询销售员企微ID失败:', e.message);
+    }
+    return null;
+  };
 
   // 通知失败不抛错，只记录日志
   const safeSend = async (fn, label) => {
     try {
-      await fn();
+      const result = await fn();
+      console.log(`[sendBookingNotification] ${label} 成功:`, result?.msgid || result?.response_code || 'ok');
+      return result;
     } catch (err) {
       console.error(`[sendBookingNotification] ${label} 失败:`, err.message);
+      return null;
     }
   };
+
+  // 构建模板卡片（button_interaction 类型，复用现有 H5 确认页）
+  const buildTemplateCard = (mainTitle, subTitleText, contentRows, buttonText, cardUrl, taskId) => {
+    const horizontalContentList = contentRows.map(({ keyname, value }) => ({ keyname, value }));
+    return {
+      card_type: 'button_interaction',
+      source: { desc: '预订管理系统' },
+      main_title: { title: mainTitle, desc: customerName },
+      sub_title_text: subTitleText,
+      horizontal_content_list: horizontalContentList,
+      button_list: [{
+        text: buttonText,
+        style: 1,
+        type: 1,
+        key: `go_booking_${taskId || orderNo}`,
+        url: cardUrl,
+      }],
+      task_id: `booking_${taskId || orderNo}`,
+      card_action: { type: 1, url: cardUrl },
+    };
+  };
+
+  console.log(`[sendBookingNotification] 开始发送: type=${type}, orderNo=${orderNo}, customer=${customerName}`);
 
   switch (type) {
     case 'submit': {
@@ -2626,59 +2666,74 @@ async function sendBookingNotification(type, order, extra = {}) {
         const md = `📋 **已有新订单**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
+          remarkLine +
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
           `> 状态：待销售员确认`;
         await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
       }
-      // ② 销售员个人通知（模板卡片，带跳转）
+      // ② 销售员模板卡片通知
       if (config.booking_notify_sales !== 0) {
-        // 查找销售员的企微userid
-        let salesUserid = null;
-        if (order.sales_person_id) {
-          try {
-            const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
-            if (userRows.length > 0) salesUserid = userRows[0].wecom_userid;
-          } catch (e) {
-            console.warn('[sendBookingNotification] 查询销售员企微ID失败:', e.message);
-          }
-        }
+        const salesUserid = await findSalesUserid();
         if (salesUserid) {
+          console.log(`[sendBookingNotification] 销售员企微userid=${salesUserid}, agent_id=${config.agent_id}`);
           const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
-          await safeSend(
-            () => sendTextCardToUser(config, salesUserid, {
-              title: `订单待确认：${orderNo}`,
-              description: `客户：${customerName}\n业务：${bizSummary}\n请尽快确认订单信息`,
-              url: cardUrl,
-              btntxt: '去确认',
-            }),
-            '销售员卡片通知'
+          const card = buildTemplateCard(
+            '📋 订单待确认',
+            `订单号：${orderNo}\n请尽快确认订单信息`,
+            [
+              { keyname: '客户', value: customerName },
+              { keyname: '业务', value: bizSummary },
+              { keyname: '销售员', value: salesPerson || '未指定' },
+              ...(remark ? [{ keyname: '备注', value: remark }] : []),
+            ],
+            '去确认',
+            cardUrl,
+            orderNo
           );
+          await safeSend(
+            () => sendTemplateCardToUser(config, salesUserid, card),
+            '销售员模板卡片'
+          );
+        } else {
+          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知。请检查 users 表 wecom_userid 字段');
         }
       }
       break;
     }
 
     case 'salesConfirm': {
-      // 通知审核员
+      // ① 审核员模板卡片通知
       const approverUserid = config.booking_approver_userid;
       if (approverUserid) {
+        console.log(`[sendBookingNotification] 审核员企微userid=${approverUserid}, agent_id=${config.agent_id}`);
         const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
-        await safeSend(
-          () => sendTextCardToUser(config, approverUserid, {
-            title: `订单待审核：${orderNo}`,
-            description: `客户：${customerName}\n业务：${bizSummary}\n销售员已确认，请审核`,
-            url: cardUrl,
-            btntxt: '去审核',
-          }),
-          '审核员卡片通知'
+        const card = buildTemplateCard(
+          '📋 订单待审核',
+          `订单号：${orderNo}\n销售员已确认，请审核`,
+          [
+            { keyname: '客户', value: customerName },
+            { keyname: '业务', value: bizSummary },
+            { keyname: '销售员', value: salesPerson || '未指定' },
+            ...(remark ? [{ keyname: '备注', value: remark }] : []),
+          ],
+          '去审核',
+          cardUrl,
+          orderNo
         );
+        await safeSend(
+          () => sendTemplateCardToUser(config, approverUserid, card),
+          '审核员模板卡片'
+        );
+      } else {
+        console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知');
       }
-      // 预订群通知
+      // ② 预订群通知
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
         const md = `✅ **销售员已确认**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
+          remarkLine +
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
           `> 状态：待审核员审核`;
@@ -2688,48 +2743,65 @@ async function sendBookingNotification(type, order, extra = {}) {
     }
 
     case 'approve': {
-      // 预订群通知
+      // ① 预订群通知
       if (config.booking_webhook_url && config.booking_notify_approve !== 0) {
         const md = `✅ **订单已确认**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
+          remarkLine +
           `> 涉及业务：${bizSummary}\n` +
           `> 状态：已确认（已锁定，不可修改）`;
         await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
       }
-      // 通知销售员
-      let salesUserid = null;
-      if (order.sales_person_id) {
-        try {
-          const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
-          if (userRows.length > 0) salesUserid = userRows[0].wecom_userid;
-        } catch (e) { /* ignore */ }
-      }
+      // ② 销售员模板卡片通知
+      const salesUserid = await findSalesUserid();
       if (salesUserid) {
+        const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+        const card = buildTemplateCard(
+          '✅ 订单已确认',
+          `订单号：${orderNo}\n审核已通过`,
+          [
+            { keyname: '客户', value: customerName },
+            { keyname: '业务', value: bizSummary },
+            ...(remark ? [{ keyname: '备注', value: remark }] : []),
+          ],
+          '查看订单',
+          cardUrl,
+          orderNo
+        );
         await safeSend(
-          () => sendTextToUser(config, salesUserid, `订单 ${orderNo}（客户：${customerName}）已审核通过，已确认。`),
-          '销售员通知'
+          () => sendTemplateCardToUser(config, salesUserid, card),
+          '销售员确认通知'
         );
       }
       break;
     }
 
     case 'reject': {
-      // 通知销售员
+      // 通知销售员驳回
       if (config.booking_notify_reject !== 0) {
-        let salesUserid = null;
-        if (order.sales_person_id) {
-          try {
-            const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
-            if (userRows.length > 0) salesUserid = userRows[0].wecom_userid;
-          } catch (e) { /* ignore */ }
-        }
+        const salesUserid = await findSalesUserid();
         if (salesUserid) {
           const reason = extra.rejectionReason || '未填写原因';
+          const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+          const card = buildTemplateCard(
+            '❌ 订单被驳回',
+            `订单号：${orderNo}\n请修改后重新提交`,
+            [
+              { keyname: '客户', value: customerName },
+              { keyname: '业务', value: bizSummary },
+              { keyname: '驳回原因', value: reason },
+            ],
+            '查看详情',
+            cardUrl,
+            orderNo
+          );
           await safeSend(
-            () => sendTextToUser(config, salesUserid, `订单 ${orderNo}（客户：${customerName}）被驳回。\n原因：${reason}\n请修改后重新提交或取消订单。`),
+            () => sendTemplateCardToUser(config, salesUserid, card),
             '销售员驳回通知'
           );
+        } else {
+          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过驳回通知');
         }
       }
       break;
@@ -2738,6 +2810,7 @@ async function sendBookingNotification(type, order, extra = {}) {
     default:
       console.warn(`[sendBookingNotification] 未知通知类型: ${type}`);
   }
+  console.log(`[sendBookingNotification] 发送完成: type=${type}, orderNo=${orderNo}`);
 }
 
 module.exports = router;
