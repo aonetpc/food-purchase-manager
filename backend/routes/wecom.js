@@ -668,15 +668,28 @@ router.post('/test-booking-card', async (req, res) => {
       return res.status(400).json({ error: `企微配置不完整: corp_id=${!!config.corp_id}, app_secret=${!!config.app_secret}, agent_id=${config.agent_id}` });
     }
 
-    const { userid, content } = req.body || {};
-    if (!userid) return res.status(400).json({ error: '请提供 userid' });
+    const { userid, username, content } = req.body || {};
+    if (!userid && !username) return res.status(400).json({ error: '请提供 userid 或 username' });
 
-    console.log(`[test-booking-card] 开始: userid=${userid}, agent_id=${config.agent_id}, corp_id=${config.corp_id}`);
+    // 支持通过系统用户名查找企微userid
+    let targetUserid = userid;
+    if (!targetUserid && username) {
+      const [userRows] = await pool.query(
+        'SELECT id, username, name, wecom_userid FROM users WHERE username = ? LIMIT 1',
+        [username]
+      );
+      if (userRows.length === 0) return res.status(400).json({ error: `系统用户 ${username} 不存在` });
+      if (!userRows[0].wecom_userid) return res.status(400).json({ error: `用户 ${username} 未绑定企微账号` });
+      targetUserid = userRows[0].wecom_userid;
+      console.log(`[test-booking-card] 用户名 ${username} → 企微userid ${targetUserid}`);
+    }
+
+    console.log(`[test-booking-card] 开始: userid=${targetUserid}, agent_id=${config.agent_id}, corp_id=${config.corp_id}`);
 
     // 验证用户是否存在于企微
     try {
       const token = await getAccessToken(config);
-      const userRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token=${token}&userid=${userid}`);
+      const userRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token=${token}&userid=${targetUserid}`);
       const userData = await userRes.json();
       console.log(`[test-booking-card] 企微用户查询:`, JSON.stringify(userData));
       if (userData.errcode !== 0) {
@@ -708,12 +721,12 @@ router.post('/test-booking-card', async (req, res) => {
     };
 
     console.log(`[test-booking-card] 发送模板卡片:`, JSON.stringify(cardContent).substring(0, 500));
-    const result = await sendTemplateCardToUser(config, userid, cardContent);
+    const result = await sendTemplateCardToUser(config, targetUserid, cardContent);
     console.log(`[test-booking-card] 发送结果:`, JSON.stringify(result));
 
     res.json({
       success: true,
-      message: `模板卡片已发送到 ${userid}`,
+      message: `模板卡片已发送到 ${targetUserid}`,
       result,
       config: {
         corp_id: config.corp_id,
@@ -2684,12 +2697,22 @@ async function sendBookingNotification(type, order, extra = {}) {
 
   // 查找销售员企微userid（内部函数，各 case 复用）
   const findSalesUserid = async () => {
-    if (!order.sales_person_id) return null;
+    console.log(`[sendBookingNotification] findSalesUserid: sales_person_id=${order.sales_person_id}, sales_person=${order.sales_person}`);
+    if (!order.sales_person_id) {
+      console.warn('[sendBookingNotification] 订单无 sales_person_id，无法查找企微userid');
+      return null;
+    }
     try {
-      const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
-      if (userRows.length > 0 && userRows[0].wecom_userid) return userRows[0].wecom_userid;
+      const [userRows] = await pool.query('SELECT id, username, name, wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
+      console.log(`[sendBookingNotification] findSalesUserid 查询结果: rows.length=${userRows.length}`);
+      if (userRows.length > 0) {
+        const u = userRows[0];
+        console.log(`[sendBookingNotification] 销售员信息: id=${u.id}, username=${u.username}, name=${u.name}, wecom_userid=${u.wecom_userid}`);
+        if (u.wecom_userid) return u.wecom_userid;
+      }
+      console.warn(`[sendBookingNotification] 销售员 wecom_userid 为空，无法发送应用消息`);
     } catch (e) {
-      console.warn('[sendBookingNotification] 查询销售员企微ID失败:', e.message);
+      console.error('[sendBookingNotification] 查询销售员企微ID失败:', e.message);
     }
     return null;
   };
@@ -2698,7 +2721,7 @@ async function sendBookingNotification(type, order, extra = {}) {
   const safeSend = async (fn, label) => {
     try {
       const result = await fn();
-      console.log(`[sendBookingNotification] ${label} 成功:`, result?.msgid || result?.response_code || 'ok');
+      console.log(`[sendBookingNotification] ${label} 成功:`, JSON.stringify(result));
       return result;
     } catch (err) {
       console.error(`[sendBookingNotification] ${label} 失败:`, err.message);
@@ -2728,6 +2751,8 @@ async function sendBookingNotification(type, order, extra = {}) {
   };
 
   console.log(`[sendBookingNotification] 开始发送: type=${type}, orderNo=${orderNo}, customer=${customerName}`);
+  console.log(`[sendBookingNotification] 企微配置: corp_id=${config.corp_id}, agent_id=${config.agent_id}, app_secret=${config.app_secret ? '已配置' : '未配置'}`);
+  console.log(`[sendBookingNotification] 通知开关: notify_submit=${config.booking_notify_submit}, notify_sales=${config.booking_notify_sales}, notify_approver=${config.booking_notify_approver}, approve=${config.booking_notify_approve}, reject=${config.booking_notify_reject}`);
 
   switch (type) {
     case 'submit': {
@@ -2740,9 +2765,10 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
           `> 状态：待销售员确认`;
-        await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+          await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
       }
       // ② 销售员模板卡片通知
+      console.log(`[sendBookingNotification] submit: notify_sales=${config.booking_notify_sales}, sales_person_id=${order.sales_person_id}`);
       if (config.booking_notify_sales !== 0) {
         const salesUserid = await findSalesUserid();
         if (salesUserid) {
@@ -2761,6 +2787,8 @@ async function sendBookingNotification(type, order, extra = {}) {
             cardUrl,
             orderNo
           );
+          console.log(`[sendBookingNotification] 发送销售员模板卡片: userid=${salesUserid}, agent_id=${config.agent_id}`);
+          console.log(`[sendBookingNotification] 卡片内容:`, JSON.stringify(card).substring(0, 400));
           await safeSend(
             () => sendTemplateCardToUser(config, salesUserid, card),
             '销售员模板卡片'
@@ -2775,8 +2803,9 @@ async function sendBookingNotification(type, order, extra = {}) {
     case 'salesConfirm': {
       // ① 审核员模板卡片通知
       const approverUserid = config.booking_approver_userid;
+      console.log(`[sendBookingNotification] salesConfirm: approver_userid=${approverUserid}`);
       if (approverUserid) {
-        console.log(`[sendBookingNotification] 审核员企微userid=${approverUserid}, agent_id=${config.agent_id}`);
+        console.log(`[sendBookingNotification] 发送审核员模板卡片: userid=${approverUserid}, agent_id=${config.agent_id}`);
         const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
         const card = buildTemplateCard(
           '📋 订单待审核',
@@ -2791,6 +2820,7 @@ async function sendBookingNotification(type, order, extra = {}) {
           cardUrl,
           orderNo
         );
+        console.log(`[sendBookingNotification] 卡片内容:`, JSON.stringify(card).substring(0, 400));
         await safeSend(
           () => sendTemplateCardToUser(config, approverUserid, card),
           '审核员模板卡片'
