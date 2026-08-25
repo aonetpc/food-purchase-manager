@@ -2695,15 +2695,52 @@ async function sendBookingNotification(type, order, extra = {}) {
   const remarkLine = remark ? `> 备注：${remark}\n` : '';
   const frontEndBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL || '';
 
-  // 查找销售员企微userid（优先使用订单已存的快照，不再查users表）
+  // 查找销售员企微userid：优先订单快照 → 兜底查users表
   const findSalesUserid = async () => {
     console.log(`[sendBookingNotification] findSalesUserid: sales_wecom_userid=${order.sales_wecom_userid}, sales_person_id=${order.sales_person_id}, sales_person=${order.sales_person}`);
-    // 直接使用订单中已存的企微userid快照
+    
+    // 优先使用订单中已存的企微userid快照
     if (order.sales_wecom_userid) {
       console.log(`[sendBookingNotification] 使用订单快照 sales_wecom_userid=${order.sales_wecom_userid}`);
       return order.sales_wecom_userid;
     }
-    console.warn('[sendBookingNotification] 订单未存储 sales_wecom_userid，跳过应用通知。请检查创建订单时是否传入该字段');
+    
+    // 兜底：通过 sales_person_id 查 users 表获取 wecom_userid（兼容旧订单）
+    if (order.sales_person_id) {
+      try {
+        const [userRows] = await pool.query(
+          'SELECT wecom_userid, username, name FROM users WHERE id = ? LIMIT 1',
+          [order.sales_person_id]
+        );
+        if (userRows.length > 0 && userRows[0].wecom_userid) {
+          const uid = userRows[0].wecom_userid;
+          console.log(`[sendBookingNotification] 兜底查找: sales_person_id=${order.sales_person_id} → wecom_userid=${uid} (username=${userRows[0].username}, name=${userRows[0].name})`);
+          return uid;
+        }
+        console.warn(`[sendBookingNotification] 销售员 ${userRows[0]?.username || '未知'} (${userRows[0]?.name || ''}) 的 wecom_userid 为空，请在用户管理页绑定企微账号`);
+      } catch (e) {
+        console.error('[sendBookingNotification] 兜底查询失败:', e.message);
+      }
+    }
+    
+    // 最后兜底：按销售员姓名查 users 表（兼容没有 sales_person_id 的历史数据）
+    if (order.sales_person) {
+      try {
+        const [userRows] = await pool.query(
+          'SELECT id, username, name, wecom_userid FROM users WHERE name = ? AND role_id IN (SELECT id FROM roles WHERE code = "sales") LIMIT 1',
+          [order.sales_person]
+        );
+        if (userRows.length > 0 && userRows[0].wecom_userid) {
+          console.log(`[sendBookingNotification] 按姓名兜底: ${order.sales_person} → wecom_userid=${userRows[0].wecom_userid}`);
+          return userRows[0].wecom_userid;
+        }
+        console.warn(`[sendBookingNotification] 按姓名 ${order.sales_person} 未找到有 wecom_userid 的销售员`);
+      } catch (e) {
+        console.error('[sendBookingNotification] 按姓名兜底查询失败:', e.message);
+      }
+    }
+    
+    console.warn('[sendBookingNotification] 无法获取销售员企微userid，跳过应用通知');
     return null;
   };
 
