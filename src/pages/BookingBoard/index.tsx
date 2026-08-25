@@ -528,6 +528,13 @@ function DetailModal({
   onEdit,
   canOperate,
   onSetTemplate,
+  onSubmit,
+  onSalesConfirm,
+  onWithdraw,
+  onApprove,
+  onReject,
+  onComplete,
+  authUser,
 }: {
   order: BookingOrder;
   onClose: () => void;
@@ -535,9 +542,17 @@ function DetailModal({
   onEdit: () => void;
   canOperate: boolean;
   onSetTemplate: (orderId: string, customerName: string) => void;
+  onSubmit: (order: BookingOrder) => void;
+  onSalesConfirm: (order: BookingOrder) => void;
+  onWithdraw: (order: BookingOrder) => void;
+  onApprove: (order: BookingOrder) => void;
+  onReject: (order: BookingOrder) => void;
+  onComplete: (order: BookingOrder) => void;
+  authUser: any;
 }) {
+  // 仅 pending 和 rejected 状态可编辑
   const canEdit = canOperate &&
-    (order.status === 'pending' || order.status === 'reviewing' || order.status === 'confirmed');
+    (order.status === 'pending' || order.status === 'rejected');
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
   const toast = useToast();
@@ -992,22 +1007,35 @@ function DetailModal({
           <div>
             <div className="text-[11px] text-gray-500 mb-2">状态时间线</div>
             <div className="space-y-1.5">
-              <TimelineItem label="提交订单" time={order.createdAt} state="done" />
+              <TimelineItem label="创建订单" time={order.createdAt} state="done" />
               {order.status === 'pending' && (
-                <TimelineItem label="预测单" time="等待中" state="active" />
+                <TimelineItem label="预测单" time="待提交" state="active" />
               )}
-              {(order.status === 'reviewing' || order.status === 'rejected') && (
+              {order.status === 'sales_confirming' && (
+                <TimelineItem label="待销售员确认" time="等待中" state="active" />
+              )}
+              {order.status === 'reviewing' && (
+                <TimelineItem label="待审核员审核" time="等待中" state="active" />
+              )}
+              {order.status === 'rejected' && (
                 <TimelineItem
-                  label={order.status === 'rejected' ? '审批中（已驳回）' : '审批中'}
-                  time={order.status === 'rejected' ? `审核人：${order.rejectedBy || '-'}` : '等待审批'}
-                  state={order.status === 'rejected' ? 'danger' : 'active'}
-                  note={order.status === 'rejected' ? order.rejectReason : undefined}
+                  label="已驳回（可修改重提）"
+                  time={order.rejectedBy ? `驳回人：${order.rejectedBy}` : '已驳回'}
+                  state="danger"
+                  note={order.rejectReason}
                 />
               )}
-              {(order.status === 'confirmed' || order.status === 'completed') && (
+              {order.status === 'confirmed' && (
                 <TimelineItem
-                  label="已确认"
+                  label="已确认（已锁定）"
                   time={order.confirmedAt || '已确认'}
+                  state="done"
+                />
+              )}
+              {order.status === 'completed' && (
+                <TimelineItem
+                  label="已完成"
+                  time={order.confirmedAt || '已完成'}
                   state="done"
                 />
               )}
@@ -1703,9 +1731,24 @@ function DetailModal({
         )}
 
         {/* 底部按钮 */}
-        <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white">
-          {canOperate && (
+        <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white flex-wrap">
+          {/* pending / rejected: 预订员可编辑 + 提交确认 */}
+          {(order.status === 'pending' || order.status === 'rejected') && canOperate && (
             <>
+              <button
+                type="button"
+                onClick={onEdit}
+                className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
+              >
+                修改此单
+              </button>
+              <button
+                type="button"
+                onClick={() => onSubmit(order)}
+                className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium"
+              >
+                提交确认
+              </button>
               <button
                 type="button"
                 onClick={onCopy}
@@ -1722,15 +1765,74 @@ function DetailModal({
               </button>
             </>
           )}
-          {canEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
-            >
-              修改此单
-            </button>
+
+          {/* sales_confirming: 预订员可撤回，销售员可确认 */}
+          {order.status === 'sales_confirming' && (
+            <>
+              {canOperate && (
+                <button
+                  type="button"
+                  onClick={() => onWithdraw(order)}
+                  className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100"
+                >
+                  撤回修改
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onSalesConfirm(order)}
+                className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium"
+              >
+                销售员确认
+              </button>
+            </>
           )}
+
+          {/* reviewing: 审核员可审核通过/驳回 */}
+          {order.status === 'reviewing' && (
+            <>
+              <button
+                type="button"
+                onClick={() => onApprove(order)}
+                className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
+              >
+                审核通过
+              </button>
+              <button
+                type="button"
+                onClick={() => onReject(order)}
+                className="px-3 py-1.5 text-xs rounded bg-red-500 hover:bg-red-600 text-white font-medium"
+              >
+                驳回
+              </button>
+            </>
+          )}
+
+          {/* confirmed: 可标记完成（锁定不可编辑） */}
+          {order.status === 'confirmed' && (
+            <>
+              <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
+                🔒 已确认·不可修改
+              </span>
+              {canOperate && (
+                <button
+                  type="button"
+                  onClick={() => onComplete(order)}
+                  className="px-3 py-1.5 text-xs rounded bg-indigo-500 hover:bg-indigo-600 text-white font-medium"
+                >
+                  标记完成
+                </button>
+              )}
+            </>
+          )}
+
+          {/* completed: 只读 */}
+          {order.status === 'completed' && (
+            <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
+              ✓ 已完成
+            </span>
+          )}
+
           <button
             type="button"
             onClick={onClose}
@@ -1782,6 +1884,9 @@ export default function BookingBoard() {
   // 设为模板弹窗
   const [showSetTemplate, setShowSetTemplate] = useState<null | string>(null);
   const [templateNameInput, setTemplateNameInput] = useState('');
+  // 驳回原因弹窗
+  const [rejectModal, setRejectModal] = useState<BookingOrder | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   // ============ 历史订单搜索辅助函数 ============
   const doSearch = useCallback(async (page: number = 1) => {
@@ -2025,6 +2130,92 @@ export default function BookingBoard() {
       },
     });
   };
+
+  // ============ 审批流程操作 ============
+  const refreshOrderAfterAction = useCallback(async (updatedOrder: BookingApiOrder) => {
+    const adapted = adaptOrder(updatedOrder);
+    orderUuidMap.current[adapted.id] = updatedOrder.id;
+    setOrders(prev => prev.map(o => o.id === adapted.id ? adapted : o));
+    setSelectedOrder(adapted);
+  }, []);
+
+  const handleSubmit = useCallback(async (order: BookingOrder) => {
+    const uuid = orderUuidMap.current[order.id] || order.id;
+    try {
+      const updated = await bookingApi.submitOrder(uuid);
+      await refreshOrderAfterAction(updated);
+      toast.success('订单已提交，等待销售员确认');
+    } catch (e) {
+      toast.error('提交失败: ' + (e as Error).message);
+    }
+  }, [refreshOrderAfterAction, toast]);
+
+  const handleSalesConfirm = useCallback(async (order: BookingOrder) => {
+    const uuid = orderUuidMap.current[order.id] || order.id;
+    try {
+      const updated = await bookingApi.salesConfirmOrder(uuid);
+      await refreshOrderAfterAction(updated);
+      toast.success('已确认，等待审核员审核');
+    } catch (e) {
+      toast.error('确认失败: ' + (e as Error).message);
+    }
+  }, [refreshOrderAfterAction, toast]);
+
+  const handleWithdraw = useCallback(async (order: BookingOrder) => {
+    const uuid = orderUuidMap.current[order.id] || order.id;
+    try {
+      const updated = await bookingApi.withdrawOrder(uuid);
+      await refreshOrderAfterAction(updated);
+      toast.success('已撤回，可修改后重新提交');
+    } catch (e) {
+      toast.error('撤回失败: ' + (e as Error).message);
+    }
+  }, [refreshOrderAfterAction, toast]);
+
+  const handleApprove = useCallback(async (order: BookingOrder) => {
+    const uuid = orderUuidMap.current[order.id] || order.id;
+    try {
+      const updated = await bookingApi.approveOrder(uuid);
+      await refreshOrderAfterAction(updated);
+      toast.success('审核通过，订单已确认');
+    } catch (e) {
+      toast.error('审核失败: ' + (e as Error).message);
+    }
+  }, [refreshOrderAfterAction, toast]);
+
+  const handleRejectClick = useCallback((order: BookingOrder) => {
+    setRejectModal(order);
+    setRejectReason('');
+  }, []);
+
+  const handleRejectConfirm = useCallback(async () => {
+    if (!rejectModal) return;
+    if (!rejectReason.trim()) {
+      toast.error('请填写驳回原因');
+      return;
+    }
+    const uuid = orderUuidMap.current[rejectModal.id] || rejectModal.id;
+    try {
+      const updated = await bookingApi.rejectOrder(uuid, rejectReason.trim());
+      await refreshOrderAfterAction(updated);
+      toast.success('已驳回');
+      setRejectModal(null);
+      setRejectReason('');
+    } catch (e) {
+      toast.error('驳回失败: ' + (e as Error).message);
+    }
+  }, [rejectModal, rejectReason, refreshOrderAfterAction, toast]);
+
+  const handleComplete = useCallback(async (order: BookingOrder) => {
+    const uuid = orderUuidMap.current[order.id] || order.id;
+    try {
+      const updated = await bookingApi.completeOrder(uuid);
+      await refreshOrderAfterAction(updated);
+      toast.success('订单已标记完成');
+    } catch (e) {
+      toast.error('操作失败: ' + (e as Error).message);
+    }
+  }, [refreshOrderAfterAction, toast]);
 
   // 统计卡片（3 类：预测单、审批中、已确认）
   const stats = useMemo(() => {
@@ -2542,7 +2733,65 @@ export default function BookingBoard() {
             setShowSetTemplate(orderId);
             setTemplateNameInput(customerName);
           }}
+          onSubmit={handleSubmit}
+          onSalesConfirm={handleSalesConfirm}
+          onWithdraw={handleWithdraw}
+          onApprove={handleApprove}
+          onReject={handleRejectClick}
+          onComplete={handleComplete}
+          authUser={authUser}
         />
+      )}
+
+      {/* ============ 驳回原因弹窗 ============ */}
+      {rejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setRejectModal(null)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+              <h3 className="text-base font-semibold text-gray-900">驳回订单审核</h3>
+              <button onClick={() => setRejectModal(null)} className="p-1 rounded hover:bg-gray-100">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="text-xs text-gray-500">
+                <div>订单号：{rejectModal.id}</div>
+                <div>客户：{rejectModal.customerName}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  驳回原因 <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rejectReason}
+                  onChange={e => setRejectReason(e.target.value)}
+                  rows={4}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                  placeholder="请填写驳回原因..."
+                  autoFocus
+                />
+              </div>
+              <div className="text-xs text-amber-600 bg-amber-50 rounded p-2 border border-amber-100">
+                ⚠️ 驳回后销售员可修改重新提交，或取消订单
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-200">
+              <button
+                onClick={() => setRejectModal(null)}
+                className="px-4 py-1.5 text-sm rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleRejectConfirm}
+                className="px-4 py-1.5 text-sm rounded bg-red-500 hover:bg-red-600 text-white font-medium"
+              >
+                确认驳回
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ============ 业务常量配置弹窗 ============ */}

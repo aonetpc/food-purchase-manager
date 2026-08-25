@@ -26,6 +26,13 @@ interface WecomConfig {
   warehouse_approval_template_id?: string;
   warehouse_field_mapping?: Record<string, string>;
   warehouse_dept_options?: Array<{ key: string; text: string }>;
+  booking_webhook_url?: string;
+  booking_notify_submit?: number;
+  booking_notify_sales?: number;
+  booking_notify_approve?: number;
+  booking_notify_reject?: number;
+  booking_approver_userid?: string;
+  booking_approver_name?: string;
 }
 
 interface TemplateControl {
@@ -540,6 +547,121 @@ export default function WecomManager() {
                 </button>
               </div>
             </div>
+        </div>
+      </div>
+
+      {/* 区块：预订审批通知配置 */}
+      <div className="card">
+        <div className="flex items-center gap-2 mb-4">
+          <MessageSquare size={20} className="text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-800">预订审批通知配置</h2>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              预订群机器人 Webhook URL
+            </label>
+            <input
+              type="text"
+              value={getFieldValue('booking_webhook_url')}
+              onChange={(e) => setFieldValue('booking_webhook_url', e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              📌 预订群机器人用于发送订单提交通知、审核通过通知等
+            </p>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">通知开关</h3>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={getFieldValue('booking_notify_submit') !== 0}
+                  onChange={(e) => setFieldValue('booking_notify_submit', e.target.checked ? 1 : 0)}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-600">提交订单时通知预订群</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={getFieldValue('booking_notify_sales') !== 0}
+                  onChange={(e) => setFieldValue('booking_notify_sales', e.target.checked ? 1 : 0)}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-600">提交订单时通知销售员</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={getFieldValue('booking_notify_approve') !== 0}
+                  onChange={(e) => setFieldValue('booking_notify_approve', e.target.checked ? 1 : 0)}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-600">审核通过时通知预订群</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={getFieldValue('booking_notify_reject') !== 0}
+                  onChange={(e) => setFieldValue('booking_notify_reject', e.target.checked ? 1 : 0)}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-600">驳回时通知销售员</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">固定审核员</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">企微UserID</label>
+                <input
+                  type="text"
+                  value={getFieldValue('booking_approver_userid')}
+                  onChange={(e) => setFieldValue('booking_approver_userid', e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="如：ZhangSan"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">姓名（显示用）</label>
+                <input
+                  type="text"
+                  value={getFieldValue('booking_approver_name')}
+                  onChange={(e) => setFieldValue('booking_approver_name', e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="如：张三"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              📌 固定审核员用于接收订单待审核通知，所有预订订单统一由此审核员审核
+            </p>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={() => saveSection('预订审批通知', {
+                booking_webhook_url: getFieldValue('booking_webhook_url'),
+                booking_notify_submit: getFieldValue('booking_notify_submit') !== 0 ? 1 : 0,
+                booking_notify_sales: getFieldValue('booking_notify_sales') !== 0 ? 1 : 0,
+                booking_notify_approve: getFieldValue('booking_notify_approve') !== 0 ? 1 : 0,
+                booking_notify_reject: getFieldValue('booking_notify_reject') !== 0 ? 1 : 0,
+                booking_approver_userid: getFieldValue('booking_approver_userid'),
+                booking_approver_name: getFieldValue('booking_approver_name'),
+              })}
+              disabled={sectionStatus['预订审批通知'] === 'saving'}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {sectionStatus['预订审批通知'] === 'saving' ? '保存中...' : sectionStatus['预订审批通知'] === 'saved' ? '已保存' : '保存配置'}
+              {sectionStatus['预订审批通知'] !== 'saving' && <Save size={16} />}
+            </button>
+          </div>
         </div>
       </div>
 

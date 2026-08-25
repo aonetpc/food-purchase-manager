@@ -1,5 +1,5 @@
 // 订单状态
-export type OrderStatus = 'pending' | 'reviewing' | 'confirmed' | 'rejected' | 'completed';
+export type OrderStatus = 'pending' | 'sales_confirming' | 'reviewing' | 'confirmed' | 'rejected' | 'completed';
 
 // UI 展示用的 3 类状态（预测单 / 审批中 / 已确认）
 export type DisplayStatus = 'pending' | 'reviewing' | 'confirmed';

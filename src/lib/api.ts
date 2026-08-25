@@ -406,25 +406,37 @@ export const bookingApi = {
     return fromBackend(res.data);
   },
 
-  // 提交审核
+  // 提交确认（pending → sales_confirming）
   async submitOrder(id: string): Promise<BookingApiOrder> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/submit`, {});
     return fromBackend(res.data);
   },
 
-  // 审核通过
+  // 销售员确认（sales_confirming → reviewing）
+  async salesConfirmOrder(id: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/sales-confirm`, {});
+    return fromBackend(res.data);
+  },
+
+  // 撤回（sales_confirming → pending）
+  async withdrawOrder(id: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/withdraw`, {});
+    return fromBackend(res.data);
+  },
+
+  // 审核通过（reviewing → confirmed）
   async approveOrder(id: string): Promise<BookingApiOrder> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/approve`, {});
     return fromBackend(res.data);
   },
 
-  // 驳回
+  // 驳回（sales_confirming/reviewing → rejected）
   async rejectOrder(id: string, rejectionReason: string): Promise<BookingApiOrder> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/reject`, { rejectionReason });
     return fromBackend(res.data);
   },
 
-  // 标记完成
+  // 标记完成（confirmed → completed）
   async completeOrder(id: string): Promise<BookingApiOrder> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/complete`, {});
     return fromBackend(res.data);

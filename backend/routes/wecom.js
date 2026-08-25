@@ -580,7 +580,10 @@ router.put('/config', async (req, res) => {
       callback_token, callback_aes_key, app_domain,
       query_agent_id, query_app_secret,
       wx_app_id, wx_app_secret,
-      warehouse_approval_template_id, warehouse_field_mapping, warehouse_dept_options
+      warehouse_approval_template_id, warehouse_field_mapping, warehouse_dept_options,
+      booking_webhook_url, booking_notify_submit, booking_notify_sales,
+      booking_notify_approve, booking_notify_reject,
+      booking_approver_userid, booking_approver_name
     } = req.body;
 
     await pool.query('INSERT IGNORE INTO wecom_config (id) VALUES (1)');
@@ -611,6 +614,13 @@ router.put('/config', async (req, res) => {
     if (warehouse_approval_template_id !== undefined) { fields.push('warehouse_approval_template_id = ?'); values.push(warehouse_approval_template_id || null); }
     if (warehouse_field_mapping !== undefined) { fields.push('warehouse_field_mapping = ?'); values.push(warehouse_field_mapping ? JSON.stringify(warehouse_field_mapping) : null); }
     if (warehouse_dept_options !== undefined) { fields.push('warehouse_dept_options = ?'); values.push(warehouse_dept_options ? JSON.stringify(warehouse_dept_options) : null); }
+    if (booking_webhook_url !== undefined) { fields.push('booking_webhook_url = ?'); values.push(booking_webhook_url || null); }
+    if (booking_notify_submit !== undefined) { fields.push('booking_notify_submit = ?'); values.push(Number(booking_notify_submit) || 0); }
+    if (booking_notify_sales !== undefined) { fields.push('booking_notify_sales = ?'); values.push(Number(booking_notify_sales) || 0); }
+    if (booking_notify_approve !== undefined) { fields.push('booking_notify_approve = ?'); values.push(Number(booking_notify_approve) || 0); }
+    if (booking_notify_reject !== undefined) { fields.push('booking_notify_reject = ?'); values.push(Number(booking_notify_reject) || 0); }
+    if (booking_approver_userid !== undefined) { fields.push('booking_approver_userid = ?'); values.push(booking_approver_userid || null); }
+    if (booking_approver_name !== undefined) { fields.push('booking_approver_name = ?'); values.push(booking_approver_name || null); }
 
     if (fields.length > 0) {
       values.push(1);
@@ -2559,6 +2569,177 @@ router.post('/callback', async (req, res) => {
   }
 });
 
+// ================================================
+// 预订审批流程专用通知函数
+// ================================================
+
+/**
+ * 构建订单业务摘要文本
+ */
+function buildBizSummary(items) {
+  if (!items || !items.length) return '无业务项目';
+  const bizMap = {
+    checkup: '体检', lodging: '住宿', breakfast: '早餐',
+    lunch: '午餐', dinner: '晚餐', meeting: '会务',
+    wellness: '康乐', carpickup: '用车',
+  };
+  const bizSet = new Set();
+  for (const it of items) {
+    const label = bizMap[it.item_type] || it.item_type;
+    bizSet.add(label);
+  }
+  return Array.from(bizSet).join('、');
+}
+
+/**
+ * 发送预订审批通知（统一入口）
+ * @param {string} type - 通知类型：submit/salesConfirm/approve/reject
+ * @param {object} order - 订单完整数据（含 items）
+ * @param {object} extra - 附加数据（如 rejectionReason）
+ */
+async function sendBookingNotification(type, order, extra = {}) {
+  const config = await getWecomConfig();
+  if (!config) {
+    console.warn('[sendBookingNotification] wecom_config 未配置，跳过通知');
+    return;
+  }
+
+  const orderNo = order.order_no || order.id;
+  const customerName = order.customer_name || '未知客户';
+  const bizSummary = buildBizSummary(order.items);
+  const salesPerson = order.sales_person || '';
+  const frontEndBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL || '';
+
+  // 通知失败不抛错，只记录日志
+  const safeSend = async (fn, label) => {
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`[sendBookingNotification] ${label} 失败:`, err.message);
+    }
+  };
+
+  switch (type) {
+    case 'submit': {
+      // ① 预订群通知
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const md = `📋 **已有新订单**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 状态：待销售员确认`;
+        await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+      }
+      // ② 销售员个人通知（模板卡片，带跳转）
+      if (config.booking_notify_sales !== 0) {
+        // 查找销售员的企微userid
+        let salesUserid = null;
+        if (order.sales_person_id) {
+          try {
+            const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
+            if (userRows.length > 0) salesUserid = userRows[0].wecom_userid;
+          } catch (e) {
+            console.warn('[sendBookingNotification] 查询销售员企微ID失败:', e.message);
+          }
+        }
+        if (salesUserid) {
+          const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+          await safeSend(
+            () => sendTextCardToUser(config, salesUserid, {
+              title: `订单待确认：${orderNo}`,
+              description: `客户：${customerName}\n业务：${bizSummary}\n请尽快确认订单信息`,
+              url: cardUrl,
+              btntxt: '去确认',
+            }),
+            '销售员卡片通知'
+          );
+        }
+      }
+      break;
+    }
+
+    case 'salesConfirm': {
+      // 通知审核员
+      const approverUserid = config.booking_approver_userid;
+      if (approverUserid) {
+        const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+        await safeSend(
+          () => sendTextCardToUser(config, approverUserid, {
+            title: `订单待审核：${orderNo}`,
+            description: `客户：${customerName}\n业务：${bizSummary}\n销售员已确认，请审核`,
+            url: cardUrl,
+            btntxt: '去审核',
+          }),
+          '审核员卡片通知'
+        );
+      }
+      // 预订群通知
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const md = `✅ **销售员已确认**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 状态：待审核员审核`;
+        await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+      }
+      break;
+    }
+
+    case 'approve': {
+      // 预订群通知
+      if (config.booking_webhook_url && config.booking_notify_approve !== 0) {
+        const md = `✅ **订单已确认**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 状态：已确认（已锁定，不可修改）`;
+        await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+      }
+      // 通知销售员
+      let salesUserid = null;
+      if (order.sales_person_id) {
+        try {
+          const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
+          if (userRows.length > 0) salesUserid = userRows[0].wecom_userid;
+        } catch (e) { /* ignore */ }
+      }
+      if (salesUserid) {
+        await safeSend(
+          () => sendTextToUser(config, salesUserid, `订单 ${orderNo}（客户：${customerName}）已审核通过，已确认。`),
+          '销售员通知'
+        );
+      }
+      break;
+    }
+
+    case 'reject': {
+      // 通知销售员
+      if (config.booking_notify_reject !== 0) {
+        let salesUserid = null;
+        if (order.sales_person_id) {
+          try {
+            const [userRows] = await pool.query('SELECT wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
+            if (userRows.length > 0) salesUserid = userRows[0].wecom_userid;
+          } catch (e) { /* ignore */ }
+        }
+        if (salesUserid) {
+          const reason = extra.rejectionReason || '未填写原因';
+          await safeSend(
+            () => sendTextToUser(config, salesUserid, `订单 ${orderNo}（客户：${customerName}）被驳回。\n原因：${reason}\n请修改后重新提交或取消订单。`),
+            '销售员驳回通知'
+          );
+        }
+      }
+      break;
+    }
+
+    default:
+      console.warn(`[sendBookingNotification] 未知通知类型: ${type}`);
+  }
+}
+
 module.exports = router;
 module.exports.getWecomConfig = getWecomConfig;
 module.exports.getAccessToken = getAccessToken;
@@ -2573,3 +2754,6 @@ module.exports.getWecomUserName = getWecomUserName;
 module.exports.sendTemplateCardToUser = sendTemplateCardToUser;
 module.exports.updateTemplateCardButton = updateTemplateCardButton;
 module.exports.sendTextViaWebhook = sendTextViaWebhook;
+module.exports.sendTextToUser = sendTextToUser;
+module.exports.sendMarkdownToUser = sendMarkdownToUser;
+module.exports.sendBookingNotification = sendBookingNotification;

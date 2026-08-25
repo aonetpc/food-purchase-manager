@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
+const { sendBookingNotification } = require('./wecom');
 
 // ------------------------------------------------------------
 // 工具：JSON 字段兼容（mysql2 有些版本 JSON 返回 string）
@@ -208,7 +209,9 @@ const BIZ_MAP = {
   carpickup: { label: '用车' },
 };
 
-const EDITABLE_STATUS = ['pending', 'reviewing', 'confirmed'];
+// 可编辑状态：仅 pending（草稿）和 rejected（驳回后可修改）
+// sales_confirming/reviewing/confirmed/completed 均不可直接编辑
+const EDITABLE_STATUS = ['pending', 'rejected'];
 
 // ============================================================
 // GET /api/booking/config  业务常量（套餐/房型/会议厅/康乐）
@@ -275,9 +278,23 @@ router.get('/config', requireAuth, async (_req, res) => {
       }
     }
 
+    // 预订审批配置（固定审核员）
+    let bookingApprover = null;
+    try {
+      const [wecomCfgRows] = await pool.query('SELECT booking_approver_userid, booking_approver_name FROM wecom_config WHERE id = 1 LIMIT 1');
+      if (wecomCfgRows.length > 0 && wecomCfgRows[0].booking_approver_userid) {
+        bookingApprover = {
+          userid: wecomCfgRows[0].booking_approver_userid,
+          name: wecomCfgRows[0].booking_approver_name || '',
+        };
+      }
+    } catch (e) {
+      // wecom_config 表或字段可能不存在（迁移未执行时）
+    }
+
     res.json({
       ok: true,
-      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, checkupItems, salesUsers },
+      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, checkupItems, salesUsers, bookingApprover },
     });
   } catch (e) {
     console.error('[booking config] error:', e);
@@ -1351,22 +1368,81 @@ router.post('/orders/:id/duplicate', requireAuth, requireBookingWrite, async (re
   }
 });
 
-// POST /api/booking/orders/:id/submit   提交审核：pending → reviewing
+// POST /api/booking/orders/:id/submit   提交确认：pending → sales_confirming
 router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const orderId = req.params.id;
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (o.status !== 'pending') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能提交` });
+    // 允许 pending 和 rejected 状态提交
+    if (!['pending', 'rejected'].includes(o.status)) {
+      return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能提交` });
+    }
 
-    await pool.query("UPDATE booking_orders SET status = 'reviewing' WHERE id = ?", [orderId]);
-    logOperation(req, '预订订单', '提交审核', `订单号=${o.order_no}`, orderId);
+    await pool.query("UPDATE booking_orders SET status = 'sales_confirming' WHERE id = ?", [orderId]);
+    logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
+
+    const order = await readOrderFull(orderId);
+    // 异步发送企微通知（不阻塞响应）
+    sendBookingNotification('submit', order).catch(e => console.error('[booking submit notify] error:', e));
+    res.json({ ok: true, data: order });
+  } catch (e) {
+    console.error('[booking submit] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/booking/orders/:id/sales-confirm  销售员确认：sales_confirming → reviewing
+router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async (req, res) => {
+  try {
+    const user = req.user || {};
+    const orderId = req.params.id;
+    const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
+    const o = rows[0];
+    if (o.status !== 'sales_confirming') {
+      return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能确认` });
+    }
+
+    await pool.query(`
+      UPDATE booking_orders SET
+        status = 'reviewing',
+        sales_confirmed_at = NOW(),
+        sales_confirmed_by = ?,
+        sales_confirmed_by_name = ?
+      WHERE id = ?
+    `, [user.id || null, user.name || user.realName || user.displayName || null, orderId]);
+    logOperation(req, '预订订单', '销售员确认', `订单号=${o.order_no} 确认人=${user.name || user.id}`, orderId);
+
+    const order = await readOrderFull(orderId);
+    // 异步通知审核员
+    sendBookingNotification('salesConfirm', order).catch(e => console.error('[booking sales-confirm notify] error:', e));
+    res.json({ ok: true, data: order });
+  } catch (e) {
+    console.error('[booking sales-confirm] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/booking/orders/:id/withdraw  撤回：sales_confirming → pending
+router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
+    const o = rows[0];
+    if (o.status !== 'sales_confirming') {
+      return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能撤回` });
+    }
+
+    await pool.query("UPDATE booking_orders SET status = 'pending' WHERE id = ?", [orderId]);
+    logOperation(req, '预订订单', '撤回', `订单号=${o.order_no}`, orderId);
 
     const order = await readOrderFull(orderId);
     res.json({ ok: true, data: order });
   } catch (e) {
-    console.error('[booking submit] error:', e);
+    console.error('[booking withdraw] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -1389,6 +1465,8 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     logOperation(req, '预订订单', '审核通过', `订单号=${o.order_no} 审核人=${user.name || user.id}`, orderId);
 
     const order = await readOrderFull(orderId);
+    // 异步通知预订群+销售员
+    sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking approve] error:', e);
@@ -1397,8 +1475,8 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
 });
 
 // POST /api/booking/orders/:id/reject   驳回
-//   pending   → rejected（销售员自己驳回）
-//   reviewing → rejected（总经理驳回）
+//   sales_confirming → rejected（销售员驳回/撤回修改）
+//   reviewing → rejected（审核员驳回）
 router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const user = req.user || {};
@@ -1406,7 +1484,7 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (!['pending', 'reviewing'].includes(o.status)) {
+    if (!['sales_confirming', 'reviewing'].includes(o.status)) {
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能驳回` });
     }
     const rejectionReason = (req.body && req.body.rejectionReason) || '未填驳回原因';
@@ -1425,6 +1503,10 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
     logOperation(req, '预订订单', '驳回', `订单号=${o.order_no} 原因=${rejectionReason}`, orderId);
 
     const order = await readOrderFull(orderId);
+    // 异步通知销售员（仅审核员驳回时通知）
+    if (o.status === 'reviewing') {
+      sendBookingNotification('reject', order, { rejectionReason }).catch(e => console.error('[booking reject notify] error:', e));
+    }
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking reject] error:', e);
