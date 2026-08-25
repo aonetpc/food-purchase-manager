@@ -750,6 +750,12 @@ jobs:
             echo "🔄 执行 093 预订订单企微userid快照迁移..."
             mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/093_booking_sales_wecom_userid.sql 2>&1 || echo "⚠️ 093 迁移有错误（已用 --force 跳过，非致命）"
 
+            # 094 迁移：回填现有订单的 sales_wecom_userid
+            # 把已有订单中为空的 sales_wecom_userid 通过 sales_person_id 关联 users.wecom_userid 补全
+            # 安全：只更新 NULL/空字符串 且 users.wecom_userid 不为空的记录
+            echo "🔄 执行 094 回填订单企微userid快照..."
+            mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/094_backfill_sales_wecom_userid.sql 2>&1 || echo "⚠️ 094 迁移有错误（已用 --force 跳过，非致命）"
+
             # 套餐方案价格校正脚本：基于已修复的角色可见性，重算每个角色方案的 original_total
             # 和 discount_rate（保持 discount_price 不变）。解决 SharePage 价格显示过高问题。
             # 脚本是安全的：

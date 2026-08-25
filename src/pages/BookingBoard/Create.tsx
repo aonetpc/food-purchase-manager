@@ -3187,11 +3187,15 @@ export default function BookingBoardCreate(props: {
                         <div className="grid grid-cols-2 gap-1.5">
                           {salesUsers.map((u) => {
                             const active = u.id === draftGroup.salesPersonId;
+                            const hasWecom = !!u.wecomUserid;
                             return (
                               <button
                                 key={u.id}
                                 type="button"
                                 onClick={() => {
+                                  if (!hasWecom) {
+                                    alert(`销售员「${u.name}」未绑定企微账号，无法发送应用消息。\n请在用户管理页面绑定企微账号后再选择。`);
+                                  }
                                   setDraftGroup((g) => ({
                                     ...g,
                                     salesPerson: u.name || u.username || '',
@@ -3202,12 +3206,16 @@ export default function BookingBoardCreate(props: {
                                 }}
                                 className={`px-3 py-2 rounded-md text-sm text-left transition-colors border ${
                                   active
-                                    ? 'bg-green-50 border-green-500 text-green-700 font-medium'
-                                    : 'bg-white border-gray-200 text-gray-700 hover:bg-green-50 hover:border-green-300 hover:text-green-700'
+                                    ? hasWecom ? 'bg-green-50 border-green-500 text-green-700 font-medium' : 'bg-amber-50 border-amber-400 text-amber-700 font-medium'
+                                    : hasWecom ? 'bg-white border-gray-200 text-gray-700 hover:bg-green-50 hover:border-green-300 hover:text-green-700' : 'bg-white border-amber-200 text-gray-600 hover:bg-amber-50'
                                 }`}
-                                title={u.username ? `账号：${u.username}` : u.name}
+                                title={hasWecom ? `企微userid: ${u.wecomUserid}` : '⚠️ 未绑定企微账号'}
                               >
                                 <span className="truncate block">{u.name || u.username || '未命名'}</span>
+                                <span className={`text-[10px] mt-0.5 flex items-center gap-1 ${hasWecom ? 'text-green-500' : 'text-amber-500'}`}>
+                                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${hasWecom ? 'bg-green-500' : 'bg-amber-400'}`}></span>
+                                  {hasWecom ? '已绑定企微' : '未绑定企微'}
+                                </span>
                               </button>
                             );
                           })}
