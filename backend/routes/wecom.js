@@ -657,6 +657,76 @@ router.put('/config', async (req, res) => {
   }
 });
 
+// ================================================
+// 预订通知调试接口（发送模板卡片到指定用户）
+// ================================================
+router.post('/test-booking-card', async (req, res) => {
+  try {
+    const config = await getWecomConfig();
+    if (!config) return res.status(400).json({ error: 'wecom_config 未配置' });
+    if (!config.corp_id || !config.app_secret || !config.agent_id) {
+      return res.status(400).json({ error: `企微配置不完整: corp_id=${!!config.corp_id}, app_secret=${!!config.app_secret}, agent_id=${config.agent_id}` });
+    }
+
+    const { userid, content } = req.body || {};
+    if (!userid) return res.status(400).json({ error: '请提供 userid' });
+
+    console.log(`[test-booking-card] 开始: userid=${userid}, agent_id=${config.agent_id}, corp_id=${config.corp_id}`);
+
+    // 验证用户是否存在于企微
+    try {
+      const token = await getAccessToken(config);
+      const userRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token=${token}&userid=${userid}`);
+      const userData = await userRes.json();
+      console.log(`[test-booking-card] 企微用户查询:`, JSON.stringify(userData));
+      if (userData.errcode !== 0) {
+        return res.status(400).json({ error: `企微用户不存在或不可见: ${userData.errmsg}` });
+      }
+    } catch (e) {
+      console.warn(`[test-booking-card] 企微用户验证失败:`, e.message);
+    }
+
+    // 发送模板卡片
+    const cardContent = content || {
+      card_type: 'button_interaction',
+      source: { desc: '预订管理系统' },
+      main_title: { title: '📋 预订系统测试通知', desc: '这是一条测试消息' },
+      sub_title_text: '如果您收到此消息，说明企微应用配置正确',
+      horizontal_content_list: [
+        { keyname: '测试项', value: '模板卡片' },
+        { keyname: '时间', value: new Date().toLocaleString('zh-CN') },
+      ],
+      button_list: [{
+        text: '预订系统',
+        style: 1,
+        type: 1,
+        key: 'go_booking_test',
+        url: (process.env.FRONTEND_URL || '') + '/booking-board',
+      }],
+      task_id: 'booking_test_card',
+      card_action: { type: 1, url: (process.env.FRONTEND_URL || '') + '/booking-board' },
+    };
+
+    console.log(`[test-booking-card] 发送模板卡片:`, JSON.stringify(cardContent).substring(0, 500));
+    const result = await sendTemplateCardToUser(config, userid, cardContent);
+    console.log(`[test-booking-card] 发送结果:`, JSON.stringify(result));
+
+    res.json({
+      success: true,
+      message: `模板卡片已发送到 ${userid}`,
+      result,
+      config: {
+        corp_id: config.corp_id,
+        agent_id: config.agent_id,
+        app_secret: config.app_secret ? '已配置' : '未配置',
+      },
+    });
+  } catch (err) {
+    console.error(`[test-booking-card] 错误:`, err);
+    res.status(500).json({ error: err.message, stack: err.stack?.substring(0, 300) });
+  }
+});
+
 // 测试发送消息到群
 router.post('/test-message', async (req, res) => {
   try {
