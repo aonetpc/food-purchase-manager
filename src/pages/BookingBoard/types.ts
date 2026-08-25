@@ -241,6 +241,7 @@ export interface BookingOrder {
   contactPhone: string;
   salesPerson: string;
   salesPersonId?: string;
+  salesWecomUserid?: string;
   payment: string;
   remark: string;
   items: BookingItem[];

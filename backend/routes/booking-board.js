@@ -248,10 +248,11 @@ router.get('/config', requireAuth, async (_req, res) => {
     const [checkupItems] = await pool.query('SELECT * FROM booking_checkup_items ORDER BY category ASC, sort_order ASC, id ASC');
 
     // 销售员列表：所有拥有 sales 角色的启用用户（用于销售员人员选择面板）
+    // 增加 wecom_userid 字段，前端下单时快照存入订单
     let salesUsers = [];
     try {
       [salesUsers] = await pool.query(`
-        SELECT DISTINCT u.id, u.name, u.username
+        SELECT DISTINCT u.id, u.name, u.username, u.wecom_userid
         FROM users u
         INNER JOIN (
           SELECT user_id FROM user_roles ur
@@ -267,7 +268,7 @@ router.get('/config', requireAuth, async (_req, res) => {
       // user_roles 表可能不存在，降级到 users.role_id
       try {
         [salesUsers] = await pool.query(`
-          SELECT u.id, u.name, u.username
+          SELECT u.id, u.name, u.username, u.wecom_userid
           FROM users u
           JOIN roles r ON r.id = u.role_id AND r.code = 'sales'
           WHERE u.status = 1
@@ -1255,12 +1256,14 @@ router.post('/orders', requireAuth, requireBookingWrite, async (req, res) => {
     const totalAmount = computeTotalAmount(items);
 
     const orderId = uuidv4();
+    // 存储销售员企微userid快照：直接从销售员数据中取，避免运行时查users表
+    const salesWecomUserid = req.body.salesWecomUserid || null;
     await conn.query(`
       INSERT INTO booking_orders
         (id, order_no, customer_name, contact_name, contact_phone,
-         sales_person, sales_person_id, payment_method, remark, status, total_amount,
+         sales_person, sales_person_id, sales_wecom_userid, payment_method, remark, status, total_amount,
          booker_id, booker_name)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `, [
       orderId, orderNo,
       req.body.customerName || null,
@@ -1268,6 +1271,7 @@ router.post('/orders', requireAuth, requireBookingWrite, async (req, res) => {
       req.body.contactPhone || null,
       req.body.salesPerson || null,
       req.body.salesPersonId || null,
+      salesWecomUserid,
       req.body.paymentMethod || null,
       req.body.remark || null,
       'pending',
@@ -1315,19 +1319,19 @@ router.post('/orders/:id/duplicate', requireAuth, requireBookingWrite, async (re
     );
 
     // 复制规则：清空 rejected_* / confirmed_* / completed_* / rejected_at 等，状态回到 pending
-    // 订单号重新生成
+    // 订单号重新生成，复制销售员企微userid快照
     const orderNo = await genOrderNo(new Date());
     const newOrderId = uuidv4();
     await conn.query(`
       INSERT INTO booking_orders
         (id, order_no, customer_name, contact_name, contact_phone,
-         sales_person, payment_method, remark, status, total_amount,
+         sales_person, sales_wecom_userid, payment_method, remark, status, total_amount,
          booker_id, booker_name)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `, [
       newOrderId, orderNo,
       src.customer_name, src.contact_name, src.contact_phone,
-      src.sales_person, src.payment_method,
+      src.sales_person, src.sales_wecom_userid || null, src.payment_method,
       req.body.clearRemark ? '' : (src.remark || ''),
       'pending',
       src.total_amount,
@@ -1606,7 +1610,8 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     await conn.query(`
       UPDATE booking_orders SET
         customer_name = ?, contact_name = ?, contact_phone = ?,
-        sales_person = ?, sales_person_id = ?, payment_method = ?, remark = ?, total_amount = ?
+        sales_person = ?, sales_person_id = ?, sales_wecom_userid = ?,
+        payment_method = ?, remark = ?, total_amount = ?
       WHERE id = ?
     `, [
       req.body.customerName || cur.customer_name,
@@ -1614,6 +1619,7 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
       req.body.contactPhone || cur.contact_phone,
       req.body.salesPerson || cur.sales_person,
       req.body.salesPersonId || cur.sales_person_id,
+      req.body.salesWecomUserid || cur.sales_wecom_userid,
       req.body.paymentMethod || cur.payment_method,
       req.body.remark ?? cur.remark,
       totalAmount,

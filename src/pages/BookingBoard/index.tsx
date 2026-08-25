@@ -100,6 +100,7 @@ function adaptOrder(apiOrder: BookingApiOrder, cfg?: { roomTypes?: any[] }): Boo
     contactPhone: apiOrder.contactPhone || '',
     salesPerson: apiOrder.salesPerson || '',
     salesPersonId: apiOrder.salesPersonId || '',
+    salesWecomUserid: apiOrder.salesWecomUserid || '',
     payment: apiOrder.paymentMethod || '',
     remark: apiOrder.remark || '',
     items: (apiOrder.items || []).map((it: any) => {
@@ -2271,6 +2272,7 @@ export default function BookingBoard() {
       contactPhone: order.contactPhone,
       salesPerson: order.salesPerson,
       salesPersonId: order.salesPersonId,
+      salesWecomUserid: order.salesWecomUserid,
       paymentMethod: order.payment,
       remark: order.remark,
       items: order.items,

@@ -1520,6 +1520,7 @@ export default function BookingBoardCreate(props: {
         contactPhone: '',
         salesPerson: copySource.salesPerson,
         salesPersonId: copySource.salesPersonId,
+        salesWecomUserid: copySource.salesWecomUserid,
         payment: copySource.payment,
         remark: copySource.remark,
         items: copyItemsForCopy(copySource),
@@ -1534,6 +1535,7 @@ export default function BookingBoardCreate(props: {
       contactPhone: '',
       salesPerson: '',
       salesPersonId: undefined,
+      salesWecomUserid: undefined,
       payment: PAYMENT_OPTIONS[0],
       remark: '',
       items: [],
@@ -2852,6 +2854,7 @@ export default function BookingBoardCreate(props: {
           contactPhone: customer.contactPhone || g.contactPhone,
           salesPerson: customer.salesPerson || g.salesPerson,
           salesPersonId: matchedSalesUser?.id || g.salesPersonId,
+          salesWecomUserid: matchedSalesUser?.wecomUserid || g.salesWecomUserid,
           payment: customer.payment || g.payment,
           remark: customer.remark || g.remark,
           items: [...g.items, ...newItems],
@@ -3154,12 +3157,12 @@ export default function BookingBoardCreate(props: {
                         tabIndex={0}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setDraftGroup((g) => ({ ...g, salesPerson: '', salesPersonId: undefined }));
+                          setDraftGroup((g) => ({ ...g, salesPerson: '', salesPersonId: undefined, salesWecomUserid: undefined }));
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.stopPropagation();
-                            setDraftGroup((g) => ({ ...g, salesPerson: '', salesPersonId: undefined }));
+                            setDraftGroup((g) => ({ ...g, salesPerson: '', salesPersonId: undefined, salesWecomUserid: undefined }));
                           }
                         }}
                         className="text-gray-400 hover:text-red-500"
@@ -3193,6 +3196,7 @@ export default function BookingBoardCreate(props: {
                                     ...g,
                                     salesPerson: u.name || u.username || '',
                                     salesPersonId: u.id,
+                                    salesWecomUserid: u.wecomUserid || undefined,
                                   }));
                                   setSalesPickerOpen(false);
                                 }}

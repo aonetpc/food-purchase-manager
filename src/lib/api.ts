@@ -146,6 +146,7 @@ export interface BookingApiOrder {
   contactPhone?: string;
   salesPerson?: string;
   salesPersonId?: string;
+  salesWecomUserid?: string;
   paymentMethod?: string;
   remark?: string;
   status: string;
@@ -184,6 +185,7 @@ export interface BookingSalesUser {
   id: string;
   name: string;
   username?: string;
+  wecomUserid?: string;
 }
 
 export interface PackageItemRow {
@@ -354,6 +356,7 @@ export const bookingApi = {
     contactPhone?: string;
     salesPerson?: string;
     salesPersonId?: string;
+    salesWecomUserid?: string;
     paymentMethod?: string;
     remark?: string;
     items: any[];
@@ -364,6 +367,7 @@ export const bookingApi = {
       contactPhone: payload.contactPhone,
       salesPerson: payload.salesPerson,
       salesPersonId: payload.salesPersonId,
+      salesWecomUserid: payload.salesWecomUserid,
       paymentMethod: payload.paymentMethod,
       remark: payload.remark,
       items: itemsToBackend(payload.items),
@@ -379,6 +383,7 @@ export const bookingApi = {
     contactPhone?: string;
     salesPerson?: string;
     salesPersonId?: string;
+    salesWecomUserid?: string;
     paymentMethod?: string;
     remark?: string;
     items: any[];
@@ -389,6 +394,7 @@ export const bookingApi = {
       contactPhone: payload.contactPhone,
       salesPerson: payload.salesPerson,
       salesPersonId: payload.salesPersonId,
+      salesWecomUserid: payload.salesWecomUserid,
       paymentMethod: payload.paymentMethod,
       remark: payload.remark,
       items: itemsToBackend(payload.items),

@@ -2695,25 +2695,15 @@ async function sendBookingNotification(type, order, extra = {}) {
   const remarkLine = remark ? `> 备注：${remark}\n` : '';
   const frontEndBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL || '';
 
-  // 查找销售员企微userid（内部函数，各 case 复用）
+  // 查找销售员企微userid（优先使用订单已存的快照，不再查users表）
   const findSalesUserid = async () => {
-    console.log(`[sendBookingNotification] findSalesUserid: sales_person_id=${order.sales_person_id}, sales_person=${order.sales_person}`);
-    if (!order.sales_person_id) {
-      console.warn('[sendBookingNotification] 订单无 sales_person_id，无法查找企微userid');
-      return null;
+    console.log(`[sendBookingNotification] findSalesUserid: sales_wecom_userid=${order.sales_wecom_userid}, sales_person_id=${order.sales_person_id}, sales_person=${order.sales_person}`);
+    // 直接使用订单中已存的企微userid快照
+    if (order.sales_wecom_userid) {
+      console.log(`[sendBookingNotification] 使用订单快照 sales_wecom_userid=${order.sales_wecom_userid}`);
+      return order.sales_wecom_userid;
     }
-    try {
-      const [userRows] = await pool.query('SELECT id, username, name, wecom_userid FROM users WHERE id = ? LIMIT 1', [order.sales_person_id]);
-      console.log(`[sendBookingNotification] findSalesUserid 查询结果: rows.length=${userRows.length}`);
-      if (userRows.length > 0) {
-        const u = userRows[0];
-        console.log(`[sendBookingNotification] 销售员信息: id=${u.id}, username=${u.username}, name=${u.name}, wecom_userid=${u.wecom_userid}`);
-        if (u.wecom_userid) return u.wecom_userid;
-      }
-      console.warn(`[sendBookingNotification] 销售员 wecom_userid 为空，无法发送应用消息`);
-    } catch (e) {
-      console.error('[sendBookingNotification] 查询销售员企微ID失败:', e.message);
-    }
+    console.warn('[sendBookingNotification] 订单未存储 sales_wecom_userid，跳过应用通知。请检查创建订单时是否传入该字段');
     return null;
   };
 
