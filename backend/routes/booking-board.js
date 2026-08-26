@@ -12,30 +12,70 @@ const { sendBookingNotification, getWecomConfig, updateTemplateCardButton } = re
  *  - user_source='system' -> user_id = users.id
  * 失败不抛错（不影响主流程）
  */
-async function saveUserSignature(user, signatureData) {
-  if (!signatureData) return;
-  const userId = user && (user.wecom_userid || user.id);
-  if (!userId) return;
-  const source = user && user.wecom_userid ? 'wecom' : 'system';
-  try {
-    const [existing] = await pool.query(
-      'SELECT id FROM user_signatures WHERE user_id = ? AND user_source = ? LIMIT 1',
-      [userId, source]
-    );
-    if (existing && existing.length > 0) {
-      await pool.query(
-        'UPDATE user_signatures SET signature_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [signatureData, existing[0].id]
+/**
+ * 保存签字数据（复用采购入库签字策略，共用 user_signatures 表）
+ * 🔧 按"对齐采购确认页"方案改造：双写 wecom + system 两个 key，
+ *    确保销售员无论从"企微H5"还是"PC 端登录"进入都能读到同一个签字。
+ * user_source='wecom'   => user_id = 订单快照 sales_wecom_userid（优先），否则登录态 wecom_userid
+ * user_source='system'  => user_id = users.id (系统用户 id)
+ *
+ * @param {object} opts
+ * @param {object} opts.order      订单行（必须含 sales_wecom_userid 快照；不依赖登录态，避免 PC 管理员代确认时写错人）
+ * @param {object} opts.loginUser  登录态 req.user（用于兜底 system 键的 user.id，以及 wecom_userid 兜底）
+ * @param {string} signatureData   data_url (base64 PNG)
+ * @returns {object} { wecomSigId, systemSigId, errors }  errors 数组非空表示有 key 保存失败
+ */
+async function saveUserSignature({ order, loginUser }, signatureData) {
+  if (!signatureData) return { wecomSigId: null, systemSigId: null, errors: [] };
+  if (!loginUser && !order) return { wecomSigId: null, systemSigId: null, errors: [] };
+
+  const errors = [];
+  // 🔹 构造 (user_id, user_source) 写入对（0~2 组；有重复去重）
+  const pairs = [];
+  const orderWecomUserId = order && order.sales_wecom_userid;
+  const loginWecomUserId = loginUser && (loginUser.wecom_userid || loginUser.wecomUserId);
+  const loginSystemId    = loginUser && loginUser.id;
+
+  const pushPair = (uid, source, from) => {
+    if (!uid) return;
+    if (pairs.some(p => p.uid === uid && p.source === source)) return;
+    pairs.push({ uid, source, from });
+  };
+  pushPair(orderWecomUserId, 'wecom', 'order.sales_wecom_userid');
+  pushPair(loginWecomUserId, 'wecom', 'loginUser.wecom_userid');
+  pushPair(loginSystemId,  'system', 'loginUser.id');
+
+  const upsertOne = async ({ uid, source, from }) => {
+    try {
+      // 🔁 对齐采购确认页 user-signatures.js POST 接口使用 ON DUPLICATE KEY UPDATE 模式
+      //    需配合 migrations/102_user_signatures_unique.sql 建立 (user_id,user_source) 唯一键。
+      const [res] = await pool.query(
+        `INSERT INTO user_signatures (id, user_id, user_source, signature_data, created_at, updated_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE signature_data = VALUES(signature_data), updated_at = CURRENT_TIMESTAMP`,
+        [uuidv4(), uid, source, signatureData]
       );
-    } else {
-      await pool.query(
-        'INSERT INTO user_signatures (id, user_id, user_source, signature_data) VALUES (?,?,?,?)',
-        [uuidv4(), userId, source, signatureData]
+      const insertId = res && res.insertId ? res.insertId : null;
+      if (insertId && insertId > 0) return insertId;
+      // UPDATE 分支（insertId=0）→ 查出已存在 id 返回
+      const [rows] = await pool.query(
+        'SELECT id FROM user_signatures WHERE user_id = ? AND user_source = ? LIMIT 1',
+        [uid, source]
       );
+      return rows && rows[0] ? rows[0].id : null;
+    } catch (e) {
+      console.error('[booking saveUserSignature] error:', { uid, source, from, msg: e && e.message });
+      errors.push({ source, from, msg: e && e.message });
+      return null;
     }
-  } catch (e) {
-    console.error('[booking saveUserSignature] error:', e && e.message);
-  }
+  };
+
+  const wecomPair  = pairs.find(p => p.source === 'wecom');
+  const systemPair = pairs.find(p => p.source === 'system');
+
+  const wecomSigId  = wecomPair  ? await upsertOne(wecomPair)  : null;
+  const systemSigId = systemPair ? await upsertOne(systemPair) : null;
+  return { wecomSigId, systemSigId, errors };
 }
 
 /**
@@ -1649,14 +1689,26 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
     ]);
     logOperation(req, '预订订单', '销售员确认', `订单号=${o.order_no} 确认人=${user.name || user.id}`, orderId);
 
-    // 复用签字：保存到 user_signatures（与采购入库共用）
-    saveUserSignature(user, signatureData).catch(() => {});
+    // 🔧 对齐采购确认页：签字保存同步 await + 双写 wecom+system 两把 key（销售快照优先），不再 fire-and-forget
+    const sigResult = await saveUserSignature({ order: o, loginUser: user }, signatureData);
 
     const order = await readOrderFull(orderId);
-    // 1) 灰化销售员原「订单待确认」蓝卡按钮（对齐食材采购机制）
-    //    若 user 没有 wecom_userid，则尝试取订单 wecom_card_response_codes.sales_confirm.userid 兜底
-    //    【方案 1.2 补读】：若 readOrderFull 命中缓存/从从库读到旧（response_code==null），强制直查主表补 1 次，
-    //    确保 submit 已同步落库的 code 不会被历史值吞掉
+
+    // 诊断容器（同步收集三个问题的结果，直接返回前端）
+    const _notifyDebug = {
+      orderNo: o.order_no,
+      saveSignature: {
+        wecomSigId: sigResult.wecomSigId,
+        systemSigId: sigResult.systemSigId,
+        errors: sigResult.errors && sigResult.errors.length ? sigResult.errors : null,
+      },
+      greySalesButton: null,
+      approveNotify: null,
+    };
+
+    // 1) 🔁 对齐采购确认页：灰化销售员原「订单待确认」蓝卡按钮 = 同步 await
+    //    ✅ userid/response_code 只用 submit 时落库的 salesCard（=发给谁、就灰谁），不再用登录态推断
+    //    失败只写错误到 _notifyDebug，不阻塞主流程
     let salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
     if (!salesCard || !salesCard.response_code) {
       try {
@@ -1672,36 +1724,61 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
         }
       } catch (_) { /* ignore */ }
     }
-    const salesGreyUserid = user.wecom_userid || (salesCard && salesCard.userid) || null;
-    if (salesGreyUserid && salesCard && salesCard.response_code) {
-      greyBookingCardButton(salesGreyUserid, salesCard.response_code, '已确认')
-        .then(() => saveCardResponseCodes(orderId, { sales_confirm: { status: 'greyed' } }).catch(()=>{}))
-        .catch(()=>{});
-    }
-    // 2) 异步发审核员卡片 + 保存审核员卡 response_code（approve 接口灰按钮用）
-    //    固定审核员场景：失败不通知销售员（用户明确拒绝方案B），仅落结构化错误日志（errcode/errmsg/invaliduser）
-    (async () => {
+    const salesGreyUserid = salesCard && salesCard.userid;
+    const salesGreyCode   = salesCard && salesCard.response_code;
+    if (salesGreyUserid && salesGreyCode) {
       try {
-        const notifyRes = await sendBookingNotification('salesConfirm', order);
-        if (notifyRes && notifyRes.approverResponseCode) {
-          await saveCardResponseCodes(orderId, {
-            approve: {
-              userid: notifyRes.approverUserid,
-              response_code: notifyRes.approverResponseCode,
-              task_id: notifyRes.approveTaskId || null,
-              status: 'sent',
-            },
-          });
-        } else {
-          const errInfo = (notifyRes && notifyRes.approveCardError) || { errmsg: '未知错误（approverResponseCode为空）' };
-          const approver = (notifyRes && notifyRes.approverUserid) || 'n/a';
-          console.error(`[booking sales-confirm] 审核员通知 FAIL: orderNo=${o.order_no}, approver=${approver}, detail=${JSON.stringify(errInfo)}`);
-        }
+        await greyBookingCardButton(salesGreyUserid, salesGreyCode, '已确认');
+        await saveCardResponseCodes(orderId, { sales_confirm: { status: 'greyed' } });
+        _notifyDebug.greySalesButton = { ok: true, userid: salesGreyUserid };
       } catch (e) {
-        console.error(`[booking sales-confirm notify] catch FAIL orderNo=${o.order_no}:`, e && e.message, e);
+        _notifyDebug.greySalesButton = { ok: false, userid: salesGreyUserid, errmsg: e && e.message };
       }
-    })();
-    res.json({ ok: true, data: order });
+    } else {
+      _notifyDebug.greySalesButton = { ok: false, reason: 'submit时没有保存response_code或userid', salesCardExists: !!salesCard, salesCardUserid: salesGreyUserid || null, salesCardHasCode: !!salesGreyCode };
+    }
+
+    // 2) 🔁 对齐采购确认页：审核员通知 = 同步 await（采购for循环同步，不再IIFE fire-and-forget）
+    //    成功 -> 同步保存approve卡response_code + status='sent'
+    //    失败 -> 把approverUserid/approveCardError直接写到_ntifyDebug，前端toast红条
+    try {
+      const notifyRes = await sendBookingNotification('salesConfirm', order);
+      if (notifyRes && notifyRes.approverResponseCode) {
+        await saveCardResponseCodes(orderId, {
+          approve: {
+            userid: notifyRes.approverUserid,
+            response_code: notifyRes.approverResponseCode,
+            task_id: notifyRes.approveTaskId || null,
+            status: 'sent',
+          },
+        });
+        _notifyDebug.approveNotify = {
+          ok: true,
+          approverUserid: notifyRes.approverUserid,
+          approverResponseCode: notifyRes.approverResponseCode,
+          approveTaskId: notifyRes.approveTaskId || null,
+        };
+      } else {
+        const errInfo = (notifyRes && notifyRes.approveCardError) || { errmsg: 'approverResponseCode为空（审核员通知未发）' };
+        const approver  = (notifyRes && notifyRes.approverUserid) || (function(){ try{ const w=getWecomConfig(); return w && w.booking_approver_userid || 'unconfigured'; }catch(_){return 'wecom_config_failed';}})();
+        _notifyDebug.approveNotify = {
+          ok: false,
+          approverUserid: approver,
+          approveTaskId: (notifyRes && notifyRes.approveTaskId) || null,
+          approveCardError: errInfo,
+        };
+        console.error(`[booking sales-confirm] 审核员通知 FAIL: orderNo=${o.order_no}, approver=${approver}, detail=${JSON.stringify(errInfo)}`);
+      }
+    } catch (e) {
+      _notifyDebug.approveNotify = {
+        ok: false,
+        approverUserid: 'notify-throw',
+        approveCardError: { errmsg: e && e.message || String(e) },
+      };
+      console.error(`[booking sales-confirm notify] catch FAIL orderNo=${o.order_no}:`, e && e.message, e);
+    }
+
+    res.json({ ok: true, data: order, _notifyDebug });
   } catch (e) {
     console.error('[booking sales-confirm] error:', e);
     res.status(500).json({ ok: false, error: e.message });
@@ -1766,7 +1843,8 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     ]);
     logOperation(req, '预订订单', '审核通过', `订单号=${o.order_no} 审核人=${user.name || user.id}`, orderId);
 
-    saveUserSignature(user, signatureData).catch(() => {});
+    // 🔧 对齐采购确认页：审核通过签字 同步 await 双写（审核人通常=系统管理员PC端，保证system键+企微审核员键都能读到）
+    await saveUserSignature({ order: o, loginUser: user }, signatureData);
 
     const order = await readOrderFull(orderId);
     // 灰化审核员原「订单待审核」卡按钮（"已审核 (时间)"）
@@ -1888,7 +1966,8 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
     `, [signatureData, completedByName, orderId]);
     logOperation(req, '预订订单', '标记完成', `订单号=${o.order_no} 操作人=${user.name || user.id}`, orderId);
 
-    saveUserSignature(user, signatureData).catch(() => {});
+    // 🔧 对齐采购确认页：标记完成签字 同步 await 双写
+    await saveUserSignature({ order: o, loginUser: user }, signatureData);
 
     const order = await readOrderFull(orderId);
     res.json({ ok: true, data: order });

@@ -2931,30 +2931,48 @@ async function sendBookingNotification(type, order, extra = {}) {
       // 现在改为通过 response_code 直接把图 1 原蓝卡按钮灰化为"已确认 (时间)"（对齐食材采购，booking-board.js 中调）
 
       // ① 审核员模板卡片通知：追加"销售确认时间 + 签字状态"（task_id 后缀避免覆盖 submit 原卡 task_id）
+      // 🔧 42014 自动重试：驳回/撤回后重新走 sales-confirm，审核员是固定单人，
+      //    task_id = `{orderNo}_approve` 会和历史上已经推送的同名审核卡撞名，
+      //    企微返回 errcode=42014 直接拒绝（不会静默，但调用方不知道会丢消息）。
+      //    与 submit 销售卡统一 for 循环递增后缀 _approve_S2 … _approve_S11 重试。
       const approverUserid = config.booking_approver_userid;
       if (approverUserid) {
-        const approveInnerTaskId = `${orderNo}_approve`;
-        const approveCard = buildTemplateCard(
-          '📋 订单待审核',
-          `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
-          [
-            { keyname: '客户', value: customerName },
-            { keyname: '业务', value: bizSummary },
-            { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
-            { keyname: '销售确认', value: confirmAtStr },
-            { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
-            ...(remark ? [{ keyname: '备注', value: remark }] : []),
-          ],
-          '去审核',
-          cardUrl,
-          approveInnerTaskId,
-          null
-        );
-        const r = await sendCard(approverUserid, approveCard, '审核员模板卡片');
+        const APPROVE_MAX_RETRY = 10;
+        const approveBaseInner = `${orderNo}_approve`;
+        let finalApproveSuffix = '';
+        let approveR = null;
+        for (let i = 0; i < APPROVE_MAX_RETRY; i++) {
+          const curSuffix = i === 0 ? '' : `_S${i + 1}`;
+          const approveInnerTaskId = `${approveBaseInner}${curSuffix}`;
+          const approveCard = buildTemplateCard(
+            '📋 订单待审核',
+            `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
+            [
+              { keyname: '客户', value: customerName },
+              { keyname: '业务', value: bizSummary },
+              { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
+              { keyname: '销售确认', value: confirmAtStr },
+              { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
+              ...(remark ? [{ keyname: '备注', value: remark }] : []),
+            ],
+            '去审核',
+            cardUrl,
+            approveInnerTaskId,
+            null
+          );
+          approveR = await sendCard(approverUserid, approveCard, `审核员模板卡片 retry=${i} taskId=${approveInnerTaskId}`);
+          const is42014 = approveR && approveR.ok === false && (Number(approveR.errcode) === 42014 || /taskid has existed/i.test(String(approveR.errmsg || '')));
+          if (!is42014) {
+            finalApproveSuffix = curSuffix;
+            break;
+          }
+          console.warn(`[sendBookingNotification] salesConfirm approver taskId=booking_${approveInnerTaskId} hit errcode=42014 taskid已存在，递增后缀重试 (${i + 1}/${APPROVE_MAX_RETRY})`);
+        }
+        const finalApproveInner = `${approveBaseInner}${finalApproveSuffix}`;
         result.approverUserid = approverUserid;
-        if (r && r.response_code) result.approverResponseCode = r.response_code;
-        if (r && r.ok === false) result.approveCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
-        result.approveTaskId = `booking_${approveInnerTaskId}`;
+        if (approveR && approveR.response_code) result.approverResponseCode = approveR.response_code;
+        if (approveR && approveR.ok === false) result.approveCardError = { errcode: approveR.errcode, errmsg: approveR.errmsg, invaliduser: approveR.invaliduser };
+        result.approveTaskId = `booking_${finalApproveInner}`;
       } else {
         // guard：审核员未配置 → 固定审批流阻塞；错误结构化返回给调用方落日志
         //   （警告卡仍回发销售员，避免 booking_approver_userid 为空时全链路静悄悄完全没人知道）

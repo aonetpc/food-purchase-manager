@@ -137,6 +137,34 @@ export default function BookingConfirmPage() {
   const [savedSignature, setSavedSignature] = useState<string | null>(null);   // 可复用的用户签字
   const [loadingSavedSig, setLoadingSavedSig] = useState(false);
 
+  // 🔁 对齐采购确认页：解析当前签字读取 user key（URL queryUser = 企微H5；否则 localStorage auth-session.state.user）
+  //   BookingConfirm 场景有三种人会点进确认页：销售员(确认)、审核员(审核)、执行人(标记完成)
+  //   所以签字 key 按"当前登录身份"取，和采购确认页的 pattern 完全一致。
+  const [currentSigUser, setCurrentSigUser] = useState<string>('');
+  useEffect(() => {
+    // 1) URL ?user=xxx 企微回调场景(和采购确认页 queryUser 一致)
+    const q = searchParams.get('user');
+    if (q) { setCurrentSigUser(q); return; }
+    // 2) localStorage.auth-session.state.user 取后端返回的原始字段 wecom_userid（下划线，不是authStore驼峰）
+    try {
+      const stored = localStorage.getItem('auth-session');
+      if (stored) {
+        const data = JSON.parse(stored);
+        const u = data?.state?.user;
+        if (u) {
+          if (u.wecom_userid) { setCurrentSigUser(u.wecom_userid); return; }
+          if (u.id)         { setCurrentSigUser(u.id);         return; }
+        }
+      }
+    } catch (_) { /* ignore */ }
+    // 3) authStore 兜底（企微H5登录态会写wecomUserId；PC端系统用户登录态会写id）
+    if (user) {
+      const uidFromStore = (user as any).wecom_userid || (user as any).wecomUserId || user.id;
+      if (uidFromStore) setCurrentSigUser(uidFromStore);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, user?.id]);
+
   // 签字画布 ref
   const salesSigRef = useRef<SignatureCanvasHandle>(null);
   const approveSigRef = useRef<SignatureCanvasHandle>(null);
@@ -221,20 +249,34 @@ export default function BookingConfirmPage() {
     return () => { cancelled = true; };
   }, [orderId, user?.token]);
 
-  // 加载当前用户的复用签字
+  // 🔁 对齐采购确认页：加载当前用户的复用签字
+  //    user_source = URL有user参数(企微H5) => wecom；否则(PC端系统登录) => system
+  //    user_id    = currentSigUser(上一步已经从 localStorage.auth-session 取后端原始字段 wecom_userid，不再用 authStore 错误的驼峰 wecomUserId)
   useEffect(() => {
-    if (!user || !user.token) return;
+    if (!currentSigUser) return;
     setLoadingSavedSig(true);
     (async () => {
       try {
-        const uid = (user as any).wecom_userid || user.id;
-        const source = (user as any).wecom_userid ? 'wecom' : 'system';
-        const res = await api.get<any>('/user/signature', { params: { user_id: uid, user_source: source } });
-        setSavedSignature((res && res.signature_data) || null);
+        const userSource = searchParams.get('user') ? 'wecom' : 'system';
+        const res = await api.get<any>('/user/signature', {
+          params: { user_id: currentSigUser, user_source: userSource }
+        });
+        if (res && res.signature_data) {
+          setSavedSignature(res.signature_data);
+          // ✅ 对齐采购确认页：首次加载成功后自动把签字"回填"进当前所有角色的签字状态
+          //    (后续如果用户点"清除/重签"，onChange 会覆盖对应 role 的状态变量)
+          setSalesSig(res.signature_data);
+          setApproveSig(res.signature_data);
+          setCompleteSig(res.signature_data);
+          salesSigRef.current?.setSignature(res.signature_data);
+          approveSigRef.current?.setSignature(res.signature_data);
+          completeSigRef.current?.setSignature(res.signature_data);
+        }
       } catch { setSavedSignature(null); }
       finally { setLoadingSavedSig(false); }
     })();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSigUser]);
 
   const refresh = async () => {
     if (!orderId || !user?.token) return;
