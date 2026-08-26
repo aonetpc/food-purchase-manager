@@ -1516,21 +1516,46 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能提交` });
     }
 
-    await pool.query(
-      "UPDATE booking_orders SET status = 'sales_confirming', submit_resend_count = submit_resend_count + 1 WHERE id = ?",
-      [orderId]
-    );
+    // 【方案S：兼容迁移101未跑】
+    // 优先使用原生列 submit_resend_count 原子自增（迁移101跑后路径，1次SQL、性能更快）；
+    // 如果列不存在（部署动作里：代码复制到服务器 <-> 迁移脚本跑完中间的竞态窗口；或Actions迁移步骤报错中断），
+    //   catch 分支降级成"只UPDATE status，submitAttempt = 1"兜底，不让用户看到 500。
+    // 兜底期间 task_id 会用 booking_{orderNo} 老卡命名：如果历史上推送过同名卡且重发起，可能触发企微去重（这是降级模式可接受的代价），
+    //   一旦迁移101执行完，下次submit就切回原生计数，task_id S{N} 永久唯一。
+    let usingNativeCount = true;
+    try {
+      await pool.query(
+        "UPDATE booking_orders SET status = 'sales_confirming', submit_resend_count = submit_resend_count + 1 WHERE id = ?",
+        [orderId]
+      );
+    } catch (eUpdate) {
+      // 只在"列不存在"错误降级；其他 SQL 错误（连接失败/权限/主键等）继续抛，避免掩盖真实问题
+      const msg = String(eUpdate && eUpdate.message || '');
+      if (!/Unknown column 'submit_resend_count' in 'field list'/i.test(msg)) throw eUpdate;
+      console.warn(`[booking submit] submit_resend_count列缺失，降级运行(orderId=${orderId}, orderNo=${o.order_no})：请尽快执行migrations/101_booking_submit_resend_count.sql`);
+      usingNativeCount = false;
+      await pool.query("UPDATE booking_orders SET status = 'sales_confirming' WHERE id = ?", [orderId]);
+    }
     logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
 
     // 【方案 S】submitAttempt 走原生列 submit_resend_count（更新后已自增 1）
     //   N=1 -> 首次任务卡：task_id = booking_{orderNo}（兼容老卡）
     //   N≥2 -> 重发起：task_id = booking_{orderNo}_S{N}
     // 再次读现行拿到提交后的计数（若迁移 101 未跑 submit_resend_count 返回 NULL -> 强制 fallback=1，不静默）
-    const [afterRows] = await pool.query(
-      'SELECT submit_resend_count AS c FROM booking_orders WHERE id = ? LIMIT 1',
-      [orderId]
-    );
-    const submitAttempt = Number(afterRows?.[0]?.c) > 0 ? Number(afterRows[0].c) : 1;
+    let submitAttempt = 1;
+    if (usingNativeCount) {
+      try {
+        const [afterRows] = await pool.query(
+          'SELECT submit_resend_count AS c FROM booking_orders WHERE id = ? LIMIT 1',
+          [orderId]
+        );
+        submitAttempt = Number(afterRows?.[0]?.c) > 0 ? Number(afterRows[0].c) : 1;
+      } catch (eRead) {
+        const msg = String(eRead && eRead.message || '');
+        if (!/Unknown column 'submit_resend_count' in 'field list'/i.test(msg)) throw eRead;
+        submitAttempt = 1;
+      }
+    }
 
     const order = await readOrderFull(orderId);
     let notifyError = null;
