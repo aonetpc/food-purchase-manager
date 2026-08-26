@@ -82,15 +82,25 @@ async function main() {
 
     // 4. 查企微配置
     console.log('\n📋 步骤4: 查企微配置...');
-    const [configs] = await pool.query(`
-      SELECT id, corp_id, agent_id, 
-             CASE WHEN app_secret THEN '已配置' ELSE '❌ 未配置' END as app_secret_status,
-             app_secret as app_secret_raw,
-             booking_webhook_url,
-             booking_approver_userid,
-             booking_notify_submit, booking_notify_sales, booking_notify_approver
-      FROM wecom_config WHERE id = 1
-    `);
+    // 先获取实际列名（兼容不同版本的表结构）
+    const [cols] = await pool.query('SHOW COLUMNS FROM wecom_config');
+    const colNames = cols.map(c => c.Field);
+    const hasCol = (name) => colNames.includes(name);
+    
+    const selectFields = [
+      'id',
+      hasCol('corp_id') ? 'corp_id' : 'NULL as corp_id',
+      hasCol('agent_id') ? 'agent_id' : 'NULL as agent_id',
+      hasCol('app_secret') ? "CASE WHEN app_secret THEN '已配置' ELSE '❌ 未配置' END as app_secret_status" : "'❌ 未配置' as app_secret_status",
+      hasCol('app_secret') ? 'app_secret as app_secret_raw' : 'NULL as app_secret_raw',
+      hasCol('booking_webhook_url') ? 'booking_webhook_url' : 'NULL as booking_webhook_url',
+      hasCol('booking_approver_userid') ? 'booking_approver_userid' : 'NULL as booking_approver_userid',
+      hasCol('booking_notify_submit') ? 'booking_notify_submit' : '1 as booking_notify_submit',
+      hasCol('booking_notify_sales') ? 'booking_notify_sales' : '1 as booking_notify_sales',
+      hasCol('booking_notify_approver') ? 'booking_notify_approver' : 'NULL as booking_notify_approver',
+    ];
+    
+    const [configs] = await pool.query(`SELECT ${selectFields.join(', ')} FROM wecom_config WHERE id = 1`);
 
     let config = null;
     if (configs.length > 0) {
@@ -103,6 +113,7 @@ async function main() {
       console.log(`  booking_approver_userid: ${c.booking_approver_userid || '❌ 空'}`);
       console.log(`  booking_notify_submit: ${c.booking_notify_submit}`);
       console.log(`  booking_notify_sales: ${c.booking_notify_sales}`);
+      console.log(`  表中已有字段: ${colNames.join(', ')}`);
     } else {
       console.log('  ❌ wecom_config 不存在');
     }
