@@ -841,35 +841,16 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
       showDisc: !!di.label, // 有 rate 就显示（谈判折扣也显示）
     };
   });
-  let origTotal = 0;
+  // finalTotal：用于顶部「合计¥X」展示 = 三角色小计求和；兜底名单级
   let finalTotal = 0;
-  // 整体折扣：三角色 rate 存在则按「数量加权」算综合折扣率（显示更准确）
-  let weightedRateNum = 0;
-  let weightedRateDen = 0;
-  let anyRoleHasRate = false;
   for (const rs of roleStats) {
     const qty = (rs.setN === '-' ? rs.importedN : Number(rs.setN || 0));
-    origTotal += qty * rs.base;
     finalTotal += qty * rs.final;
-    if (typeof rs.rate === 'number' && rs.rate > 0 && rs.rate <= 100 && qty > 0) {
-      anyRoleHasRate = true;
-      weightedRateNum += rs.rate * qty;
-      weightedRateDen += qty;
-    }
   }
   if (finalTotal <= 0 && paxList.length > 0) {
-    // 兜底：名单级 finalAmount 求和（若套餐级全0）
     for (const p of paxList) finalTotal += Number((p as any).finalAmount || 0);
-    origTotal = finalTotal;
   }
-  const totalSaved = Math.max(0, origTotal - finalTotal);
-  // 整体折扣率：优先「数量加权 DB rate」，否则回退 final/base 反推
-  let overallRate: number | undefined;
-  if (anyRoleHasRate && weightedRateDen > 0) overallRate = weightedRateNum / weightedRateDen;
-  const overallDi = overallRate != null
-    ? formatDiscountInfo({ discount_rate: overallRate, final: finalTotal, base: origTotal })
-    : formatDiscountInfo({ final: finalTotal, base: origTotal });
-  const overallShow = !!overallDi.label;       // 有就显示（含谈判折扣名义值）
+  // 整体汇总（原价合计/折后合计/整体折扣/共节省）已移除：顶部右上角已有绿色合计显示
 
   // 名单逐行：用于折叠展开
   type PaxRow = { name: string; roleLabel: string; packageName: string; base: number; final: number; discount: string; custom: boolean };
@@ -917,41 +898,34 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
           <span className="text-xs font-mono font-semibold text-green-700 whitespace-nowrap">合计 {formatCurrency(finalTotal)}</span>
         </div>
 
-        {/* 三角色分栏：PC端语义，双行卡头（角色名单独一行，价格+折扣独立一行）+ items-stretch 等高 + justify-between 底对齐 */}
+        {/* 三角色分栏：第一行=角色名左+折后价/人右；第二行=折扣徽章；等高底对齐 */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] items-stretch">
           {roleStats.map(rs => {
             const hasData = rs.setN !== 0 || rs.importedN > 0;
             return (
               <div key={rs.key} className="bg-white border rounded p-2 flex flex-col justify-between" style={{ borderColor: `${bizColor}22` }}>
-                {/* 卡头第一行：角色名（固定最小高度，避免 2/3 字错位） */}
-                <div className="flex items-center justify-between mb-1 min-h-[1.1em]">
+                {/* 卡头第一行：角色名（左，min-h 统一）+ 折后价/人（右） */}
+                <div className="flex items-center justify-between mb-1 min-h-[1.3em]">
                   <span className="text-gray-700 font-medium whitespace-nowrap">{rs.label}</span>
-                </div>
-                {/* 卡头第二行：原价（划线）+ 折扣徽章 + 折后价/人（两端对齐，不再被角色名挤压） */}
-                <div className="flex items-end justify-between gap-1 mb-1.5 whitespace-nowrap">
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {rs.showDisc && rs.base > 0 && rs.final < rs.base ? (
-                      <span className="text-[10px] text-gray-400 line-through">原价 {formatCurrency(rs.base)}</span>
-                    ) : rs.showDisc && rs.di.fromRate && rs.base > 0 ? (
-                      <span className="text-[10px] text-gray-400 line-through">原价 {formatCurrency(rs.base)}</span>
-                    ) : null}
-                    {rs.di.label && (
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        rs.di.nominalOnly
-                          ? 'bg-sky-50 text-sky-600 border border-sky-100'   // 谈判折扣（金额无差，蓝色提示）
-                          : 'bg-red-50 text-red-500'                           // 实际有差，红色强提示
-                      }`}>
-                        {rs.di.label}{rs.di.nominalOnly ? '（谈）' : ''}
-                      </span>
-                    )}
-                  </div>
                   {rs.final > 0 ? (
-                    <span className="text-gray-800 font-bold font-mono flex-shrink-0">
+                    <span className="text-gray-800 font-bold font-mono flex-shrink-0 whitespace-nowrap">
                       {formatCurrency(rs.final)}<span className="text-[10px] text-gray-400 font-normal font-sans">/人</span>
                     </span>
-                  ) : (
-                    <span className="text-gray-300 text-[10px] font-mono flex-shrink-0">—/人</span>
-                  )}
+                  ) : hasData ? (
+                    <span className="text-gray-300 text-[10px] font-mono flex-shrink-0 whitespace-nowrap">—/人</span>
+                  ) : null}
+                </div>
+                {/* 卡头第二行：只放折扣徽章（有折扣率时显示左对齐，无则占位）*/}
+                <div className="mb-1.5 min-h-[1.3em] flex items-center">
+                  {rs.di.label ? (
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${
+                      rs.di.nominalOnly
+                        ? 'bg-sky-50 text-sky-600 border border-sky-100'   // 谈判折扣（蓝色提示）
+                        : 'bg-red-50 text-red-500'                           // 实际有差（红色强提示）
+                    }`}>
+                      {rs.di.label}{rs.di.nominalOnly ? '（谈）' : ''}
+                    </span>
+                  ) : null}
                 </div>
                 {/* 卡体：设定/已导/待绑 或 0人占位 */}
                 <div className="flex-1 flex flex-col justify-between gap-1.5">
@@ -1034,44 +1008,6 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {/* 汇总：原价/整体折扣/节省 —— 只要有 DB 折扣率就显示整体X.X折（含谈判折扣名义值） */}
-        {origTotal > 0 && (
-          <div className="pt-2 mt-1 border-t border-dashed" style={{ borderColor: `${bizColor}25` }}>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-500">原价合计</span>
-              <span className={`${totalSaved > 0 ? 'text-gray-500 line-through' : 'text-gray-700'}`}>{formatCurrency(origTotal)}</span>
-            </div>
-            {overallShow || totalSaved > 0 ? (
-              <>
-                <div className="flex items-center justify-between text-xs mt-0.5">
-                  <span className="text-gray-600">
-                    折后合计
-                    {overallShow ? (
-                      <>
-                        {' · '}整体
-                        <span className={`font-semibold ${overallDi.nominalOnly ? 'text-sky-600' : 'text-red-500'}`}>
-                          {overallDi.label}
-                        </span>
-                        {overallDi.nominalOnly && <span className="text-[10px] ml-1 text-sky-500">（谈判折扣）</span>}
-                      </>
-                    ) : null}
-                  </span>
-                  <span className="text-green-600 font-semibold">{formatCurrency(finalTotal)}</span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] mt-0.5">
-                  <span className="text-gray-400">共节省</span>
-                  <span className={totalSaved > 0 ? 'text-green-600' : 'text-gray-400'}>
-                    {totalSaved > 0 ? `-${formatCurrency(totalSaved)}` : '—'}
-                    {overallDi.nominalOnly && totalSaved === 0 ? (
-                      <span className="ml-1 text-sky-400">（金额无差 · 折扣为约定）</span>
-                    ) : null}
-                  </span>
-                </div>
-              </>
-            ) : null}
           </div>
         )}
       </div>
