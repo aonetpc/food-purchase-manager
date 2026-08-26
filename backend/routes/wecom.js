@@ -2862,32 +2862,53 @@ async function sendBookingNotification(type, order, extra = {}) {
         if (salesUserid) {
           const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
           const submitAttempt = Number(extra && extra.submitAttempt) > 0 ? Number(extra.submitAttempt) : 1;
-          // buildTemplateCard 内部已经做 task_id: `booking_${taskId || orderNo}`，这里只传 ${orderNo}${suffix}
-          //    避免生成重复前缀 booking_booking_${orderNo}_S{N}
-          const submitSuffix = extra && extra.submitSuffix
+          // 【42014 自动重试】迁移 101 未跑或回填遗漏时，首次 submitAttempt=1 生成的 task_id
+          //   可能与历史卡重名，企微会返回 errcode=42014 "taskid has existed or empty or exceed max len"。
+          //   这里从 submitAttempt 起步，最多 10 次递增后缀重试（_S2 _S3 … _S11）直到成功，
+          //   保证"无报错但收不到消息"这种情况永不发生。
+          const MAX_RETRY = 10;
+          let finalSubmitAttemptUse = submitAttempt;
+          let finalSuffixUse = (extra && extra.submitSuffix)
             ? String(extra.submitSuffix)
-            : submitAttempt > 1 ? `_S${submitAttempt}` : ''; // 首次不传 suffix → buildTemplateCard 内：booking_${orderNo}
-          const innerTaskId = `${orderNo}${submitSuffix}`;
-          const fullTaskId = `booking_${innerTaskId}`;
-          const card = buildTemplateCard(
-            '📋 订单待确认',
-            `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
-            [
-              { keyname: '客户', value: customerName },
-              { keyname: '业务', value: bizSummary },
-              { keyname: '销售员', value: salesPerson || '未指定' },
-              ...(remark ? [{ keyname: '备注', value: remark }] : []),
-            ],
-            '去确认',
-            cardUrl,
-            innerTaskId
-          );
-          const r = await sendCard(salesUserid, card, `销售员模板卡片 attempt=${submitAttempt}`);
+            : (submitAttempt > 1 ? `_S${submitAttempt}` : '');
+          let r = null;
+          for (let i = 0; i < MAX_RETRY; i++) {
+            const curSuffix = i === 0
+              ? finalSuffixUse
+              : `_S${submitAttempt + i}`;
+            const innerTaskId = `${orderNo}${curSuffix}`;
+            const fullTaskId = `booking_${innerTaskId}`;
+            const card = buildTemplateCard(
+              '📋 订单待确认',
+              `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
+              [
+                { keyname: '客户', value: customerName },
+                { keyname: '业务', value: bizSummary },
+                { keyname: '销售员', value: salesPerson || '未指定' },
+                ...(remark ? [{ keyname: '备注', value: remark }] : []),
+              ],
+              '去确认',
+              cardUrl,
+              innerTaskId
+            );
+            r = await sendCard(salesUserid, card, `销售员模板卡片 attempt=${submitAttempt} retry=${i} taskId=${fullTaskId}`);
+            // 成功 或 不是 42014 重名错误 → 跳出重试
+            const is42014 = r && r.ok === false && (Number(r.errcode) === 42014 || /taskid has existed/i.test(String(r.errmsg || '')));
+            if (!is42014) {
+              finalSubmitAttemptUse = submitAttempt + Math.max(0, i);
+              finalSuffixUse = curSuffix;
+              break;
+            }
+            // 是 42014 → 下一轮换 _S{submitAttempt + i}（第 1 次重试从 submitAttempt + 1 起步）
+            console.warn(`[sendBookingNotification] submit taskId=${fullTaskId} hit errcode=42014 taskid已存在，递增后缀重试 (${i + 1}/${MAX_RETRY})`);
+          }
+          const finalInnerTaskId = `${orderNo}${finalSuffixUse}`;
+          const finalFullTaskId = `booking_${finalInnerTaskId}`;
           result.salesUserid = salesUserid;
           if (r && r.response_code) result.salesResponseCode = r.response_code;
           if (r && r.ok === false) result.salesCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
-          result.submitTaskId = fullTaskId;
-          result.submitAttempt = submitAttempt;
+          result.submitTaskId = finalFullTaskId;
+          result.submitAttempt = finalSubmitAttemptUse;
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
           result.salesCardError = { errcode: -2, errmsg: 'sales_userid_not_found', hint: 'users.wecom_userid / sales_wecom_userid 快照均为空' };
