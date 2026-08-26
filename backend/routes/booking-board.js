@@ -63,18 +63,33 @@ async function saveCardResponseCodes(orderId, patches) {
     );
     const existing = parseMaybeJson(existingRows?.[0]?.c) || {};
     const nowSQL = 'CURRENT_TIMESTAMP';
-    const build = (prev, obj) => ({
-      userid: obj.userid ? String(obj.userid) : (prev && prev.userid) || null,
-      response_code: obj.response_code ? String(obj.response_code) : (prev && prev.response_code) || null,
-      at: prev && prev.at ? prev.at : null,
-    });
+    const build = (prev, obj) => {
+      // 支持显式清空：patch 中含 cleared=true → 清掉 response_code 但保留 attempt/task_id 防下次生成乱序
+      if (obj && obj.cleared === true) {
+        return {
+          userid: null,
+          response_code: null,
+          at: null,
+          attempt: (prev && prev.attempt) ? Number(prev.attempt) : null,
+          task_id: (prev && prev.task_id) ? String(prev.task_id) : null,
+          cleared: true,
+        };
+      }
+      return {
+        userid: obj && obj.userid ? String(obj.userid) : (prev && prev.userid) || null,
+        response_code: obj && obj.response_code ? String(obj.response_code) : (prev && prev.response_code) || null,
+        attempt: (obj && typeof obj.attempt === 'number') ? obj.attempt : ((prev && prev.attempt) ? Number(prev.attempt) : null),
+        task_id: (obj && typeof obj.task_id === 'string' && obj.task_id) ? obj.task_id : ((prev && prev.task_id) ? String(prev.task_id) : null),
+        at: prev && prev.at ? prev.at : null,
+      };
+    };
     for (const key of Object.keys(patches)) {
       const patch = patches[key];
       if (!patch) continue;
       const prev = existing[key] || null;
       const merged = build(prev, patch);
       // 若 response_code 本次有值（新建或更新），覆盖 at（由 SQL NOW() 写）
-      if (patch.response_code) merged.at = nowSQL;
+      if (patch && patch.response_code) merged.at = nowSQL;
       existing[key] = merged;
     }
     const str = JSON.stringify(existing);
@@ -1488,15 +1503,32 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
 
     const order = await readOrderFull(orderId);
+    // 方案 A：task_id 按发起次数递增，绕过企微同一 task_id 去重导致驳回再发起收不到新卡
+    //     首次 attempt=1 → task_id = booking_${orderNo}（兼容线上旧卡）
+    //     驳回重发 attempt≥2 → task_id = booking_${orderNo}_S2, _S3 …
+    const existingCodes = order.wecom_card_response_codes || {};
+    const prevAttempt = (existingCodes.sales_confirm && Number(existingCodes.sales_confirm.attempt)) || 0;
+    const submitAttempt = prevAttempt + 1;
     // 异步发送企微通知 + 保存销售员"订单待确认"卡 response_code（H5 确认后灰按钮用）
     (async () => {
       try {
-        const notifyRes = await sendBookingNotification('submit', order);
+        const notifyRes = await sendBookingNotification('submit', order, { submitAttempt });
         if (notifyRes && notifyRes.salesResponseCode) {
           await saveCardResponseCodes(orderId, {
             sales_confirm: {
               userid: notifyRes.salesUserid,
               response_code: notifyRes.salesResponseCode,
+              attempt: Number(notifyRes.submitAttempt || submitAttempt),
+              task_id: notifyRes.submitTaskId || null,
+            },
+          });
+        } else if (notifyRes) {
+          // 有返回但没 response_code（例如企微返回 errcode / 销售员 userid 空）
+          // 仍记录 attempt，避免下次 submit 再从 1 起用回相同 task_id
+          await saveCardResponseCodes(orderId, {
+            sales_confirm: {
+              userid: notifyRes.salesUserid || existingCodes.sales_confirm?.userid || null,
+              attempt: submitAttempt,
             },
           });
         }
@@ -1591,6 +1623,11 @@ router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req
 
     await pool.query("UPDATE booking_orders SET status = 'pending' WHERE id = ?", [orderId]);
     logOperation(req, '预订订单', '撤回', `订单号=${o.order_no}`, orderId);
+
+    // 方案 B：撤回进入待编辑态，sales_confirm 方向蓝卡已无意义
+    // 1) 清 response_code 避免后续无效灰按钮 API 调用
+    // 2) 保留 attempt 计数，下次 submit 会自动 +1（task_id 递增绕过企微去重）
+    saveCardResponseCodes(orderId, { sales_confirm: { cleared: true } }).catch(() => {});
 
     const order = await readOrderFull(orderId);
     res.json({ ok: true, data: order });
@@ -1694,6 +1731,9 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
       if (greyUserId && salesCard && salesCard.response_code) {
         greyBookingCardButton(greyUserId, salesCard.response_code, '已驳回').catch(()=>{});
       }
+      // 方案 B：驳回=闭环，sales_confirm 对应蓝卡已处理完毕
+      //   清 response_code 防后续无效灰按钮调用；保留 attempt → 下次重新发起 submit 自动 +1（task_id 递增，绕开企微去重静默）
+      saveCardResponseCodes(orderId, { sales_confirm: { cleared: true } }).catch(() => {});
     } else if (o.status === 'reviewing') {
       // 审核员驳回→灰化「订单待审核」卡按钮为"已驳回 (时间)"
       const approveCard = order.wecom_card_response_codes && order.wecom_card_response_codes.approve;
@@ -1707,6 +1747,8 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
       if (greyUserId && approveCard && approveCard.response_code) {
         greyBookingCardButton(greyUserId, approveCard.response_code, '已驳回').catch(()=>{});
       }
+      // 方案 B：审核员驳回 → approve 方向闭环
+      saveCardResponseCodes(orderId, { approve: { cleared: true } }).catch(() => {});
     }
 
     // 异步通知销售员（仅审核员驳回时通知）

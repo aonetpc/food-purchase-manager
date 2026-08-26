@@ -2832,14 +2832,19 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 状态：待销售员确认`;
         await sendGroupMsg(md, '预订群通知');
       }
-      // ② 销售员模板卡片通知（task_id = booking_${orderNo}，与之前版本保持一致，避免不同 id 生成新的蓝卡）
+      // ② 销售员模板卡片通知（task_id = booking_${orderNo}_S{attempt}，每次 resubmit 递增以绕过企微 task_id 去重）
       if (config.booking_notify_sales !== 0) {
         const salesUserid = await findSalesUserid();
         if (salesUserid) {
           const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
+          const submitAttempt = Number(extra && extra.submitAttempt) > 0 ? Number(extra.submitAttempt) : 1;
+          const submitSuffix = extra && extra.submitSuffix
+            ? String(extra.submitSuffix)
+            : submitAttempt > 1 ? `_S${submitAttempt}` : ''; // 首次提交保持 booking_{orderNo}，兼容已在线的旧卡 task_id 可覆盖
+          const taskId = `booking_${orderNo}${submitSuffix}`;
           const card = buildTemplateCard(
             '📋 订单待确认',
-            `订单号：${orderNo}\n请尽快确认订单信息`,
+            `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
             [
               { keyname: '客户', value: customerName },
               { keyname: '业务', value: bizSummary },
@@ -2848,11 +2853,13 @@ async function sendBookingNotification(type, order, extra = {}) {
             ],
             '去确认',
             cardUrl,
-            orderNo
+            taskId
           );
-          const r = await sendCard(salesUserid, card, '销售员模板卡片');
+          const r = await sendCard(salesUserid, card, `销售员模板卡片 attempt=${submitAttempt}`);
           result.salesUserid = salesUserid;
           if (r && r.response_code) result.salesResponseCode = r.response_code;
+          result.submitTaskId = taskId;
+          result.submitAttempt = submitAttempt;
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
         }
