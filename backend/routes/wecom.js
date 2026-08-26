@@ -2746,19 +2746,7 @@ async function sendBookingNotification(type, order, extra = {}) {
     return null;
   };
 
-  // 通知失败不抛错，只记录日志
-  const safeSend = async (fn, label) => {
-    try {
-      const result = await fn();
-      console.log(`[sendBookingNotification] ${label} 成功:`, JSON.stringify(result));
-      return result;
-    } catch (err) {
-      console.error(`[sendBookingNotification] ${label} 失败:`, err.message);
-      return null;
-    }
-  };
-
-  // 构建模板卡片（button_interaction 类型，复用现有 H5 确认页）
+  // 构建模板卡片（button_interaction 类型，与采购/仓库模块完全一致）
   const buildTemplateCard = (mainTitle, subTitleText, contentRows, buttonText, cardUrl, taskId) => {
     const horizontalContentList = contentRows.map(({ keyname, value }) => ({ keyname, value }));
     return {
@@ -2779,20 +2767,29 @@ async function sendBookingNotification(type, order, extra = {}) {
     };
   };
 
-  console.log(`[sendBookingNotification] 开始发送: type=${type}, orderNo=${orderNo}, customer=${customerName}`);
-  console.log(`[sendBookingNotification] 企微配置: corp_id=${config.corp_id || '❌空'}, agent_id=${config.agent_id || '❌空'}, app_secret=${config.app_secret ? '已配置' : '❌空'}`);
-  console.log(`[sendBookingNotification] 通知开关: notify_submit=${config.booking_notify_submit}, notify_sales=${config.booking_notify_sales}, notify_approve=${config.booking_notify_approve}, reject=${config.booking_notify_reject}`);
+  // 直接发送模板卡片（与采购确认/仓库盘点完全一致，不额外检查配置）
+  const sendCard = async (userid, card, label) => {
+    try {
+      const result = await sendTemplateCardToUser(config, userid, card);
+      console.log(`[sendBookingNotification] ${label} 成功:`, JSON.stringify(result));
+      return result;
+    } catch (err) {
+      console.error(`[sendBookingNotification] ${label} 失败: userid=${userid}, error=${err.message}`);
+      return null;
+    }
+  };
 
-  // 配置完整性检查：模板卡片发送需要 corp_id + app_secret + agent_id
-  const hasAppConfig = !!(config.corp_id && config.app_secret && config.agent_id);
-  const missingFields = [];
-  if (!config.corp_id) missingFields.push('corp_id');
-  if (!config.app_secret) missingFields.push('app_secret');
-  if (!config.agent_id) missingFields.push('agent_id');
-  if (!hasAppConfig) {
-    console.warn(`[sendBookingNotification] ⚠️ 企微应用配置不完整，缺少字段: ${missingFields.join(', ')}`);
-    console.warn(`[sendBookingNotification] 详细值: corp_id="${config.corp_id||''}"(${typeof config.corp_id}), app_secret="${config.app_secret||''}"(${typeof config.app_secret},len=${config.app_secret?config.app_secret.length:0}), agent_id="${config.agent_id||''}"(${typeof config.agent_id})`);
-  }
+  // 直接发送群通知
+  const sendGroupMsg = async (md, label) => {
+    try {
+      await sendMarkdownViaWebhook(config.booking_webhook_url, md);
+      console.log(`[sendBookingNotification] ${label} 成功`);
+    } catch (err) {
+      console.error(`[sendBookingNotification] ${label} 失败: ${err.message}`);
+    }
+  };
+
+  console.log(`[sendBookingNotification] 开始: type=${type}, orderNo=${orderNo}, customer=${customerName}`);
 
   switch (type) {
     case 'submit': {
@@ -2805,14 +2802,12 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
           `> 状态：待销售员确认`;
-          await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+        await sendGroupMsg(md, '预订群通知');
       }
       // ② 销售员模板卡片通知
-      console.log(`[sendBookingNotification] submit: notify_sales=${config.booking_notify_sales}, sales_person_id=${order.sales_person_id}`);
       if (config.booking_notify_sales !== 0) {
         const salesUserid = await findSalesUserid();
         if (salesUserid) {
-          console.log(`[sendBookingNotification] 销售员企微userid=${salesUserid}, agent_id=${config.agent_id}`);
           const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
           const card = buildTemplateCard(
             '📋 订单待确认',
@@ -2827,20 +2822,9 @@ async function sendBookingNotification(type, order, extra = {}) {
             cardUrl,
             orderNo
           );
-          console.log(`[sendBookingNotification] 发送销售员模板卡片: userid=${salesUserid}, agent_id=${config.agent_id}`);
-          console.log(`[sendBookingNotification] 卡片内容:`, JSON.stringify(card).substring(0, 400));
-          if (!hasAppConfig) {
-            console.warn('[sendBookingNotification] ⚠️ 跳过发送销售员卡片：企微应用配置不完整');
-          } else {
-            console.log(`[sendBookingNotification] ▶️ 开始调用sendTemplateCardToUser...`);
-            await safeSend(
-              () => sendTemplateCardToUser(config, salesUserid, card),
-              '销售员模板卡片'
-            );
-            console.log(`[sendBookingNotification] ✅ 销售员模板卡片发送流程完成`);
-          }
+          await sendCard(salesUserid, card, '销售员模板卡片');
         } else {
-          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知。请检查 users 表 wecom_userid 字段');
+          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
         }
       }
       break;
@@ -2849,9 +2833,7 @@ async function sendBookingNotification(type, order, extra = {}) {
     case 'salesConfirm': {
       // ① 审核员模板卡片通知
       const approverUserid = config.booking_approver_userid;
-      console.log(`[sendBookingNotification] salesConfirm: approver_userid=${approverUserid}`);
       if (approverUserid) {
-        console.log(`[sendBookingNotification] 发送审核员模板卡片: userid=${approverUserid}, agent_id=${config.agent_id}`);
         const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
         const card = buildTemplateCard(
           '📋 订单待审核',
@@ -2866,17 +2848,7 @@ async function sendBookingNotification(type, order, extra = {}) {
           cardUrl,
           orderNo
         );
-        console.log(`[sendBookingNotification] 卡片内容:`, JSON.stringify(card).substring(0, 400));
-        if (!hasAppConfig) {
-          console.warn('[sendBookingNotification] ⚠️ 跳过审核员通知：企微应用配置不完整');
-        } else {
-          console.log(`[sendBookingNotification] ▶️ 开始发送审核员模板卡片...`);
-          await safeSend(
-            () => sendTemplateCardToUser(config, approverUserid, card),
-            '审核员模板卡片'
-          );
-          console.log(`[sendBookingNotification] ✅ 审核员模板卡片发送流程完成`);
-        }
+        await sendCard(approverUserid, card, '审核员模板卡片');
       } else {
         console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知');
       }
@@ -2889,7 +2861,7 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
           `> 状态：待审核员审核`;
-        await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+        await sendGroupMsg(md, '预订群通知');
       }
       break;
     }
@@ -2903,7 +2875,7 @@ async function sendBookingNotification(type, order, extra = {}) {
           remarkLine +
           `> 涉及业务：${bizSummary}\n` +
           `> 状态：已确认（已锁定，不可修改）`;
-        await safeSend(() => sendMarkdownViaWebhook(config.booking_webhook_url, md), '预订群通知');
+        await sendGroupMsg(md, '预订群通知');
       }
       // ② 销售员模板卡片通知
       const salesUserid = await findSalesUserid();
@@ -2921,16 +2893,7 @@ async function sendBookingNotification(type, order, extra = {}) {
           cardUrl,
           orderNo
         );
-        if (!hasAppConfig) {
-          console.warn('[sendBookingNotification] ⚠️ 跳过销售员确认通知：企微应用配置不完整');
-        } else {
-          console.log(`[sendBookingNotification] ▶️ 开始发送销售员确认通知...`);
-          await safeSend(
-            () => sendTemplateCardToUser(config, salesUserid, card),
-            '销售员确认通知'
-          );
-          console.log(`[sendBookingNotification] ✅ 销售员确认通知发送完成`);
-        }
+        await sendCard(salesUserid, card, '销售员确认通知');
       }
       break;
     }
@@ -2954,16 +2917,7 @@ async function sendBookingNotification(type, order, extra = {}) {
             cardUrl,
             orderNo
           );
-          if (!hasAppConfig) {
-            console.warn('[sendBookingNotification] ⚠️ 跳过驳回通知：企微应用配置不完整');
-          } else {
-            console.log(`[sendBookingNotification] ▶️ 开始发送驳回通知...`);
-            await safeSend(
-              () => sendTemplateCardToUser(config, salesUserid, card),
-              '销售员驳回通知'
-            );
-            console.log(`[sendBookingNotification] ✅ 驳回通知发送完成`);
-          }
+          await sendCard(salesUserid, card, '销售员驳回通知');
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过驳回通知');
         }
@@ -2974,7 +2928,7 @@ async function sendBookingNotification(type, order, extra = {}) {
     default:
       console.warn(`[sendBookingNotification] 未知通知类型: ${type}`);
   }
-  console.log(`[sendBookingNotification] 发送完成: type=${type}, orderNo=${orderNo}`);
+  console.log(`[sendBookingNotification] 完成: type=${type}, orderNo=${orderNo}`);
 }
 
 module.exports = router;
