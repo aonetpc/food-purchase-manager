@@ -53,18 +53,33 @@ function friendlyCapsuleName(cap: any): string {
   if (cap.code) return `${cap.code}套餐`;
   return '体检套餐';
 }
-// discount_rate% → "X.X折"；缺省用 final/base 反推；无折扣（≥100%或10折）返回空
-function formatDiscount(opts: { discount_rate?: number; final?: number; base?: number }): string {
-  let { discount_rate, final, base } = opts;
-  if (typeof discount_rate === 'number' && discount_rate > 0 && discount_rate < 100) {
-    return `${Math.round(discount_rate * 10) / 100}折`;
-  }
+// 折扣信息返回 { label: "X.X折", fromRate: true, nominalOnly: false }
+//  - fromRate: 折扣率来源于 DB discount_rate（即使 final==base 也应显示谈判折扣）
+//  - nominalOnly: true = final==base 但 rate<100（谈判折扣存在，金额未实际打折）
+type DiscountInfo = { label: string; fromRate: boolean; nominalOnly: boolean };
+function NO_DISCOUNT(): DiscountInfo { return { label: '', fromRate: false, nominalOnly: false }; }
+function formatDiscountInfo(opts: { discount_rate?: number; final?: number; base?: number }): DiscountInfo {
+  const { discount_rate, final = 0, base = 0 } = opts;
   const b = Number(base || 0);
   const f = Number(final || 0);
-  if (b > 0 && f > 0 && f < b) {
-    return `${Math.round((f / b) * 1000) / 10}折`;
+  if (typeof discount_rate === 'number' && discount_rate > 0 && discount_rate < 100) {
+    const label = `${Math.round(discount_rate * 10) / 100}折`;
+    // 实际金额无差但有 rate → 标记为"谈判折扣"
+    const nominalOnly = b > 0 && f > 0 && f >= b;
+    return { label, fromRate: true, nominalOnly };
   }
-  return '';
+  if (b > 0 && f > 0 && f < b) {
+    return {
+      label: `${Math.round((f / b) * 1000) / 10}折`,
+      fromRate: false,
+      nominalOnly: false,
+    };
+  }
+  return NO_DISCOUNT();
+}
+// 兼容旧接口（只返回字符串）
+function formatDiscount(opts: { discount_rate?: number; final?: number; base?: number }): string {
+  return formatDiscountInfo(opts).label;
 }
 
 function n(n: any): number { return Number(n || 0); }
@@ -801,28 +816,46 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
   const hasRoleSetting = !!savedCounts && roleOrder.some(k => Number(savedCounts?.[k] || 0) > 0);
 
   // 每个角色价 & 小计（数量优先设定，否则已导入人数；定价统一按订单套餐取 firstPkgFromList）
-  type RoleStat = { key: string; label: string; setN: number | '-'; importedN: number; remain: number; base: number; final: number; rate: number | undefined; discount: string; subtotal: number };
+  type RoleStat = {
+    key: string; label: string;
+    setN: number | '-'; importedN: number; remain: number;
+    base: number; final: number; rate: number | undefined;
+    subtotal: number;
+    di: DiscountInfo;       // 折扣徽章：rate优先强制显示
+    showDisc: boolean;      // 是否显示折扣行（有徽章则显示）
+  };
   const roleStats: RoleStat[] = roleOrder.map(k => {
     const setN: number | '-' = hasRoleSetting ? (Number(savedCounts?.[k] || 0)) : '-';
     const importedN = importedCounts[k] || 0;
     const remain = hasRoleSetting ? Math.max(0, (Number(savedCounts?.[k] || 0)) - importedN) : 0;
     const pr = getRolePricing(firstPkgFromList, k);
-    const discount = formatDiscount({ discount_rate: pr.rate, final: pr.final, base: pr.base });
+    const di = formatDiscountInfo({ discount_rate: pr.rate, final: pr.final, base: pr.base });
     const qty = hasRoleSetting ? (Number(savedCounts?.[k] || 0)) : importedN;
     return {
       key: k,
       label: ROLE_LABEL[k] || k,
       setN, importedN, remain,
-      base: pr.base, final: pr.final, rate: pr.rate, discount,
+      base: pr.base, final: pr.final, rate: pr.rate,
       subtotal: qty * pr.final,
+      di,
+      showDisc: !!di.label, // 有 rate 就显示（谈判折扣也显示）
     };
   });
   let origTotal = 0;
   let finalTotal = 0;
+  // 整体折扣：三角色 rate 存在则按「数量加权」算综合折扣率（显示更准确）
+  let weightedRateNum = 0;
+  let weightedRateDen = 0;
+  let anyRoleHasRate = false;
   for (const rs of roleStats) {
     const qty = (rs.setN === '-' ? rs.importedN : Number(rs.setN || 0));
     origTotal += qty * rs.base;
     finalTotal += qty * rs.final;
+    if (typeof rs.rate === 'number' && rs.rate > 0 && rs.rate <= 100 && qty > 0) {
+      anyRoleHasRate = true;
+      weightedRateNum += rs.rate * qty;
+      weightedRateDen += qty;
+    }
   }
   if (finalTotal <= 0 && paxList.length > 0) {
     // 兜底：名单级 finalAmount 求和（若套餐级全0）
@@ -830,7 +863,13 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
     origTotal = finalTotal;
   }
   const totalSaved = Math.max(0, origTotal - finalTotal);
-  const overallDiscount = formatDiscount({ final: finalTotal, base: origTotal });
+  // 整体折扣率：优先「数量加权 DB rate」，否则回退 final/base 反推
+  let overallRate: number | undefined;
+  if (anyRoleHasRate && weightedRateDen > 0) overallRate = weightedRateNum / weightedRateDen;
+  const overallDi = overallRate != null
+    ? formatDiscountInfo({ discount_rate: overallRate, final: finalTotal, base: origTotal })
+    : formatDiscountInfo({ final: finalTotal, base: origTotal });
+  const overallShow = !!overallDi.label;       // 有就显示（含谈判折扣名义值）
 
   // 名单逐行：用于折叠展开
   type PaxRow = { name: string; roleLabel: string; packageName: string; base: number; final: number; discount: string; custom: boolean };
@@ -878,52 +917,70 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
           <span className="text-xs font-mono font-semibold text-green-700 whitespace-nowrap">合计 {formatCurrency(finalTotal)}</span>
         </div>
 
-        {/* 三角色分栏：PC端语义（男性/已婚女/未婚女），移动端自动换行 1~3 列 */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+        {/* 三角色分栏：PC端语义，双行卡头（角色名单独一行，价格+折扣独立一行）+ items-stretch 等高 + justify-between 底对齐 */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] items-stretch">
           {roleStats.map(rs => {
             const hasData = rs.setN !== 0 || rs.importedN > 0;
             return (
-              <div key={rs.key} className="bg-white border rounded p-2" style={{ borderColor: `${bizColor}22` }}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-gray-700 font-medium">{rs.label}</span>
-                  {rs.final > 0 && (
-                    <span className="text-gray-600 font-mono">
-                      {formatCurrency(rs.final)}<span className="text-[10px] text-gray-400">/人</span>
-                    </span>
-                  )}
+              <div key={rs.key} className="bg-white border rounded p-2 flex flex-col justify-between" style={{ borderColor: `${bizColor}22` }}>
+                {/* 卡头第一行：角色名（固定最小高度，避免 2/3 字错位） */}
+                <div className="flex items-center justify-between mb-1 min-h-[1.1em]">
+                  <span className="text-gray-700 font-medium whitespace-nowrap">{rs.label}</span>
                 </div>
-                {/* 原价划线 + 折扣率徽章 */}
-                {rs.base > 0 && rs.final > 0 && rs.final < rs.base ? (
-                  <div className="flex items-center justify-end gap-1 mb-1">
-                    <span className="text-[10px] text-gray-400 line-through">原价 {formatCurrency(rs.base)}</span>
-                    {rs.discount && (
-                      <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-500 text-[10px] font-medium">{rs.discount}</span>
+                {/* 卡头第二行：原价（划线）+ 折扣徽章 + 折后价/人（两端对齐，不再被角色名挤压） */}
+                <div className="flex items-end justify-between gap-1 mb-1.5 whitespace-nowrap">
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {rs.showDisc && rs.base > 0 && rs.final < rs.base ? (
+                      <span className="text-[10px] text-gray-400 line-through">原价 {formatCurrency(rs.base)}</span>
+                    ) : rs.showDisc && rs.di.fromRate && rs.base > 0 ? (
+                      <span className="text-[10px] text-gray-400 line-through">原价 {formatCurrency(rs.base)}</span>
+                    ) : null}
+                    {rs.di.label && (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        rs.di.nominalOnly
+                          ? 'bg-sky-50 text-sky-600 border border-sky-100'   // 谈判折扣（金额无差，蓝色提示）
+                          : 'bg-red-50 text-red-500'                           // 实际有差，红色强提示
+                      }`}>
+                        {rs.di.label}{rs.di.nominalOnly ? '（谈）' : ''}
+                      </span>
                     )}
                   </div>
-                ) : null}
-                {!hasData ? (
-                  <div className="text-gray-300 text-center py-1.5">0人</div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-3 gap-1 text-center font-mono">
-                      <div className="bg-gray-50 rounded px-1 py-0.5">
-                        <div className="text-[9px] text-gray-400">设定</div>
-                        <div className="text-gray-800">{rs.setN === '-' ? '-' : rs.setN}</div>
-                      </div>
-                      <div className="bg-gray-50 rounded px-1 py-0.5">
-                        <div className="text-[9px] text-gray-400">已导</div>
-                        <div className="text-gray-800">{rs.importedN}</div>
-                      </div>
-                      <div className="rounded px-1 py-0.5" style={{ background: rs.remain > 0 ? 'rgba(245,158,11,.1)' : '#F9FAFB' }}>
-                        <div className="text-[9px]" style={{ color: rs.remain > 0 ? '#F59E0B' : '#9CA3AF' }}>待绑</div>
-                        <div style={{ color: rs.remain > 0 ? '#B45309' : '#1F2937' }}>{rs.remain}</div>
-                      </div>
+                  {rs.final > 0 ? (
+                    <span className="text-gray-800 font-bold font-mono flex-shrink-0">
+                      {formatCurrency(rs.final)}<span className="text-[10px] text-gray-400 font-normal font-sans">/人</span>
+                    </span>
+                  ) : (
+                    <span className="text-gray-300 text-[10px] font-mono flex-shrink-0">—/人</span>
+                  )}
+                </div>
+                {/* 卡体：设定/已导/待绑 或 0人占位 */}
+                <div className="flex-1 flex flex-col justify-between gap-1.5">
+                  {!hasData ? (
+                    <div className="text-gray-300 text-center py-2 border border-dashed rounded" style={{ borderColor: '#E5E7EB' }}>
+                      0人 · 暂无设定
                     </div>
-                    <div className="text-right mt-1 text-green-700 font-mono font-semibold">
-                      小计 {formatCurrency(rs.subtotal)}
-                    </div>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-3 gap-1 text-center font-mono">
+                        <div className="bg-gray-50 rounded px-1 py-0.5">
+                          <div className="text-[9px] text-gray-400">设定</div>
+                          <div className="text-gray-800">{rs.setN === '-' ? '-' : rs.setN}</div>
+                        </div>
+                        <div className="bg-gray-50 rounded px-1 py-0.5">
+                          <div className="text-[9px] text-gray-400">已导</div>
+                          <div className="text-gray-800">{rs.importedN}</div>
+                        </div>
+                        <div className="rounded px-1 py-0.5" style={{ background: rs.remain > 0 ? 'rgba(245,158,11,.1)' : '#F9FAFB' }}>
+                          <div className="text-[9px]" style={{ color: rs.remain > 0 ? '#F59E0B' : '#9CA3AF' }}>待绑</div>
+                          <div style={{ color: rs.remain > 0 ? '#B45309' : '#1F2937' }}>{rs.remain}</div>
+                        </div>
+                      </div>
+                      <div className="text-right text-green-700 font-mono font-semibold">
+                        小计 {formatCurrency(rs.subtotal)}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -980,24 +1037,38 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
           </div>
         )}
 
-        {/* 汇总：原价/整体折扣/节省 */}
+        {/* 汇总：原价/整体折扣/节省 —— 只要有 DB 折扣率就显示整体X.X折（含谈判折扣名义值） */}
         {origTotal > 0 && (
           <div className="pt-2 mt-1 border-t border-dashed" style={{ borderColor: `${bizColor}25` }}>
             <div className="flex items-center justify-between text-xs">
               <span className="text-gray-500">原价合计</span>
               <span className={`${totalSaved > 0 ? 'text-gray-500 line-through' : 'text-gray-700'}`}>{formatCurrency(origTotal)}</span>
             </div>
-            {totalSaved > 0 ? (
+            {overallShow || totalSaved > 0 ? (
               <>
                 <div className="flex items-center justify-between text-xs mt-0.5">
                   <span className="text-gray-600">
-                    折后合计{overallDiscount ? <> · 整体<span className="font-semibold text-red-500">{overallDiscount}</span></> : null}
+                    折后合计
+                    {overallShow ? (
+                      <>
+                        {' · '}整体
+                        <span className={`font-semibold ${overallDi.nominalOnly ? 'text-sky-600' : 'text-red-500'}`}>
+                          {overallDi.label}
+                        </span>
+                        {overallDi.nominalOnly && <span className="text-[10px] ml-1 text-sky-500">（谈判折扣）</span>}
+                      </>
+                    ) : null}
                   </span>
                   <span className="text-green-600 font-semibold">{formatCurrency(finalTotal)}</span>
                 </div>
                 <div className="flex items-center justify-between text-[11px] mt-0.5">
                   <span className="text-gray-400">共节省</span>
-                  <span className="text-green-600">-{formatCurrency(totalSaved)}</span>
+                  <span className={totalSaved > 0 ? 'text-green-600' : 'text-gray-400'}>
+                    {totalSaved > 0 ? `-${formatCurrency(totalSaved)}` : '—'}
+                    {overallDi.nominalOnly && totalSaved === 0 ? (
+                      <span className="ml-1 text-sky-400">（金额无差 · 折扣为约定）</span>
+                    ) : null}
+                  </span>
                 </div>
               </>
             ) : null}
