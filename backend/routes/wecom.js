@@ -2778,8 +2778,14 @@ async function sendBookingNotification(type, order, extra = {}) {
   };
 
   console.log(`[sendBookingNotification] 开始发送: type=${type}, orderNo=${orderNo}, customer=${customerName}`);
-  console.log(`[sendBookingNotification] 企微配置: corp_id=${config.corp_id}, agent_id=${config.agent_id}, app_secret=${config.app_secret ? '已配置' : '未配置'}`);
-  console.log(`[sendBookingNotification] 通知开关: notify_submit=${config.booking_notify_submit}, notify_sales=${config.booking_notify_sales}, notify_approver=${config.booking_notify_approver}, approve=${config.booking_notify_approve}, reject=${config.booking_notify_reject}`);
+  console.log(`[sendBookingNotification] 企微配置: corp_id=${config.corp_id || '❌空'}, agent_id=${config.agent_id || '❌空'}, app_secret=${config.app_secret ? '已配置' : '❌空'}`);
+  console.log(`[sendBookingNotification] 通知开关: notify_submit=${config.booking_notify_submit}, notify_sales=${config.booking_notify_sales}, notify_approve=${config.booking_notify_approve}, reject=${config.booking_notify_reject}`);
+
+  // 配置完整性检查：模板卡片发送需要 corp_id + app_secret + agent_id
+  const hasAppConfig = config.corp_id && config.app_secret && config.agent_id;
+  if (!hasAppConfig) {
+    console.warn(`[sendBookingNotification] ⚠️ 企微应用配置不完整（corp_id=${!!config.corp_id}, app_secret=${!!config.app_secret}, agent_id=${!!config.agent_id}），模板卡片可能无法发送`);
+  }
 
   switch (type) {
     case 'submit': {
@@ -2816,10 +2822,14 @@ async function sendBookingNotification(type, order, extra = {}) {
           );
           console.log(`[sendBookingNotification] 发送销售员模板卡片: userid=${salesUserid}, agent_id=${config.agent_id}`);
           console.log(`[sendBookingNotification] 卡片内容:`, JSON.stringify(card).substring(0, 400));
-          await safeSend(
-            () => sendTemplateCardToUser(config, salesUserid, card),
-            '销售员模板卡片'
-          );
+          if (!hasAppConfig) {
+            console.warn('[sendBookingNotification] ⚠️ 跳过发送：企微应用配置不完整（需要 corp_id + app_secret + agent_id）');
+          } else {
+            await safeSend(
+              () => sendTemplateCardToUser(config, salesUserid, card),
+              '销售员模板卡片'
+            );
+          }
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知。请检查 users 表 wecom_userid 字段');
         }
@@ -2848,10 +2858,14 @@ async function sendBookingNotification(type, order, extra = {}) {
           orderNo
         );
         console.log(`[sendBookingNotification] 卡片内容:`, JSON.stringify(card).substring(0, 400));
-        await safeSend(
-          () => sendTemplateCardToUser(config, approverUserid, card),
-          '审核员模板卡片'
-        );
+        if (!hasAppConfig) {
+          console.warn('[sendBookingNotification] ⚠️ 跳过审核员通知：企微应用配置不完整');
+        } else {
+          await safeSend(
+            () => sendTemplateCardToUser(config, approverUserid, card),
+            '审核员模板卡片'
+          );
+        }
       } else {
         console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知');
       }
@@ -2896,10 +2910,14 @@ async function sendBookingNotification(type, order, extra = {}) {
           cardUrl,
           orderNo
         );
-        await safeSend(
-          () => sendTemplateCardToUser(config, salesUserid, card),
-          '销售员确认通知'
-        );
+        if (!hasAppConfig) {
+          console.warn('[sendBookingNotification] ⚠️ 跳过销售员确认通知：企微应用配置不完整');
+        } else {
+          await safeSend(
+            () => sendTemplateCardToUser(config, salesUserid, card),
+            '销售员确认通知'
+          );
+        }
       }
       break;
     }
@@ -2923,10 +2941,14 @@ async function sendBookingNotification(type, order, extra = {}) {
             cardUrl,
             orderNo
           );
-          await safeSend(
-            () => sendTemplateCardToUser(config, salesUserid, card),
-            '销售员驳回通知'
-          );
+          if (!hasAppConfig) {
+            console.warn('[sendBookingNotification] ⚠️ 跳过驳回通知：企微应用配置不完整');
+          } else {
+            await safeSend(
+              () => sendTemplateCardToUser(config, salesUserid, card),
+              '销售员驳回通知'
+            );
+          }
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过驳回通知');
         }
