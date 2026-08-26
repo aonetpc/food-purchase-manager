@@ -3,9 +3,10 @@
  * 用法：cd /opt/food-purchase/backend && node scripts/diagnose-booking-wecom.js [订单号]
  * 
  * 检查：
+ * 0. 企微配置完整性（通过getWecomConfig函数，与生产代码一致）
  * 1. 订单是否存储了 sales_wecom_userid
  * 2. 销售员用户是否绑定了 wecom_userid
- * 3. 企微配置是否完整
+ * 3. 企微API连接和模板卡片发送测试
  */
 const pool = require('../db');
 
@@ -21,6 +22,43 @@ async function main() {
   console.log('='.repeat(60));
 
   try {
+    // 0. 用生产代码的 getWecomConfig 函数读取配置（确保与线上一致）
+    console.log('\n📋 步骤0: 通过getWecomConfig()读取企微配置...');
+    const wecomModule = require('../routes/wecom');
+    let prodConfig = null;
+    try {
+      if (wecomModule.getWecomConfig) {
+        prodConfig = await wecomModule.getWecomConfig();
+      }
+    } catch (e) {
+      console.log(`  ⚠️ 无法调用getWecomConfig: ${e.message}`);
+    }
+    
+    // 备用：直接查数据库
+    if (!prodConfig) {
+      const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
+      prodConfig = rows.length > 0 ? rows[0] : null;
+    }
+    
+    if (!prodConfig) {
+      console.log('  ❌ wecom_config 表无数据！');
+    } else {
+      console.log(`  corp_id: ${prodConfig.corp_id || '❌ 空'}`);
+      console.log(`  agent_id: ${prodConfig.agent_id || '❌ 空'}`);
+      console.log(`  app_secret: ${prodConfig.app_secret ? `✅ 已配置(${prodConfig.app_secret.length}字符)` : '❌ 空'}`);
+      console.log(`  webhook_url: ${prodConfig.webhook_url ? '✅ 已配置' : '❌ 空'}`);
+      console.log(`  booking_webhook_url: ${prodConfig.booking_webhook_url ? '✅ 已配置' : '❌ 空'}`);
+      console.log(`  booking_approver_userid: ${prodConfig.booking_approver_userid || '❌ 空'}`);
+      console.log(`  booking_notify_submit: ${prodConfig.booking_notify_submit}`);
+      console.log(`  booking_notify_sales: ${prodConfig.booking_notify_sales}`);
+      
+      const complete = prodConfig.corp_id && prodConfig.app_secret && prodConfig.agent_id;
+      console.log(`  配置完整性: ${complete ? '✅ 完整' : '❌ 不完整 - 缺少: '}` + 
+        [!prodConfig.corp_id ? 'corp_id ' : ''] + 
+        [!prodConfig.app_secret ? 'app_secret ' : ''] + 
+        [!prodConfig.agent_id ? 'agent_id' : '']);
+    }
+
     // 1. 查订单
     console.log('\n📋 步骤1: 查订单数据...');
     const [orders] = await pool.query(`
