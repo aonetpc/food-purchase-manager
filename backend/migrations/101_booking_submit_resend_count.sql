@@ -32,14 +32,14 @@ SET @sql = IF(
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 
--- 回填：历史已成功发过销售卡、且当前已离开 pending 的订单 = 至少完成 1 次 submit
+-- 回填：历史已离开 pending 状态的订单 = 至少完成过 1 次 submit
 --   submit_resend_count 归 1（下次重发起直接到 2，task_id S2 → 绝不再命中第 1 次提交的去重键）
 --   只改 submit_resend_count=0 的行，避免迁移多次运行把已经 >1 的后续数据回退。
+--   注意：不依赖 response_code（驳回 saveCardResponseCodes cleared=true 会把 response_code 清成 null，
+--         只保留 task_id 原值），改用 status 判断 + JSON 字段非空即可。
 UPDATE booking_orders
    SET submit_resend_count = 1
  WHERE submit_resend_count = 0
    AND status IN ('sales_confirming','reviewing','rejected','confirmed','completed')
    AND wecom_card_response_codes IS NOT NULL
-   AND CHAR_LENGTH(wecom_card_response_codes) > 2
-   AND JSON_UNQUOTE(JSON_EXTRACT(wecom_card_response_codes, '$.sales_confirm.response_code')) IS NOT NULL
-   AND JSON_UNQUOTE(JSON_EXTRACT(wecom_card_response_codes, '$.sales_confirm.response_code')) <> '';
+   AND CHAR_LENGTH(wecom_card_response_codes) > 2;
