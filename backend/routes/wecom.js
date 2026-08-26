@@ -2837,8 +2837,8 @@ async function sendBookingNotification(type, order, extra = {}) {
     approverUserid: null, approverResponseCode: null,
     // salesConfirm 结构化错误（固定审核员场景不通知销售员，但调用方必须能拿到 errcode 落日志）
     approveCardError: null,
-    // submit：第 N 次发起 & 最终 task_id（booking_${orderNo}_S{N}）
-    submitAttempt: null, submitTaskId: null,
+    // 最终落地 task_id 完整值：含 booking_ 前缀（booking-board 保存到 JSON 方便排错）
+    submitAttempt: null, submitTaskId: null, approveTaskId: null,
     // approve/reject: 发给审核员本人（通过审核后）/销售员（驳回）回退更新（暂未启用，预留）
     rejectSalesResponseCode: null,
   };
@@ -2912,6 +2912,7 @@ async function sendBookingNotification(type, order, extra = {}) {
       // ① 审核员模板卡片通知：追加"销售确认时间 + 签字状态"（task_id 后缀避免覆盖 submit 原卡 task_id）
       const approverUserid = config.booking_approver_userid;
       if (approverUserid) {
+        const approveInnerTaskId = `${orderNo}_approve`;
         const approveCard = buildTemplateCard(
           '📋 订单待审核',
           `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
@@ -2925,13 +2926,14 @@ async function sendBookingNotification(type, order, extra = {}) {
           ],
           '去审核',
           cardUrl,
-          `${orderNo}_approve`,
+          approveInnerTaskId,
           null
         );
         const r = await sendCard(approverUserid, approveCard, '审核员模板卡片');
         result.approverUserid = approverUserid;
         if (r && r.response_code) result.approverResponseCode = r.response_code;
         if (r && r.ok === false) result.approveCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
+        result.approveTaskId = `booking_${approveInnerTaskId}`;
       } else {
         // guard：审核员未配置 → 固定审批流阻塞；错误结构化返回给调用方落日志
         //   （警告卡仍回发销售员，避免 booking_approver_userid 为空时全链路静悄悄完全没人知道）
