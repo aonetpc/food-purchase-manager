@@ -274,10 +274,16 @@ export default function WecomManager() {
     if (showSecrets[field]) {
       return secretValues[field] || '';
     }
-    return (config as any)[field] || '';
+    const val = (config as any)[field];
+    // 通知开关字段：确保始终返回数字类型（0或1）
+    const notifyFields = ['booking_notify_submit', 'booking_notify_sales', 'booking_notify_approve', 'booking_notify_reject'];
+    if (notifyFields.includes(field)) {
+      return Number(val) || 0;
+    }
+    return val ?? '';
   };
 
-  const setFieldValue = (field: string, value: string) => {
+  const setFieldValue = (field: string, value: string | number | boolean) => {
     setConfig(prev => ({ ...prev, [field]: value }));
     if (showSecrets[field]) {
       setSecretValues(prev => ({ ...prev, [field]: value }));
