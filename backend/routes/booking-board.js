@@ -1559,8 +1559,9 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
 
     const order = await readOrderFull(orderId);
     let notifyError = null;
+    let notifyRes = null;
     try {
-      const notifyRes = await sendBookingNotification('submit', order, { submitAttempt });
+      notifyRes = await sendBookingNotification('submit', order, { submitAttempt });
       if (notifyRes && notifyRes.salesResponseCode) {
         await saveCardResponseCodes(orderId, {
           sales_confirm: {
@@ -1594,7 +1595,21 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     if (notifyError) {
       console.error(`[booking submit notify] FAIL orderNo=${o.order_no} submitAttempt=${submitAttempt}:`, JSON.stringify(notifyError));
     }
-    res.json({ ok: true, data: order });
+    // 诊断信息一并返回前端，方便排查"没有报错但收不到消息"
+    res.json({
+      ok: true,
+      data: order,
+      _notifyDebug: {
+        orderNo: o.order_no,
+        submitAttempt,
+        usingNativeCount,
+        salesUserid: (notifyRes && notifyRes.salesUserid) || null,
+        salesResponseCode: (notifyRes && notifyRes.salesResponseCode) || null,
+        submitTaskId: (notifyRes && notifyRes.submitTaskId) || null,
+        salesCardError: (notifyRes && notifyRes.salesCardError) || notifyError || null,
+        salesWecomUserid: o.sales_wecom_userid || null,
+      },
+    });
   } catch (e) {
     console.error('[booking submit] error:', e);
     res.status(500).json({ ok: false, error: e.message });
