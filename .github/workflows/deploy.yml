@@ -778,7 +778,9 @@ jobs:
             #     然后立刻 mv 081_xxx.sql 081_xxx_DONE.sql 改名为 _DONE.sql 收尾！
             # ==========================================================================
             declare -a SKIPPED_FILES=()
-            for sql_file in /opt/food-purchase/backend/migrations/0*.sql; do
+            # 🔧 glob 修复：原 0*.sql 只匹配 0 开头，导致 100/101 等三位数编号的迁移(开头=1/2)永远被跳过。
+            #    改为 [0-9]*.sql 匹配任何数字前缀的迁移文件，再由 migrate.js / _DONE.sql / DML 保护做二次过滤。
+            for sql_file in /opt/food-purchase/backend/migrations/[0-9]*.sql; do
               fname="$(basename "$sql_file")"
               case "$fname" in
                 *_DONE.sql)
