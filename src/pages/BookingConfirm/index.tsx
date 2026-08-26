@@ -376,18 +376,6 @@ export default function BookingConfirmPage() {
           <Row label="付款方式" value={order.paymentMethod || '—'} />
         </InfoCard>
 
-        {/* 审批流程卡 */}
-        <ApprovalFlowCard steps={flowSteps} />
-
-        {/* 驳回信息（rejected 状态显示详情） */}
-        {order.status === 'rejected' && (
-          <InfoCard icon={<X size={16} className="text-red-500" />} title="驳回信息">
-            {order.rejectedByName && <Row label="驳回人" value={order.rejectedByName} />}
-            {order.rejectedAt && <Row label="驳回时间" value={formatDateTime(order.rejectedAt)} />}
-            {order.rejectionReason && <Row label="驳回原因" value={<span className="whitespace-pre-wrap break-words">{order.rejectionReason}</span>} />}
-          </InfoCard>
-        )}
-
         {/* 涉及业务 + 备注 */}
         <InfoCard icon={<FileText size={16} className="text-blue-500" />} title="涉及业务">
           <div className="flex flex-wrap gap-2 mb-2">
@@ -519,6 +507,16 @@ export default function BookingConfirmPage() {
             </button>
           </ActionBox>
         )}
+
+        {/* 审批流程卡：放在签字操作区全部下方，rejected 状态前叠加驳回详情卡 */}
+        {order.status === 'rejected' && (
+          <InfoCard icon={<X size={16} className="text-red-500" />} title="驳回信息">
+            {order.rejectedByName && <Row label="驳回人" value={order.rejectedByName} />}
+            {order.rejectedAt && <Row label="驳回时间" value={formatDateTime(order.rejectedAt)} />}
+            {order.rejectionReason && <Row label="驳回原因" value={<span className="whitespace-pre-wrap break-words">{order.rejectionReason}</span>} />}
+          </InfoCard>
+        )}
+        <ApprovalFlowCard steps={flowSteps} />
 
         <button onClick={refresh} className="w-full py-2 text-xs text-gray-400 flex items-center justify-center gap-1">
           <RefreshCw size={12} />刷新订单状态
@@ -1177,36 +1175,131 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
   );
 }
 
-// --- 用车：多客户 ---
+// --- 用车：多客户（对齐 PC extra.carpickup 新结构）---
 function CarDetails({ item, pax }: { item: any; pax: number }) {
   const extra = item.extra || {};
-  const customers: any[] = extra.customers || [];
-  const totalPax = customers.reduce((s, c) => s + Number(c.paxCount || 0), 0);
+  // 数据源：先 carpickup 新结构，fallback 旧 customers 平铺数组
+  const carpickup: any = extra.carpickup || null;
+  const newCustomers: any[] = carpickup?.customers || [];
+  const oldCustomers: any[] = extra.customers || [];
+
+  const hasNew = !!carpickup && Array.isArray(newCustomers) && newCustomers.length > 0;
+  const shareRide = carpickup?.shareRide === true;
+  const hasCustom = carpickup && carpickup.customAmount != null && carpickup.customAmount !== ''
+    && !isNaN(Number(carpickup.customAmount));
+  const perCustomer = Number(carpickup?.pricePerCustomer || 0);
+  const customAmt = hasCustom ? Number(carpickup.customAmount) : 0;
+
+  // 订单列表项 item.amount 为该明细总额（H5 ItemHeader 右侧已显示）
+  // 客户总数 & 人数
+  const customerCount = hasNew ? newCustomers.length : oldCustomers.length;
+  const totalPax = hasNew
+    ? newCustomers.reduce((s: number, c: any) => s + Number(c.paxCount || 0), 0)
+    : oldCustomers.reduce((s: number, c: any) => s + Number(c.paxCount || 0), 0);
+  const carRemark = carpickup?.remark || extra.remark || '';
+
   return (
     <div className="py-1">
-      <p className="text-sm text-gray-700">用车{pax > 0 ? <span className="text-xs text-gray-400 ml-1.5">· 共{pax}人</span> : null}</p>
-      {customers.length > 0 && (
-        <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 p-2.5 space-y-1.5">
-          {customers.map((c, i) => (
-            <div key={i} className="text-xs text-gray-600 flex items-start gap-2">
-              <span className="text-gray-400">{i + 1}.</span>
-              <div className="flex-1 min-w-0">
-                <span className="text-gray-800 font-medium">{c.customerName || c.name || '(未填客户名)'}</span>
-                <span className="text-gray-400 mx-1.5">·</span>
-                <span className="text-gray-500">
-                  {[c.date, c.time || c.pickupTime].filter(Boolean).join(' ') || '时间未设'}
-                </span>
-                <span className="text-gray-400 mx-1.5">·</span>
-                <span>{c.paxCount || 0}人</span>
-                {c.fromAddr && <span className="block text-gray-400 mt-0.5">起：{c.fromAddr}</span>}
-                {c.toAddr   && <span className="block text-gray-400 mt-0.5">到：{c.toAddr}</span>}
+      {/* 概要条：拼车/专车 + 客户数 + 单价/客户 + 议价覆盖 + 总价 */}
+      <div className="flex flex-wrap items-center gap-2 text-xs mb-2">
+        <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+          shareRide ? 'bg-teal-50 text-teal-700 border border-teal-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+        }`}>
+          {shareRide ? '拼车' : '专车'}
+        </span>
+        <span className="text-gray-600">{customerCount} 位客户 · 共 {totalPax || pax || 0} 人</span>
+        {perCustomer > 0 && (
+          <span className="text-gray-700 font-mono">{formatCurrency(perCustomer)}<span className="text-[10px] text-gray-400 font-sans">/客户</span></span>
+        )}
+        {hasCustom && (
+          <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px] border border-amber-100 font-medium">
+            议价覆盖 {formatCurrency(customAmt)}
+          </span>
+        )}
+        <span className="ml-auto text-green-700 font-bold font-mono text-sm">{formatCurrency(hasCustom ? customAmt : (item.amount || 0))}</span>
+      </div>
+
+      {/* 每位客户：接 + 送 两列卡片 */}
+      {customerCount > 0 ? (
+        <div className="space-y-3">
+          {(hasNew ? newCustomers : oldCustomers).map((c: any, i: number) => (
+            <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-2.5">
+              {/* 客户头：联系人 + 联系电话 · X人 */}
+              <div className="flex items-center justify-between mb-2 text-xs">
+                <div className="font-semibold text-gray-800">
+                  客户 {i + 1}: <span>{c.customerName || c.name || c.contactName || '(未填客户名)'}</span>
+                </div>
+                <div className="text-gray-500 flex items-center gap-2 flex-shrink-0 ml-2">
+                  {c.contactPhone && (
+                    <a href={`tel:${c.contactPhone}`} className="text-blue-600 hover:underline flex items-center gap-1">
+                      <Phone size={11} />{c.contactPhone}
+                    </a>
+                  )}
+                  <span className="text-gray-400">·</span>
+                  <span className="text-gray-600 font-mono">{Number(c.paxCount || 0)}人</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {hasNew ? (
+                  <>
+                    {/* 接 — lime-50 */}
+                    <div className="rounded border border-lime-100 bg-lime-50 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-lime-700 mb-1">接 · Pickup</div>
+                      <div className="text-gray-800 font-medium mb-0.5">
+                        {[c.pickupDate, c.pickupTime].filter(Boolean).join(' ') || <span className="text-gray-400">接车时间未设</span>}
+                      </div>
+                      {c.pickupRoute ? (
+                        <div className="text-gray-600 break-words whitespace-pre-wrap">📍 {c.pickupRoute}</div>
+                      ) : <div className="text-gray-300">📍 未填写接车路线</div>}
+                    </div>
+                    {/* 送 — rose-50 */}
+                    <div className="rounded border border-rose-100 bg-rose-50 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-rose-700 mb-1">送 · Dropoff</div>
+                      <div className="text-gray-800 font-medium mb-0.5">
+                        {[c.dropoffDate, c.dropoffTime].filter(Boolean).join(' ') || <span className="text-gray-400">送车时间未设</span>}
+                      </div>
+                      {c.dropoffRoute ? (
+                        <div className="text-gray-600 break-words whitespace-pre-wrap">📍 {c.dropoffRoute}</div>
+                      ) : <div className="text-gray-300">📍 未填写送车路线</div>}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* 旧 customers 兼容：起址 -> 到址 两列 */}
+                    <div className="rounded border border-lime-100 bg-lime-50 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-lime-700 mb-1">起 · From</div>
+                      <div className="text-gray-800 font-medium mb-0.5">
+                        {[c.date, c.time || c.pickupTime].filter(Boolean).join(' ') || <span className="text-gray-400">时间未设</span>}
+                      </div>
+                      {c.fromAddr || c.pickupRoute ? (
+                        <div className="text-gray-600 break-words">📍 {c.fromAddr || c.pickupRoute}</div>
+                      ) : <div className="text-gray-300">📍 未填写出发地址</div>}
+                    </div>
+                    <div className="rounded border border-rose-100 bg-rose-50 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-rose-700 mb-1">到 · To</div>
+                      <div className="text-gray-800 font-medium mb-0.5">
+                        {[c.dropoffDate, c.dropoffTime].filter(Boolean).join(' ') || <span className="text-gray-400">—</span>}
+                      </div>
+                      {c.toAddr || c.dropoffRoute ? (
+                        <div className="text-gray-600 break-words">📍 {c.toAddr || c.dropoffRoute}</div>
+                      ) : <div className="text-gray-300">📍 未填写目的地</div>}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           ))}
-          <div className="pt-1 mt-1 border-t border-gray-200 text-xs text-gray-500 flex justify-between">
-            <span>客户数：{customers.length}</span>
-            <span>总人数：{totalPax || pax}</span>
-          </div>
+        </div>
+      ) : (
+        <div className="text-center text-gray-400 text-xs py-2 border border-dashed rounded">暂无客户明细</div>
+      )}
+
+      {/* 备注 */}
+      {carRemark && (
+        <div className="mt-3 pt-2 border-t border-dashed border-gray-200 text-xs text-gray-500">
+          <span className="text-gray-400">用车备注：</span>
+          <span className="whitespace-pre-wrap break-words text-gray-700">{carRemark}</span>
         </div>
       )}
     </div>

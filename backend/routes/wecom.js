@@ -2746,25 +2746,43 @@ async function sendBookingNotification(type, order, extra = {}) {
     return null;
   };
 
+  // 销售确认时间格式化：东八区本地时区 → `YYYY-MM-DD HH:mm`
+  // 与 MySQL NOW() 入库时区一致（Asia/Shanghai），避免 toISOString 少 8 小时
+  const formatCardDate = (v) => {
+    if (v === null || v === undefined || v === '') return '';
+    const d = new Date(v);
+    if (isNaN(d.getTime())) {
+      // 兜底：字符串直接切头
+      const s = String(v);
+      return s.length >= 16 ? s.slice(0, 16).replace('T', ' ') : s;
+    }
+    const pad = (x) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   // 构建模板卡片（button_interaction 类型，与采购/仓库模块完全一致）
-  const buildTemplateCard = (mainTitle, subTitleText, contentRows, buttonText, cardUrl, taskId) => {
+  // 可选 extras：支持 card_status / result_item 等企业微信模板卡完成态字段
+  const buildTemplateCard = (mainTitle, subTitleText, contentRows, buttonText, cardUrl, taskId, extras = null) => {
     const horizontalContentList = contentRows.map(({ keyname, value }) => ({ keyname, value }));
-    return {
-      card_type: 'button_interaction',
-      source: { desc: '预订管理系统' },
-      main_title: { title: mainTitle, desc: customerName },
-      sub_title_text: subTitleText,
-      horizontal_content_list: horizontalContentList,
-      button_list: [{
-        text: buttonText,
-        style: 1,
-        type: 1,
-        key: `go_booking_${taskId || orderNo}`,
-        url: cardUrl,
-      }],
-      task_id: `booking_${taskId || orderNo}`,
-      card_action: { type: 1, url: cardUrl },
-    };
+    return Object.assign(
+      {
+        card_type: 'button_interaction',
+        source: { desc: '预订管理系统' },
+        main_title: { title: mainTitle, desc: customerName },
+        sub_title_text: subTitleText,
+        horizontal_content_list: horizontalContentList,
+        button_list: [{
+          text: buttonText,
+          style: 1,
+          type: 1,
+          key: `go_booking_${taskId || orderNo}`,
+          url: cardUrl,
+        }],
+        task_id: `booking_${taskId || orderNo}`,
+        card_action: { type: 1, url: cardUrl },
+      },
+      extras && typeof extras === 'object' ? extras : {}
+    );
   };
 
   // 直接发送模板卡片（与采购确认/仓库盘点完全一致，不额外检查配置）
@@ -2831,35 +2849,104 @@ async function sendBookingNotification(type, order, extra = {}) {
     }
 
     case 'salesConfirm': {
-      // ① 审核员模板卡片通知
+      // 销售确认时间 & 签字状态（readOrderFull 保证 UPDATE→SELECT 顺序，字段必非空）
+      const confirmAtStr = formatCardDate(order.sales_confirmed_at) || '确认时间未记录';
+      const confirmByName = order.sales_confirmed_by_name || salesPerson || '未指定';
+      const hasSignature = !!(order.sales_confirmed_signature && order.sales_confirmed_signature.length > 20);
+      const sigStatus = hasSignature ? '✅ 已签字' : '⚠ 未签字';
+
+      // 通用 URL（销售员"查看订单" / 审核员"去审核"都指向同一个 H5 确认页）
+      const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
+
+      // ① 销售员"完成卡"：让销售员看到「我已经处理完」，与原来的 "订单待确认" 蓝卡做视觉区分
+      if (config.booking_notify_sales !== 0) {
+        const salesUserid = await findSalesUserid();
+        if (salesUserid) {
+          // 企微 button_interaction 完成态：card_status + result_item 打出勾号，视觉就是"已完成"
+          const finishedCard = buildTemplateCard(
+            '✅ 订单已确认（完成）',
+            `订单号：${orderNo}\n您已完成确认，等待审核员审核。`,
+            [
+              { keyname: '客户', value: customerName },
+              { keyname: '业务', value: bizSummary },
+              { keyname: '确认人', value: confirmByName },
+              { keyname: '确认时间', value: confirmAtStr },
+              { keyname: '签字状态', value: hasSignature ? '✅ 已签字（点击订单可查看图片）' : '⚠ 未签字' },
+              ...(remark ? [{ keyname: '备注', value: remark }] : []),
+            ],
+            '查看订单',
+            cardUrl,
+            `${orderNo}_sales_done`,
+            {
+              card_status: 'finished_with_result',
+              result_item: {
+                title: '已确认',
+                url: cardUrl,
+                url_name: '查看详情',
+                desc: `确认人：${confirmByName} · ${confirmAtStr}`,
+              },
+            }
+          );
+          await sendCard(salesUserid, finishedCard, '销售员确认完成卡');
+        } else {
+          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过「销售员完成卡」');
+        }
+      }
+
+      // ② 审核员模板卡片通知：追加"销售确认时间 + 签字状态"便于审核人一眼知道完成度
       const approverUserid = config.booking_approver_userid;
       if (approverUserid) {
-        const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
-        const card = buildTemplateCard(
+        const approveCard = buildTemplateCard(
           '📋 订单待审核',
-          `订单号：${orderNo}\n销售员已确认，请审核`,
+          `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
           [
             { keyname: '客户', value: customerName },
             { keyname: '业务', value: bizSummary },
-            { keyname: '销售员', value: salesPerson || '未指定' },
+            { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
+            { keyname: '销售确认', value: confirmAtStr },
+            { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
             ...(remark ? [{ keyname: '备注', value: remark }] : []),
           ],
           '去审核',
           cardUrl,
-          orderNo
+          `${orderNo}_approve`,
+          null
         );
-        await sendCard(approverUserid, card, '审核员模板卡片');
+        await sendCard(approverUserid, approveCard, '审核员模板卡片');
       } else {
-        console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知');
+        // guard：审核员未配置不静默 —— 发 fallback 卡片回销售员，避免审批卡死
+        console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知，并回发警告给销售员');
+        if (config.booking_notify_sales !== 0) {
+          const salesUserid = await findSalesUserid();
+          if (salesUserid && cardUrl) {
+            const warnCard = buildTemplateCard(
+              '⚠ 审核员未配置，审批流程阻塞',
+              `订单号：${orderNo}\n已完成销售确认，但 wecom_config.booking_approver_userid 为空，请联系管理员配置。`,
+              [
+                { keyname: '客户', value: customerName },
+                { keyname: '销售确认', value: confirmAtStr },
+                { keyname: '签字状态', value: sigStatus },
+                ...(remark ? [{ keyname: '备注', value: remark }] : []),
+              ],
+              '查看订单',
+              cardUrl,
+              `${orderNo}_approver_missing`
+            );
+            await sendCard(salesUserid, warnCard, '审核员缺失警告卡');
+          }
+        }
       }
-      // ② 预订群通知
+
+      // ③ 预订群通知（顺序保持最后，避免群通知打断应用通知）
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
         const md = `✅ **销售员已确认**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
           remarkLine +
           `> 涉及业务：${bizSummary}\n` +
-          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 确认人：${confirmByName}\n` +
+          `> 确认时间：${confirmAtStr}\n` +
+          `> 签字：${hasSignature ? '✅ 已签字' : '⚠ 未签字'}\n` +
           `> 状态：待审核员审核`;
         await sendGroupMsg(md, '预订群通知');
       }
