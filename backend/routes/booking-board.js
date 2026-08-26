@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
-const { sendBookingNotification } = require('./wecom');
+const { sendBookingNotification, getWecomConfig, updateTemplateCardButton } = require('./wecom');
 
 /**
  * 保存用户签字到 user_signatures 表（与采购入库/仓库模块共用）
@@ -35,6 +35,73 @@ async function saveUserSignature(user, signatureData) {
     }
   } catch (e) {
     console.error('[booking saveUserSignature] error:', e && e.message);
+  }
+}
+
+/**
+ * 格式化当前时间为中国时区字符串 YYYY-MM-DD HH:mm:ss
+ * 用于模板卡按钮灰化：`已确认 (YYYY-MM-DD HH:mm:ss)`
+ * - 与食材采购 `purchase-confirmations.js L363` 完全一致
+ */
+function formatNowCN(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/**
+ * 写 booking_orders.wecom_card_response_codes（JSON 兼容）
+ * @param {string|number} orderId
+ * @param {Object} patches    e.g. { sales_confirm: {userid, response_code}, approve: {...} }
+ * 为每个 patch 附加 at: CURRENT_TIMESTAMP 可追溯
+ */
+async function saveCardResponseCodes(orderId, patches) {
+  if (!orderId || !patches || Object.keys(patches).length === 0) return;
+  try {
+    const [existingRows] = await pool.query(
+      'SELECT wecom_card_response_codes AS c FROM booking_orders WHERE id = ? LIMIT 1',
+      [orderId]
+    );
+    const existing = parseMaybeJson(existingRows?.[0]?.c) || {};
+    const nowSQL = 'CURRENT_TIMESTAMP';
+    const build = (prev, obj) => ({
+      userid: obj.userid ? String(obj.userid) : (prev && prev.userid) || null,
+      response_code: obj.response_code ? String(obj.response_code) : (prev && prev.response_code) || null,
+      at: prev && prev.at ? prev.at : null,
+    });
+    for (const key of Object.keys(patches)) {
+      const patch = patches[key];
+      if (!patch) continue;
+      const prev = existing[key] || null;
+      const merged = build(prev, patch);
+      // 若 response_code 本次有值（新建或更新），覆盖 at（由 SQL NOW() 写）
+      if (patch.response_code) merged.at = nowSQL;
+      existing[key] = merged;
+    }
+    const str = JSON.stringify(existing);
+    // at 字段我们写的占位 CURRENT_TIMESTAMP（string），在 SQL 中用 REPLACE 换成真正函数
+    const finalStr = str.replace(/\"CURRENT_TIMESTAMP\"/g, 'NOW()');
+    // 直接写 SQL 段（用 SET 直接赋值避免 MySQL JSON 函数版本差异）
+    const sql = `UPDATE booking_orders SET wecom_card_response_codes = ${finalStr} WHERE id = ?`;
+    await pool.query(sql, [orderId]);
+  } catch (e) {
+    console.error('[booking saveCardResponseCodes] error:', e && e.message);
+  }
+}
+
+/**
+ * 企微模板卡按钮灰化（调用 updateTemplateCardButton，已对齐食材采购）
+ * - 失败不抛错，不影响主业务
+ */
+async function greyBookingCardButton(userid, responseCode, label) {
+  if (!userid || !responseCode) return;
+  try {
+    const cfg = await getWecomConfig();
+    if (!cfg || !cfg.corp_id || !cfg.agent_id) return;
+    const nowStr = formatNowCN();
+    await updateTemplateCardButton(cfg, userid, responseCode, `${label} (${nowStr})`);
+    console.log(`[greyBookingCardButton] OK: label=${label}, user=${userid}`);
+  } catch (e) {
+    console.error(`[greyBookingCardButton] FAIL: ${label} user=${userid}:`, e && e.message);
   }
 }
 
@@ -198,6 +265,7 @@ async function readOrderFull(orderId) {
   const items = itemRows.map(normalizeItem);
   return {
     ...order,
+    wecom_card_response_codes: parseMaybeJson(order.wecom_card_response_codes),
     items,
     derivedBreakfasts: deriveBreakfastItems(items),
   };
@@ -1420,8 +1488,22 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
 
     const order = await readOrderFull(orderId);
-    // 异步发送企微通知（不阻塞响应）
-    sendBookingNotification('submit', order).catch(e => console.error('[booking submit notify] error:', e));
+    // 异步发送企微通知 + 保存销售员"订单待确认"卡 response_code（H5 确认后灰按钮用）
+    (async () => {
+      try {
+        const notifyRes = await sendBookingNotification('submit', order);
+        if (notifyRes && notifyRes.salesResponseCode) {
+          await saveCardResponseCodes(orderId, {
+            sales_confirm: {
+              userid: notifyRes.salesUserid,
+              response_code: notifyRes.salesResponseCode,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[booking submit notify] error:', e);
+      }
+    })();
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking submit] error:', e);
@@ -1466,8 +1548,29 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
     saveUserSignature(user, signatureData).catch(() => {});
 
     const order = await readOrderFull(orderId);
-    // 异步通知审核员
-    sendBookingNotification('salesConfirm', order).catch(e => console.error('[booking sales-confirm notify] error:', e));
+    // 1) 灰化销售员原「订单待确认」蓝卡按钮（对齐食材采购机制）
+    //    若 user 没有 wecom_userid，则尝试取订单 wecom_card_response_codes.sales_confirm.userid 兜底
+    const salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
+    const salesGreyUserid = user.wecom_userid || (salesCard && salesCard.userid) || null;
+    if (salesGreyUserid && salesCard && salesCard.response_code) {
+      greyBookingCardButton(salesGreyUserid, salesCard.response_code, '已确认').catch(()=>{});
+    }
+    // 2) 异步发审核员卡片 + 保存审核员卡 response_code（approve 接口灰按钮用）
+    (async () => {
+      try {
+        const notifyRes = await sendBookingNotification('salesConfirm', order);
+        if (notifyRes && notifyRes.approverResponseCode) {
+          await saveCardResponseCodes(orderId, {
+            approve: {
+              userid: notifyRes.approverUserid,
+              response_code: notifyRes.approverResponseCode,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[booking sales-confirm notify] error:', e);
+      }
+    })();
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking sales-confirm] error:', e);
@@ -1531,6 +1634,19 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     saveUserSignature(user, signatureData).catch(() => {});
 
     const order = await readOrderFull(orderId);
+    // 灰化审核员原「订单待审核」卡按钮（"已审核 (时间)"）
+    //  优先级：approveCard 存的 userid → 当前操作审核人 wecom_userid → getWecomConfig().booking_approver_userid
+    const approveCard = order.wecom_card_response_codes && order.wecom_card_response_codes.approve;
+    let approveGreyUserid = (approveCard && approveCard.userid) || user.wecom_userid || null;
+    if (!approveGreyUserid) {
+      try {
+        const wcfg = await getWecomConfig();
+        approveGreyUserid = wcfg && wcfg.booking_approver_userid ? wcfg.booking_approver_userid : null;
+      } catch(_) { /* ignore */ }
+    }
+    if (approveGreyUserid && approveCard && approveCard.response_code) {
+      greyBookingCardButton(approveGreyUserid, approveCard.response_code, '已审核').catch(()=>{});
+    }
     // 异步通知预订群+销售员
     sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
     res.json({ ok: true, data: order });
@@ -1569,6 +1685,30 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
     logOperation(req, '预订订单', '驳回', `订单号=${o.order_no} 原因=${rejectionReason}`, orderId);
 
     const order = await readOrderFull(orderId);
+
+    // 根据驳回阶段灰对应按钮
+    if (o.status === 'sales_confirming') {
+      // 销售员自己驳回→灰化图 1 原「订单待确认」按钮为"已驳回 (时间)"
+      const salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
+      const greyUserId = user.wecom_userid || (salesCard && salesCard.userid) || null;
+      if (greyUserId && salesCard && salesCard.response_code) {
+        greyBookingCardButton(greyUserId, salesCard.response_code, '已驳回').catch(()=>{});
+      }
+    } else if (o.status === 'reviewing') {
+      // 审核员驳回→灰化「订单待审核」卡按钮为"已驳回 (时间)"
+      const approveCard = order.wecom_card_response_codes && order.wecom_card_response_codes.approve;
+      let greyUserId = (approveCard && approveCard.userid) || user.wecom_userid || null;
+      if (!greyUserId) {
+        try {
+          const wcfg = await getWecomConfig();
+          greyUserId = wcfg && wcfg.booking_approver_userid ? wcfg.booking_approver_userid : null;
+        } catch(_) { /* ignore */ }
+      }
+      if (greyUserId && approveCard && approveCard.response_code) {
+        greyBookingCardButton(greyUserId, approveCard.response_code, '已驳回').catch(()=>{});
+      }
+    }
+
     // 异步通知销售员（仅审核员驳回时通知）
     if (o.status === 'reviewing') {
       sendBookingNotification('reject', order, { rejectionReason }).catch(e => console.error('[booking reject notify] error:', e));

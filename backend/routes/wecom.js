@@ -2809,6 +2809,16 @@ async function sendBookingNotification(type, order, extra = {}) {
 
   console.log(`[sendBookingNotification] 开始: type=${type}, orderNo=${orderNo}, customer=${customerName}`);
 
+  // 返回值（调用方保存到 booking_orders.wecom_card_response_codes，用于 H5 确认后灰化按钮）
+  const result = {
+    // submit: 发给销售员的「订单待确认」submit 卡 response_code
+    salesUserid: null, salesResponseCode: null,
+    // salesConfirm: 发给审核员的「订单待审核」approve 卡 response_code
+    approverUserid: null, approverResponseCode: null,
+    // approve/reject: 发给审核员本人（通过审核后）/销售员（驳回）回退更新（暂未启用，预留）
+    rejectSalesResponseCode: null,
+  };
+
   switch (type) {
     case 'submit': {
       // ① 预订群通知
@@ -2822,7 +2832,7 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 状态：待销售员确认`;
         await sendGroupMsg(md, '预订群通知');
       }
-      // ② 销售员模板卡片通知
+      // ② 销售员模板卡片通知（task_id = booking_${orderNo}，与之前版本保持一致，避免不同 id 生成新的蓝卡）
       if (config.booking_notify_sales !== 0) {
         const salesUserid = await findSalesUserid();
         if (salesUserid) {
@@ -2840,7 +2850,9 @@ async function sendBookingNotification(type, order, extra = {}) {
             cardUrl,
             orderNo
           );
-          await sendCard(salesUserid, card, '销售员模板卡片');
+          const r = await sendCard(salesUserid, card, '销售员模板卡片');
+          result.salesUserid = salesUserid;
+          if (r && r.response_code) result.salesResponseCode = r.response_code;
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
         }
@@ -2855,45 +2867,13 @@ async function sendBookingNotification(type, order, extra = {}) {
       const hasSignature = !!(order.sales_confirmed_signature && order.sales_confirmed_signature.length > 20);
       const sigStatus = hasSignature ? '✅ 已签字' : '⚠ 未签字';
 
-      // 通用 URL（销售员"查看订单" / 审核员"去审核"都指向同一个 H5 确认页）
+      // 通用 URL
       const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
 
-      // ① 销售员"完成卡"：让销售员看到「我已经处理完」，与原来的 "订单待确认" 蓝卡做视觉区分
-      if (config.booking_notify_sales !== 0) {
-        const salesUserid = await findSalesUserid();
-        if (salesUserid) {
-          // 企微 button_interaction 完成态：card_status + result_item 打出勾号，视觉就是"已完成"
-          const finishedCard = buildTemplateCard(
-            '✅ 订单已确认（完成）',
-            `订单号：${orderNo}\n您已完成确认，等待审核员审核。`,
-            [
-              { keyname: '客户', value: customerName },
-              { keyname: '业务', value: bizSummary },
-              { keyname: '确认人', value: confirmByName },
-              { keyname: '确认时间', value: confirmAtStr },
-              { keyname: '签字状态', value: hasSignature ? '✅ 已签字（点击订单可查看图片）' : '⚠ 未签字' },
-              ...(remark ? [{ keyname: '备注', value: remark }] : []),
-            ],
-            '查看订单',
-            cardUrl,
-            `${orderNo}_sales_done`,
-            {
-              card_status: 'finished_with_result',
-              result_item: {
-                title: '已确认',
-                url: cardUrl,
-                url_name: '查看详情',
-                desc: `确认人：${confirmByName} · ${confirmAtStr}`,
-              },
-            }
-          );
-          await sendCard(salesUserid, finishedCard, '销售员确认完成卡');
-        } else {
-          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过「销售员完成卡」');
-        }
-      }
+      // 【注意】已删除上一轮"销售员完成卡"——不再发送图 2 冗余的「✅ 订单已确认（完成）」给销售本人
+      // 现在改为通过 response_code 直接把图 1 原蓝卡按钮灰化为"已确认 (时间)"（对齐食材采购，booking-board.js 中调）
 
-      // ② 审核员模板卡片通知：追加"销售确认时间 + 签字状态"便于审核人一眼知道完成度
+      // ① 审核员模板卡片通知：追加"销售确认时间 + 签字状态"（task_id 后缀避免覆盖 submit 原卡 task_id）
       const approverUserid = config.booking_approver_userid;
       if (approverUserid) {
         const approveCard = buildTemplateCard(
@@ -2912,7 +2892,9 @@ async function sendBookingNotification(type, order, extra = {}) {
           `${orderNo}_approve`,
           null
         );
-        await sendCard(approverUserid, approveCard, '审核员模板卡片');
+        const r = await sendCard(approverUserid, approveCard, '审核员模板卡片');
+        result.approverUserid = approverUserid;
+        if (r && r.response_code) result.approverResponseCode = r.response_code;
       } else {
         // guard：审核员未配置不静默 —— 发 fallback 卡片回销售员，避免审批卡死
         console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知，并回发警告给销售员');
@@ -2937,7 +2919,7 @@ async function sendBookingNotification(type, order, extra = {}) {
         }
       }
 
-      // ③ 预订群通知（顺序保持最后，避免群通知打断应用通知）
+      // ② 预订群通知
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
         const md = `✅ **销售员已确认**\n` +
           `> 订单号：${orderNo}\n` +
@@ -3015,7 +2997,8 @@ async function sendBookingNotification(type, order, extra = {}) {
     default:
       console.warn(`[sendBookingNotification] 未知通知类型: ${type}`);
   }
-  console.log(`[sendBookingNotification] 完成: type=${type}, orderNo=${orderNo}`);
+  console.log(`[sendBookingNotification] 完成: type=${type}, orderNo=${orderNo}, result=`, JSON.stringify(result));
+  return result;
 }
 
 module.exports = router;
