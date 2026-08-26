@@ -6,6 +6,38 @@ const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
 const { sendBookingNotification } = require('./wecom');
 
+/**
+ * 保存用户签字到 user_signatures 表（与采购入库/仓库模块共用）
+ *  - user_source='wecom'  -> user_id = wecom_userid
+ *  - user_source='system' -> user_id = users.id
+ * 失败不抛错（不影响主流程）
+ */
+async function saveUserSignature(user, signatureData) {
+  if (!signatureData) return;
+  const userId = user && (user.wecom_userid || user.id);
+  if (!userId) return;
+  const source = user && user.wecom_userid ? 'wecom' : 'system';
+  try {
+    const [existing] = await pool.query(
+      'SELECT id FROM user_signatures WHERE user_id = ? AND user_source = ? LIMIT 1',
+      [userId, source]
+    );
+    if (existing && existing.length > 0) {
+      await pool.query(
+        'UPDATE user_signatures SET signature_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [signatureData, existing[0].id]
+      );
+    } else {
+      await pool.query(
+        'INSERT INTO user_signatures (id, user_id, user_source, signature_data) VALUES (?,?,?,?)',
+        [uuidv4(), userId, source, signatureData]
+      );
+    }
+  } catch (e) {
+    console.error('[booking saveUserSignature] error:', e && e.message);
+  }
+}
+
 // ------------------------------------------------------------
 // 工具：JSON 字段兼容（mysql2 有些版本 JSON 返回 string）
 // ------------------------------------------------------------
@@ -1398,10 +1430,15 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
 });
 
 // POST /api/booking/orders/:id/sales-confirm  销售员确认：sales_confirming → reviewing
+// body: { signature_data: string (base64 PNG, 必填) }
 router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const user = req.user || {};
     const orderId = req.params.id;
+    const signatureData = (req.body && req.body.signature_data) || '';
+    if (!signatureData) {
+      return res.status(400).json({ ok: false, error: '请先签字再确认' });
+    }
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
@@ -1414,10 +1451,19 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
         status = 'reviewing',
         sales_confirmed_at = NOW(),
         sales_confirmed_by = ?,
-        sales_confirmed_by_name = ?
+        sales_confirmed_by_name = ?,
+        sales_confirmed_signature = ?
       WHERE id = ?
-    `, [user.id || null, user.name || user.realName || user.displayName || null, orderId]);
+    `, [
+      user.id || null,
+      user.name || user.realName || user.displayName || null,
+      signatureData,
+      orderId,
+    ]);
     logOperation(req, '预订订单', '销售员确认', `订单号=${o.order_no} 确认人=${user.name || user.id}`, orderId);
+
+    // 复用签字：保存到 user_signatures（与采购入库共用）
+    saveUserSignature(user, signatureData).catch(() => {});
 
     const order = await readOrderFull(orderId);
     // 异步通知审核员
@@ -1452,10 +1498,15 @@ router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req
 });
 
 // POST /api/booking/orders/:id/approve  审核通过 reviewing → confirmed
+// body: { signature_data: string (base64 PNG, 必填) }
 router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const user = req.user || {};
     const orderId = req.params.id;
+    const signatureData = (req.body && req.body.signature_data) || '';
+    if (!signatureData) {
+      return res.status(400).json({ ok: false, error: '请先签字再审核通过' });
+    }
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
@@ -1463,10 +1514,21 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
 
     await pool.query(`
       UPDATE booking_orders SET
-        status = 'confirmed', confirmed_at = NOW()
+        status = 'confirmed',
+        confirmed_at = NOW(),
+        approved_signature = ?,
+        approved_by = ?,
+        approved_by_name = ?
       WHERE id = ?
-    `, [orderId]);
+    `, [
+      signatureData,
+      user.id || null,
+      user.name || user.realName || user.displayName || null,
+      orderId,
+    ]);
     logOperation(req, '预订订单', '审核通过', `订单号=${o.order_no} 审核人=${user.name || user.id}`, orderId);
+
+    saveUserSignature(user, signatureData).catch(() => {});
 
     const order = await readOrderFull(orderId);
     // 异步通知预订群+销售员
@@ -1519,16 +1581,32 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
 });
 
 // POST /api/booking/orders/:id/complete  标记完成 confirmed → completed
+// body: { signature_data: string (base64 PNG, 必填) }
 router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req, res) => {
   try {
+    const user = req.user || {};
     const orderId = req.params.id;
+    const signatureData = (req.body && req.body.signature_data) || '';
+    if (!signatureData) {
+      return res.status(400).json({ ok: false, error: '请先签字再标记完成' });
+    }
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
     if (o.status !== 'confirmed') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能标记完成` });
 
-    await pool.query("UPDATE booking_orders SET status = 'completed', completed_at = NOW() WHERE id = ?", [orderId]);
-    logOperation(req, '预订订单', '标记完成', `订单号=${o.order_no}`, orderId);
+    const completedByName = user.name || user.realName || user.displayName || null;
+    await pool.query(`
+      UPDATE booking_orders SET
+        status = 'completed',
+        completed_at = NOW(),
+        completed_signature = ?,
+        completed_by_name = ?
+      WHERE id = ?
+    `, [signatureData, completedByName, orderId]);
+    logOperation(req, '预订订单', '标记完成', `订单号=${o.order_no} 操作人=${user.name || user.id}`, orderId);
+
+    saveUserSignature(user, signatureData).catch(() => {});
 
     const order = await readOrderFull(orderId);
     res.json({ ok: true, data: order });

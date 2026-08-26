@@ -161,6 +161,17 @@ export interface BookingApiOrder {
   rejectedAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  // ---------- 流程字段（签字 & 确认人信息）新增 ----------
+  salesConfirmedAt?: string;
+  salesConfirmedBy?: string;
+  salesConfirmedByName?: string;
+  salesConfirmedSignature?: string; // base64 PNG
+  approvedSignature?: string;        // base64 PNG
+  approvedBy?: string;
+  approvedByName?: string;
+  completedSignature?: string;       // base64 PNG
+  completedByName?: string;
+  rejectedSignature?: string;        // base64 PNG（预留）
   items: any[];
   derivedBreakfasts?: any[];
 }
@@ -245,7 +256,12 @@ export interface RoomTypeRow {
   id: string;
   code: string;
   name: string;
+  /** 主单价（历史字段，口径按 pricing_mode） */
   price: number;
+  /** 按间计价的单价（元/间/晚） */
+  price_per_room?: number;
+  /** 按人计价的单价（元/人/晚） */
+  price_per_person?: number;
   status: number;
   sort_order: number;
   pricing_mode?: 'per_room' | 'per_person';
@@ -419,8 +435,8 @@ export const bookingApi = {
   },
 
   // 销售员确认（sales_confirming → reviewing）
-  async salesConfirmOrder(id: string): Promise<BookingApiOrder> {
-    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/sales-confirm`, {});
+  async salesConfirmOrder(id: string, signatureData: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/sales-confirm`, { signature_data: signatureData });
     return fromBackend(res.data);
   },
 
@@ -431,8 +447,8 @@ export const bookingApi = {
   },
 
   // 审核通过（reviewing → confirmed）
-  async approveOrder(id: string): Promise<BookingApiOrder> {
-    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/approve`, {});
+  async approveOrder(id: string, signatureData: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/approve`, { signature_data: signatureData });
     return fromBackend(res.data);
   },
 
@@ -443,8 +459,8 @@ export const bookingApi = {
   },
 
   // 标记完成（confirmed → completed）
-  async completeOrder(id: string): Promise<BookingApiOrder> {
-    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/complete`, {});
+  async completeOrder(id: string, signatureData: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/complete`, { signature_data: signatureData });
     return fromBackend(res.data);
   },
 
