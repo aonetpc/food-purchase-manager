@@ -221,6 +221,13 @@ export interface PackageRow {
   auto_total?: number;
   remark?: string;
   items?: PackageItemRow[];
+  /** 三角色定价计划（订单保存的权威定价源） */
+  role_plans?: Partial<Record<'male' | 'female_married' | 'female_single', {
+    original_total?: number;
+    discount_price?: number;
+    discount_rate?: number;
+    remark?: string | null;
+  }>>;
 }
 
 export interface CheckupItemRow {

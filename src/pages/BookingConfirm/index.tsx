@@ -35,10 +35,37 @@ const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> =
 };
 
 const ROLE_LABEL: Record<string, string> = {
-  male: '男',
-  female_married: '女·已婚',
-  female_single: '女·未婚',
+  male: '男性',
+  female_married: '已婚女',
+  female_single: '未婚女',
 };
+
+// 销售胶囊/套餐名称友好化（对齐PC BookingBoard#friendlyCapsuleName）
+function friendlyCapsuleName(cap: any): string {
+  if (!cap) return '未设置套餐';
+  const raw = String(cap.name || cap.code || '').trim();
+  if (!raw) return cap.code ? `${cap.code}套餐` : '体检套餐';
+  const ugly = [
+    /^套餐\s*[0-9a-fA-F-]{8,}$/, /^[0-9a-fA-F]{8}-[0-9a-fA-F-]+$/,
+    /^[0-9]+$/, /^[Pp]KG[_-]?\w+$/, /^[Pp]ackage[_-]?\w+$/, /^[0-9a-fA-F]{12,}$/,
+  ].some(p => p.test(raw));
+  if (!ugly) return raw;
+  if (cap.code) return `${cap.code}套餐`;
+  return '体检套餐';
+}
+// discount_rate% → "X.X折"；缺省用 final/base 反推；无折扣（≥100%或10折）返回空
+function formatDiscount(opts: { discount_rate?: number; final?: number; base?: number }): string {
+  let { discount_rate, final, base } = opts;
+  if (typeof discount_rate === 'number' && discount_rate > 0 && discount_rate < 100) {
+    return `${Math.round(discount_rate * 10) / 100}折`;
+  }
+  const b = Number(base || 0);
+  const f = Number(final || 0);
+  if (b > 0 && f > 0 && f < b) {
+    return `${Math.round((f / b) * 1000) / 10}折`;
+  }
+  return '';
+}
 
 function n(n: any): number { return Number(n || 0); }
 function formatCurrency(nu: any): string {
@@ -702,121 +729,281 @@ function ItemDetails({ item, bizKey, packages, mealTypes, roomTypes, capsules }:
   }
 }
 
-// --- 体检套餐 + 折扣率 ---
+// --- 体检套餐 + 折扣率（三角色分栏 + 名单默认折叠）---
 function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
   item: any; packages: PackageRow[]; capsules: any[]; pax: number; bizColor: string;
 }) {
+  const [paxOpen, setPaxOpen] = useState(false);
   const extra = item.extra || {};
   const paxList: any[] = extra.paxList || [];
 
-  // 胶囊 code/name → 胶囊
+  // 胶囊/套餐索引
   const capsuleByCode: Record<string, any> = {};
   for (const c of capsules || []) capsuleByCode[c.code] = c;
   const capsuleById: Record<string, any> = {};
   for (const c of capsules || []) capsuleById[c.id] = c;
-  const pkgByCode: Record<string, any> = {};
+  const pkgByCode: Record<string, PackageRow> = {};
   for (const p of packages || []) pkgByCode[p.code] = p;
-  const pkgById: Record<string, any> = {};
+  const pkgById: Record<string, PackageRow> = {};
   for (const p of packages || []) pkgById[p.id] = p;
 
   function paxRole(p: any): 'male' | 'female_married' | 'female_single' {
     if (p.gender === '女' || p.gender === 'F') return p.married ? 'female_married' : 'female_single';
     return 'male';
   }
-
-  function lookupCapsuleForPax(p: any) {
-    const pk = p.package || '';
-    // 可能是胶囊 id 或 code
-    return capsuleByCode[pk] || capsuleById[pk] || null;
+  function lookupCapsule(pkgIdOrCode: string) {
+    return capsuleByCode[pkgIdOrCode] || capsuleById[pkgIdOrCode] || null;
   }
-
-  function lookupRolePrices(cap: any, role: string) {
-    return cap?.prices?.[role] || cap?.role_plans?.[role] || null;
+  function lookupPackage(pkgIdOrCode: string): PackageRow | null {
+    return pkgById[pkgIdOrCode] || pkgByCode[pkgIdOrCode] || null;
   }
+  // 取三角色定价（优先级：pkg.role_plans > cap.role_plans > cap.prices[role] > cap.price 兜底）
+  function getRolePricing(pkgIdOrCode: string, role: 'male' | 'female_married' | 'female_single') {
+    const cap = lookupCapsule(pkgIdOrCode);
+    const pkg = lookupPackage(pkgIdOrCode);
+    const pkgRp = pkg?.role_plans?.[role];
+    const capRp = cap?.role_plans?.[role];
+    const capPrice = cap?.prices?.[role];
+    let base = 0, final = 0, rate: number | undefined;
+    base = Number(pkgRp?.original_total ?? capRp?.original_total ?? capPrice?.base_price ?? capRp?.base_price ?? cap?.price ?? 0);
+    final = Number(pkgRp?.discount_price ?? capRp?.discount_price ?? capPrice?.discount_price ?? 0);
+    rate = pkgRp?.discount_rate ?? capRp?.discount_rate ?? capPrice?.discount_rate;
+    if (!base && final) base = final;
+    if (!final && base) final = base;
+    return { base, final, rate };
+  }
+  // 套餐 ID：订单选中套餐优先，否则名单中第一个非空 package
+  const savedPkgId: string = extra.selectedChkPkgId || '';
+  const firstPkgFromList: string = savedPkgId || (paxList.find((p: any) => p?.package)?.package || '');
+  const firstCap = lookupCapsule(firstPkgFromList);
+  const firstPkg = lookupPackage(firstPkgFromList);
+  const packageName = friendlyCapsuleName(firstCap) || firstPkg?.name || (firstPkgFromList ? '体检套餐' : '未设置套餐');
 
+  // 角色维度聚合（按订单实际套餐 pricing 取价）
+  const roleOrder: Array<'male' | 'female_married' | 'female_single'> = ['male', 'female_married', 'female_single'];
+  const paxByRole: Record<string, any[]> = { male: [], female_married: [], female_single: [] };
+  const importedCounts: Record<string, number> = { male: 0, female_married: 0, female_single: 0 };
+  for (const p of paxList) {
+    const r = paxRole(p);
+    importedCounts[r] += 1;
+    paxByRole[r].push(p);
+  }
+  // 设定人数（savedCounts）：extra.roleCounts（驼峰/下划线兼容），缺则未设定
+  const rawRoleCounts: any = extra.roleCounts || extra.role_counts || null;
+  let savedCounts: Record<string, number | undefined> | null = null;
+  if (rawRoleCounts) {
+    savedCounts = {
+      male: Number(rawRoleCounts.male ?? rawRoleCounts.Male),
+      female_married: Number(rawRoleCounts.female_married ?? rawRoleCounts.femaleMarried ?? rawRoleCounts.FemaleMarried),
+      female_single: Number(rawRoleCounts.female_single ?? rawRoleCounts.femaleSingle ?? rawRoleCounts.FemaleSingle),
+    };
+  }
+  const hasRoleSetting = !!savedCounts && roleOrder.some(k => Number(savedCounts?.[k] || 0) > 0);
+
+  // 每个角色价 & 小计（数量优先设定，否则已导入人数；定价统一按订单套餐取 firstPkgFromList）
+  type RoleStat = { key: string; label: string; setN: number | '-'; importedN: number; remain: number; base: number; final: number; rate: number | undefined; discount: string; subtotal: number };
+  const roleStats: RoleStat[] = roleOrder.map(k => {
+    const setN: number | '-' = hasRoleSetting ? (Number(savedCounts?.[k] || 0)) : '-';
+    const importedN = importedCounts[k] || 0;
+    const remain = hasRoleSetting ? Math.max(0, (Number(savedCounts?.[k] || 0)) - importedN) : 0;
+    const pr = getRolePricing(firstPkgFromList, k);
+    const discount = formatDiscount({ discount_rate: pr.rate, final: pr.final, base: pr.base });
+    const qty = hasRoleSetting ? (Number(savedCounts?.[k] || 0)) : importedN;
+    return {
+      key: k,
+      label: ROLE_LABEL[k] || k,
+      setN, importedN, remain,
+      base: pr.base, final: pr.final, rate: pr.rate, discount,
+      subtotal: qty * pr.final,
+    };
+  });
   let origTotal = 0;
   let finalTotal = 0;
-  const rows: Array<{ name: string; packageName: string; roleLabel: string; base: number; final: number; custom: boolean }> = [];
-  for (const p of paxList) {
-    const role = paxRole(p);
-    const cap = lookupCapsuleForPax(p);
-    const rp = cap ? lookupRolePrices(cap, role) : null;
-    let base = Number(rp?.original_total || cap?.prices?.[role]?.base_price || rp?.base_price || cap?.price || 0);
-    let final = Number(p.finalAmount || rp?.discount_price || cap?.prices?.[role]?.discount_price || base || 0);
-    if (!base) base = final; // 兜底
-    origTotal += base;
-    finalTotal += final;
-    let packageName = cap?.name || p.package || '';
-    if (!packageName && p.package) {
-      const pkg = pkgByCode[p.package] || pkgById[p.package];
-      if (pkg) packageName = pkg.name;
-    }
-    rows.push({
-      name: p.name || '',
-      packageName,
-      roleLabel: ROLE_LABEL[role] || (p.gender || '男') + (p.married === true ? '·已婚' : p.married === false ? '·未婚' : ''),
-      base, final,
-      custom: !!(p.customItems && p.customItems.length > 0),
-    });
+  for (const rs of roleStats) {
+    const qty = (rs.setN === '-' ? rs.importedN : Number(rs.setN || 0));
+    origTotal += qty * rs.base;
+    finalTotal += qty * rs.final;
   }
+  if (finalTotal <= 0 && paxList.length > 0) {
+    // 兜底：名单级 finalAmount 求和（若套餐级全0）
+    for (const p of paxList) finalTotal += Number((p as any).finalAmount || 0);
+    origTotal = finalTotal;
+  }
+  const totalSaved = Math.max(0, origTotal - finalTotal);
+  const overallDiscount = formatDiscount({ final: finalTotal, base: origTotal });
 
-  const saved = origTotal - finalTotal;
-  const discountRatio = origTotal > 0 ? finalTotal / origTotal : 1;
-  const discountPct = origTotal > 0 ? Math.round(discountRatio * 1000) / 10 : 0;
+  // 名单逐行：用于折叠展开
+  type PaxRow = { name: string; roleLabel: string; packageName: string; base: number; final: number; discount: string; custom: boolean };
+  const rows: PaxRow[] = paxList.map((p: any) => {
+    const role = paxRole(p);
+    const pkgKey = p.package || firstPkgFromList;
+    const pr = getRolePricing(pkgKey, role);
+    const cap = lookupCapsule(pkgKey);
+    const pkg = lookupPackage(pkgKey);
+    let pkgName = friendlyCapsuleName(cap) || pkg?.name || '';
+    if (!pkgName && p.package) pkgName = '体检套餐';
+    let base = Number((p as any).originalAmount || pr.base || 0);
+    let final = Number((p as any).finalAmount || pr.final || 0);
+    if (!base && final) base = final;
+    if (!final && base) final = base;
+    const discount = formatDiscount({ final, base });
+    return {
+      name: p.name || '',
+      roleLabel: ROLE_LABEL[role] || (p.gender || '男') + (p.married === true ? '·已婚' : p.married === false ? '·未婚' : ''),
+      packageName: pkgName,
+      base, final, discount,
+      custom: !!(p.customItems && (p.customItems as any[]).length > 0),
+    };
+  });
+
+  const cardStyle: React.CSSProperties = { borderColor: `${bizColor}25`, background: `${bizColor}08` };
 
   return (
     <div className="py-1">
       <p className="text-sm text-gray-700">
         体检
-        {pax > 0 && <span className="text-xs text-gray-400 ml-1.5">· {pax}人（名单{rows.length}人）</span>}
+        {pax > 0 && <span className="text-xs text-gray-400 ml-1.5">· {pax}人（名单{paxList.length}人）</span>}
       </p>
-      {rows.length > 0 && (
-        <div className={`mt-2 rounded-lg border p-2.5 space-y-2`} style={{ borderColor: `${bizColor}25`, background: `${bizColor}08` }}>
-          {rows.map((r, i) => (
-            <div key={i} className="flex items-start justify-between gap-2 text-xs">
-              <div className="flex-1 min-w-0">
-                <div className="text-gray-700 font-medium">
-                  {r.name || <span className="text-gray-400">未填姓名</span>}
-                  {r.custom && <span className="ml-1.5 px-1 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">定制</span>}
-                </div>
-                <div className="text-gray-500 mt-0.5">
-                  <span>{r.roleLabel}</span>
-                  {r.packageName && <> · <span className="text-gray-600">{r.packageName}</span></>}
-                </div>
-              </div>
-              <div className="text-right flex-shrink-0">
-                {r.base > 0 && r.final < r.base ? (
-                  <div className="text-gray-400 line-through text-[11px]">{formatCurrency(r.base)}</div>
-                ) : null}
-                <div className="flex items-baseline gap-1 justify-end">
-                  <span className="text-gray-800 font-semibold">{formatCurrency(r.final)}</span>
-                  {r.base > 0 && r.final < r.base && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-500">
-                      {Math.round(r.final / r.base * 1000) / 10}折
+
+      <div className={`mt-2 rounded-lg border p-2.5 space-y-3`} style={cardStyle}>
+        {/* 头部：套餐名 + 合计 */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-white border" style={{ borderColor: `${bizColor}55`, color: bizColor }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 2v4M16 2v4M3 10h18" /></svg>
+              体检套餐
+            </span>
+            <span className="text-sm font-semibold text-gray-800 truncate">{packageName}</span>
+          </div>
+          <span className="text-xs font-mono font-semibold text-green-700 whitespace-nowrap">合计 {formatCurrency(finalTotal)}</span>
+        </div>
+
+        {/* 三角色分栏：PC端语义（男性/已婚女/未婚女），移动端自动换行 1~3 列 */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+          {roleStats.map(rs => {
+            const hasData = rs.setN !== 0 || rs.importedN > 0;
+            return (
+              <div key={rs.key} className="bg-white border rounded p-2" style={{ borderColor: `${bizColor}22` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-gray-700 font-medium">{rs.label}</span>
+                  {rs.final > 0 && (
+                    <span className="text-gray-600 font-mono">
+                      {formatCurrency(rs.final)}<span className="text-[10px] text-gray-400">/人</span>
                     </span>
                   )}
                 </div>
+                {/* 原价划线 + 折扣率徽章 */}
+                {rs.base > 0 && rs.final > 0 && rs.final < rs.base ? (
+                  <div className="flex items-center justify-end gap-1 mb-1">
+                    <span className="text-[10px] text-gray-400 line-through">原价 {formatCurrency(rs.base)}</span>
+                    {rs.discount && (
+                      <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-500 text-[10px] font-medium">{rs.discount}</span>
+                    )}
+                  </div>
+                ) : null}
+                {!hasData ? (
+                  <div className="text-gray-300 text-center py-1.5">0人</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-3 gap-1 text-center font-mono">
+                      <div className="bg-gray-50 rounded px-1 py-0.5">
+                        <div className="text-[9px] text-gray-400">设定</div>
+                        <div className="text-gray-800">{rs.setN === '-' ? '-' : rs.setN}</div>
+                      </div>
+                      <div className="bg-gray-50 rounded px-1 py-0.5">
+                        <div className="text-[9px] text-gray-400">已导</div>
+                        <div className="text-gray-800">{rs.importedN}</div>
+                      </div>
+                      <div className="rounded px-1 py-0.5" style={{ background: rs.remain > 0 ? 'rgba(245,158,11,.1)' : '#F9FAFB' }}>
+                        <div className="text-[9px]" style={{ color: rs.remain > 0 ? '#F59E0B' : '#9CA3AF' }}>待绑</div>
+                        <div style={{ color: rs.remain > 0 ? '#B45309' : '#1F2937' }}>{rs.remain}</div>
+                      </div>
+                    </div>
+                    <div className="text-right mt-1 text-green-700 font-mono font-semibold">
+                      小计 {formatCurrency(rs.subtotal)}
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-          ))}
-          {origTotal > 0 && finalTotal < origTotal && (
-            <div className="pt-2 mt-1 border-t border-dashed" style={{ borderColor: `${bizColor}25` }}>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500">原价合计</span>
-                <span className="text-gray-500 line-through">{formatCurrency(origTotal)}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs mt-0.5">
-                <span className="text-gray-600">折后合计 · 整体{discountPct}折</span>
-                <span className="text-green-600 font-semibold">{formatCurrency(finalTotal)}</span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] mt-0.5">
-                <span className="text-gray-400">共节省</span>
-                <span className="text-green-600">-{formatCurrency(saved)}</span>
-              </div>
-            </div>
-          )}
+            );
+          })}
         </div>
-      )}
+
+        {/* 名单：默认折叠，点击展开（不再在上方渲染横滚姓名条） */}
+        {rows.length > 0 && (
+          <div className="border rounded" style={{ borderColor: `${bizColor}22` }}>
+            <button
+              type="button"
+              onClick={() => setPaxOpen(v => !v)}
+              className="w-full flex items-center justify-between px-2 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50/60 rounded"
+            >
+              <span className="flex items-center gap-1">
+                <span style={{ color: bizColor }}>●</span> 名单 {rows.length} 人
+              </span>
+              <span className="flex items-center gap-1 text-gray-400">
+                {paxOpen ? '收起' : '展开'}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: paxOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </span>
+            </button>
+            {paxOpen && (
+              <div className="px-2 pb-2 space-y-2 border-t" style={{ borderColor: `${bizColor}22` }}>
+                {rows.map((r, i) => (
+                  <div key={i} className="flex items-start justify-between gap-2 pt-2 text-xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-gray-700 font-medium">
+                        {r.name || <span className="text-gray-400">未填姓名</span>}
+                        {r.custom && <span className="ml-1.5 px-1 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">定制</span>}
+                      </div>
+                      <div className="text-gray-500 mt-0.5">
+                        <span>{r.roleLabel}</span>
+                        {r.packageName && <> · <span className="text-gray-600">{r.packageName}</span></>}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {r.base > 0 && r.final < r.base ? (
+                        <div className="text-gray-400 line-through text-[11px]">{formatCurrency(r.base)}</div>
+                      ) : null}
+                      <div className="flex items-baseline gap-1 justify-end">
+                        <span className="text-gray-800 font-semibold">{formatCurrency(r.final)}</span>
+                        {r.discount && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-500">{r.discount}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 汇总：原价/整体折扣/节省 */}
+        {origTotal > 0 && (
+          <div className="pt-2 mt-1 border-t border-dashed" style={{ borderColor: `${bizColor}25` }}>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500">原价合计</span>
+              <span className={`${totalSaved > 0 ? 'text-gray-500 line-through' : 'text-gray-700'}`}>{formatCurrency(origTotal)}</span>
+            </div>
+            {totalSaved > 0 ? (
+              <>
+                <div className="flex items-center justify-between text-xs mt-0.5">
+                  <span className="text-gray-600">
+                    折后合计{overallDiscount ? <> · 整体<span className="font-semibold text-red-500">{overallDiscount}</span></> : null}
+                  </span>
+                  <span className="text-green-600 font-semibold">{formatCurrency(finalTotal)}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] mt-0.5">
+                  <span className="text-gray-400">共节省</span>
+                  <span className="text-green-600">-{formatCurrency(totalSaved)}</span>
+                </div>
+              </>
+            ) : null}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -898,37 +1085,47 @@ function MealDetails({ item, mealTypes, bizKey, pax, bizColor, unit }: {
   );
 }
 
-// --- 住宿：双口径单价 ---
+// --- 住宿：双口径单价（议价优先）---
 function LodgingDetails({ item, roomTypes, pax, bizColor }: {
   item: any; roomTypes: RoomTypeRow[]; pax: number; bizColor: string;
 }) {
   const extra = item.extra || {};
   const lodgingTypeCode = extra.lodgingType || 'standard';
-  const pricingMode = extra.pricingMode || extra.pricing_mode || 'per_room';
-  const nights = Number(extra.nights || 0);
-  const rooms = Number(extra.rooms || (pax ? Math.max(1, Math.ceil(pax / 2)) : 0));
-  const persons = Number(extra.persons || pax || 0);
-  const customPrice = extra.customPrice != null ? Number(extra.customPrice) : null;
+  const pricingMode: 'per_room' | 'per_person' = extra.pricingMode || extra.pricing_mode || 'per_room';
+  const nights = Number(extra.nights || 0) || 1;
+  const rooms = Number(extra.rooms || (pax ? Math.max(1, Math.ceil(pax / 2)) : 0)) || 1;
+  const persons = Number(extra.persons || pax || 0) || 1;
+  // 议价：PC 端逻辑一致——'customPrice' in extra 且非 null/undefined 即生效（对齐 BookingBoard L1307）
+  const hasCustom = 'customPrice' in extra && extra.customPrice !== undefined && extra.customPrice !== null && extra.customPrice !== '';
+  const customPrice = hasCustom ? Number(extra.customPrice) : 0;
 
   // 反查房型：优先按 code，再按 name 兜底
   let rt = (roomTypes || []).find(r => String(r.code) === String(lodgingTypeCode));
   if (!rt) rt = (roomTypes || []).find(r => String(r.name) === String(lodgingTypeCode));
   const typeName = rt?.name || (lodgingTypeCode === 'standard' ? '标准间' : lodgingTypeCode === 'bigbed' ? '大床房' : lodgingTypeCode === 'suite' ? '套房' : lodgingTypeCode === 'vipsuite' ? 'VIP套房' : lodgingTypeCode);
-  const perRoom = Number(rt?.price_per_room || (rt as any).pricePerRoom || (customPrice && pricingMode === 'per_room' ? customPrice : rt?.price || 0));
-  const perPerson = Number(rt?.price_per_person || (rt as any).pricePerPerson || (customPrice && pricingMode === 'per_person' ? customPrice : 0));
-  const isBargain = !!customPrice;
 
-  const mainQty = pricingMode === 'per_room' ? (rooms || 1) : persons;
+  // 标准双口径价（房型配置价，参考价永远走这个）
+  const stdPerRoom = Number(rt?.price_per_room || (rt as any).pricePerRoom || rt?.price || 0);
+  const stdPerPerson = Number(rt?.price_per_person || (rt as any).pricePerPerson || 0);
+  // 主口径标准价（对齐 BookingBoard L1302-1306）
+  const displayStd = pricingMode === 'per_person'
+    ? (stdPerPerson > 0 ? stdPerPerson : (rt?.pricing_mode === 'per_person' ? Number(rt?.price || 0) : 0))
+    : (stdPerRoom > 0 ? stdPerRoom : Number(rt?.price || 0));
+  // 主口径显示价：议价覆盖（对齐 BookingBoard L1308）
+  const mainUnitPrice = hasCustom ? customPrice : displayStd;
+  const refPerRoom = stdPerRoom;
+  const refPerPerson = stdPerPerson;
+
+  const mainQty = pricingMode === 'per_room' ? rooms : persons;
   const mainUnit = pricingMode === 'per_room' ? '间' : '人';
-  const mainUnitPrice = pricingMode === 'per_room' ? perRoom : perPerson;
-  const mainSubtotal = nights > 0 ? mainUnitPrice * mainQty * nights : mainUnitPrice * mainQty;
+  const mainSubtotal = mainUnitPrice * mainQty * nights;
 
   return (
     <div className="py-1">
       <div className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
         <span className="font-medium">{typeName}</span>
-        {isBargain && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">议价</span>}
-        <span className="text-xs text-gray-400">· {nights || 1}晚</span>
+        {hasCustom && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">议价</span>}
+        <span className="text-xs text-gray-400">· {nights}晚</span>
       </div>
       <div className={`mt-2 rounded-lg border p-2.5 space-y-2`} style={{ borderColor: `${bizColor}25`, background: `${bizColor}08` }}>
         {/* 主单价 */}
@@ -940,17 +1137,17 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
             {formatCurrency(mainUnitPrice)}<span className="text-xs text-gray-400 font-normal">/{mainUnit}/晚</span>
           </span>
         </div>
-        {/* 参考单价（另一口径） */}
-        {pricingMode === 'per_room' && perPerson > 0 ? (
+        {/* 参考单价（另一口径）：永远显示房型标准价，不受议价影响 */}
+        {pricingMode === 'per_room' && refPerPerson > 0 ? (
           <div className="text-[11px] text-gray-400 flex items-center justify-between">
             <span>参考 · 按人单价</span>
-            <span>{formatCurrency(perPerson)}<span className="opacity-60">/人/晚（此单按间）</span></span>
+            <span>{formatCurrency(refPerPerson)}<span className="opacity-60">/人/晚（此单按间）</span></span>
           </div>
         ) : null}
-        {pricingMode === 'per_person' && perRoom > 0 ? (
+        {pricingMode === 'per_person' && refPerRoom > 0 ? (
           <div className="text-[11px] text-gray-400 flex items-center justify-between">
             <span>参考 · 按间单价</span>
-            <span>{formatCurrency(perRoom)}<span className="opacity-60">/间/晚（此单按人）</span></span>
+            <span>{formatCurrency(refPerRoom)}<span className="opacity-60">/间/晚（此单按人）</span></span>
           </div>
         ) : null}
         {/* 合计 */}
@@ -959,8 +1156,8 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
             <span>数量</span>
             <span>
               {pricingMode === 'per_room'
-                ? `${rooms || 1}间 × ${nights || 1}晚 × ${formatCurrency(perRoom)}/间/晚`
-                : `${persons || 1}人 × ${nights || 1}晚 × ${formatCurrency(perPerson)}/人/晚`}
+                ? `${rooms}间 × ${nights}晚 × ${formatCurrency(mainUnitPrice)}/间/晚`
+                : `${persons}人 × ${nights}晚 × ${formatCurrency(mainUnitPrice)}/人/晚`}
             </span>
           </div>
           <div className="flex items-center justify-between text-sm mt-1">
