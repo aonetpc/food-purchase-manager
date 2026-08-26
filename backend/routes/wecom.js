@@ -2695,7 +2695,7 @@ async function sendBookingNotification(type, order, extra = {}) {
   const salesPerson = order.sales_person || '';
   const remark = order.remark || '';
   const remarkLine = remark ? `> 备注：${remark}\n` : '';
-  const frontEndBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL || '';
+  const frontEndBase = config.app_domain || '';
 
   // 查找销售员企微userid：优先订单快照 → 兜底查users表
   const findSalesUserid = async () => {
@@ -2808,7 +2808,7 @@ async function sendBookingNotification(type, order, extra = {}) {
       if (config.booking_notify_sales !== 0) {
         const salesUserid = await findSalesUserid();
         if (salesUserid) {
-          const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+          const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
           const card = buildTemplateCard(
             '📋 订单待确认',
             `订单号：${orderNo}\n请尽快确认订单信息`,
@@ -2834,7 +2834,7 @@ async function sendBookingNotification(type, order, extra = {}) {
       // ① 审核员模板卡片通知
       const approverUserid = config.booking_approver_userid;
       if (approverUserid) {
-        const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+        const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
         const card = buildTemplateCard(
           '📋 订单待审核',
           `订单号：${orderNo}\n销售员已确认，请审核`,
@@ -2880,7 +2880,7 @@ async function sendBookingNotification(type, order, extra = {}) {
       // ② 销售员模板卡片通知
       const salesUserid = await findSalesUserid();
       if (salesUserid) {
-        const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+        const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
         const card = buildTemplateCard(
           '✅ 订单已确认',
           `订单号：${orderNo}\n审核已通过`,
@@ -2904,7 +2904,7 @@ async function sendBookingNotification(type, order, extra = {}) {
         const salesUserid = await findSalesUserid();
         if (salesUserid) {
           const reason = extra.rejectionReason || '未填写原因';
-          const cardUrl = frontEndBase ? `${frontEndBase}/booking-board` : '';
+          const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
           const card = buildTemplateCard(
             '❌ 订单被驳回',
             `订单号：${orderNo}\n请修改后重新提交`,

@@ -53,6 +53,7 @@ const ManagementReport = lazy(() => import('@/pages/ManagementReport'));
 const StockTakeOperate = lazy(() => import('@/pages/StockTakeOperate'));
 const PermissionManager = lazy(() => import('@/pages/PermissionManager'));
 const BookingBoard = lazy(() => import('@/pages/BookingBoard'));
+const BookingConfirmPage = lazy(() => import('@/pages/BookingConfirm'));
 const CheckupApp = lazy(() => import('@/pages/CheckupTemplates/H5App'));
 const CheckupSharePage = lazy(() => import('@/pages/CheckupTemplates/SharePage'));
 const CheckupTemplatesPage = lazy(() => import('@/pages/CheckupTemplates/DesktopRedirect'));
@@ -103,6 +104,7 @@ export default function App() {
           <Route path="/wecom-test-reject/:id" element={<WecomTestConfirmPage />} />
           <Route path="/wecom-confirm" element={<WecomConfirmPage />} />
           <Route path="/warehouse-confirm" element={<WarehouseConfirmPage />} />
+          <Route path="/booking-confirm" element={<BookingConfirmPage />} />
           
           <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/daily" replace />} />
