@@ -2786,14 +2786,32 @@ async function sendBookingNotification(type, order, extra = {}) {
   };
 
   // 直接发送模板卡片（与采购确认/仓库盘点完全一致，不额外检查配置）
+  // 返回值：{ ok, response_code?:string, msgid?:string, errcode?:number, errmsg?:string }
+  //   - ok=true  ：企微 errcode=0，response_code 一定非空（updateTemplateCardButton 用）
+  //   - ok=false ：结构化错误；调用方不 try/catch 也能拿到 errcode/errmsg 做日志，绝不静默吞
   const sendCard = async (userid, card, label) => {
     try {
       const result = await sendTemplateCardToUser(config, userid, card);
       console.log(`[sendBookingNotification] ${label} 成功:`, JSON.stringify(result));
-      return result;
+      return {
+        ok: true,
+        response_code: result && result.response_code ? String(result.response_code) : null,
+        msgid: result && result.msgid ? String(result.msgid) : null,
+      };
     } catch (err) {
-      console.error(`[sendBookingNotification] ${label} 失败: userid=${userid}, error=${err.message}`);
-      return null;
+      const msg = (err && err.message) ? String(err.message) : String(err);
+      console.error(`[sendBookingNotification] ${label} 失败: userid=${userid}, error=${msg}`);
+      // 解析 sendTemplateCardToUser 里抛出的 "errcode=X, errmsg=Y [, invaliduser=Z]"
+      let errcode = null;
+      let errmsg = msg;
+      let invaliduser = null;
+      const mCode = msg.match(/errcode=([^,\s]+)/);
+      const mMsg = msg.match(/errmsg=([^,]*)/);
+      const mInv = msg.match(/invaliduser=([^,\s]*)/);
+      if (mCode) { try { errcode = Number(mCode[1]); } catch(_){ errcode = mCode[1]; } }
+      if (mMsg) errmsg = mMsg[1].trim();
+      if (mInv) invaliduser = mInv[1].trim();
+      return { ok:false, response_code:null, errcode, errmsg, invaliduser };
     }
   };
 
@@ -2813,8 +2831,14 @@ async function sendBookingNotification(type, order, extra = {}) {
   const result = {
     // submit: 发给销售员的「订单待确认」submit 卡 response_code
     salesUserid: null, salesResponseCode: null,
+    // submit 结构化错误：sendCard.ok===false 时填 {errcode, errmsg, invaliduser}，绝不静默
+    salesCardError: null,
     // salesConfirm: 发给审核员的「订单待审核」approve 卡 response_code
     approverUserid: null, approverResponseCode: null,
+    // salesConfirm 结构化错误（固定审核员场景不通知销售员，但调用方必须能拿到 errcode 落日志）
+    approveCardError: null,
+    // submit：第 N 次发起 & 最终 task_id（booking_${orderNo}_S{N}）
+    submitAttempt: null, submitTaskId: null,
     // approve/reject: 发给审核员本人（通过审核后）/销售员（驳回）回退更新（暂未启用，预留）
     rejectSalesResponseCode: null,
   };
@@ -2838,10 +2862,13 @@ async function sendBookingNotification(type, order, extra = {}) {
         if (salesUserid) {
           const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
           const submitAttempt = Number(extra && extra.submitAttempt) > 0 ? Number(extra.submitAttempt) : 1;
+          // buildTemplateCard 内部已经做 task_id: `booking_${taskId || orderNo}`，这里只传 ${orderNo}${suffix}
+          //    避免生成重复前缀 booking_booking_${orderNo}_S{N}
           const submitSuffix = extra && extra.submitSuffix
             ? String(extra.submitSuffix)
-            : submitAttempt > 1 ? `_S${submitAttempt}` : ''; // 首次提交保持 booking_{orderNo}，兼容已在线的旧卡 task_id 可覆盖
-          const taskId = `booking_${orderNo}${submitSuffix}`;
+            : submitAttempt > 1 ? `_S${submitAttempt}` : ''; // 首次不传 suffix → buildTemplateCard 内：booking_${orderNo}
+          const innerTaskId = `${orderNo}${submitSuffix}`;
+          const fullTaskId = `booking_${innerTaskId}`;
           const card = buildTemplateCard(
             '📋 订单待确认',
             `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
@@ -2853,15 +2880,17 @@ async function sendBookingNotification(type, order, extra = {}) {
             ],
             '去确认',
             cardUrl,
-            taskId
+            innerTaskId
           );
           const r = await sendCard(salesUserid, card, `销售员模板卡片 attempt=${submitAttempt}`);
           result.salesUserid = salesUserid;
           if (r && r.response_code) result.salesResponseCode = r.response_code;
-          result.submitTaskId = taskId;
+          if (r && r.ok === false) result.salesCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
+          result.submitTaskId = fullTaskId;
           result.submitAttempt = submitAttempt;
         } else {
           console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
+          result.salesCardError = { errcode: -2, errmsg: 'sales_userid_not_found', hint: 'users.wecom_userid / sales_wecom_userid 快照均为空' };
         }
       }
       break;
@@ -2902,8 +2931,11 @@ async function sendBookingNotification(type, order, extra = {}) {
         const r = await sendCard(approverUserid, approveCard, '审核员模板卡片');
         result.approverUserid = approverUserid;
         if (r && r.response_code) result.approverResponseCode = r.response_code;
+        if (r && r.ok === false) result.approveCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
       } else {
-        // guard：审核员未配置不静默 —— 发 fallback 卡片回销售员，避免审批卡死
+        // guard：审核员未配置 → 固定审批流阻塞；错误结构化返回给调用方落日志
+        //   （警告卡仍回发销售员，避免 booking_approver_userid 为空时全链路静悄悄完全没人知道）
+        result.approveCardError = { errcode: -3, errmsg: 'approver_userid_not_configured', hint: 'wecom_config.booking_approver_userid 为空，请在企微通知配置页填写固定审核员' };
         console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知，并回发警告给销售员');
         if (config.booking_notify_sales !== 0) {
           const salesUserid = await findSalesUserid();

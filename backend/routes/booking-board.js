@@ -1503,39 +1503,46 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
 
     const order = await readOrderFull(orderId);
-    // 方案 A：task_id 按发起次数递增，绕过企微同一 task_id 去重导致驳回再发起收不到新卡
-    //     首次 attempt=1 → task_id = booking_${orderNo}（兼容线上旧卡）
-    //     驳回重发 attempt≥2 → task_id = booking_${orderNo}_S2, _S3 …
+    // 方案 1.1：submit 同步 await 通知 + response_code 落库（消灰按钮竞态）
+    //   前端 submit 成功返回时，企微卡 response_code 必然已写入 wecom_card_response_codes，
+    //   随后销售员秒点「去确认」→ sales-confirm readOrderFull() 必拿到 code → 按钮必灰。
     const existingCodes = order.wecom_card_response_codes || {};
     const prevAttempt = (existingCodes.sales_confirm && Number(existingCodes.sales_confirm.attempt)) || 0;
     const submitAttempt = prevAttempt + 1;
-    // 异步发送企微通知 + 保存销售员"订单待确认"卡 response_code（H5 确认后灰按钮用）
-    (async () => {
-      try {
-        const notifyRes = await sendBookingNotification('submit', order, { submitAttempt });
-        if (notifyRes && notifyRes.salesResponseCode) {
-          await saveCardResponseCodes(orderId, {
-            sales_confirm: {
-              userid: notifyRes.salesUserid,
-              response_code: notifyRes.salesResponseCode,
-              attempt: Number(notifyRes.submitAttempt || submitAttempt),
-              task_id: notifyRes.submitTaskId || null,
-            },
-          });
-        } else if (notifyRes) {
-          // 有返回但没 response_code（例如企微返回 errcode / 销售员 userid 空）
-          // 仍记录 attempt，避免下次 submit 再从 1 起用回相同 task_id
-          await saveCardResponseCodes(orderId, {
-            sales_confirm: {
-              userid: notifyRes.salesUserid || existingCodes.sales_confirm?.userid || null,
-              attempt: submitAttempt,
-            },
-          });
+    let notifyError = null;
+    try {
+      const notifyRes = await sendBookingNotification('submit', order, { submitAttempt });
+      if (notifyRes && notifyRes.salesResponseCode) {
+        await saveCardResponseCodes(orderId, {
+          sales_confirm: {
+            userid: notifyRes.salesUserid,
+            response_code: notifyRes.salesResponseCode,
+            attempt: Number(notifyRes.submitAttempt || submitAttempt),
+            task_id: notifyRes.submitTaskId || null,
+          },
+        });
+      } else {
+        // 无论成功失败，submit attempt 必须写入，避免下次 submit 回退导致 task_id 重复静默
+        await saveCardResponseCodes(orderId, {
+          sales_confirm: {
+            userid: (notifyRes && notifyRes.salesUserid) || existingCodes.sales_confirm?.userid || null,
+            attempt: submitAttempt,
+          },
+        });
+        if (notifyRes && notifyRes.salesCardError) {
+          notifyError = notifyRes.salesCardError;
         }
-      } catch (e) {
-        console.error('[booking submit notify] error:', e);
       }
-    })();
+    } catch (e) {
+      notifyError = { errmsg: e && e.message || String(e) };
+      // 链路上层异常也记 attempt，不破坏 task_id 递增不变量
+      await saveCardResponseCodes(orderId, {
+        sales_confirm: { attempt: submitAttempt },
+      }).catch(()=>{});
+    }
+    if (notifyError) {
+      console.error(`[booking submit notify] FAIL orderNo=${o.order_no} attempt=${submitAttempt}:`, JSON.stringify(notifyError));
+    }
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking submit] error:', e);
@@ -1582,12 +1589,29 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
     const order = await readOrderFull(orderId);
     // 1) 灰化销售员原「订单待确认」蓝卡按钮（对齐食材采购机制）
     //    若 user 没有 wecom_userid，则尝试取订单 wecom_card_response_codes.sales_confirm.userid 兜底
-    const salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
+    //    【方案 1.2 补读】：若 readOrderFull 命中缓存/从从库读到旧（response_code==null），强制直查主表补 1 次，
+    //    确保 submit 已同步落库的 code 不会被历史值吞掉
+    let salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
+    if (!salesCard || !salesCard.response_code) {
+      try {
+        const [recheckRows] = await pool.query(
+          'SELECT wecom_card_response_codes AS c FROM booking_orders WHERE id = ? LIMIT 1',
+          [orderId]
+        );
+        const recheck = parseMaybeJson(recheckRows?.[0]?.c);
+        if (recheck && recheck.sales_confirm) {
+          salesCard = recheck.sales_confirm;
+          if (!order.wecom_card_response_codes) order.wecom_card_response_codes = {};
+          order.wecom_card_response_codes.sales_confirm = salesCard;
+        }
+      } catch (_) { /* ignore */ }
+    }
     const salesGreyUserid = user.wecom_userid || (salesCard && salesCard.userid) || null;
     if (salesGreyUserid && salesCard && salesCard.response_code) {
       greyBookingCardButton(salesGreyUserid, salesCard.response_code, '已确认').catch(()=>{});
     }
     // 2) 异步发审核员卡片 + 保存审核员卡 response_code（approve 接口灰按钮用）
+    //    固定审核员场景：失败不通知销售员（用户明确拒绝方案B），仅落结构化错误日志（errcode/errmsg/invaliduser）
     (async () => {
       try {
         const notifyRes = await sendBookingNotification('salesConfirm', order);
@@ -1598,9 +1622,13 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
               response_code: notifyRes.approverResponseCode,
             },
           });
+        } else {
+          const errInfo = (notifyRes && notifyRes.approveCardError) || { errmsg: '未知错误（approverResponseCode为空）' };
+          const approver = (notifyRes && notifyRes.approverUserid) || 'n/a';
+          console.error(`[booking sales-confirm] 审核员通知 FAIL: orderNo=${o.order_no}, approver=${approver}, detail=${JSON.stringify(errInfo)}`);
         }
       } catch (e) {
-        console.error('[booking sales-confirm notify] error:', e);
+        console.error(`[booking sales-confirm notify] catch FAIL orderNo=${o.order_no}:`, e && e.message, e);
       }
     })();
     res.json({ ok: true, data: order });
