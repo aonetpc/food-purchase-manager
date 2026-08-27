@@ -490,6 +490,13 @@ export default function BookingConfirmPage() {
               hasSavedSig={!!savedSignature}
             />
             <SignatureCanvas ref={salesSigRef} onChange={setSalesSig} />
+            {/* 🔧 错误红框下沉到按钮正上方：签字区在页面中部滚动时用户也能看到错误，而不是只在页顶有一个可能被遮的红框 */}
+            {error && (
+              <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 text-sm text-red-700">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div className="break-all">{error}</div>
+              </div>
+            )}
             <button
               onClick={handleSalesConfirm}
               disabled={submitting || !salesSig}
@@ -508,6 +515,13 @@ export default function BookingConfirmPage() {
                 <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
                   placeholder="请填写驳回原因..." rows={3}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none" />
+                {/* 驳回原因输入下方也下沉错误红框（驳回操作也可能因权限被 403） */}
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 text-sm text-red-700">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                    <div className="break-all">{error}</div>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button onClick={() => { setShowRejectBox(false); setRejectReason(''); }}
                     disabled={submitting}
@@ -522,6 +536,12 @@ export default function BookingConfirmPage() {
               <>
                 <SignatureActionsBar onLoadSaved={() => applySavedSignature('approve')} loadingSavedSig={loadingSavedSig} hasSavedSig={!!savedSignature} />
                 <SignatureCanvas ref={approveSigRef} onChange={setApproveSig} />
+                {error && (
+                  <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 text-sm text-red-700">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                    <div className="break-all">{error}</div>
+                  </div>
+                )}
                 <div className="flex gap-2 mt-3">
                   <button onClick={() => setShowRejectBox(true)} disabled={submitting}
                     className="flex-1 py-3 bg-gray-100 text-gray-700 text-sm font-medium rounded-xl flex items-center justify-center gap-1.5">
@@ -542,6 +562,12 @@ export default function BookingConfirmPage() {
           <ActionBox icon={<CheckCircle2 size={16} />} title="订单已确认" desc="业务执行完毕后可标记完成" tone="green">
             <SignatureActionsBar onLoadSaved={() => applySavedSignature('complete')} loadingSavedSig={loadingSavedSig} hasSavedSig={!!savedSignature} />
             <SignatureCanvas ref={completeSigRef} onChange={setCompleteSig} />
+            {error && (
+              <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 text-sm text-red-700">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div className="break-all">{error}</div>
+              </div>
+            )}
             <button onClick={handleComplete} disabled={submitting || !completeSig}
               className="mt-3 w-full py-3 bg-indigo-500 text-white font-medium rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
               {submitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
