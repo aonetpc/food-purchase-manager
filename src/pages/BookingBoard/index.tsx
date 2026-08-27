@@ -1932,6 +1932,26 @@ export default function BookingBoard() {
     }
   }, []);
 
+  // 调度板卡片点击打开弹窗 —— 强制先拉后端最新详情，避免 H5 (BookingConfirm)
+  // 在另一个窗口操作后，调度板仍停留在列表加载时的旧缓存（status/签字/可操作按钮都错）
+  const handleCardClick = useCallback(async (group: BookingOrder) => {
+    try {
+      const backendId = orderUuidMap.current[group.id] || group.id;
+      const detail = await bookingApi.getOrder(backendId);
+      const adapted = adaptOrder(detail);
+      // 1. id 映射（业务号 → 后端 UUID）同步刷新
+      orderUuidMap.current[adapted.id] = detail.id;
+      // 2. 开弹窗：用最新对象渲染时间线/签字/可操作按钮
+      setSelectedOrder(adapted);
+      // 3. 同步列表格子的 status/KPI 计数，避免卡片标签仍是旧值
+      setOrders(prev => prev.map(o => (o.id === adapted.id ? adapted : o)));
+    } catch (e) {
+      // 拉取失败降级成老行为（直接用缓存对象打开），避免弹窗打不开
+      console.warn('[BookingBoard] handleCardClick 拉最新详情失败，回退用缓存值:', e);
+      setSelectedOrder(group);
+    }
+  }, []);
+
   // 复制历史订单为新单
   const copyOrder = useCallback(async (row: BookingSearchResult) => {
     try {
@@ -2610,7 +2630,7 @@ export default function BookingBoard() {
                   cards={boardData[biz.type]}
                   weekDates={weekDates}
                   todayKey={todayKey}
-                  onCardClick={setSelectedOrder}
+                  onCardClick={handleCardClick}
                 />
               ))}
             </div>
