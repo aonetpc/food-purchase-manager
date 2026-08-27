@@ -64,6 +64,7 @@ interface MovementListResponse {
 interface MovementForm {
   warehouse_id: string;
   item_id: string;
+  item_name: string;
   quantity: string;
   unit: string;
   unit_price: string;
@@ -73,6 +74,7 @@ interface MovementForm {
 const EMPTY_FORM: MovementForm = {
   warehouse_id: '',
   item_id: '',
+  item_name: '',
   quantity: '',
   unit: '',
   unit_price: '',
@@ -182,7 +184,7 @@ export default function StockMovement() {
 
   // 弹窗内选择仓库后加载该仓库物资
   const handleWarehouseChange = async (wid: string) => {
-    setForm((prev) => ({ ...prev, warehouse_id: wid, item_id: '', unit: '', unit_price: '' }));
+    setForm((prev) => ({ ...prev, warehouse_id: wid, item_id: '', item_name: '', unit: '', unit_price: '' }));
     if (!wid) {
       setMaterialOptions([]);
       return;
@@ -197,12 +199,13 @@ export default function StockMovement() {
     }
   };
 
-  // 选择物资时自动填充单位与参考单价
+  // 选择物资时自动填充物资名、单位与参考单价
   const handleMaterialChange = (itemId: string) => {
     const target = materialOptions.find((m) => m.id === itemId);
     setForm((prev) => ({
       ...prev,
       item_id: itemId,
+      item_name: target?.item_name || '',
       unit: target?.unit || '',
       unit_price: target?.reference_price ? String(target.reference_price) : '',
     }));
@@ -236,6 +239,7 @@ export default function StockMovement() {
       await api.post(`/stock-movements/${modalType}`, {
         warehouse_id: form.warehouse_id,
         item_id: form.item_id,
+        item_name: form.item_name,
         quantity: qty,
         unit: form.unit,
         unit_price: price,

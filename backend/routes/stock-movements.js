@@ -106,13 +106,25 @@ router.post('/inbound', requireWarehouseManager, async (req, res) => {
 
     await conn.beginTransaction();
 
+    // 兜底：item_name 为空时通过 item_id 查 warehouse_items 表取物资名
+    let resolvedItemName = (item_name || '').trim() ? item_name : null;
+    if (!resolvedItemName) {
+      const [nameRows] = await conn.query('SELECT name FROM warehouse_items WHERE id = ? LIMIT 1', [item_id]);
+      if (nameRows.length > 0 && nameRows[0].name) {
+        resolvedItemName = nameRows[0].name;
+      } else {
+        await conn.rollback();
+        return res.status(400).json({ error: '物资不存在或无名称，请先在仓库管理中维护物资' });
+      }
+    }
+
     // 记录流水（带部门归集）
     const id = uuidv4();
     const total_amount = unit_price !== null ? quantity * unit_price : null;
     await conn.query(
       `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
        VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
-      [id, warehouse_id, item_id, item_name, quantity, unit, unit_price, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
+      [id, warehouse_id, item_id, resolvedItemName, quantity, unit, unit_price, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
     );
 
     // 更新库存（不存在则插入）
@@ -238,13 +250,25 @@ router.post('/outbound', requireWarehouseManager, async (req, res) => {
       return res.status(400).json({ error: '库存不足' });
     }
 
+    // 兜底：item_name 为空时通过 item_id 查 warehouse_items 表取物资名
+    let resolvedItemName = (item_name || '').trim() ? item_name : null;
+    if (!resolvedItemName) {
+      const [nameRows] = await conn.query('SELECT name FROM warehouse_items WHERE id = ? LIMIT 1', [item_id]);
+      if (nameRows.length > 0 && nameRows[0].name) {
+        resolvedItemName = nameRows[0].name;
+      } else {
+        await conn.rollback();
+        return res.status(400).json({ error: '物资不存在或无名称，请先在仓库管理中维护物资' });
+      }
+    }
+
     // 记录流水（出库数量为负数，带部门归集）
     const id = uuidv4();
     const total_amount = unit_price ? Number(quantity) * Number(unit_price) : null;
     await conn.query(
       `INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount, reason, related_type, operator_id, operator_name, department_id, department_name)
        VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
-      [id, warehouse_id, item_id, item_name, -Math.abs(quantity), unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null, department_id, department_name || null]
+      [id, warehouse_id, item_id, resolvedItemName, -Math.abs(quantity), unit, unit_price || null, total_amount, reason || null, operator_id || null, operator_name || null, department_id, department_name || null]
     );
 
     // 扣减库存
