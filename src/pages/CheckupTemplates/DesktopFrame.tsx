@@ -16,15 +16,16 @@ export default function CheckupDesktopFrame() {
   // 移动端：全屏展示 H5App，不加桌面框架
   if (isMobile) {
     return (
-      <div className="fixed inset-0 z-30 bg-gray-50">
+      <div className="fixed inset-0 z-[60] bg-gray-50">
         <CheckupApp />
       </div>
     );
   }
 
   // PC 端：全屏展示 H5App + 返回按钮 + 标题栏
+  // z-[60] 覆盖 Layout 的顶栏(z-50) 和 侧边栏(z-40)，避免被遮挡
   return (
-    <div className="fixed inset-0 z-30 bg-gray-50 flex flex-col">
+    <div className="fixed inset-0 z-[60] bg-gray-50 flex flex-col">
       <header className="bg-white border-b border-gray-200 flex items-center px-4 h-14 shrink-0 shadow-sm">
         <button
           onClick={() => navigate('/checkup-templates')}
