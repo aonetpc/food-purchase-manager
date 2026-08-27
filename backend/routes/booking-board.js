@@ -12,17 +12,29 @@ const { sendBookingNotification, getWecomConfig, updateTemplateCardButton } = re
 // ============================================================
 
 /**
- * 是否为"审核员角色"（admin / booker 或 具备 action:booking:approve 权限码）
- * 负责：审核通过 / 驳回 / 标记完成 等管理动作
+ * 是否为"配置的审核员"（严格匹配 wecom_config.booking_approver_userid）
+ * 审核员必须由企业微信配置页面指定，不再依赖 admin/booker 角色。
+ * 负责：审核通过 / 驳回（reviewing阶段） / 标记完成 等管理动作
+ */
+async function isConfiguredBookingReviewer(user) {
+  if (!user) return false;
+  try {
+    const cfg = await getWecomConfig();
+    if (!cfg || !cfg.booking_approver_userid) return false;
+    const wecom = String(user.wecom_userid || user.wecomUserId || '');
+    if (!wecom) return false;
+    return wecom === String(cfg.booking_approver_userid);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * @deprecated 保留旧函数签名兼容；内部直接走配置审核员判断
  */
 function isBookingReviewer(user) {
-  if (!user) return false;
-  const role = user.role;
-  if (role === 'admin' || role === 'booker') return true;
-  const codes = user.permissionCodes;
-  if (codes instanceof Set && codes.has('action:booking:approve')) return true;
-  // 多角色场景：user.roles 数组可能被上层挂过
-  if (Array.isArray(user.roles) && (user.roles.includes('admin') || user.roles.includes('booker'))) return true;
+  // 同步包装：异步场景下调用方需改用 isConfiguredBookingReviewer
+  // 此处保留仅为兼容已有同步调用点（将逐步替换）
   return false;
 }
 
@@ -1721,13 +1733,11 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
     }
 
     // --- 业务角色限制 ---
-    // admin/booker 可代任何订单确认（管理员兜底 / 预订员代确认）
-    // sales 角色只能确认"本人名下"的订单
-    const reviewer = isBookingReviewer(user);
-    if (!reviewer && !isSalesOwnerOfOrder(user, o)) {
+    // 销售员确认仅限订单登记的销售员本人（严格身份匹配）
+    if (!isSalesOwnerOfOrder(user, o)) {
       return res.status(403).json({
         ok: false,
-        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）或管理员可确认此订单`,
+        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）可确认此订单`,
       });
     }
 
@@ -1886,12 +1896,12 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     if (o.status !== 'reviewing') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能审核` });
 
     // --- 业务角色限制 ---
-    // 审核通过仅限审核员（admin/booker/具备 booking:approve 权限码）
-    // sales 角色不能审核订单（防止自己确认自己通过）
-    if (!isBookingReviewer(user)) {
+    // 审核通过仅限配置的审核员（wecom_config.booking_approver_userid）
+    const isReviewer = await isConfiguredBookingReviewer(user);
+    if (!isReviewer) {
       return res.status(403).json({
         ok: false,
-        error: '仅管理员和预订员可审核订单，请联系相关审核员操作',
+        error: '仅企业微信配置中指定的审核员可审核订单',
       });
     }
 
@@ -1955,19 +1965,19 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
     const rejectionReason = (req.body && req.body.rejectionReason) || '未填驳回原因';
 
     // --- 业务角色限制（按驳回阶段区分）---
-    // ① sales_confirming 阶段：销售本人 或 审核员(admin/booker) 可驳回/撤回
-    // ② reviewing     阶段：仅审核员可驳回
-    const reviewer = isBookingReviewer(user);
-    if (o.status === 'reviewing' && !reviewer) {
+    // ① sales_confirming 阶段：仅订单销售员本人可撤回
+    // ② reviewing     阶段：仅配置的审核员可驳回
+    const isReviewer = await isConfiguredBookingReviewer(user);
+    if (o.status === 'reviewing' && !isReviewer) {
       return res.status(403).json({
         ok: false,
-        error: '仅管理员和预订员可在审核阶段驳回订单',
+        error: '仅企业微信配置中指定的审核员可驳回此订单',
       });
     }
-    if (o.status === 'sales_confirming' && !reviewer && !isSalesOwnerOfOrder(user, o)) {
+    if (o.status === 'sales_confirming' && !isSalesOwnerOfOrder(user, o)) {
       return res.status(403).json({
         ok: false,
-        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）或管理员可撤回/驳回此订单`,
+        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）可撤回此订单`,
       });
     }
 
@@ -2041,11 +2051,12 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
     if (o.status !== 'confirmed') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能标记完成` });
 
     // --- 业务角色限制 ---
-    // 标记完成仅限审核员（admin/booker/具备 booking:approve 权限码）
-    if (!isBookingReviewer(user)) {
+    // 标记完成仅限配置的审核员（wecom_config.booking_approver_userid）
+    const isReviewer = await isConfiguredBookingReviewer(user);
+    if (!isReviewer) {
       return res.status(403).json({
         ok: false,
-        error: '仅管理员和预订员可标记完成此订单',
+        error: '仅企业微信配置中指定的审核员可标记完成此订单',
       });
     }
 

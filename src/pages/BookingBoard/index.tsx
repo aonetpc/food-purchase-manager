@@ -537,6 +537,7 @@ function DetailModal({
   onReject,
   onComplete,
   authUser,
+  bookingApprover,
 }: {
   order: BookingOrder;
   onClose: () => void;
@@ -551,6 +552,7 @@ function DetailModal({
   onReject: (order: BookingOrder) => void;
   onComplete: (order: BookingOrder, signatureData: string) => void;
   authUser: any;
+  bookingApprover: null | { userid: string; name: string };
 }) {
   // 仅 pending 和 rejected 状态可编辑
   const canEdit = canOperate &&
@@ -622,6 +624,34 @@ function DetailModal({
     if (role === 'approve') { setApproveSig(''); approveSigRef.current?.clear(); }
     if (role === 'complete') { setCompleteSig(''); completeSigRef.current?.clear(); }
   }
+
+  // ============================================================
+  // 🔧 前端身份过滤：与后端 isSalesOwnerOfOrder / isConfiguredBookingReviewer 对齐
+  //    销售员确认：仅限订单销售员本人
+  //    审核/驳回/标记完成：仅限企业微信配置中指定的审核员
+  // ============================================================
+  const isOrderSalesPerson = (() => {
+    if (!authUser) return false;
+    const uid = String(authUser.id || '');
+    const wecom = String(authUser.wecom_userid || authUser.wecomUserId || '');
+    const name = authUser.name || authUser.realName || authUser.displayName || '';
+    if (uid && order.salesPersonId && String(order.salesPersonId) === uid) return true;
+    if (wecom && order.salesWecomUserid && String(order.salesWecomUserid) === wecom) return true;
+    if (name && order.salesPerson && order.salesPerson.includes(name)) return true;
+    return false;
+  })();
+
+  const isConfiguredReviewer = (() => {
+    if (!authUser || !bookingApprover) return false;
+    const wecom = String(authUser.wecom_userid || authUser.wecomUserId || '');
+    if (!wecom || !bookingApprover.userid) return false;
+    return wecom === String(bookingApprover.userid);
+  })();
+
+  // 销售员确认：仅限订单销售员本人
+  const canSalesConfirm = isOrderSalesPerson;
+  // 审核通过/驳回/标记完成：仅限配置的审核员
+  const canReviewOrComplete = isConfiguredReviewer;
   // 全部业务展开（不再只体检）
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   // 体检：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
@@ -630,6 +660,7 @@ function DetailModal({
   // 业务配置（用于 code→中文名反查，以及体检套餐 items 导出）
   const [bizCfg, setBizCfg] = useState<any>({
     packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], mealTypes: [],
+    bookingApprover: null as null | { userid: string; name: string },
   });
   const [bizCfgLoading, setBizCfgLoading] = useState(false);
 
@@ -663,6 +694,7 @@ function DetailModal({
           meetingHalls: cfg.meetingHalls || [],
           wellnessTypes: cfg.wellnessTypes || [],
           mealTypes: cfg.mealTypes || [],
+          bookingApprover: cfg.bookingApprover || null,
         });
       } catch {
         // 失败保持空数组，用 code 兜底展示
@@ -1832,8 +1864,8 @@ function DetailModal({
             </>
           )}
 
-          {/* sales_confirming: 预订员可撤回，销售员可确认（需签字） */}
-          {order.status === 'sales_confirming' && (
+          {/* sales_confirming: 仅订单销售员本人可确认（需签字） */}
+          {order.status === 'sales_confirming' && canSalesConfirm && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-amber-200 rounded-lg bg-amber-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium text-amber-700">请先手写签名再点"销售员确认"</span>
@@ -1873,8 +1905,8 @@ function DetailModal({
             </div>
           )}
 
-          {/* reviewing: 审核员可审核通过/驳回（通过需签字） */}
-          {order.status === 'reviewing' && (
+          {/* reviewing: 审核通过/驳回 仅限审核员（admin/booker） */}
+          {order.status === 'reviewing' && canReviewOrComplete && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-blue-200 rounded-lg bg-blue-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium text-blue-700">请先手写签名再点"审核通过"</span>
@@ -1912,7 +1944,7 @@ function DetailModal({
             </div>
           )}
 
-          {/* confirmed: 可标记完成（锁定不可编辑，需签字） */}
+          {/* confirmed: 标记完成 仅限审核员（admin/booker） */}
           {order.status === 'confirmed' && (
             <div className="col-span-full mt-4 space-y-3">
               <div className="flex items-center gap-2">
@@ -1920,7 +1952,7 @@ function DetailModal({
                   🔒 已确认·不可修改
                 </span>
               </div>
-              {canOperate && (
+              {canOperate && canReviewOrComplete && (
                 <div className="p-3 border border-dashed border-indigo-200 rounded-lg bg-indigo-50/30 space-y-3">
                   <div className="flex items-center justify-between text-xs text-gray-600">
                     <span className="font-medium text-indigo-700">请先手写签名再点"标记完成"</span>
@@ -2119,6 +2151,14 @@ export default function BookingBoard() {
     const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
     return role === 'admin' || role === 'booker' || roleCodes.includes('admin') || roleCodes.includes('booker');
   })();
+  // 权限：仅 admin 可见（业务配置、下载模板、导入Excel）
+  const isAdminOnly = (() => {
+    if (!authUser) return false;
+    const role = authUser.role;
+    const roles = authUser.roles || [];
+    const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
+    return role === 'admin' || roleCodes.includes('admin');
+  })();
 
   // 统一的加载订单函数（切周 / 修复数据后刷新都复用）
   const loadOrders = useCallback(async (ws?: Date) => {
@@ -2136,6 +2176,7 @@ export default function BookingBoard() {
           packages: (cfgResp.packages || cfgResp.checkupPackages || []) as any[],
           meetingHalls: (cfgResp.meetingHalls || cfgResp.meeting_halls || []) as any[],
           wellnessTypes: (cfgResp.wellnessTypes || cfgResp.wellness_types || []) as any[],
+          bookingApprover: cfgResp.bookingApprover || null,
         });
       }
       const map: Record<string, string> = {};
@@ -2512,13 +2553,17 @@ export default function BookingBoard() {
 
             {isBookingOperator && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setBizConfigOpen(true)}
-                  className="px-3 py-1.5 text-xs rounded border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
-                >
-                  <Settings size={12} /> 业务配置
-                </button>
+                {/* 业务配置：仅 admin 可见 */}
+                {isAdminOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setBizConfigOpen(true)}
+                    className="px-3 py-1.5 text-xs rounded border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
+                  >
+                    <Settings size={12} /> 业务配置
+                  </button>
+                )}
+                {/* TODO: 下载模板 / 导入Excel 功能暂时下线，保留代码便于后续恢复
                 <a
                   href="/templates/预订订单导入模板.xlsx"
                   download="预订订单导入模板.xlsx"
@@ -2533,6 +2578,7 @@ export default function BookingBoard() {
                 >
                   <Upload size={12} /> 导入Excel
                 </button>
+                */}
                 <div className="relative">
                   <button
                     type="button"
@@ -2900,6 +2946,7 @@ export default function BookingBoard() {
           onReject={handleRejectClick}
           onComplete={handleComplete}
           authUser={authUser}
+          bookingApprover={bizCfg.bookingApprover || null}
         />
       )}
 
