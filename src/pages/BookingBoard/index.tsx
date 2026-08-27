@@ -556,9 +556,8 @@ function DetailModal({
   authUser: any;
   bookingApprover: null | { userid: string; name: string };
 }) {
-  // 仅 pending 和 rejected 状态可编辑
-  const canEdit = canOperate &&
-    (order.status === 'pending' || order.status === 'rejected');
+  // 所有非 completed 状态均可编辑；reviewing/confirmed 修改会触发通知
+  const canEdit = canOperate && order.status !== 'completed';
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
   const toast = useToast();
@@ -583,6 +582,7 @@ function DetailModal({
   const approveSigRef = useRef<SignatureCanvasHandle>(null);
   const completeSigRef = useRef<SignatureCanvasHandle>(null);
   const [loadingSavedSig, setLoadingSavedSig] = useState(false);
+  const [showEditConfirm, setShowEditConfirm] = useState(false);
   const [hasSavedSig, setHasSavedSig] = useState(false);
   const [, setSavedSignature] = useState<string | null>(null);
 
@@ -1841,16 +1841,25 @@ function DetailModal({
 
         {/* 底部按钮 */}
         <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white flex-wrap">
-          {/* pending / rejected: 预订员可编辑 + 提交确认 */}
+          {/* 所有非 completed 状态均可修改；confirmed 需强提示 */}
+          {canOperate && order.status !== 'completed' && (
+            <button
+              type="button"
+              onClick={() => {
+                if (order.status === 'confirmed') {
+                  setShowEditConfirm(true);
+                } else {
+                  onEdit();
+                }
+              }}
+              className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
+            >
+              修改此单
+            </button>
+          )}
+          {/* pending / rejected: 额外显示提交确认 + 复制 + 模板 */}
           {(order.status === 'pending' || order.status === 'rejected') && canOperate && (
             <>
-              <button
-                type="button"
-                onClick={onEdit}
-                className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
-              >
-                修改此单
-              </button>
               <button
                 type="button"
                 onClick={() => onSubmit(order)}
@@ -1959,8 +1968,8 @@ function DetailModal({
           {order.status === 'confirmed' && (
             <div className="col-span-full mt-4 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
-                  🔒 已确认·不可修改
+                <span className="px-3 py-1.5 text-xs rounded bg-amber-50 text-amber-700 inline-flex items-center gap-1">
+                  ⚠️ 已确认·修改将重走审批（需审核员重新审批）
                 </span>
               </div>
               {canOperate && canReviewOrComplete && (
@@ -2023,6 +2032,36 @@ function DetailModal({
           </button>
         </div>
       </div>
+
+      {/* confirmed 修改确认对话框 */}
+      {showEditConfirm && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100 bg-amber-50">
+              <h3 className="font-semibold text-amber-800">⚠️ 修改已确认订单</h3>
+            </div>
+            <div className="px-5 py-4">
+              <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
+                {`此订单已确认，修改后将：\n\n1. 订单状态回退为「审批中」\n2. 审核员将收到变更通知\n3. 审核员需重新审批后才能再次确认`}
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end gap-2">
+              <button
+                onClick={() => setShowEditConfirm(false)}
+                className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => { setShowEditConfirm(false); onEdit(); }}
+                className="px-3 py-1.5 text-xs rounded bg-yellow-500 hover:bg-yellow-600 text-white font-medium"
+              >
+                确定修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2507,10 +2546,21 @@ export default function BookingBoard() {
       if (createDrawer?.mode === 'edit' && createDrawer.order) {
         const uuid = orderUuidMap.current[createDrawer.order.id];
         if (!uuid) throw new Error('找不到订单UUID，请刷新后重试');
-        const updated = await bookingApi.updateOrder(uuid, toPayload(newOrder));
+        const result = await bookingApi.updateOrder(uuid, toPayload(newOrder));
+        const updated = result.order;
+        const notify = result.notify;
         const adapted = adaptOrder(updated);
         orderUuidMap.current[adapted.id] = updated.id;
         setOrders(prev => prev.map(o => o.id === createDrawer.order!.id ? adapted : o));
+
+        // 根据后端返回的 notify 显示不同 toast
+        if (notify?.action === 'confirmed_to_reviewing') {
+          toast.success('订单已修改，已退回审批中，审核员将收到通知');
+        } else if (notify?.action === 'reviewing_modified') {
+          toast.success('订单已修改，审核员将收到更新提醒');
+        } else if (notify?.action === 'sales_confirming_modified') {
+          toast.success('订单已修改，销售员确认卡片已更新');
+        }
       } else {
         // create 或 copy 都走新建
         const created = await bookingApi.createOrder(toPayload(newOrder));

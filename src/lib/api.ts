@@ -410,7 +410,7 @@ export const bookingApi = {
     paymentMethod?: string;
     remark?: string;
     items: any[];
-  }): Promise<BookingApiOrder> {
+  }): Promise<{ order: BookingApiOrder; notify?: any }> {
     const backendPayload = {
       customerName: payload.customerName,
       contactName: payload.contactName,
@@ -422,8 +422,8 @@ export const bookingApi = {
       remark: payload.remark,
       items: itemsToBackend(payload.items),
     };
-    const res = await api.put<{ ok: boolean; data: any }>(`/booking/orders/${id}`, backendPayload);
-    return fromBackend(res.data);
+    const res = await api.put<{ ok: boolean; data: any; notify?: any }>(`/booking/orders/${id}`, backendPayload);
+    return { order: fromBackend(res.data), notify: res.notify };
   },
 
   // 复制为新单
