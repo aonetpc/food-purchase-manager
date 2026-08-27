@@ -537,6 +537,7 @@ function DetailModal({
   onReject,
   onComplete,
   authUser,
+  bookingApprover,
 }: {
   order: BookingOrder;
   onClose: () => void;
@@ -551,6 +552,7 @@ function DetailModal({
   onReject: (order: BookingOrder) => void;
   onComplete: (order: BookingOrder, signatureData: string) => void;
   authUser: any;
+  bookingApprover: null | { userid: string; name: string };
 }) {
   // 仅 pending 和 rejected 状态可编辑
   const canEdit = canOperate &&
@@ -624,10 +626,9 @@ function DetailModal({
   }
 
   // ============================================================
-  // 🔧 前端身份过滤：与后端 isSalesOwnerOfOrder / isBookingReviewer 对齐
-  //    非订单销售员本人不应看到"销售员确认"按钮；
-  //    非 admin/booker 不应看到"审核通过/标记完成"按钮。
-  //    虽然后端有 403 兜底，但前端不应展示不该操作的 UI。
+  // 🔧 前端身份过滤：与后端 isSalesOwnerOfOrder / isConfiguredBookingReviewer 对齐
+  //    销售员确认：仅限订单销售员本人
+  //    审核/驳回/标记完成：仅限企业微信配置中指定的审核员
   // ============================================================
   const isOrderSalesPerson = (() => {
     if (!authUser) return false;
@@ -640,22 +641,17 @@ function DetailModal({
     return false;
   })();
 
-  const isOrderReviewer = (() => {
-    if (!authUser) return false;
-    const role = authUser.role;
-    const roles = authUser.roles || [];
-    const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
-    if (role === 'admin' || role === 'booker') return true;
-    if (roleCodes.includes('admin') || roleCodes.includes('booker')) return true;
-    const codes = authUser.permissionCodes;
-    if (codes instanceof Set && codes.has('action:booking:approve')) return true;
-    return false;
+  const isConfiguredReviewer = (() => {
+    if (!authUser || !bookingApprover) return false;
+    const wecom = String(authUser.wecom_userid || authUser.wecomUserId || '');
+    if (!wecom || !bookingApprover.userid) return false;
+    return wecom === String(bookingApprover.userid);
   })();
 
-  // 当前用户是否可执行"销售员确认"（本人销售 或 审核员代确认）
-  const canSalesConfirm = isOrderSalesPerson || isOrderReviewer;
-  // 当前用户是否可执行"审核通过/驳回/标记完成"（仅审核员）
-  const canReviewOrComplete = isOrderReviewer;
+  // 销售员确认：仅限订单销售员本人
+  const canSalesConfirm = isOrderSalesPerson;
+  // 审核通过/驳回/标记完成：仅限配置的审核员
+  const canReviewOrComplete = isConfiguredReviewer;
   // 全部业务展开（不再只体检）
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   // 体检：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
@@ -664,6 +660,7 @@ function DetailModal({
   // 业务配置（用于 code→中文名反查，以及体检套餐 items 导出）
   const [bizCfg, setBizCfg] = useState<any>({
     packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], mealTypes: [],
+    bookingApprover: null as null | { userid: string; name: string },
   });
   const [bizCfgLoading, setBizCfgLoading] = useState(false);
 
@@ -697,6 +694,7 @@ function DetailModal({
           meetingHalls: cfg.meetingHalls || [],
           wellnessTypes: cfg.wellnessTypes || [],
           mealTypes: cfg.mealTypes || [],
+          bookingApprover: cfg.bookingApprover || null,
         });
       } catch {
         // 失败保持空数组，用 code 兜底展示
@@ -1866,15 +1864,11 @@ function DetailModal({
             </>
           )}
 
-          {/* sales_confirming: 撤回需 canOperate；销售员确认需本人销售 或 审核员代确认 */}
+          {/* sales_confirming: 仅订单销售员本人可确认（需签字） */}
           {order.status === 'sales_confirming' && canSalesConfirm && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-amber-200 rounded-lg bg-amber-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
-                <span className="font-medium text-amber-700">
-                  {isOrderSalesPerson
-                    ? '请先手写签名再点"销售员确认"'
-                    : `管理员代确认（订单销售员：${order.salesPerson || '—'}）·请先手写签名`}
-                </span>
+                <span className="font-medium text-amber-700">请先手写签名再点"销售员确认"</span>
                 <div className="flex gap-1.5">
                   <button type="button" onClick={loadSavedSignature}
                     className="px-2 py-1 border border-amber-200 rounded bg-white hover:bg-amber-50 text-amber-700 disabled:opacity-50"
@@ -1905,7 +1899,7 @@ function DetailModal({
                   title={!salesSig ? '请先在上方手写签名' : ''}
                   className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {!salesSig ? '请先签字' : isOrderSalesPerson ? '销售员确认' : '代销售员确认'}
+                  {!salesSig ? '请先签字' : '销售员确认'}
                 </button>
               </div>
             </div>
@@ -2174,6 +2168,7 @@ export default function BookingBoard() {
           packages: (cfgResp.packages || cfgResp.checkupPackages || []) as any[],
           meetingHalls: (cfgResp.meetingHalls || cfgResp.meeting_halls || []) as any[],
           wellnessTypes: (cfgResp.wellnessTypes || cfgResp.wellness_types || []) as any[],
+          bookingApprover: cfgResp.bookingApprover || null,
         });
       }
       const map: Record<string, string> = {};
@@ -2938,6 +2933,7 @@ export default function BookingBoard() {
           onReject={handleRejectClick}
           onComplete={handleComplete}
           authUser={authUser}
+          bookingApprover={bizCfg.bookingApprover || null}
         />
       )}
 
