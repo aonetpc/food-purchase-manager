@@ -123,6 +123,8 @@ async function executeMigration(filename) {
           console.log(`  ⚠️  字段已存在，跳过`);
         } else if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
           console.log(`  ⚠️  数据已存在，跳过`);
+        } else if (err.code === 'ER_DUP_KEYNAME' || err.errno === 1061) {
+          console.log(`  ⚠️  索引/键已存在，跳过`);
         } else if (err.code === 'ER_CANT_DROP_FIELD_OR_KEY' || err.errno === 1091) {
           console.log(`  ⚠️  字段/索引不存在，跳过`);
         } else {
