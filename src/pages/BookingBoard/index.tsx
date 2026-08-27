@@ -2151,6 +2151,14 @@ export default function BookingBoard() {
     const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
     return role === 'admin' || role === 'booker' || roleCodes.includes('admin') || roleCodes.includes('booker');
   })();
+  // 权限：仅 admin 可见（业务配置、下载模板、导入Excel）
+  const isAdminOnly = (() => {
+    if (!authUser) return false;
+    const role = authUser.role;
+    const roles = authUser.roles || [];
+    const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
+    return role === 'admin' || roleCodes.includes('admin');
+  })();
 
   // 统一的加载订单函数（切周 / 修复数据后刷新都复用）
   const loadOrders = useCallback(async (ws?: Date) => {
@@ -2545,13 +2553,17 @@ export default function BookingBoard() {
 
             {isBookingOperator && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setBizConfigOpen(true)}
-                  className="px-3 py-1.5 text-xs rounded border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
-                >
-                  <Settings size={12} /> 业务配置
-                </button>
+                {/* 业务配置：仅 admin 可见 */}
+                {isAdminOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setBizConfigOpen(true)}
+                    className="px-3 py-1.5 text-xs rounded border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
+                  >
+                    <Settings size={12} /> 业务配置
+                  </button>
+                )}
+                {/* TODO: 下载模板 / 导入Excel 功能暂时下线，保留代码便于后续恢复
                 <a
                   href="/templates/预订订单导入模板.xlsx"
                   download="预订订单导入模板.xlsx"
@@ -2566,6 +2578,7 @@ export default function BookingBoard() {
                 >
                   <Upload size={12} /> 导入Excel
                 </button>
+                */}
                 <div className="relative">
                   <button
                     type="button"

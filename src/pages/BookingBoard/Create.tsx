@@ -3063,12 +3063,14 @@ export default function BookingBoardCreate(props: {
           )}
         </h1>
         <div className="ml-auto flex items-center gap-2">
+          {/* TODO: Excel导入 / 下载模板 功能暂时下线，保留代码便于后续恢复
           <button onClick={() => fileInputRef.current?.click()} className={btnGhost}>
             <Upload size={14} /> Excel导入
           </button>
           <button onClick={downloadTemplate} className={btnGhost}>
             <Download size={14} /> 下载模板
           </button>
+          */}
           <button onClick={handleClear} className={btnGhost}>
             <Eraser size={14} /> 清空
           </button>

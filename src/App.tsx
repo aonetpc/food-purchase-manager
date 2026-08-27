@@ -54,7 +54,7 @@ const StockTakeOperate = lazy(() => import('@/pages/StockTakeOperate'));
 const PermissionManager = lazy(() => import('@/pages/PermissionManager'));
 const BookingBoard = lazy(() => import('@/pages/BookingBoard'));
 const BookingConfirmPage = lazy(() => import('@/pages/BookingConfirm'));
-const CheckupApp = lazy(() => import('@/pages/CheckupTemplates/H5App'));
+const CheckupDesktopFrame = lazy(() => import('@/pages/CheckupTemplates/DesktopFrame'));
 const CheckupSharePage = lazy(() => import('@/pages/CheckupTemplates/SharePage'));
 const CheckupTemplatesPage = lazy(() => import('@/pages/CheckupTemplates/DesktopRedirect'));
 const CheckupCenter = lazy(() => import('@/pages/CheckupCenter'));
@@ -87,7 +87,8 @@ export default function App() {
           <Route path="/stock-take-operate" element={<StockTakeOperate />} />
 
           {/* ============== 体检配单 H5（登录态：销售/管理员手机操作）============== */}
-          <Route path="/h/checkup-templates/*" element={<ProtectedRoute><CheckupApp /></ProtectedRoute>} />
+          {/* NOTE: /h/checkup-templates/* 已移至 Layout 内部，通过 CheckupDesktopFrame 包裹 */}
+          {/* 手机端直接通过企微 H5 入口（/h/checkup-templates）进入时走 PC 框架内嵌模式 */}
 
           {/* ============== 体检套餐分享落地页（免登录：客户微信打开）============== */}
           <Route path="/h/checkup-share/:token" element={<CheckupSharePage />} />
@@ -244,6 +245,12 @@ export default function App() {
             } />
             <Route path="booking-board" element={<BookingBoard />} />
             <Route path="checkup-templates" element={<CheckupTemplatesPage />} />
+            {/* 体检配单 H5 嵌入 PC 框架：在框架内全屏展示 H5App，带返回按钮 */}
+            <Route path="h/checkup-templates/*" element={
+              <ProtectedRoute>
+                <CheckupDesktopFrame />
+              </ProtectedRoute>
+            } />
             <Route path="checkup-center" element={<CheckupCenter />} />
           </Route>
         </Routes>
