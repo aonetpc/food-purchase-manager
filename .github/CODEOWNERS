@@ -1,0 +1,34 @@
+# CODEOWNERS — 以下路径的改动必须 @aonetpc review 通过才能合入 main。
+# 功能对话 / 业务 PR 误改部署链路时，GitHub 会自动强制拦截（CODEOWNERS）。
+
+# --------------
+# CI / 部署链路
+# --------------
+.github/workflows/*                         @aonetpc
+
+# --------------
+# 数据库连接 & 迁移入口（凭证、env 注入、migrate 工具逻辑）
+# --------------
+backend/db.js                               @aonetpc
+backend/server.js                           @aonetpc
+backend/migrations/migrate.js               @aonetpc
+backend/migrations/README_MIGRATIONS.md     @aonetpc
+
+# --------------
+# 迁移 SQL（防止一次性 DML 漏改名 _DONE、防止 DELIMITER/GRANT 等 migrate.js 不支持的语法）
+# --------------
+backend/migrations/*.sql                    @aonetpc
+
+# --------------
+# 凭证/环境配置
+# --------------
+*.env*                                      @aonetpc
+.env.example                                @aonetpc
+
+# --------------
+# 协作约定本身（改规则必须经 owner）
+# --------------
+CONTRIBUTING.md                             @aonetpc
+.github/CODEOWNERS                          @aonetpc
+README.md                                   @aonetpc
+PROJECT_SUMMARY.md                          @aonetpc
