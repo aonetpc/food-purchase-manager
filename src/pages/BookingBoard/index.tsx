@@ -622,6 +622,40 @@ function DetailModal({
     if (role === 'approve') { setApproveSig(''); approveSigRef.current?.clear(); }
     if (role === 'complete') { setCompleteSig(''); completeSigRef.current?.clear(); }
   }
+
+  // ============================================================
+  // 🔧 前端身份过滤：与后端 isSalesOwnerOfOrder / isBookingReviewer 对齐
+  //    非订单销售员本人不应看到"销售员确认"按钮；
+  //    非 admin/booker 不应看到"审核通过/标记完成"按钮。
+  //    虽然后端有 403 兜底，但前端不应展示不该操作的 UI。
+  // ============================================================
+  const isOrderSalesPerson = (() => {
+    if (!authUser) return false;
+    const uid = String(authUser.id || '');
+    const wecom = String(authUser.wecom_userid || authUser.wecomUserId || '');
+    const name = authUser.name || authUser.realName || authUser.displayName || '';
+    if (uid && order.salesPersonId && String(order.salesPersonId) === uid) return true;
+    if (wecom && order.salesWecomUserid && String(order.salesWecomUserid) === wecom) return true;
+    if (name && order.salesPerson && order.salesPerson.includes(name)) return true;
+    return false;
+  })();
+
+  const isOrderReviewer = (() => {
+    if (!authUser) return false;
+    const role = authUser.role;
+    const roles = authUser.roles || [];
+    const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
+    if (role === 'admin' || role === 'booker') return true;
+    if (roleCodes.includes('admin') || roleCodes.includes('booker')) return true;
+    const codes = authUser.permissionCodes;
+    if (codes instanceof Set && codes.has('action:booking:approve')) return true;
+    return false;
+  })();
+
+  // 当前用户是否可执行"销售员确认"（本人销售 或 审核员代确认）
+  const canSalesConfirm = isOrderSalesPerson || isOrderReviewer;
+  // 当前用户是否可执行"审核通过/驳回/标记完成"（仅审核员）
+  const canReviewOrComplete = isOrderReviewer;
   // 全部业务展开（不再只体检）
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   // 体检：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
@@ -1832,11 +1866,15 @@ function DetailModal({
             </>
           )}
 
-          {/* sales_confirming: 预订员可撤回，销售员可确认（需签字） */}
-          {order.status === 'sales_confirming' && (
+          {/* sales_confirming: 撤回需 canOperate；销售员确认需本人销售 或 审核员代确认 */}
+          {order.status === 'sales_confirming' && canSalesConfirm && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-amber-200 rounded-lg bg-amber-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
-                <span className="font-medium text-amber-700">请先手写签名再点"销售员确认"</span>
+                <span className="font-medium text-amber-700">
+                  {isOrderSalesPerson
+                    ? '请先手写签名再点"销售员确认"'
+                    : `管理员代确认（订单销售员：${order.salesPerson || '—'}）·请先手写签名`}
+                </span>
                 <div className="flex gap-1.5">
                   <button type="button" onClick={loadSavedSignature}
                     className="px-2 py-1 border border-amber-200 rounded bg-white hover:bg-amber-50 text-amber-700 disabled:opacity-50"
@@ -1867,14 +1905,14 @@ function DetailModal({
                   title={!salesSig ? '请先在上方手写签名' : ''}
                   className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {!salesSig ? '请先签字' : '销售员确认'}
+                  {!salesSig ? '请先签字' : isOrderSalesPerson ? '销售员确认' : '代销售员确认'}
                 </button>
               </div>
             </div>
           )}
 
-          {/* reviewing: 审核员可审核通过/驳回（通过需签字） */}
-          {order.status === 'reviewing' && (
+          {/* reviewing: 审核通过/驳回 仅限审核员（admin/booker） */}
+          {order.status === 'reviewing' && canReviewOrComplete && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-blue-200 rounded-lg bg-blue-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium text-blue-700">请先手写签名再点"审核通过"</span>
@@ -1912,7 +1950,7 @@ function DetailModal({
             </div>
           )}
 
-          {/* confirmed: 可标记完成（锁定不可编辑，需签字） */}
+          {/* confirmed: 标记完成 仅限审核员（admin/booker） */}
           {order.status === 'confirmed' && (
             <div className="col-span-full mt-4 space-y-3">
               <div className="flex items-center gap-2">
@@ -1920,7 +1958,7 @@ function DetailModal({
                   🔒 已确认·不可修改
                 </span>
               </div>
-              {canOperate && (
+              {canOperate && canReviewOrComplete && (
                 <div className="p-3 border border-dashed border-indigo-200 rounded-lg bg-indigo-50/30 space-y-3">
                   <div className="flex items-center justify-between text-xs text-gray-600">
                     <span className="font-medium text-indigo-700">请先手写签名再点"标记完成"</span>
