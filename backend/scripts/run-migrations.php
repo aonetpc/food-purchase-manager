@@ -24,7 +24,11 @@
 // ============== 数据库配置（与 db.js 保持一致） ==============
 $DB_HOST = getenv('DB_HOST') ?: 'localhost';
 $DB_USER = getenv('DB_USER') ?: 'food_purchase';
-$DB_PASS = getenv('DB_PASSWORD') ?: 'food_purchase123';
+$DB_PASS = getenv('DB_PASSWORD');
+if (!$DB_PASS) {
+  fwrite(STDERR, "[run-migrations] DB_PASSWORD 环境变量未设置\n");
+  exit(1);
+}
 $DB_NAME = getenv('DB_NAME') ?: 'food_purchase';
 
 $MIGRATIONS_DIR = __DIR__ . '/../migrations';

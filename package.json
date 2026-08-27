@@ -45,5 +45,10 @@
     "vite-plugin-compression": "^0.5.1",
     "vite-plugin-trae-solo-badge": "^1.0.0",
     "vite-tsconfig-paths": "^5.1.4"
-  }
+  },
+  "allowScripts": [
+    "esbuild",
+    "vite",
+    "@rollup/rollup-win32-x64-msvc"
+  ]
 }

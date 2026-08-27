@@ -4,6 +4,14 @@ import tsconfigPaths from "vite-tsconfig-paths";
 import viteCompression from 'vite-plugin-compression';
 
 export default defineConfig({
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     sourcemap: false,
     chunkSizeWarningLimit: 600,

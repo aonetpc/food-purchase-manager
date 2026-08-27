@@ -1,5 +1,11 @@
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const mysql = require('mysql2/promise');
 const { v4: uuidv4 } = require('uuid');
+
+if (!process.env.DB_PASSWORD) {
+  console.error('[seed-room-types] DB_PASSWORD 环境变量未设置');
+  process.exit(1);
+}
 
 const ROOM_TYPES = [
   { name: '【稻香楼】标准大床房', price: 1118 },
@@ -24,7 +30,7 @@ async function seedRoomTypes() {
   const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'food_purchase',
-    password: process.env.DB_PASSWORD || 'food_purchase123',
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'food_purchase',
     waitForConnections: true,
     connectionLimit: 5,

@@ -20,7 +20,11 @@
 
 $DB_HOST = getenv('DB_HOST') ?: 'localhost';
 $DB_USER = getenv('DB_USER') ?: 'food_purchase';
-$DB_PASS = getenv('DB_PASSWORD') ?: 'food_purchase123';
+$DB_PASS = getenv('DB_PASSWORD');
+if (!$DB_PASS) {
+  fwrite(STDERR, "[reimport-checkup-items] DB_PASSWORD 环境变量未设置\n");
+  exit(1);
+}
 $DB_NAME = getenv('DB_NAME') ?: 'food_purchase';
 
 $SQL_FILE = __DIR__ . '/../migrations/070_checkup_items_import_mysql57.sql';

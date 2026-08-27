@@ -259,14 +259,18 @@ async function sendTemplateCardToUser(config, userid, { card_type, main_title, s
 }
 
 // 更新模板卡片按钮文案（按钮变灰不可点击）
-async function updateTemplateCardButton(config, userid, responseCode, replaceName) {
+async function updateTemplateCardButton(config, userid, responseCode, replaceName, replaceStyle) {
   const accessToken = await getAccessToken(config);
+  // replace_style: 1=primary(蓝) 2=gray(灰禁用) 3=warn(红)
+  // 默认 2=灰：所有调用方都是"确认/驳回后灰化原按钮"场景
+  const style = (typeof replaceStyle === 'number' && [1,2,3].includes(replaceStyle)) ? replaceStyle : 2;
   const body = {
     userids: [userid],
     agentid: Number(config.agent_id),
     response_code: responseCode,
     button: {
-      replace_name: replaceName
+      replace_name: replaceName,
+      replace_style: style,
     }
   };
 

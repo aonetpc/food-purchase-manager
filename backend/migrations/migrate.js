@@ -16,6 +16,9 @@
  *   - 建议执行前先 backup
  */
 
+// 先加载 .env（生产环境凭证），必须在 require('../db') 之前
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -29,12 +32,35 @@ const MIGRATIONS_DIR = __dirname;
 
 /**
  * 读取并解析迁移脚本文件
+ *
+ * 过滤规则：
+ *   1. 命名形如 NNN_*.sql（编号支持任意位数，兼容 100/101 及未来 4 位数）
+ *   2. 跳过 *_DONE.sql（一次性 DML 已手动执行并收尾）
+ *   3. 跳过含 booking_checkup_items / booking_checkup_packages / booking_package_items
+ *      的 INSERT/UPDATE/DELETE/REPLACE（移植自原 deploy.yml for 循环的体检/套餐数据保护）
  */
 function getMigrationFiles() {
   return fs
     .readdirSync(MIGRATIONS_DIR)
-    .filter((f) => /^\d{3}_.*\.sql$/.test(f) && !f.endsWith('_DONE.sql'))
+    .filter((f) => /^\d+_.*\.sql$/.test(f) && !f.endsWith('_DONE.sql'))
+    .filter((f) => !containsProtectedDML(f))
     .sort();
+}
+
+/**
+ * 检测 SQL 文件是否包含对体检/套餐业务数据表的一次性 DML
+ * （这类文件如需执行应手动跑一次后改名 _DONE.sql，不能每次部署重跑覆盖用户数据）
+ */
+function containsProtectedDML(filename) {
+  const filePath = path.join(MIGRATIONS_DIR, filename);
+  const content = fs.readFileSync(filePath, 'utf8');
+  const pattern =
+    /((INSERT\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO)\s+`?booking_checkup_items`?)|((INSERT\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO)\s+`?booking_checkup_packages`?)|((INSERT\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO)\s+`?booking_package_items`?)/i;
+  if (pattern.test(content)) {
+    console.log(`  ⏭️  跳过（含体检/套餐业务数据 DML，需手动执行后改名 _DONE.sql）: ${filename}`);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -100,6 +126,9 @@ async function executeMigration(filename) {
         } else if (err.code === 'ER_CANT_DROP_FIELD_OR_KEY' || err.errno === 1091) {
           console.log(`  ⚠️  字段/索引不存在，跳过`);
         } else {
+          // 非幂等错误：附加文件名、errno、语句预览，便于定位
+          const preview = stmt.length > 80 ? stmt.slice(0, 80) + '...' : stmt;
+          err.message = `${err.message} | file=${filename} errno=${err.errno || '?'} stmt=${preview}`;
           throw err;
         }
       }
@@ -285,9 +314,14 @@ async function backup() {
   const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'food_purchase',
-    password: process.env.DB_PASSWORD || 'food_purchase123',
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'food_purchase',
   };
+
+  if (!dbConfig.password) {
+    console.error('\n❌ 备份失败：DB_PASSWORD 环境变量未设置\n');
+    process.exit(1);
+  }
 
   const cmd = `mysqldump -h ${dbConfig.host} -u ${dbConfig.user} -p${dbConfig.password} ${dbConfig.database} > ${backupFile}`;
 

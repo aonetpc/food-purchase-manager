@@ -4,22 +4,72 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+
+# 各 job 所需的 GitHub Secrets：
+#   SSH_HOST / SSH_USER / SSH_PRIVATE_KEY — SSH 登录目标服务器
+#   DB_PASSWORD — 数据库密码（通过 ssh-action envs 注入，不写入服务器磁盘）
+#   DB_USER / DB_NAME / DB_HOST — 可选（如与默认值 food_purchase / food_purchase / localhost 不同才配置）
 
 jobs:
-  deploy:
+  # ================================================================
+  # Job 1/5: ci-check — 在 GitHub runner 编译/类型检查，所有 push & PR 都跑
+  #         坏代码卡在这里，不进入部署阶段。
+  # ================================================================
+  ci-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to server
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install & typecheck & build
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
+  # ================================================================
+  # Job 2/5: deploy-frontend — 只构建 + 部署 dist/ 到 Nginx 静态目录
+  # ================================================================
+  deploy-frontend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: ci-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy frontend via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          command_timeout: 30m
+          command_timeout: 15m
           script: |
             set -e
+            # 本地 runner 已经 build 好，这里通过 scp？不可行。
+            # 回到老方案：在服务器 git fetch + reset + build（确保 dist 在服务器侧生成）
             cd ~/food-purchase-manager
-            # 强制同步远程分支（避免分支分歧导致pull失败）
             git fetch origin main
             git reset --hard origin/main
             npm ci
@@ -27,926 +77,131 @@ jobs:
             sudo rm -rf /var/www/food-purchase/*
             sudo cp -r dist/* /var/www/food-purchase/
             sudo chown -R ubuntu:ubuntu /var/www/food-purchase
-            sudo cp backend/package.json /opt/food-purchase/backend/
-            sudo cp backend/package-lock.json /opt/food-purchase/backend/
-            sudo cp backend/server.js /opt/food-purchase/backend/
-            sudo cp backend/db.js /opt/food-purchase/backend/
-            sudo cp backend/fix-checkin-data.js /opt/food-purchase/backend/
-            sudo cp backend/fix-worker-names.js /opt/food-purchase/backend/
-            sudo cp backend/fix-signature-data.js /opt/food-purchase/backend/
-            sudo cp backend/fix-scan-inbound-missing.js /opt/food-purchase/backend/
-            sudo cp backend/fix-scan-inbound-instant-use.js /opt/food-purchase/backend/
-            sudo cp backend/fix-dedup-expense.js /opt/food-purchase/backend/
-            sudo cp backend/fix-dedup-expense-v2.js /opt/food-purchase/backend/
-            sudo cp backend/fix-instant-use-expense.js /opt/food-purchase/backend/
-            sudo cp -r backend/routes/* /opt/food-purchase/backend/routes/
-            sudo cp -r backend/middleware/* /opt/food-purchase/backend/middleware/
-            sudo cp -r backend/migrations/* /opt/food-purchase/backend/migrations/
-            sudo mkdir -p /opt/food-purchase/backend/scripts
-            sudo cp -r backend/scripts/* /opt/food-purchase/backend/scripts/
-            sudo mkdir -p /opt/food-purchase/backend/utils
-            sudo cp -r backend/utils/. /opt/food-purchase/backend/utils/
-            sudo cp -r backend/fonts /opt/food-purchase/backend/
-            sudo chown -R ubuntu:ubuntu /opt/food-purchase/backend
-            cd /opt/food-purchase/backend
-            npm ci --production
-            # 数据库迁移：创建suppliers表（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              CREATE TABLE IF NOT EXISTS suppliers (
-                id VARCHAR(36) PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                contact VARCHAR(50),
-                phone VARCHAR(20),
-                address VARCHAR(200),
-                sort_order INT DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-              );
-            " 2>/dev/null || true
+            echo "✅ Frontend deployed"
 
-            # 数据库迁移：确保 purchase_records 表有 department_id 和 department_name 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_records';
-              SET @columnname = 'department_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
+  # ================================================================
+  # Job 3/5: deploy-backend — rsync 同步后端代码 + 安装生产依赖
+  #         通过安全门：.env 必须先就位
+  # ================================================================
+  deploy-backend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: deploy-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy backend via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 15m
+          script: |
+            set -e
+            cd ~/food-purchase-manager
+            git fetch origin main
+            git reset --hard origin/main
 
-              SET @columnname = 'department_name';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(50)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @indexname = 'idx_department';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND index_name = @indexname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (department_id)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 purchase_records 表有 supplier_id 和 supplier_name 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_records';
-              SET @columnname = 'supplier_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @columnname = 'supplier_name';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @indexname = 'idx_supplier';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND index_name = @indexname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (supplier_id)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：批量更新未指定供应商的记录为默认供应商
-            # 如果供应商表为空则不更新，COALESCE确保安全
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              UPDATE purchase_records
-              SET supplier_id = COALESCE((SELECT id FROM suppliers ORDER BY sort_order ASC LIMIT 1), supplier_id),
-                  supplier_name = COALESCE((SELECT name FROM suppliers ORDER BY sort_order ASC LIMIT 1), supplier_name)
-              WHERE supplier_id IS NULL OR supplier_id = '';
-            " 2>/dev/null || true
-
-            # 数据库迁移：移除可能存在的唯一约束，允许同一食材同一天多条记录
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_records';
-              SET @idx_uniq_date_ing = 'idx_unique_date_ingredient';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND index_name = @idx_uniq_date_ing) > 0,
-                CONCAT('ALTER TABLE ', @tablename, ' DROP INDEX ', @idx_uniq_date_ing),
-                'SELECT 1'
-              ));
-              PREPARE dropIfExists FROM @preparedStatement;
-              EXECUTE dropIfExists;
-              DEALLOCATE PREPARE dropIfExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：创建 wecom_config 表（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              CREATE TABLE IF NOT EXISTS wecom_config (
-                id INT PRIMARY KEY DEFAULT 1,
-                corp_id VARCHAR(100),
-                app_secret VARCHAR(200),
-                agent_id VARCHAR(50),
-                chat_id VARCHAR(100),
-                approval_template_id VARCHAR(100),
-                applicant_userid VARCHAR(100),
-                payment_options JSON,
-                default_payment_key VARCHAR(50),
-                payee_name VARCHAR(50),
-                bank_name VARCHAR(100),
-                bank_account VARCHAR(50),
-                payment_reason_template VARCHAR(200),
-                callback_token VARCHAR(100),
-                callback_aes_key VARCHAR(200),
-                approval_field_mapping JSON,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-              );
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 wecom_config 表添加 approval_field_mapping 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'wecom_config';
-              SET @columnname = 'approval_field_mapping';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 wecom_config 表添加 webhook_url 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'wecom_config';
-              SET @columnname = 'webhook_url';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(500)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 wecom_config 表添加 test_webhook_url 字段（测试群机器人URL，与生产webhook_url隔离）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'wecom_config';
-              SET @columnname = 'test_webhook_url';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(500)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：创建 wecom_test_messages 表（测试消息表，与生产数据完全隔离）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              CREATE TABLE IF NOT EXISTS wecom_test_messages (
-                id VARCHAR(36) PRIMARY KEY,
-                test_date DATE NOT NULL,
-                total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-                departments JSON,
-                purchase_items JSON,
-                message_content TEXT,
-                status VARCHAR(20) DEFAULT 'pending',
-                confirmed_by VARCHAR(100),
-                confirmed_at DATETIME,
-                rejected_by VARCHAR(100),
-                rejected_at DATETIME,
-                reject_reason TEXT,
-                wecom_sent TINYINT DEFAULT 0,
-                sent_at DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_test_date (test_date),
-                INDEX idx_status (status)
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            " 2>/dev/null || true
-
-            # 数据库迁移：创建 wecom_callback_logs 表（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              CREATE TABLE IF NOT EXISTS wecom_callback_logs (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                message_type VARCHAR(50) NOT NULL,
-                content TEXT,
-                chat_id VARCHAR(100),
-                from_user VARCHAR(100),
-                msg_type VARCHAR(50),
-                event VARCHAR(50),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-              );
-            " 2>/dev/null || true
-
-            # 数据库迁移：创建 purchase_confirmations 表（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              CREATE TABLE IF NOT EXISTS purchase_confirmations (
-                id VARCHAR(36) PRIMARY KEY,
-                purchase_date DATE NOT NULL,
-                total_amount DECIMAL(10,2) NOT NULL,
-                departments JSON NOT NULL,
-                purchase_items JSON NOT NULL,
-                status ENUM('pending','confirmed','rejected','completed','reimbursed') DEFAULT 'pending',
-                confirmed_by VARCHAR(100),
-                confirmed_at DATETIME,
-                wecom_msg_id VARCHAR(100),
-                reimbursement_no VARCHAR(100),
-                reimbursement_status ENUM('pending','approved','rejected','null') DEFAULT 'pending',
-                rejection_reason TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-              );
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 purchase_confirmations 表添加 confirmed_by 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_confirmations';
-              SET @columnname = 'confirmed_by';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 purchase_confirmations 表添加 confirmed_at 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_confirmations';
-              SET @columnname = 'confirmed_at';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' DATETIME')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 departments 表添加 confirmer_userid 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'departments';
-              SET @columnname = 'confirmer_userid';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 purchase_confirmations 表添加 pdf_url 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_confirmations';
-              SET @columnname = 'pdf_url';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(255)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 purchase_confirmations 表添加 confirmed_signatures 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_confirmations';
-              SET @columnname = 'confirmed_signatures';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 purchase_confirmations 表添加 reimbursement_sp_no 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_confirmations';
-              SET @columnname = 'reimbursement_sp_no';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 purchase_confirmations 表添加 approval_detail 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'purchase_confirmations';
-              SET @columnname = 'approval_detail';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：更新 status 字段添加 'reimbursing' 值
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              ALTER TABLE purchase_confirmations MODIFY COLUMN status ENUM('pending','confirmed','rejected','completed','reimbursed','reimbursing') DEFAULT 'pending';
-            " 2>/dev/null || true
-
-            # 数据库迁移：更新 reimbursement_status 字段添加 'processing' 值
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              ALTER TABLE purchase_confirmations MODIFY COLUMN reimbursement_status ENUM('pending','approved','rejected','processing','null') DEFAULT 'pending';
-            " 2>/dev/null || true
-
-            # 数据库迁移：给 wecom_test_messages 表添加 pdf_url 字段（如果不存在）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'wecom_test_messages';
-              SET @columnname = 'pdf_url';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(500)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 创建PDF存储目录
-            mkdir -p /opt/food-purchase/backend/uploads/pdfs
-            chmod 755 /opt/food-purchase/backend/uploads/pdfs
-
-            # 数据库迁移：确保 warehouse_purchase_items 表有 warehouse_id 和 warehouse_name 字段（明细级仓库）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'warehouse_purchase_items';
-
-              SET @columnname = 'warehouse_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT \"入库仓库ID（明细级）\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @columnname = 'warehouse_name';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100) NULL COMMENT \"入库仓库名称\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @indexname = 'idx_wpi_warehouse';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND index_name = @indexname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (warehouse_id)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 warehouse_purchases 表的 warehouse_id 改为可空
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'warehouse_purchases';
-              SET @columnname = 'warehouse_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname
-                  AND is_nullable = 'YES') > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' MODIFY COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT \"已废弃，使用明细行的warehouse_id\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @columnname = 'warehouse_name';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname
-                  AND is_nullable = 'YES') > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' MODIFY COLUMN ', @columnname, ' VARCHAR(100) NULL')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 stock_movements 表有 department_id 和 department_name 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'stock_movements';
-
-              SET @columnname = 'department_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT \"归集部门ID（出库/盘点必填）\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @columnname = 'department_name';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(50) NULL COMMENT \"归集部门名称\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @indexname = 'idx_sm_department';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND index_name = @indexname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD INDEX ', @indexname, ' (department_id)')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 wecom_config 表有仓库审批相关字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'wecom_config';
-
-              SET @columnname = 'warehouse_approval_template_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100) COMMENT \"仓库采购审批模板ID\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @columnname = 'warehouse_field_mapping';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON COMMENT \"仓库采购审批字段映射\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @columnname = 'warehouse_dept_options';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON COMMENT \"仓库采购审批模板部门选项缓存\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 warehouse_items 和 warehouse_purchase_items 有即采即用字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-
-              SET @tablename = 'warehouse_items';
-              SET @columnname = 'instant_use';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) DEFAULT 0 COMMENT \"即采即用\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-
-              SET @tablename = 'warehouse_purchase_items';
-              SET @columnname = 'instant_use_override';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) DEFAULT NULL COMMENT \"即采即用覆盖\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 回填旧数据：将旧采购单表头仓库写入明细行
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              UPDATE warehouse_purchase_items wi
-                INNER JOIN warehouse_purchases wp ON wi.purchase_id = wp.id
-                SET wi.warehouse_id = wp.warehouse_id,
-                    wi.warehouse_name = wp.warehouse_name
-                WHERE wi.warehouse_id IS NULL
-                  AND wp.warehouse_id IS NOT NULL;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 warehouse_purchases 表有 apply_pdf_path 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'warehouse_purchases';
-              SET @columnname = 'apply_pdf_path';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(500) NULL COMMENT \"采购申请单PDF路径\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 departments 表有 wecom_dept_id 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'departments';
-              SET @columnname = 'wecom_dept_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname
-                  AND table_name = @tablename
-                  AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(50) NULL COMMENT \"企微部门ID\"')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：通过 Node.js migrate.js 执行（带错误日志输出）
-            cd /opt/food-purchase/backend && node migrations/migrate.js up 2>&1 || echo "⚠️ migrate.js 执行有错误，继续部署..."
-
-            # 体检项目体检意义批量更新（独立脚本，绕过事务回滚问题）
-            cd /opt/food-purchase/backend && node scripts/update_clinical_significance.js 2>&1 || echo "⚠️ 体检意义更新有错误，继续部署..."
-
-            # 090 迁移：体检项目分类从旧7类重映射到新8类（客户健康关注点视角）
-            # 此脚本是幂等的 UPDATE（只改 category 字段），安全可重复执行
-            echo "🔄 执行 090 分类重映射迁移..."
-            mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/090_category_to_client_view.sql 2>&1 || echo "⚠️ 090 迁移有错误（已用 --force 跳过，非致命）"
-
-            # 091 迁移：填充 booking_checkup_items.applicable_roles 针对 "(男)/（男）(女)/（女）" 后缀模式
-            # 修复：肿瘤标志11项（男）/肿瘤标志10项（女）这类带后缀的组合项目因 applicable_roles 为 NULL
-            #       导致退化为关键词匹配（又没匹配到），最终在所有角色视角里同时显示并导致原价虚高
-            # 安全：仅 UPDATE applicable_roles IS NULL/空 的行（幂等）
-            echo "🔄 执行 091 male_female_applicable_roles_patterns 迁移..."
-            mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/091_male_female_applicable_roles_patterns.sql 2>&1 || echo "⚠️ 091 迁移有错误（已用 --force 跳过，非致命）"
-
-            # 092 迁移：预订审批流程 - 两级审批（销售员确认+审核员审核）+ 企微通知配置
-            # 新增 booking_orders 表 sales_confirmed_at/by/by_name 字段
-            # 新增 wecom_config 表 booking_webhook_url/notify 开关/approver 字段
-            # 安全：幂等 ALTER TABLE，可重复执行
-            echo "🔄 执行 092 预订审批流程迁移..."
-            mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/092_booking_wecom_notification.sql 2>&1 || echo "⚠️ 092 迁移有错误（已用 --force 跳过，非致命）"
-
-            # 093 迁移：预订订单新增 sales_wecom_userid 字段
-            # 下单时快照销售员企微userid存入订单，发通知时直接使用，不再查users表
-            # 安全：幂等 ALTER TABLE ADD COLUMN，可重复执行
-            echo "🔄 执行 093 预订订单企微userid快照迁移..."
-            mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/093_booking_sales_wecom_userid.sql 2>&1 || echo "⚠️ 093 迁移有错误（已用 --force 跳过，非致命）"
-
-            # 094 迁移：回填现有订单的 sales_wecom_userid
-            # 把已有订单中为空的 sales_wecom_userid 通过 sales_person_id 关联 users.wecom_userid 补全
-            # 安全：只更新 NULL/空字符串 且 users.wecom_userid 不为空的记录
-            echo "🔄 执行 094 回填订单企微userid快照..."
-            mysql --force -u food_purchase -p'food_purchase123' food_purchase < /opt/food-purchase/backend/migrations/094_backfill_sales_wecom_userid.sql 2>&1 || echo "⚠️ 094 迁移有错误（已用 --force 跳过，非致命）"
-
-            # 套餐方案价格校正脚本：基于已修复的角色可见性，重算每个角色方案的 original_total
-            # 和 discount_rate（保持 discount_price 不变）。解决 SharePage 价格显示过高问题。
-            # 脚本是安全的：
-            #   - 仅遍历 booking_packages / booking_package_items / booking_package_role_plans
-            #   - 只 UPDATE original_total 和 discount_rate 两个字段，不动其他数据
-            #   - 有差异（>0.5元）才写
-            echo "🔄 执行套餐方案价格校正（recalc-package-role-plans.js --apply）..."
-            cd /opt/food-purchase/backend && node scripts/recalc-package-role-plans.js --apply 2>&1 || echo "⚠️ 套餐价格校正脚本有错误，继续部署..."
-
-            # 兜底1：mysql --force 管道模式（--force 保证单条语句报错不中断后续语句，错误输出到 stdout）
-            # 重要：跳过 *_DONE.sql 后缀文件——这些是一次性迁移（删库+全量重插/分类映射/数据纠正），
-            #       若每次部署都重复执行会清掉用户修改过的体检项目/套餐明细数据
-            # 二次保险：即使有人忘了改名 _DONE，只要 SQL 里含对 booking_checkup_items / booking_checkup_packages
-            #          的 INSERT/UPDATE/DELETE，也自动跳过（这些是用户业务数据，不能被迁移脚本覆盖）
-            # ==========================================================================
-            # ⚠️⚠️⚠️ 生产数据保护：此 for 循环绝对禁止执行任何会改体检项目/套餐明细的 DML 脚本！
-            # 如看到部署日志打印 "Skip (contains DML on user data tables)" → 不是报错，是保护机制生效。
-            # 想真的执行这些一次性 DML 脚本？
-            #   → 手动跑一次（SSH 登录服务器执行 mysql < 081_xxx.sql），
-            #     然后立刻 mv 081_xxx.sql 081_xxx_DONE.sql 改名为 _DONE.sql 收尾！
-            # ==========================================================================
-            declare -a SKIPPED_FILES=()
-            # 🔧 glob 修复：原 0*.sql 只匹配 0 开头，导致 100/101 等三位数编号的迁移(开头=1/2)永远被跳过。
-            #    改为 [0-9]*.sql 匹配任何数字前缀的迁移文件，再由 migrate.js / _DONE.sql / DML 保护做二次过滤。
-            for sql_file in /opt/food-purchase/backend/migrations/[0-9]*.sql; do
-              fname="$(basename "$sql_file")"
-              case "$fname" in
-                *_DONE.sql)
-                  echo "Skip (already done): $fname"
-                  SKIPPED_FILES+=("$fname  [标记_DONE.sql]")
-                  continue
-                  ;;
-              esac
-              # 保险：检测是否含用户业务数据表的 DML，若有则跳过
-              if grep -Ei '(INSERT.*INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_items`?|(INSERT.*INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_checkup_packages`?|(INSERT.*INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+`?booking_package_items`?' "$sql_file" >/dev/null 2>&1; then
-                echo "Skip (contains DML on user data tables booking_checkup_items/packages/package_items): $fname → 如需执行请手动跑一次后改名 _DONE.sql"
-                SKIPPED_FILES+=("$fname  [含体检/套餐DML保护跳过]")
-                continue
-              fi
-              echo "Running migration (mysql --force): $sql_file"
-              mysql --force -u food_purchase -p'food_purchase123' food_purchase < "$sql_file" 2>&1 || echo "⚠️ $sql_file 有错误（已用 --force 跳过，非致命）"
-            done
-            # ====== 🔒 体检/套餐数据保护：打印本轮跳过的迁移文件清单，肉眼可见 = 保护生效 ======
-            if [ "${#SKIPPED_FILES[@]}" -gt 0 ]; then
-              echo ""
-              echo "=================================================="
-              echo "✅ 体检/套餐数据保护：本轮跳过的迁移文件共 ${#SKIPPED_FILES[@]} 个"
-              echo "（这些是一次性 DML 脚本，已手动跑过并改名 *_DONE.sql，"
-              echo "  或含 booking_checkup_items/packages 的 INSERT/UPDATE，"
-              echo "  每次部署若重复执行会覆盖当前生产数据 → 本轮自动跳过是正确行为）"
-              echo "--------------------------------------------------"
-              for s in "${SKIPPED_FILES[@]}"; do
-                echo "  - $s"
-              done
-              echo "=================================================="
-              echo ""
+            # --- .env 安全门：缺失则中止，旧后端进程不被触动 ---
+            if [ ! -f /opt/food-purchase/backend/.env ]; then
+              echo "❌ ABORT: /opt/food-purchase/backend/.env 不存在。"
+              echo "   请先创建 .env（含 DB_PASSWORD 等）后再触发部署。"
+              exit 1
             fi
 
-            # 数据库迁移：确保 warehouses 表有 enable_stock_take 字段（盘点开关）
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'warehouses';
-              SET @columnname = 'enable_stock_take';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TINYINT(1) DEFAULT 1 COMMENT ''是否参与月末盘点'' AFTER status')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
+            # 后端代码同步：rsync 一行替代逐文件 cp，新增文件自动覆盖
+            sudo rsync -a --delete \
+              --exclude node_modules \
+              --exclude uploads \
+              --exclude 'backup_*.sql' \
+              --exclude '.env' \
+              backend/ /opt/food-purchase/backend/
+            sudo chown -R ubuntu:ubuntu /opt/food-purchase/backend
 
-            # 数据库迁移：确保 stock_takes 表有 period_month 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'stock_takes';
-              SET @columnname = 'period_month';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(7) NULL COMMENT ''成本归属月份'' AFTER warehouse_name')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
+            # 运行时目录
+            sudo -u ubuntu mkdir -p /opt/food-purchase/backend/uploads/pdfs
+            sudo chown -R ubuntu:ubuntu /opt/food-purchase/backend/uploads
 
-            # 数据库迁移：确保 stock_takes 表有 access_token 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'stock_takes';
-              SET @columnname = 'access_token';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(64) NULL COMMENT ''盘点H5访问token'' AFTER period_month')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 stock_takes 表有 operator_id 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'stock_takes';
-              SET @columnname = 'operator_id';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(36) NULL COMMENT ''盘点执行人'' AFTER remark')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 stock_takes 表有 review_sample 字段
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              SET @dbname = DATABASE();
-              SET @tablename = 'stock_takes';
-              SET @columnname = 'review_sample';
-              SET @preparedStatement = (SELECT IF(
-                (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                  WHERE table_schema = @dbname AND table_name = @tablename AND column_name = @columnname) > 0,
-                'SELECT 1',
-                CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' JSON NULL COMMENT ''财务复核抽样'' AFTER review_result')
-              ));
-              PREPARE alterIfNotExists FROM @preparedStatement;
-              EXECUTE alterIfNotExists;
-              DEALLOCATE PREPARE alterIfNotExists;
-            " 2>/dev/null || true
-
-            # 数据库迁移：确保 stock_movements 的 movement_type ENUM 包含 'expense'
-            mysql -u food_purchase -p'food_purchase123' food_purchase -e "
-              ALTER TABLE stock_movements MODIFY COLUMN movement_type
-              ENUM('inbound','outbound','adjust','expense') NOT NULL
-              COMMENT '类型：入库/出库/盘点调整/即买即用消耗';
-            " 2>/dev/null || true
-
-            # 修复打卡记录数据：删除重复记录 + 修复UTC时间（失败不中断部署）
-            echo "🔧 Fixing checkin data (duplicates + UTC time)..."
+            # 安装生产依赖
             cd /opt/food-purchase/backend
-            node fix-checkin-data.js || echo "⚠️ fix-checkin-data failed, continuing..."
+            npm ci --production
+            echo "✅ Backend synced & dependencies installed"
 
-            # 同步外请人员姓名到打卡记录（失败不中断部署）
-            echo "🔧 Syncing worker names to checkin records..."
+  # ================================================================
+  # Job 4/5: migrate — 唯一迁移入口 migrate.js up
+  # ================================================================
+  migrate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: deploy-backend
+    runs-on: ubuntu-latest
+    env:
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_HOST: ${{ secrets.DB_HOST }}
+    steps:
+      - name: Run migrations via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DB_PASSWORD,DB_USER,DB_NAME,DB_HOST
+          command_timeout: 30m
+          script: |
+            set -e
+            export DB_PASSWORD="${DB_PASSWORD}"
+            export DB_USER="${DB_USER:-food_purchase}"
+            export DB_NAME="${DB_NAME:-food_purchase}"
+            export DB_HOST="${DB_HOST:-localhost}"
+
+            if [ -z "$DB_PASSWORD" ]; then
+              echo "❌ ABORT: DB_PASSWORD secret 未配置。请在 GitHub → Settings → Secrets 新增 DB_PASSWORD。"
+              exit 1
+            fi
+
             cd /opt/food-purchase/backend
-            node fix-worker-names.js || echo "⚠️ fix-worker-names failed, continuing..."
+            node migrations/migrate.js up
 
-            # 补全7月25日确认单中邓岳圳的缺失签名（失败不中断部署）
-            echo "🔧 Fixing missing signatures for 2026-07-25 confirmation..."
-            cd /opt/food-purchase/backend
-            node fix-signature-data.js || echo "⚠️ fix-signature-data failed, continuing..."
+            # 历史数据修复脚本（幂等，失败不中断部署）
+            node fix-checkin-data.js 2>&1 || echo "⚠️ fix-checkin-data failed, continuing..."
+            node fix-worker-names.js 2>&1 || echo "⚠️ fix-worker-names failed, continuing..."
+            node fix-signature-data.js 2>&1 || echo "⚠️ fix-signature-data failed, continuing..."
+            node fix-scan-inbound-missing.js 2>&1 || echo "⚠️ fix-scan-inbound-missing failed, continuing..."
+            node fix-scan-inbound-instant-use.js 2>&1 || echo "⚠️ fix-scan-inbound-instant-use failed, continuing..."
+            node fix-dedup-expense.js 2>&1 || echo "⚠️ fix-dedup-expense failed, continuing..."
+            node fix-dedup-expense-v2.js 2>&1 || echo "⚠️ fix-dedup-expense-v2 failed, continuing..."
+            node fix-instant-use-expense.js 2>&1 || echo "⚠️ fix-instant-use-expense failed, continuing..."
+            node scripts/update_clinical_significance.js 2>&1 || echo "⚠️ update_clinical_significance failed, continuing..."
+            node scripts/recalc-package-role-plans.js --apply 2>&1 || echo "⚠️ recalc-package-role-plans failed, continuing..."
+            echo "✅ Migrations & data fixes done"
 
-            # 修复扫码领料缺失的入库记录（失败不中断部署）
-            echo "🔧 Fixing missing scan inbound records..."
-            cd /opt/food-purchase/backend
-            node fix-scan-inbound-missing.js || echo "⚠️ fix-scan-inbound-missing failed, continuing..."
-
-            # 修复即买即用物资错误入库到部门仓库的历史数据（失败不中断部署）
-            echo "🔧 Fixing instant-use items incorrectly inbounded to dept warehouse..."
-            cd /opt/food-purchase/backend
-            node fix-scan-inbound-instant-use.js || echo "⚠️ fix-scan-inbound-instant-use failed, continuing..."
-
-            # 去重：清理重复的即买即用消耗流水（失败不中断部署）
-            echo "🔧 Deduping duplicate expense records..."
-            cd /opt/food-purchase/backend
-            node fix-dedup-expense.js || echo "⚠️ fix-dedup-expense failed, continuing..."
-
-            # 修复：仓库采购即采即用出库 movement_type outbound→expense（失败不中断部署）
-            echo "🔧 Fixing instant-use expense movement_type..."
-            cd /opt/food-purchase/backend
-            node fix-instant-use-expense.js || echo "⚠️ fix-instant-use-expense failed, continuing..."
-
-            # 重启后端服务（失败不中断部署，稍后 health check 会验证）
+  # ================================================================
+  # Job 5/5: restart — systemctl restart + 多轮 health check
+  # ================================================================
+  restart:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: migrate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restart backend & health check via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
             echo "🔄 Restarting backend service..."
             sudo systemctl restart food-purchase-backend || echo "⚠️ systemctl restart failed, trying alternative..."
             sleep 5
-            # 多次重试 health check
             for i in 1 2 3 4 5; do
               if curl -s http://127.0.0.1:3001/api/health; then
-                echo "✅ Backend service is healthy"
-                break
+                echo "✅ Backend service is healthy (attempt $i/5)"
+                exit 0
               fi
               echo "  Waiting for backend... attempt $i/5"
               sleep 3
             done
-            echo "✅ Deployment finished"
+            echo "❌ Backend did not become healthy"
+            exit 1

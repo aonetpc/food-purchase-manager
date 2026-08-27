@@ -6,12 +6,18 @@
  * - 描述基于医学专业文献生成，控制在 30-40 字
  */
 
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const mysql = require('mysql2/promise');
+
+if (!process.env.DB_PASSWORD) {
+  console.error('[update_clinical_significance] DB_PASSWORD 环境变量未设置');
+  process.exit(1);
+}
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'food_purchase',
-  password: process.env.DB_PASSWORD || 'food_purchase123',
+  password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME || 'food_purchase',
   waitForConnections: true,
   connectionLimit: 5,

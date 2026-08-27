@@ -94,6 +94,18 @@ function formatNowCN(date = new Date()) {
  * @param {Object} patches    e.g. { sales_confirm: {userid, response_code}, approve: {...} }
  * 为每个 patch 附加 at: CURRENT_TIMESTAMP 可追溯
  */
+// 格式化当前时间为 MySQL DATETIME 格式字符串
+function formatMySQLTimestamp(date) {
+  const d = date || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${y}-${m}-${dd} ${hh}:${mm}:${ss}`;
+}
+
 async function saveCardResponseCodes(orderId, patches) {
   if (!orderId || !patches || Object.keys(patches).length === 0) return;
   try {
@@ -102,12 +114,11 @@ async function saveCardResponseCodes(orderId, patches) {
       [orderId]
     );
     const existing = parseMaybeJson(existingRows?.[0]?.c) || {};
-    const nowSQL = 'CURRENT_TIMESTAMP';
+    const nowStr = formatMySQLTimestamp();
     const build = (prev, obj) => {
       prev = prev || null;
       if (!obj) return prev;
       // 显式废弃标记：驳回 / 撤回 → cleared=true 把"当前这张卡"作废，submit 重发起绝不复用其 task_id
-      //   保留 userid/task_id 原值便于排错（知道是哪张卡被废弃），清掉 response_code & 记录 discard 时间
       if (obj.cleared === true) {
         return {
           userid: (prev && prev.userid) || null,
@@ -115,8 +126,7 @@ async function saveCardResponseCodes(orderId, patches) {
           at: null,
           task_id: (prev && prev.task_id) || null,
           status: 'discarded',
-          discarded_at: nowSQL,
-          // attempt 旧字段遗留保留（只做 backward 兼容读），新逻辑用原生 submit_resend_count 不再读取/写入
+          discarded_at: nowStr,
           attempt: (prev && prev.attempt) ? Number(prev.attempt) : null,
           cleared: true,
         };
@@ -125,8 +135,6 @@ async function saveCardResponseCodes(orderId, patches) {
       merged.userid = obj.userid ? String(obj.userid) : ((prev && prev.userid) || null);
       merged.response_code = obj.response_code ? String(obj.response_code) : ((prev && prev.response_code) || null);
       merged.task_id = (typeof obj.task_id === 'string' && obj.task_id) ? obj.task_id : ((prev && prev.task_id) || null);
-      // status 枚举：sent（企微 sendCard 成功拿到 response_code）/ greyed（H5 确认后灰按钮）/ discarded（驳回/撤回作废）
-      // / sent_attempt_failed / sent_throw（通知失败/抛错的落地标签，便于排错）
       if (obj.status && typeof obj.status === 'string') {
         merged.status = obj.status;
       } else {
@@ -134,13 +142,11 @@ async function saveCardResponseCodes(orderId, patches) {
       }
       if (obj.discarded_at) merged.discarded_at = obj.discarded_at;
       else if (prev && prev.discarded_at && merged.status !== 'discarded') merged.discarded_at = prev.discarded_at;
-      // at：当次 response_code 有值（新建/更新）时记录 NOW()，否则沿用旧值或清空
-      if (obj.response_code) merged.at = nowSQL;
+      // 修复：使用应用层时间字符串，不再用 CURRENT_TIMESTAMP/NOW() 占位
+      if (obj.response_code) merged.at = nowStr;
       else if (merged.response_code && prev && prev.at) merged.at = prev.at;
       else merged.at = null;
-      // 向后兼容 attempt 字段（旧代码）：新逻辑用原生 submit_resend_count，这里保留原值，不再写入
       merged.attempt = (prev && prev.attempt) ? Number(prev.attempt) : null;
-      // cleared 标记保留 true 不覆盖（下次 cleared:false 写新卡时未传则清除标记，默认新卡无 cleared）
       merged.cleared = (obj.cleared === false) ? false : (obj.cleared === true ? true : ((prev && prev.cleared === true) ? true : false));
       if (merged.cleared === false) delete merged.cleared;
       return merged;
@@ -151,12 +157,17 @@ async function saveCardResponseCodes(orderId, patches) {
       const prev = existing[key] || null;
       existing[key] = build(prev, patch);
     }
-    const str = JSON.stringify(existing);
-    const finalStr = str.replace(/\"CURRENT_TIMESTAMP\"/g, 'NOW()');
-    const sql = `UPDATE booking_orders SET wecom_card_response_codes = ${finalStr} WHERE id = ?`;
-    await pool.query(sql, [orderId]);
+    // 修复：使用 JSON_OBJECT 构造 JSON 值，避免直接拼接 NOW() 导致 JSON 格式错误
+    const jsonStr = JSON.stringify(existing);
+    // 正确转义 JSON 字符串用于 SQL 参数
+    const escapedJson = jsonStr.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const sql = `UPDATE booking_orders SET wecom_card_response_codes = ? WHERE id = ?`;
+    await pool.query(sql, [jsonStr, orderId]);
+    console.log(`[saveCardResponseCodes] OK: orderId=${orderId}, keys=${Object.keys(patches).join(',')}`);
   } catch (e) {
     console.error('[booking saveCardResponseCodes] error:', e && e.message);
+    // 重新抛出错误，让调用方能感知到保存失败
+    throw e;
   }
 }
 

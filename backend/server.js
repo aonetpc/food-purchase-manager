@@ -1,3 +1,6 @@
+// 先加载 .env（生产环境凭证），必须在 require('./db') 之前
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
