@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
-const { sendBookingNotification, getWecomConfig, updateTemplateCardButton } = require('./wecom');
+const { sendBookingNotification, getWecomConfig, updateTemplateCardButton, updateTemplateCard, buildBizSummary, sendTextToUser, sendMarkdownViaWebhook } = require('./wecom');
 
 // ============================================================
 // 业务角色判断 helper（requireBookingWrite 已放开入口白名单，
@@ -440,9 +440,8 @@ const BIZ_MAP = {
   carpickup: { label: '用车' },
 };
 
-// 可编辑状态：仅 pending（草稿）和 rejected（驳回后可修改）
-// sales_confirming/reviewing/confirmed/completed 均不可直接编辑
-const EDITABLE_STATUS = ['pending', 'rejected'];
+// 可编辑状态：除 completed 外均可编辑；reviewing/confirmed/sales_confirming 修改后会触发卡片更新+通知
+const EDITABLE_STATUS = ['pending', 'rejected', 'sales_confirming', 'reviewing', 'confirmed'];
 
 // ============================================================
 // GET /api/booking/config  业务常量（套餐/房型/会议厅/康乐）
@@ -2083,8 +2082,9 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
 });
 
 // ============================================================
-// DELETE /api/booking/orders/:id  删除订单（草稿专用，级联删 items）
-// 仅允许 pending 状态的订单删除
+// DELETE /api/booking/orders/:id  删除订单
+// - admin：可删除任何状态的订单（级联删 items）
+// - 其他角色：仅允许删除 pending 状态的订单（草稿专用）
 // ============================================================
 router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
@@ -2092,17 +2092,28 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
     const [rows] = await conn.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [req.params.id]);
     if (!rows || !rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (o.status !== 'pending') {
-      return res.status(400).json({ ok: false, error: `仅草稿状态（pending）可删除，当前状态 ${o.status} 不允许删除` });
-    }
     if (o.is_template === 1) {
       return res.status(400).json({ ok: false, error: '模板订单请使用 unset-template 接口删除' });
     }
+
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    // 非管理员仅允许删除 pending 草稿
+    if (!isAdmin && o.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: `仅草稿状态（pending）可删除，当前状态 ${o.status} 不允许删除；如需删除请联系管理员` });
+    }
+
     await conn.beginTransaction();
     await conn.query('DELETE FROM booking_items WHERE order_id = ?', [req.params.id]);
-    await conn.query('DELETE FROM booking_orders WHERE id = ? AND status = ? AND is_template = 0', [req.params.id, 'pending']);
+    if (isAdmin) {
+      // 管理员：删除该订单的所有业务 items，允许删除任何状态
+      await conn.query('DELETE FROM booking_orders WHERE id = ? AND is_template = 0', [req.params.id]);
+    } else {
+      // 非管理员：仅删除 pending 状态订单
+      await conn.query('DELETE FROM booking_orders WHERE id = ? AND status = ? AND is_template = 0', [req.params.id, 'pending']);
+    }
     await conn.commit();
-    logOperation(req, '预订订单', '删除草稿', `订单号=${o.order_no}`, req.params.id);
+    logOperation(req, '预订订单', isAdmin ? '管理员删除订单' : '删除草稿', `订单号=${o.order_no}`, req.params.id);
     res.json({ ok: true });
   } catch (e) {
     try { await conn.rollback(); } catch (_) {}
@@ -2129,8 +2140,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
   }
 });
 
-// PUT /api/booking/orders/:id   编辑
-// 允许状态：pending / reviewing / confirmed
+// PUT /api/booking/orders/:id   编辑（放开所有非 completed 状态；reviewing/confirmed 触发卡片更新+通知）
 router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -2143,7 +2153,8 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
       return res.status(404).json({ ok: false, error: '订单不存在' });
     }
     const cur = rows[0];
-    if (!EDITABLE_STATUS.includes(cur.status)) {
+    const originalStatus = cur.status;
+    if (!EDITABLE_STATUS.includes(originalStatus)) {
       await conn.rollback();
       return res.status(400).json({ ok: false, error: `当前状态 ${cur.status} 不允许编辑` });
     }
@@ -2174,11 +2185,19 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     await conn.query('DELETE FROM booking_items WHERE order_id = ?', [orderId]);
     await insertItems(conn, orderId, items);
 
-    await conn.commit();
-    logOperation(req, '预订订单', '编辑', `订单号=${cur.order_no}`, orderId);
+    // confirmed 状态修改 → 自动降级为 reviewing 重新审批
+    if (originalStatus === 'confirmed') {
+      await conn.query("UPDATE booking_orders SET status = 'reviewing', confirmed_at = NULL, confirmed_by = NULL WHERE id = ?", [orderId]);
+    }
 
+    await conn.commit();
+    logOperation(req, '预订订单', '编辑', `订单号=${cur.order_no} 原状态=${originalStatus}`, orderId);
+
+    // --- 提交后通知逻辑（事务外，失败不回滚）---
     const order = await readOrderFull(orderId);
-    res.json({ ok: true, data: order });
+    const notifyInfo = await handleOrderEditNotification(originalStatus, order, req);
+
+    res.json({ ok: true, data: order, notify: notifyInfo });
   } catch (e) {
     await conn.rollback();
     console.error('[booking PUT order] error:', e);
@@ -2187,6 +2206,136 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     conn.release();
   }
 });
+
+// ============================================================
+// 订单编辑后通知处理（reviewing 更新审核卡+通知；confirmed→reviewing 重走审批；sales_confirming 更新销售卡）
+// ============================================================
+async function handleOrderEditNotification(originalStatus, order, req) {
+  const result = { action: originalStatus === 'confirmed' ? 'confirmed_to_reviewing' : (originalStatus + '_modified') };
+  try {
+    if (!order) return result;
+
+    const config = await getWecomConfig();
+    if (!config) {
+      console.warn('[handleOrderEditNotification] wecom_config 未配置，跳过通知');
+      return result;
+    }
+
+    const orderNo = order.order_no || order.id;
+    const customerName = order.customer_name || '未知客户';
+    const bizSummary = buildBizSummary(order.items);
+    const changeTime = formatNowCN();
+    const cardUrl = config.app_domain ? `${config.app_domain}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
+    const cardCodes = parseMaybeJson(order.wecom_card_response_codes) || {};
+
+    // --- 给审核员发文字提醒（reviewing / confirmed 均发）---
+    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed') && config.booking_approver_userid) {
+      // 发送文字通知
+      try {
+        const text = originalStatus === 'confirmed'
+          ? `📋 订单 ${orderNo}（${customerName}）已修改，需重新审核。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`
+          : `📝 订单 ${orderNo}（${customerName}）已被修改，请重新审核。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`;
+        await sendTextToUser(config, config.booking_approver_userid, text);
+        console.log(`[handleOrderEditNotification] 审核员文字通知已发送: orderNo=${orderNo}, approver=${config.booking_approver_userid}`);
+      } catch (e) {
+        console.error(`[handleOrderEditNotification] 审核员文字通知失败:`, e && e.message);
+      }
+    }
+
+    // --- 更新审核卡片内容（reviewing / confirmed 均更新）---
+    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed')) {
+      const approveCard = cardCodes.approve;
+      if (approveCard && approveCard.response_code) {
+        try {
+          const mainTitle = originalStatus === 'confirmed'
+            ? '📋 订单待审核（已变更·需重审）'
+            : '📋 订单待审核（已修改）';
+          const subTitle = `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请${originalStatus === 'confirmed' ? '重新审批' : '重新审核'}`;
+          const hContent = [
+            { keyname: '客户', value: customerName },
+            { keyname: '业务', value: bizSummary },
+            { keyname: '金额', value: `¥${order.total_amount || 0}` },
+          ];
+          if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
+
+          const card = {
+            card_type: 'button_interaction',
+            source: { desc: '预订管理系统' },
+            main_title: { title: mainTitle, desc: customerName },
+            sub_title_text: subTitle,
+            horizontal_content_list: hContent,
+            button_list: [{
+              text: originalStatus === 'confirmed' ? '重新审批' : '去审核',
+              style: 1,
+              type: 1,
+              key: `go_booking_${order.id}`,
+              url: cardUrl,
+            }],
+          };
+          await updateTemplateCard(config, config.booking_approver_userid, 'button_interaction', approveCard.response_code, {
+            main_title: card.main_title,
+            sub_title_text: card.sub_title_text,
+            horizontal_content_list: card.horizontal_content_list,
+            button_list: card.button_list,
+          });
+          console.log(`[handleOrderEditNotification] 审核卡片已更新: orderNo=${orderNo}`);
+        } catch (e) {
+          console.error(`[handleOrderEditNotification] 审核卡片更新失败:`, e && e.message);
+        }
+      }
+    }
+
+    // --- 更新销售员确认卡片（sales_confirming）---
+    if (originalStatus === 'sales_confirming') {
+      const salesCard = cardCodes.sales_confirm;
+      if (salesCard && salesCard.response_code) {
+        try {
+          const hContent = [
+            { keyname: '客户', value: customerName },
+            { keyname: '业务', value: bizSummary },
+            { keyname: '金额', value: `¥${order.total_amount || 0}` },
+          ];
+          if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
+
+          await updateTemplateCard(config, salesCard.userid, 'button_interaction', salesCard.response_code, {
+            main_title: { title: '📋 订单待确认（已修改）', desc: customerName },
+            sub_title_text: `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请重新确认`,
+            horizontal_content_list: hContent,
+            button_list: [{
+              text: '去确认',
+              style: 1,
+              type: 1,
+              key: `go_booking_${order.id}`,
+              url: cardUrl,
+            }],
+          });
+          console.log(`[handleOrderEditNotification] 销售员确认卡片已更新: orderNo=${orderNo}`);
+        } catch (e) {
+          console.error(`[handleOrderEditNotification] 销售员卡片更新失败:`, e && e.message);
+        }
+      }
+    }
+
+    // --- 群通知（可选）---
+    if (config.booking_webhook_url && (originalStatus === 'confirmed')) {
+      try {
+        const md = `⚠️ **订单已修改（需重新审核）**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          `> 业务：${bizSummary}\n` +
+          `> 金额：¥${order.total_amount || 0}\n` +
+          `> 修改时间：${changeTime}\n` +
+          `> 状态：已退回审批中`;
+        await sendMarkdownViaWebhook(config.booking_webhook_url, md);
+      } catch (e) {
+        console.error(`[handleOrderEditNotification] 群通知失败:`, e && e.message);
+      }
+    }
+  } catch (e) {
+    console.error(`[handleOrderEditNotification] 主逻辑失败:`, e && e.message);
+  }
+  return result;
+}
 
 // ============================================================
 // 工具：克隆一条订单为模板（原订单保持不变，克隆产生新记录为 is_template=1）

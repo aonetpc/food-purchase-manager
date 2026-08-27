@@ -3102,3 +3102,5 @@ module.exports.sendTextViaWebhook = sendTextViaWebhook;
 module.exports.sendTextToUser = sendTextToUser;
 module.exports.sendMarkdownToUser = sendMarkdownToUser;
 module.exports.sendBookingNotification = sendBookingNotification;
+module.exports.updateTemplateCard = updateTemplateCard;
+module.exports.buildBizSummary = buildBizSummary;
