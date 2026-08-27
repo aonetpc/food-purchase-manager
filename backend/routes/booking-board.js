@@ -6,6 +6,42 @@ const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
 const { sendBookingNotification, getWecomConfig, updateTemplateCardButton } = require('./wecom');
 
+// ============================================================
+// 业务角色判断 helper（requireBookingWrite 已放开入口白名单，
+//                    这里做细粒度"谁能操作什么"的限制）
+// ============================================================
+
+/**
+ * 是否为"审核员角色"（admin / booker 或 具备 action:booking:approve 权限码）
+ * 负责：审核通过 / 驳回 / 标记完成 等管理动作
+ */
+function isBookingReviewer(user) {
+  if (!user) return false;
+  const role = user.role;
+  if (role === 'admin' || role === 'booker') return true;
+  const codes = user.permissionCodes;
+  if (codes instanceof Set && codes.has('action:booking:approve')) return true;
+  // 多角色场景：user.roles 数组可能被上层挂过
+  if (Array.isArray(user.roles) && (user.roles.includes('admin') || user.roles.includes('booker'))) return true;
+  return false;
+}
+
+/**
+ * 当前登录用户是否为"此订单登记的销售员本人"
+ * 匹配顺序：sales_person_id (user.id) → sales_wecom_userid → 姓名包含
+ * 满足任意一条即视为本人（允许做销售员确认动作；admin/booker 不用此判断）
+ */
+function isSalesOwnerOfOrder(user, order) {
+  if (!user || !order) return false;
+  const uid = String(user.id || '');
+  const wecom = String(user.wecom_userid || user.wecomUserId || '');
+  const name = user.name || user.realName || user.displayName || '';
+  if (uid && order.sales_person_id && String(order.sales_person_id) === uid) return true;
+  if (wecom && order.sales_wecom_userid && String(order.sales_wecom_userid) === wecom) return true;
+  if (name && order.sales_person && order.sales_person.includes(name)) return true;
+  return false;
+}
+
 /**
  * 保存用户签字到 user_signatures 表（与采购入库/仓库模块共用）
  *  - user_source='wecom'  -> user_id = wecom_userid
@@ -1684,6 +1720,17 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能确认` });
     }
 
+    // --- 业务角色限制 ---
+    // admin/booker 可代任何订单确认（管理员兜底 / 预订员代确认）
+    // sales 角色只能确认"本人名下"的订单
+    const reviewer = isBookingReviewer(user);
+    if (!reviewer && !isSalesOwnerOfOrder(user, o)) {
+      return res.status(403).json({
+        ok: false,
+        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）或管理员可确认此订单`,
+      });
+    }
+
     await pool.query(`
       UPDATE booking_orders SET
         status = 'reviewing',
@@ -1838,6 +1885,16 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     const o = rows[0];
     if (o.status !== 'reviewing') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能审核` });
 
+    // --- 业务角色限制 ---
+    // 审核通过仅限审核员（admin/booker/具备 booking:approve 权限码）
+    // sales 角色不能审核订单（防止自己确认自己通过）
+    if (!isBookingReviewer(user)) {
+      return res.status(403).json({
+        ok: false,
+        error: '仅管理员和预订员可审核订单，请联系相关审核员操作',
+      });
+    }
+
     await pool.query(`
       UPDATE booking_orders SET
         status = 'confirmed',
@@ -1896,6 +1953,23 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能驳回` });
     }
     const rejectionReason = (req.body && req.body.rejectionReason) || '未填驳回原因';
+
+    // --- 业务角色限制（按驳回阶段区分）---
+    // ① sales_confirming 阶段：销售本人 或 审核员(admin/booker) 可驳回/撤回
+    // ② reviewing     阶段：仅审核员可驳回
+    const reviewer = isBookingReviewer(user);
+    if (o.status === 'reviewing' && !reviewer) {
+      return res.status(403).json({
+        ok: false,
+        error: '仅管理员和预订员可在审核阶段驳回订单',
+      });
+    }
+    if (o.status === 'sales_confirming' && !reviewer && !isSalesOwnerOfOrder(user, o)) {
+      return res.status(403).json({
+        ok: false,
+        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）或管理员可撤回/驳回此订单`,
+      });
+    }
 
     await pool.query(`
       UPDATE booking_orders SET
@@ -1965,6 +2039,15 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
     if (o.status !== 'confirmed') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能标记完成` });
+
+    // --- 业务角色限制 ---
+    // 标记完成仅限审核员（admin/booker/具备 booking:approve 权限码）
+    if (!isBookingReviewer(user)) {
+      return res.status(403).json({
+        ok: false,
+        error: '仅管理员和预订员可标记完成此订单',
+      });
+    }
 
     const completedByName = user.name || user.realName || user.displayName || null;
     await pool.query(`

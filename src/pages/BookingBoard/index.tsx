@@ -28,13 +28,14 @@ import {
   deriveBreakfastSessions,
   type FlatItem,
 } from './utils';
-import { bookingApi, type BookingApiOrder, type BookingSearchResult } from '../../lib/api';
+import { bookingApi, type BookingApiOrder, type BookingSearchResult, api as coreApi } from '../../lib/api';
 import { checkupApi } from '@/pages/CheckupTemplates/api';
 import { scopeVisible } from '@/pages/CheckupTemplates/roleVisibility';
 import { useAuthStore } from '@/store/authStore';
 import { useToast } from '@/components/Toast';
 import CreateFormRaw from './Create';
 import BizConfigModal from './BizConfigModal';
+import SignatureCanvas, { type SignatureCanvasHandle } from '@/components/SignatureCanvas';
 
 const ROLE_LABEL: Record<string, string> = {
   male: '男性', female_married: '已婚女', female_single: '未婚女',
@@ -544,11 +545,11 @@ function DetailModal({
   canOperate: boolean;
   onSetTemplate: (orderId: string, customerName: string) => void;
   onSubmit: (order: BookingOrder) => void;
-  onSalesConfirm: (order: BookingOrder) => void;
+  onSalesConfirm: (order: BookingOrder, signatureData: string) => void;
   onWithdraw: (order: BookingOrder) => void;
-  onApprove: (order: BookingOrder) => void;
+  onApprove: (order: BookingOrder, signatureData: string) => void;
   onReject: (order: BookingOrder) => void;
-  onComplete: (order: BookingOrder) => void;
+  onComplete: (order: BookingOrder, signatureData: string) => void;
   authUser: any;
 }) {
   // 仅 pending 和 rejected 状态可编辑
@@ -557,6 +558,70 @@ function DetailModal({
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
   const toast = useToast();
+
+  // ============================================================
+  // 🔧 三套签字（销售员确认 / 审核通过 / 标记完成）——对齐 BookingConfirm H5
+  //    打开弹窗时会先拉 user_signatures 历史签字自动回填，用户也可清除重签
+  // ============================================================
+  const [salesSig, setSalesSig] = useState<string>('');
+  const [approveSig, setApproveSig] = useState<string>('');
+  const [completeSig, setCompleteSig] = useState<string>('');
+  const salesSigRef = useRef<SignatureCanvasHandle>(null);
+  const approveSigRef = useRef<SignatureCanvasHandle>(null);
+  const completeSigRef = useRef<SignatureCanvasHandle>(null);
+  const [loadingSavedSig, setLoadingSavedSig] = useState(false);
+  const [hasSavedSig, setHasSavedSig] = useState(false);
+  const [, setSavedSignature] = useState<string | null>(null);
+
+  // 打开弹窗时：加载当前登录用户的历史签字并回填三套签字板
+  useEffect(() => {
+    if (!authUser) return;
+    let mounted = true;
+    setLoadingSavedSig(true);
+    (async () => {
+      try {
+        // user_source：有 wecom_userid 就认为走企微通道，否则是 PC 系统登录
+        const uid = authUser.wecom_userid || authUser.wecomUserId || authUser.id;
+        const source = (authUser.wecom_userid || authUser.wecomUserId) ? 'wecom' : 'system';
+        if (!uid) return;
+        const res = await coreApi.get<any>('/user/signature', {
+          params: { user_id: uid, user_source: source },
+        }).catch(() => null);
+        if (!mounted) return;
+        if (res && res.signature_data) {
+          setSavedSignature(res.signature_data);
+          setHasSavedSig(true);
+          setSalesSig(res.signature_data);
+          setApproveSig(res.signature_data);
+          setCompleteSig(res.signature_data);
+          salesSigRef.current?.setSignature(res.signature_data);
+          approveSigRef.current?.setSignature(res.signature_data);
+          completeSigRef.current?.setSignature(res.signature_data);
+        } else {
+          setHasSavedSig(false);
+        }
+      } catch {
+        if (mounted) setHasSavedSig(false);
+      } finally {
+        if (mounted) setLoadingSavedSig(false);
+      }
+    })();
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id, authUser?.wecom_userid]);
+
+  function loadSavedSignature() {
+    // 用户点"使用已保存签名"按钮：如果已拉到过历史签字，那现在签字板里一定有值（已自动回填）
+    // 没值就说明 user_signatures 无记录，提示用户手写
+    if (!hasSavedSig && !loadingSavedSig) {
+      toast.info('暂无已保存签名，请在下方手写签名');
+    }
+  }
+  function clearSignature(role: 'sales' | 'approve' | 'complete') {
+    if (role === 'sales') { setSalesSig(''); salesSigRef.current?.clear(); }
+    if (role === 'approve') { setApproveSig(''); approveSigRef.current?.clear(); }
+    if (role === 'complete') { setCompleteSig(''); completeSigRef.current?.clear(); }
+  }
   // 全部业务展开（不再只体检）
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   // 体检：加载当前销售员的销售胶囊，用于回显套餐名 + 角色定价
@@ -1767,64 +1832,125 @@ function DetailModal({
             </>
           )}
 
-          {/* sales_confirming: 预订员可撤回，销售员可确认 */}
+          {/* sales_confirming: 预订员可撤回，销售员可确认（需签字） */}
           {order.status === 'sales_confirming' && (
-            <>
-              {canOperate && (
+            <div className="col-span-full mt-4 p-3 border border-dashed border-amber-200 rounded-lg bg-amber-50/30 space-y-3">
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span className="font-medium text-amber-700">请先手写签名再点"销售员确认"</span>
+                <div className="flex gap-1.5">
+                  <button type="button" onClick={loadSavedSignature}
+                    className="px-2 py-1 border border-amber-200 rounded bg-white hover:bg-amber-50 text-amber-700 disabled:opacity-50"
+                    disabled={loadingSavedSig}>
+                    {loadingSavedSig ? '加载中...' : '使用已保存签名'}
+                  </button>
+                  <button type="button" onClick={() => clearSignature('sales')}
+                    className="px-2 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 text-gray-600">
+                    清除重签
+                  </button>
+                </div>
+              </div>
+              <SignatureCanvas ref={salesSigRef} onChange={setSalesSig} />
+              <div className="flex items-center gap-2 justify-end">
+                {canOperate && (
+                  <button
+                    type="button"
+                    onClick={() => onWithdraw(order)}
+                    className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  >
+                    撤回修改
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => onWithdraw(order)}
-                  className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  onClick={() => onSalesConfirm(order, salesSig)}
+                  disabled={!salesSig}
+                  title={!salesSig ? '请先在上方手写签名' : ''}
+                  className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  撤回修改
+                  {!salesSig ? '请先签字' : '销售员确认'}
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => onSalesConfirm(order)}
-                className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium"
-              >
-                销售员确认
-              </button>
-            </>
+              </div>
+            </div>
           )}
 
-          {/* reviewing: 审核员可审核通过/驳回 */}
+          {/* reviewing: 审核员可审核通过/驳回（通过需签字） */}
           {order.status === 'reviewing' && (
-            <>
-              <button
-                type="button"
-                onClick={() => onApprove(order)}
-                className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
-              >
-                审核通过
-              </button>
-              <button
-                type="button"
-                onClick={() => onReject(order)}
-                className="px-3 py-1.5 text-xs rounded bg-red-500 hover:bg-red-600 text-white font-medium"
-              >
-                驳回
-              </button>
-            </>
-          )}
-
-          {/* confirmed: 可标记完成（锁定不可编辑） */}
-          {order.status === 'confirmed' && (
-            <>
-              <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
-                🔒 已确认·不可修改
-              </span>
-              {canOperate && (
+            <div className="col-span-full mt-4 p-3 border border-dashed border-blue-200 rounded-lg bg-blue-50/30 space-y-3">
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span className="font-medium text-blue-700">请先手写签名再点"审核通过"</span>
+                <div className="flex gap-1.5">
+                  <button type="button" onClick={loadSavedSignature}
+                    className="px-2 py-1 border border-blue-200 rounded bg-white hover:bg-blue-50 text-blue-700 disabled:opacity-50"
+                    disabled={loadingSavedSig}>
+                    {loadingSavedSig ? '加载中...' : '使用已保存签名'}
+                  </button>
+                  <button type="button" onClick={() => clearSignature('approve')}
+                    className="px-2 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 text-gray-600">
+                    清除重签
+                  </button>
+                </div>
+              </div>
+              <SignatureCanvas ref={approveSigRef} onChange={setApproveSig} />
+              <div className="flex items-center gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => onComplete(order)}
-                  className="px-3 py-1.5 text-xs rounded bg-indigo-500 hover:bg-indigo-600 text-white font-medium"
+                  onClick={() => onApprove(order, approveSig)}
+                  disabled={!approveSig}
+                  title={!approveSig ? '请先在上方手写签名' : ''}
+                  className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  标记完成
+                  {!approveSig ? '请先签字' : '审核通过'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => onReject(order)}
+                  className="px-3 py-1.5 text-xs rounded bg-red-500 hover:bg-red-600 text-white font-medium"
+                >
+                  驳回
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* confirmed: 可标记完成（锁定不可编辑，需签字） */}
+          {order.status === 'confirmed' && (
+            <div className="col-span-full mt-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
+                  🔒 已确认·不可修改
+                </span>
+              </div>
+              {canOperate && (
+                <div className="p-3 border border-dashed border-indigo-200 rounded-lg bg-indigo-50/30 space-y-3">
+                  <div className="flex items-center justify-between text-xs text-gray-600">
+                    <span className="font-medium text-indigo-700">请先手写签名再点"标记完成"</span>
+                    <div className="flex gap-1.5">
+                      <button type="button" onClick={loadSavedSignature}
+                        className="px-2 py-1 border border-indigo-200 rounded bg-white hover:bg-indigo-50 text-indigo-700 disabled:opacity-50"
+                        disabled={loadingSavedSig}>
+                        {loadingSavedSig ? '加载中...' : '使用已保存签名'}
+                      </button>
+                      <button type="button" onClick={() => clearSignature('complete')}
+                        className="px-2 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 text-gray-600">
+                        清除重签
+                      </button>
+                    </div>
+                  </div>
+                  <SignatureCanvas ref={completeSigRef} onChange={setCompleteSig} />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => onComplete(order, completeSig)}
+                      disabled={!completeSig}
+                      title={!completeSig ? '请先在上方手写签名' : ''}
+                      className="px-3 py-1.5 text-xs rounded bg-indigo-500 hover:bg-indigo-600 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {!completeSig ? '请先签字' : '标记完成'}
+                    </button>
+                  </div>
+                </div>
               )}
-            </>
+            </div>
           )}
 
           {/* completed: 只读 */}
@@ -2171,10 +2297,14 @@ export default function BookingBoard() {
     }
   }, [refreshOrderAfterAction, toast]);
 
-  const handleSalesConfirm = useCallback(async (order: BookingOrder) => {
+  const handleSalesConfirm = useCallback(async (order: BookingOrder, signatureData: string) => {
     const uuid = orderUuidMap.current[order.id] || order.id;
     try {
-      const updated = await bookingApi.salesConfirmOrder(uuid);
+      if (!signatureData) {
+        toast.error('请先签字再确认');
+        return;
+      }
+      const updated = await bookingApi.salesConfirmOrder(uuid, signatureData);
       await refreshOrderAfterAction(updated);
       toast.success('已确认，等待审核员审核');
     } catch (e) {
@@ -2193,10 +2323,14 @@ export default function BookingBoard() {
     }
   }, [refreshOrderAfterAction, toast]);
 
-  const handleApprove = useCallback(async (order: BookingOrder) => {
+  const handleApprove = useCallback(async (order: BookingOrder, signatureData: string) => {
     const uuid = orderUuidMap.current[order.id] || order.id;
     try {
-      const updated = await bookingApi.approveOrder(uuid);
+      if (!signatureData) {
+        toast.error('请先签字再审核通过');
+        return;
+      }
+      const updated = await bookingApi.approveOrder(uuid, signatureData);
       await refreshOrderAfterAction(updated);
       toast.success('审核通过，订单已确认');
     } catch (e) {
@@ -2227,10 +2361,14 @@ export default function BookingBoard() {
     }
   }, [rejectModal, rejectReason, refreshOrderAfterAction, toast]);
 
-  const handleComplete = useCallback(async (order: BookingOrder) => {
+  const handleComplete = useCallback(async (order: BookingOrder, signatureData: string) => {
     const uuid = orderUuidMap.current[order.id] || order.id;
     try {
-      const updated = await bookingApi.completeOrder(uuid);
+      if (!signatureData) {
+        toast.error('请先签字再标记完成');
+        return;
+      }
+      const updated = await bookingApi.completeOrder(uuid, signatureData);
       await refreshOrderAfterAction(updated);
       toast.success('订单已标记完成');
     } catch (e) {

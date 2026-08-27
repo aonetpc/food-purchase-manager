@@ -232,9 +232,18 @@ function requirePermission(permissionCode) {
 }
 
 /**
- * 预订模块写操作权限校验中间件
- * 仅允许 admin / booker 角色执行写操作（创建/编辑/提交/审核/驳回/完成/模板等）
- * 其他角色（如 sales / finance / boss / viewer）仅可查看
+ * 预订模块写操作权限校验中间件（入口白名单 —— 细粒度业务限制交给各 handler 内部）
+ *
+ * 历史：v1 只放 admin/booker，导致 sales 角色在 H5 BookingConfirm 页
+ *       签字后点"销售员确认"直接 403，错误红框在页顶被滚动遮挡，
+ *       用户感知为"点了没反应"。
+ *
+ * 当前策略：入口白名单放开到常见业务角色（admin / booker / sales /
+ *            purchaser / finance / boss / temp_auditor / temp_chairman），
+ *            sales 只能"确认本人名下订单"，审核/驳回/标记完成等管理动作
+ *            仍限制为 admin/booker —— 这些限制在各路由 handler 内部
+ *            按业务语义分别校验（见 booking-board.js sales-confirm /
+ *            approve / reject / complete 各路由内的判断）。
  *
  * 使用：router.post('/orders', requireAuth, requireBookingWrite, handler)
  */
@@ -243,8 +252,17 @@ async function requireBookingWrite(req, res, next) {
     return res.status(401).json({ error: '未登录' });
   }
 
-  // 允许的角色白名单
-  const allowedRoles = ['admin', 'booker'];
+  // 入口白名单：能进到路由 handler 就算过；业务操作角色限制交给 handler 内部
+  const allowedRoles = [
+    'admin',
+    'booker',
+    'sales',
+    'purchaser',
+    'finance',
+    'boss',
+    'temp_auditor',
+    'temp_chairman',
+  ];
 
   // 1. 优先校验 user.role（requireAuth 中已动态查询并回填）
   if (allowedRoles.includes(req.user.role)) {
@@ -270,14 +288,15 @@ async function requireBookingWrite(req, res, next) {
     // 查询失败，忽略
   }
 
-  // 3. 降级：检查权限码（admin 应有 action:booking:create 或 action:booking:config）
+  // 3. 降级：检查权限码（action:booking:create / action:booking:config / action:booking:approve）
   if (req.user.permissionCodes &&
       (req.user.permissionCodes.has('action:booking:create') ||
-       req.user.permissionCodes.has('action:booking:config'))) {
+       req.user.permissionCodes.has('action:booking:config') ||
+       req.user.permissionCodes.has('action:booking:approve'))) {
     return next();
   }
 
-  return res.status(403).json({ error: '无操作权限，仅管理员和预订员可执行此操作' });
+  return res.status(403).json({ error: '无操作权限，请联系管理员开通预订相关角色' });
 }
 
 /**
