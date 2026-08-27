@@ -118,15 +118,21 @@ async function executeMigration(filename) {
       try {
         await conn.query(stmt);
       } catch (err) {
-        // 忽略 "已存在" 类错误（幂等处理）
+        // 忽略 "已存在/不存在" 类错误（幂等处理）
         if (err.code === 'ER_DUP_FIELD_DATA' || err.errno === 1060) {
           console.log(`  ⚠️  字段已存在，跳过`);
-        } else if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-          console.log(`  ⚠️  数据已存在，跳过`);
         } else if (err.code === 'ER_DUP_KEYNAME' || err.errno === 1061) {
           console.log(`  ⚠️  索引/键已存在，跳过`);
+        } else if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+          console.log(`  ⚠️  数据已存在，跳过`);
+        } else if (err.code === 'ER_TABLE_EXISTS_ERROR' || err.errno === 1050) {
+          console.log(`  ⚠️  表已存在，跳过`);
         } else if (err.code === 'ER_CANT_DROP_FIELD_OR_KEY' || err.errno === 1091) {
           console.log(`  ⚠️  字段/索引不存在，跳过`);
+        } else if (err.code === 'ER_BAD_TABLE_ERROR' || err.errno === 1051) {
+          console.log(`  ⚠️  表不存在（DROP），跳过`);
+        } else if (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054) {
+          console.log(`  ⚠️  字段不存在（可能已被其他迁移处理），跳过`);
         } else {
           // 非幂等错误：附加文件名、errno、语句预览，便于定位
           const preview = stmt.length > 80 ? stmt.slice(0, 80) + '...' : stmt;

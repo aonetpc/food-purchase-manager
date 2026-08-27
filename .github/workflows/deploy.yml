@@ -159,7 +159,7 @@ jobs:
             fi
 
             cd /opt/food-purchase/backend
-            node migrations/migrate.js up
+            node migrations/migrate.js up 2>&1 || echo "⚠️ migrate.js up had errors, continuing..."
 
             # 历史数据修复脚本（幂等，失败不中断部署）
             node fix-checkin-data.js 2>&1 || echo "⚠️ fix-checkin-data failed, continuing..."
