@@ -1484,14 +1484,18 @@ function ImportPreviewDetails(props: { paxList: PaxEntry[] }) {
 export default function BookingBoardCreate(props: {
   mode: 'create' | 'edit' | 'copy';
   order?: BookingOrder;
+  defaultDate?: string;
   onClose: () => void;
   onSaved: (order: BookingOrder) => Promise<void> | void;
 }) {
-  const { mode, order, onClose, onSaved } = props;
+  const { mode, order, defaultDate, onClose, onSaved } = props;
   const editOrder = mode === 'edit' ? order : undefined;
   const copySource = mode === 'copy' ? order : undefined;
   const isEdit = mode === 'edit';
   const isCopy = mode === 'copy';
+  // 默认日期：优先使用传入的 defaultDate，否则用今天
+  const _defaultDate = defaultDate || todayStr();
+  const _defaultDateNext = fmt(addDays(parseDateLocal(_defaultDate), 1));
 
   // 订单草稿（客户信息 + 业务项目）
   const [draftGroup, setDraftGroup] = useState<BookingOrder>(() => {
@@ -1553,7 +1557,7 @@ export default function BookingBoardCreate(props: {
   });
 
   // 体检表单
-  const [chkDate, setChkDate] = useState(todayStr());
+  const [chkDate, setChkDate] = useState(_defaultDate);
   const [chkTime, setChkTime] = useState('07:30');
   const [chkPax, setChkPax] = useState<PaxEntry[]>([emptyPax()]);
   const [showChkPaste, setShowChkPaste] = useState(false);
@@ -1597,8 +1601,8 @@ export default function BookingBoardCreate(props: {
     // 单晚自定义单价（单位：元/间/晚 或 元/人/晚，取决于 pricingMode）。undefined = 用房型配置标准价；显式 0 = 免费接待
     customPrice?: number;
   };
-  const [lgIn, setLgIn] = useState(todayStr());
-  const [lgOut, setLgOut] = useState(fmt(addDays(new Date(), 1)));
+  const [lgIn, setLgIn] = useState(_defaultDate);
+  const [lgOut, setLgOut] = useState(_defaultDateNext);
   const [lgArr, setLgArr] = useState('14:00');
   const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
 
@@ -1615,7 +1619,7 @@ export default function BookingBoardCreate(props: {
 
   // 用车表单（单条会话，里面含客户一/二/三...列表）
   const [carSession, setCarSession] = useState<CarpickupSession>(() => ({
-    date: todayStr(),
+    date: _defaultDate,
     startTime: '07:00',
     shareRide: false,
     pricePerCustomer: 0,

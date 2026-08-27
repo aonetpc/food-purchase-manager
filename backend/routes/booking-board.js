@@ -2083,8 +2083,9 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
 });
 
 // ============================================================
-// DELETE /api/booking/orders/:id  删除订单（草稿专用，级联删 items）
-// 仅允许 pending 状态的订单删除
+// DELETE /api/booking/orders/:id  删除订单
+// - admin：可删除任何状态的订单（级联删 items）
+// - 其他角色：仅允许删除 pending 状态的订单（草稿专用）
 // ============================================================
 router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => {
   const conn = await pool.getConnection();
@@ -2092,17 +2093,28 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
     const [rows] = await conn.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [req.params.id]);
     if (!rows || !rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (o.status !== 'pending') {
-      return res.status(400).json({ ok: false, error: `仅草稿状态（pending）可删除，当前状态 ${o.status} 不允许删除` });
-    }
     if (o.is_template === 1) {
       return res.status(400).json({ ok: false, error: '模板订单请使用 unset-template 接口删除' });
     }
+
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    // 非管理员仅允许删除 pending 草稿
+    if (!isAdmin && o.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: `仅草稿状态（pending）可删除，当前状态 ${o.status} 不允许删除；如需删除请联系管理员` });
+    }
+
     await conn.beginTransaction();
     await conn.query('DELETE FROM booking_items WHERE order_id = ?', [req.params.id]);
-    await conn.query('DELETE FROM booking_orders WHERE id = ? AND status = ? AND is_template = 0', [req.params.id, 'pending']);
+    if (isAdmin) {
+      // 管理员：删除该订单的所有业务 items，允许删除任何状态
+      await conn.query('DELETE FROM booking_orders WHERE id = ? AND is_template = 0', [req.params.id]);
+    } else {
+      // 非管理员：仅删除 pending 状态订单
+      await conn.query('DELETE FROM booking_orders WHERE id = ? AND status = ? AND is_template = 0', [req.params.id, 'pending']);
+    }
     await conn.commit();
-    logOperation(req, '预订订单', '删除草稿', `订单号=${o.order_no}`, req.params.id);
+    logOperation(req, '预订订单', isAdmin ? '管理员删除订单' : '删除草稿', `订单号=${o.order_no}`, req.params.id);
     res.json({ ok: true });
   } catch (e) {
     try { await conn.rollback(); } catch (_) {}
