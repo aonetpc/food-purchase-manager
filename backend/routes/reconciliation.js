@@ -499,7 +499,7 @@ router.get('/monthly/supplier/:id/pending', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await pool.query(`
-      SELECT id, purchase_no, purchase_date, supplier_name, total_amount,
+      SELECT id, purchase_no, created_at AS purchase_date, supplier_name, total_amount,
              actual_amount, confirmed_at, approval_sp_no, pdf_url
       FROM warehouse_purchases
       WHERE supplier_id = ?

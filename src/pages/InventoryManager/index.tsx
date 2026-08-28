@@ -193,7 +193,11 @@ export default function InventoryManager() {
       {/* 顶部汇总卡片：全部 + 各仓库 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {/* 全部仓库合计 */}
-        <div className="stat-card">
+        <div
+          className={`stat-card cursor-pointer transition-all hover:shadow-md ${!warehouseId ? 'ring-2 ring-primary-500 bg-primary-50' : ''}`}
+          onClick={() => setWarehouseId('')}
+          title="点击查看全部仓库"
+        >
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <p className="text-sm text-gray-500 font-medium">全部仓库合计</p>
@@ -220,7 +224,12 @@ export default function InventoryManager() {
 
         {/* 各仓库汇总 */}
         {summary.map((w) => (
-          <div key={w.warehouse_id} className="stat-card">
+          <div
+            key={w.warehouse_id}
+            className={`stat-card cursor-pointer transition-all hover:shadow-md ${warehouseId === w.warehouse_id ? 'ring-2 ring-primary-500 bg-primary-50' : ''}`}
+            onClick={() => setWarehouseId(w.warehouse_id)}
+            title={`点击查看${w.warehouse_name}的库存`}
+          >
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-sm text-gray-500 font-medium truncate">{w.warehouse_name}</p>
