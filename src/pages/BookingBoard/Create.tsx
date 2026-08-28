@@ -1989,25 +1989,25 @@ export default function BookingBoardCreate(props: {
   function selectBizType(type: BizType) {
     setDrawer({ open: true, mode: 'form', itemType: type, editIdx: -1 });
     if (type === 'checkup') {
-      setChkDate(todayStr());
+      setChkDate(_defaultDate);
       setChkTime('07:30');
       setChkPax([emptyPax()]);
       setSelectedChkPkg('');
       setRoleCounts({ male: 0, female_married: 0, female_single: 0 });
     } else if (type === 'lodging') {
-      setLgIn(todayStr());
-      setLgOut(fmt(addDays(new Date(), 1)));
+      setLgIn(_defaultDate);
+      setLgOut(_defaultDateNext);
       setLgArr('14:00');
       setLgSessions([]);
     } else if (type === 'lunch' || type === 'dinner') {
       setMlSessions([]);
     } else if (type === 'meeting') {
       setMtSessions([
-        { date: todayStr(), startTime: '09:00', hall: 'siji', slotType: 'full', pax: 20 },
+        { date: _defaultDate, startTime: '09:00', hall: 'siji', slotType: 'full', pax: 20 },
       ]);
     } else if (type === 'wellness') {
       setWlSessions([
-        { date: todayStr(), startTime: '15:00', wellnessType: 'mahjong', hours: 4, pax: 2 },
+        { date: _defaultDate, startTime: '15:00', wellnessType: 'mahjong', hours: 4, pax: 2 },
       ]);
     } else if (type === 'carpickup') {
       // 用车：默认 1 个客户，填入截图1的示例
@@ -2015,10 +2015,10 @@ export default function BookingBoardCreate(props: {
         contactName: '孙老师',
         contactPhone: '15921728857',
         paxCount: 20,
-        pickupDate: todayStr(),
+        pickupDate: _defaultDate,
         pickupTime: '7:00',
         pickupRoute: '7:00重固镇政府--7:40画一（走高速）',
-        dropoffDate: todayStr(),
+        dropoffDate: _defaultDate,
         dropoffTime: '体检结束后',
         dropoffRoute: '原路送回',
       };
@@ -2036,7 +2036,7 @@ export default function BookingBoardCreate(props: {
   function openEdit(item: BookingItem, idx: number) {
     setDrawer({ open: true, mode: 'form', itemType: item.itemType, editIdx: idx });
     if (item.itemType === 'checkup') {
-      setChkDate(item.date || todayStr());
+      setChkDate(item.date || _defaultDate);
       // B-1：chkTime 兜底改为 07:30（与新建默认一致）
       setChkTime(item.startTime || '07:30');
       const paxListBackup = (item.extra.paxList || []).map((p) => ({ ...p }));
@@ -2071,8 +2071,8 @@ export default function BookingBoardCreate(props: {
       // 清理套餐共享编辑缓存（避免带入上次状态）
       setPackageSharedEdits({});
     } else if (item.itemType === 'lodging') {
-      setLgIn(item.extra.dateCheckIn || todayStr());
-      setLgOut(item.extra.dateCheckOut || fmt(addDays(new Date(), 1)));
+      setLgIn(item.extra.dateCheckIn || _defaultDate);
+      setLgOut(item.extra.dateCheckOut || _defaultDateNext);
       setLgArr(item.extra.arrivalTime || '14:00');
 
       // 单晚自定义单价回显
@@ -2098,8 +2098,8 @@ export default function BookingBoardCreate(props: {
       setLgSessions([{
         id: item.id,
         lodgingType: typeCode,
-        dateCheckIn: item.extra.dateCheckIn || todayStr(),
-        dateCheckOut: item.extra.dateCheckOut || fmt(addDays(new Date(), 1)),
+        dateCheckIn: item.extra.dateCheckIn || _defaultDate,
+        dateCheckOut: item.extra.dateCheckOut || _defaultDateNext,
         arrivalTime: item.extra.arrivalTime || '14:00',
         rooms,
         pax,
@@ -2108,7 +2108,7 @@ export default function BookingBoardCreate(props: {
       }]);
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
       setMlSessions((item.extra.sessions as MealSession[] || []).map((s) => ({
-        date: s.date || todayStr(),
+        date: s.date || _defaultDate,
         time: s.time || '12:00',
         mealType: s.mealType || 'work',
         pricingMode: (s as any).pricingMode || 'per_table',
@@ -2126,7 +2126,7 @@ export default function BookingBoardCreate(props: {
       const sess: CarpickupSession = item.extra?.carpickup
         ? (item.extra.carpickup as CarpickupSession)
         : {
-            date: item.date || todayStr(),
+            date: item.date || _defaultDate,
             startTime: item.startTime || '07:00',
             shareRide: false,
             pricePerCustomer: 0,
@@ -2137,8 +2137,8 @@ export default function BookingBoardCreate(props: {
         // 兼容老数据：至少保留一个空客户
         sess.customers = [{
           contactName: '', contactPhone: '', paxCount: 0,
-          pickupDate: sess.date || todayStr(), pickupTime: sess.startTime || '07:00',
-          pickupRoute: '', dropoffDate: sess.date || todayStr(),
+          pickupDate: sess.date || _defaultDate, pickupTime: sess.startTime || '07:00',
+          pickupRoute: '', dropoffDate: sess.date || _defaultDate,
           dropoffTime: '', dropoffRoute: '',
         }];
       }
@@ -2682,7 +2682,7 @@ export default function BookingBoardCreate(props: {
             });
           }
           if (paxList.length) {
-            const date = todayStr();
+            const date = _defaultDate;
             const pkgTotal = calcCheckupAmount(paxList, finalBizConfigForCalc);
             const paxListWithSnap = paxList.map(p => ({
               ...p,
@@ -3909,7 +3909,7 @@ export default function BookingBoardCreate(props: {
                             key={rt.code}
                             onClick={() => {
                               const minOut = fmt(addDays(parseDateLocal(lgIn), 1));
-                              const checkIn = lgIn || todayStr();
+                              const checkIn = lgIn || _defaultDate;
                               const checkOut = lgOut && parseDateLocal(lgOut) >= parseDateLocal(minOut) ? lgOut : minOut;
                               const arrivalTime = lgArr || '14:00';
                               const beds = getBedsPerRoom(rt.code, finalBizConfigForCalc);
@@ -4280,7 +4280,7 @@ export default function BookingBoardCreate(props: {
                               setMlSessions((prev) => [
                                 ...prev,
                                 {
-                                  date: todayStr(),
+                                  date: _defaultDate,
                                   time: drawer.itemType === 'dinner' ? '18:00' : info.defaultTime,
                                   mealType: m.code,
                                   pricingMode: info.pricingMode,
@@ -4591,7 +4591,7 @@ export default function BookingBoardCreate(props: {
                               setMtSessions((prev) => [
                                 ...prev,
                                 {
-                                  date: todayStr(),
+                                  date: _defaultDate,
                                   startTime: '09:00',
                                   hall: h.code,
                                   slotType: 'full' as const,
@@ -4778,7 +4778,7 @@ export default function BookingBoardCreate(props: {
                               setWlSessions((prev) => [
                                 ...prev,
                                 {
-                                  date: todayStr(),
+                                  date: _defaultDate,
                                   startTime: '15:00',
                                   wellnessType: w.code,
                                   hours: initHours,
@@ -5063,9 +5063,9 @@ export default function BookingBoardCreate(props: {
                         onClick={() => {
                           const newCust: CarCustomer = {
                             contactName: '', contactPhone: '', paxCount: 0,
-                            pickupDate: carSession.customers[0]?.pickupDate || todayStr(),
+                            pickupDate: carSession.customers[0]?.pickupDate || _defaultDate,
                             pickupTime: '', pickupRoute: '',
-                            dropoffDate: carSession.customers[0]?.dropoffDate || todayStr(),
+                            dropoffDate: carSession.customers[0]?.dropoffDate || _defaultDate,
                             dropoffTime: '', dropoffRoute: '',
                           };
                           setCarSession(prev => ({ ...prev, customers: [...prev.customers, newCust] }));
