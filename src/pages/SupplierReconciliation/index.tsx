@@ -506,7 +506,7 @@ export default function SupplierReconciliation() {
                   </div>
                 )}
                 {pendingSuppliers.map(supplier => {
-                  const sid = supplier.id;
+                  const sid = supplier.supplier_id;
                   const expanded = expandedSupplierId === sid;
                   const purchases = supplierPurchases[sid] || [];
                   const selectedInSupplier = purchases.filter(p => selectedPurchases.has(p.id));
@@ -526,10 +526,10 @@ export default function SupplierReconciliation() {
                         {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                         <span className="font-medium text-slate-800">{supplierName}</span>
                         <span className="text-xs text-slate-500">
-                          {supplier.pending_count ?? purchases.length ?? 0} 张待月结
+                          {supplier.purchase_count ?? purchases.length ?? 0} 张待月结
                         </span>
                         <span className="ml-auto text-sm font-semibold text-slate-700">
-                          {formatCurrency(supplier.pending_amount ?? 0)}
+                          {formatCurrency(supplier.total_amount ?? 0)}
                         </span>
                         {selectedInSupplier.length > 0 && (
                           <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
