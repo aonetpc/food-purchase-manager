@@ -55,6 +55,9 @@ interface AuthStore {
   bindWecom: (userId: string, wecomUserId: string) => Promise<boolean>;
   logout: () => void;
   isAdmin: () => boolean;
+  hasRole: (role: UserRole | UserRole[]) => boolean;
+  canEditCheckupItems: () => boolean;
+  canWriteCheckupPackages: () => boolean;
   canViewMonthly: () => boolean;
   hasPermission: (permissionCode: string) => boolean;
   getSession: () => User | null;
@@ -162,6 +165,35 @@ export const useAuthStore = create<AuthStore>()(
         return false;
       },
 
+      hasRole: (role) => {
+        const user = get().user;
+        if (!user) return false;
+        const codes: UserRole[] = [];
+        if (user.role) codes.push(user.role);
+        if (Array.isArray(user.roles)) {
+          user.roles.forEach(r => {
+            if (typeof r === 'string') codes.push(r as UserRole);
+            else if (r && typeof (r as any).code === 'string') codes.push((r as any).code);
+          });
+        }
+        const targets = Array.isArray(role) ? role : [role];
+        return targets.some(t => codes.includes(t));
+      },
+
+      // 体检中心-项目库：仅 admin/boss 可写（与后端 requireBookingAdmin 一致）
+      canEditCheckupItems: () => get().hasRole(['admin', 'boss']),
+
+      // 体检中心-套餐库写权限（新建/编辑/克隆/删除）：当前仅 admin + 非 booker 的业务角色可写；
+      //     后续如需放开 booker 改自己的套餐，只需修改此函数（不影响后端安全 gate）
+      canWriteCheckupPackages: () => {
+        if (get().isAdmin()) return true;
+        if (get().hasRole('boss')) return true;
+        // booker 目前只读（后续可按归属放开）
+        if (get().hasRole('booker')) return false;
+        // sales / purchaser 等其他业务角色保留原有能力（体检中心前端虽未提供入口，但函数对齐未来扩展）
+        return !!get().user;
+      },
+
       canViewMonthly: () => {
         return get().hasPermission('menu:monthly') || get().hasPermission('menu:m-monthly');
       },
@@ -240,7 +272,7 @@ export const useAuthStore = create<AuthStore>()(
           if (idxToRemove >= 0) mergedMenus.splice(idxToRemove, 1);
         }
 
-        // 兼容兜底：确保 menu:booking-board 和 menu:checkup-templates 至少在管理员能看到时被注入
+        // 兼容兜底：确保 menu:booking-board 至少在管理员能看到时被注入
         const userRoles = user?.roles?.map((r: any) => typeof r === 'string' ? r : r.code) || [];
         const isAdmin = userRoles.includes('admin') || userRoles.includes('ADMIN') ||
                         userRoles.includes('超级管理员') || (user as any)?.isAdmin;
@@ -258,17 +290,14 @@ export const useAuthStore = create<AuthStore>()(
             icon: 'Calendar',
           });
         }
-        // 体检配单：所有已登录用户可见（用于 PC 端跳板跳转移动端）
-        if (!mergedMenus.some(m => m.path === '/checkup-templates') && user) {
-          mergedMenus.push({
-            code: 'menu:checkup-templates',
-            name: '体检配单',
-            path: '/checkup-templates',
-            icon: 'Stethoscope',
-          });
-        }
-        // 体检中心：独立管理页面（体检项目库 + 体检套餐管理），仅管理员级用户可见
-        if (!mergedMenus.some(m => m.path === '/checkup-center') && isManagerUser) {
+        // 体检配单：由 RBAC（menu:checkup-templates 权限）控制显示，移除「所有用户可见」兜底
+        // 直接输 URL 仍可访问（作为自建应用入口），仅侧边栏菜单按权限控制
+        // 体检中心：独立管理页面（体检项目库 + 体检套餐管理）。
+        //  - admin/boss/manager 级用户：完整可写
+        //  - booker（预订员）：可见菜单，页面内为只读模式（操作按钮禁用）
+        //  - 其他角色：无菜单
+        if (!mergedMenus.some(m => m.path === '/checkup-center') &&
+            (isManagerUser || userRoles.includes('booker'))) {
           mergedMenus.push({
             code: 'menu:checkup-center',
             name: '体检中心',
