@@ -2706,7 +2706,13 @@ export default function BookingBoard() {
                   <div className="flex items-start justify-between">
                     <div
                       className="min-w-0 flex-1 cursor-pointer"
-                      onClick={() => isBookingOperator ? setCreateDrawer({ mode: 'edit', order: o }) : setSelectedOrder(o)}
+                      onClick={() => {
+                        if (isBookingOperator && o.status !== 'completed') {
+                          setCreateDrawer({ mode: 'edit', order: o });
+                        } else {
+                          setSelectedOrder(o);
+                        }
+                      }}
                     >
                       <div className="text-sm font-medium text-gray-900 truncate">{o.id}</div>
                       <div className="text-xs text-gray-600 font-medium mt-0.5 truncate">👥 {o.customerName || '（未填客户名）'}</div>
