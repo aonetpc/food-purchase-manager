@@ -2185,9 +2185,26 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     await conn.query('DELETE FROM booking_items WHERE order_id = ?', [orderId]);
     await insertItems(conn, orderId, items);
 
-    // confirmed 状态修改 → 自动降级为 reviewing 重新审批
+    // confirmed 状态修改 → 自动降级为 reviewing 重新审批，同步清空审核通过相关字段
     if (originalStatus === 'confirmed') {
-      await conn.query("UPDATE booking_orders SET status = 'reviewing', confirmed_at = NULL, confirmed_by = NULL WHERE id = ?", [orderId]);
+      await conn.query(`UPDATE booking_orders SET
+          status = 'reviewing',
+          confirmed_at = NULL,
+          approved_by = NULL,
+          approved_by_name = NULL,
+          approved_signature = NULL
+        WHERE id = ?`, [orderId]);
+    }
+
+    // sales_confirming 状态修改 → 回到 reviewing，清空销售员确认痕迹
+    if (originalStatus === 'sales_confirming') {
+      await conn.query(`UPDATE booking_orders SET
+          status = 'reviewing',
+          sales_confirmed_at = NULL,
+          sales_confirmed_by = NULL,
+          sales_confirmed_by_name = NULL,
+          sales_confirmed_signature = NULL
+        WHERE id = ?`, [orderId]);
     }
 
     await conn.commit();
