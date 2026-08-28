@@ -1,13 +1,16 @@
 import { useState } from 'react';
-import { Stethoscope, ClipboardList, Palette } from 'lucide-react';
+import { Stethoscope, ClipboardList, Palette, BookOpen } from 'lucide-react';
 import CheckupItemsTab from './CheckupItemsTab';
 import PackagesTab from './PackagesTab';
 import BrandConfigTab from './BrandConfigTab';
+import { useAuthStore } from '@/store/authStore';
 
 type MainTab = 'items' | 'packages' | 'brand';
 
 export default function CheckupCenter() {
   const [tab, setTab] = useState<MainTab>('packages');
+  const hasRole = useAuthStore(s => s.hasRole);
+  const isBooker = hasRole('booker');
 
   const tabs: { key: MainTab; name: string; icon: React.ComponentType<any>; desc: string }[] = [
     { key: 'packages', name: '体检套餐管理', icon: ClipboardList, desc: '基础套餐管理 / 我的套餐 / 三角色价格方案' },
@@ -28,6 +31,18 @@ export default function CheckupCenter() {
             <p className="text-sm text-gray-500 mt-0.5">统一管理体检项目库、基础套餐与销售员套餐</p>
           </div>
         </div>
+        {/* 预订员角色：仅查看模式提示 */}
+        {isBooker && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+            <BookOpen size={14} className="mt-0.5 shrink-0" />
+            <div>
+              <span className="font-medium">📖 当前为只读模式（预订员）</span>
+              <span className="text-sky-600/80 ml-2">
+                体检项目库、套餐库、品牌设置均为查看模式。如需修改，请联系管理员开通。
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 主 Tab 切换 */}

@@ -162,6 +162,8 @@ export interface PaxEntry {
   //   - undefined/null = 完全使用套餐原始项目
   //   - 有值 = 使用该数组作为最终体检项目列表（已包含加减后的结果）
   customItems?: CustomPackageItem[] | null;
+  // 第7期新增：备注（粘贴导入第7列/手动补充；列表不展示，导出体检名单.xlsx 会带）
+  remark?: string;
 }
 
 export type MealPricingMode = 'per_table' | 'per_person';

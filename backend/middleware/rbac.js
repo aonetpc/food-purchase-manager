@@ -300,6 +300,54 @@ async function requireBookingWrite(req, res, next) {
 }
 
 /**
+ * 体检中心（项目库/套餐库/品牌配置）写接口专用权限中间件。
+ *
+ * 业务语义：
+ *   体检中心是"基础数据配置"模块，和订单写操作（requireBookingWrite）是两套权限体系：
+ *   - booker / sales 能新建订单、能在「体检配单」工具里创建自用套餐，
+ *     但不能改动体检中心的基础配置（项目增删、套餐模板、品牌价格）。
+ *   - 只有 admin/boss 两个管理级角色可以写入体检中心基础配置。
+ *   - 「体检配单」checkup-templates.js 不使用本中间件，它走自有归属判断。
+ *
+ * 使用：router.post('/config/checkup-items', requireAuth, requireBookingAdmin, handler)
+ */
+async function requireBookingAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: '未登录或会话过期' });
+  }
+  // 体检中心写接口白名单
+  const ADMIN_ROLES = ['admin', 'boss'];
+
+  // 1. 直接 role 字段命中
+  if (ADMIN_ROLES.includes(req.user.role)) {
+    return next();
+  }
+  // 2. 多角色表（user_roles）兜底判断
+  try {
+    const [roleCodeRows] = await pool.query(`
+      SELECT DISTINCT r.code
+      FROM (
+        SELECT role_id FROM user_roles WHERE user_id = ?
+        UNION
+        SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+      ) t
+      JOIN roles r ON r.id = t.role_id
+    `, [req.user.id, req.user.id]);
+    const userRoleCodes = roleCodeRows.map(r => r.code);
+    if (ADMIN_ROLES.some(r => userRoleCodes.includes(r))) {
+      return next();
+    }
+  } catch (e) {
+    // 查询失败保守处理：拒绝
+  }
+  // 3. 权限码兜底：action:booking:config（基础配置权限）
+  if (req.user.permissionCodes && req.user.permissionCodes.has('action:booking:config')) {
+    return next();
+  }
+  return res.status(403).json({ error: '无操作权限：体检中心配置仅管理员可修改' });
+}
+
+/**
  * 获取用户权限列表
  * 返回当前用户的所有权限（菜单+按钮+API）
  */
@@ -449,6 +497,7 @@ module.exports = {
   requireRole,
   requirePermission,
   requireBookingWrite,
+  requireBookingAdmin,
   getUserPermissions,
   getRoles,
   getPermissions,

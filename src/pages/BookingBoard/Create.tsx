@@ -96,7 +96,7 @@ function parseDateLocal(s: string): Date {
 }
 
 function emptyPax(): PaxEntry {
-  return { name: '', idCard: '', phone: '', gender: '男', married: false, package: '' };
+  return { name: '', idCard: '', phone: '', gender: '男', married: false, package: '', remark: '' };
 }
 
 // 人员性别+婚否 → 套餐角色映射
@@ -1451,6 +1451,7 @@ function ImportPreviewDetails(props: { paxList: PaxEntry[] }) {
                 <th className="px-2 py-1 text-left font-medium">性别</th>
                 <th className="px-2 py-1 text-left font-medium">婚姻</th>
                 <th className="px-2 py-1 text-left font-medium">套餐</th>
+                <th className="px-2 py-1 text-left font-medium">备注</th>
               </tr>
             </thead>
             <tbody>
@@ -1468,6 +1469,9 @@ function ImportPreviewDetails(props: { paxList: PaxEntry[] }) {
                     </span>
                   </td>
                   <td className="px-2 py-1 text-gray-600 font-mono">{p.package}</td>
+                  <td className="px-2 py-1 text-gray-500 max-w-[160px] truncate" title={p.remark}>
+                    {p.remark || <span className="text-gray-300">—</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2874,7 +2878,7 @@ export default function BookingBoardCreate(props: {
     reader.readAsText(file, 'utf-8');
   }
 
-  // 体检名单粘贴导入（列序：姓名/身份证/性别/手机/婚否/套餐）
+  // 体检名单粘贴导入（列序：姓名/身份证/性别/手机/婚否/套餐/备注）
   function doChkImport() {
     const lines = (chkPasteText || '').split(/\r?\n/).filter(l => l.trim().length > 0);
     if (lines.length === 0) return;
@@ -2884,13 +2888,14 @@ export default function BookingBoardCreate(props: {
     for (let i = startIdx; i < lines.length; i++) {
       const cells = splitRow(lines[i]);
       if (cells.length === 0) continue;
-      // 新列序：姓名(0)/身份证(1)/性别(2)/手机(3)/婚否(4)/套餐(5)
+      // 列序：姓名(0)/身份证(1)/性别(2)/手机(3)/婚否(4)/套餐(5)/备注(6)
       const name = cells[0] || '';
       const idCard = cells[1] || '';
       let genderRaw = cells[2] || '';
       const phone = cells[3] || '';
       const marriedRaw = cells[4] || '';
       const pkgRaw = cells[5] || '';
+      const remarkRaw = cells[6] || '';
       // 解析套餐：优先使用已选中的套餐胶囊
       const v = (pkgRaw || '').trim();
       const up = v.toUpperCase();
@@ -2928,7 +2933,7 @@ export default function BookingBoardCreate(props: {
       if (!gender) gender = '男';
       if (!name && !idCard) continue;
       paxList.push({
-        name, idCard, phone, gender, married, package: pkgCode,
+        name, idCard, phone, gender, married, package: pkgCode, remark: remarkRaw.trim(),
       });
     }
     if (paxList.length) {
@@ -2961,8 +2966,8 @@ export default function BookingBoardCreate(props: {
   function exportChkTemplate() {
     const rows = chkPax
       .filter((p) => p.name.trim())
-      .map((p) => [p.name, p.idCard, p.gender, p.phone, p.married ? '已婚' : '未婚', p.package]);
-    const csv = toCSV(rows, ['姓名', '身份证号', '性别', '手机号', '婚否', '套餐']);
+      .map((p) => [p.name, p.idCard, p.gender, p.phone, p.married ? '已婚' : '未婚', p.package, p.remark || '']);
+    const csv = toCSV(rows, ['姓名', '身份证号', '性别', '手机号', '婚否', '套餐', '备注']);
     downloadFile('体检名单.csv', csv);
   }
 
@@ -3737,6 +3742,19 @@ export default function BookingBoardCreate(props: {
                                           onChange={(e) => updChkPax(idx, { phone: e.target.value })}
                                           className={`${inputCls} font-mono text-xs`}
                                           placeholder="11位手机号"
+                                        />
+                                      </div>
+                                      <div className="sm:col-span-2">
+                                        <label className="text-[10px] text-gray-400 mb-0.5 flex items-center justify-between">
+                                          <span>备注</span>
+                                          <span className="text-gray-300">名单不展示，导出体检名单.xlsx 时带出</span>
+                                        </label>
+                                        <textarea
+                                          value={p.remark || ''}
+                                          onChange={(e) => updChkPax(idx, { remark: e.target.value })}
+                                          rows={2}
+                                          className={`${inputCls} text-xs resize-y`}
+                                          placeholder="如：需加做胸部CT、空腹血糖异常、孕妇注意事项等特殊说明"
                                         />
                                       </div>
                                     </div>
@@ -5255,22 +5273,25 @@ export default function BookingBoardCreate(props: {
             <div className="mb-3 text-xs text-gray-500 leading-relaxed space-y-1">
               <div>
                 列序：
-                <span className="text-gray-700 font-mono ml-1">姓名 / 身份证号 / 性别 / 手机 / 婚否</span>
-                <span className="text-gray-400 ml-1">（套餐已在上方选择，无需再填）</span>
+                <span className="text-gray-700 font-mono ml-1">姓名 / 身份证号 / 性别 / 手机 / 婚否 / 套餐 / 备注</span>
               </div>
               <div>
                 分隔符：
                 <span className="text-gray-700 ml-1">Tab / 逗号 / 空格 均可</span>
+                <span className="text-gray-400 ml-1">（套餐列若已在上方选择，可留空；备注列为可选项）</span>
               </div>
               <div className="text-green-600">
                 ✨ 粘贴后自动根据身份证号推断性别（第17位奇男偶女），婚姻支持「已婚/未婚/是/否」
+              </div>
+              <div className="text-amber-600">
+                💡 备注：名单列表不显示，仅在「导出体检名单.xlsx」时带出，可用于标注特殊说明
               </div>
             </div>
             <textarea
               value={chkPasteText}
               onChange={(e) => setChkPasteText(e.target.value)}
               rows={10}
-              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t男\t13800138000\t已婚\n李芳\t310110199205058888\t女\t13900139000\t未婚\n王敏 320104198812125566 女 13800138000 已婚'}
+              placeholder={'示例（从Excel/WPS复制）：\n张伟\t3301198501011234\t男\t13800138000\t已婚\tA\t需加做胸部CT\n李芳\t310110199205058888\t女\t13900139000\t未婚\tB\t\n王敏 320104198812125566 女 13800138000 已婚 A 空腹血糖异常'}
               className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 font-mono focus:outline-none focus:border-green-500"
             />
             <div className="flex justify-end gap-2 mt-3">

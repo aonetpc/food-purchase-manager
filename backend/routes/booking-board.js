@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
-const { requireAuth, requireBookingWrite } = require('../middleware/rbac');
+const { requireAuth, requireBookingWrite, requireBookingAdmin } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
 const { sendBookingNotification, getWecomConfig, updateTemplateCardButton, updateTemplateCard, buildBizSummary, sendTextToUser, sendMarkdownViaWebhook } = require('./wecom');
 
@@ -673,7 +673,7 @@ function enhancePackageList(routerRef) {
   });
 
   // 覆盖 package create：同时初始化 item_count
-  routerRef.post('/config/packages', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.post('/config/packages', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { code, name, price, status, sort_order, remark } = req.body;
@@ -696,7 +696,7 @@ function enhancePackageList(routerRef) {
   });
 
   // 覆盖 package update：支持 remark 字段 + 自动重算
-  routerRef.put('/config/packages/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.put('/config/packages/:id', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { id } = req.params;
@@ -767,7 +767,7 @@ function enhancePackageList(routerRef) {
   });
 
   // delete package（级联删除关联的项目）
-  routerRef.delete('/config/packages/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.delete('/config/packages/:id', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { id } = req.params;
@@ -848,7 +848,7 @@ function makeCheckupItemCrud(routerRef) {
     }
   });
 
-  routerRef.post(`${basePath}`, requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.post(`${basePath}`, requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       for (const f of requiredFields) {
@@ -907,7 +907,7 @@ function makeCheckupItemCrud(routerRef) {
     }
   });
 
-  routerRef.put(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.put(`${basePath}/:id`, requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { id } = req.params;
@@ -962,7 +962,7 @@ function makeCheckupItemCrud(routerRef) {
     }
   });
 
-  routerRef.delete(`${basePath}/:id`, requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.delete(`${basePath}/:id`, requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { id } = req.params;
@@ -1005,7 +1005,7 @@ function makeCheckupItemCrud(routerRef) {
   //
   // ❌ 正常使用场景（只改单个/几个项目）严禁调此接口！请使用 DELETE /:id 行内删除
   // ==========================================================================
-  routerRef.delete(`${basePath}`, requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.delete(`${basePath}`, requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -1078,7 +1078,7 @@ function makePackageItemCrud(routerRef) {
   });
 
   // add item to package
-  routerRef.post('/config/packages/:pkgId/items', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.post('/config/packages/:pkgId/items', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { pkgId } = req.params;
@@ -1120,7 +1120,7 @@ function makePackageItemCrud(routerRef) {
   });
 
   // update package item
-  routerRef.put('/config/packages/:pkgId/items/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.put('/config/packages/:pkgId/items/:id', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { id } = req.params;
@@ -1147,7 +1147,7 @@ function makePackageItemCrud(routerRef) {
   });
 
   // delete package item
-  routerRef.delete('/config/packages/:pkgId/items/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.delete('/config/packages/:pkgId/items/:id', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { pkgId, id } = req.params;
@@ -1168,7 +1168,7 @@ function makePackageItemCrud(routerRef) {
   });
 
   // 批量更新套餐 items（一次保存全部）
-  routerRef.put('/config/packages/:pkgId/items-batch', requireAuth, requireBookingWrite, async (req, res) => {
+  routerRef.put('/config/packages/:pkgId/items-batch', requireAuth, requireBookingAdmin, async (req, res) => {
     const conn = await pool.getConnection();
     try {
       const { pkgId } = req.params;
