@@ -47,6 +47,10 @@ export default function PackagesTab() {
   const toast = useToast();
   const isAdmin = useAuthStore(s => s.isAdmin());
   const user = useAuthStore(s => s.user);
+  const hasRole = useAuthStore(s => s.hasRole);
+  const canWritePackages = useAuthStore(s => s.canWriteCheckupPackages());
+  const isBooker = hasRole('booker');
+  const readonlyTooltip = '📖 只读模式 · 预订员暂不可新建套餐';
   const [scope, setScope] = useState<ScopeTab>(isAdmin ? 'public' : 'all');
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -188,8 +192,17 @@ export default function PackagesTab() {
             <Plus size={14} /> 新建基础套餐
           </button>
         )}
-        {!isAdmin && (
+        {!isAdmin && !isBooker && (
           <button onClick={onCreate} className={btnPrimary}>
+            <Plus size={14} /> 新建我的套餐
+          </button>
+        )}
+        {!isAdmin && isBooker && (
+          <button
+            disabled
+            title={readonlyTooltip}
+            className={btnPrimary + ' cursor-not-allowed'}
+          >
             <Plus size={14} /> 新建我的套餐
           </button>
         )}
@@ -223,14 +236,22 @@ export default function PackagesTab() {
         </div>
       ) : list.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-          <div className="text-5xl mb-3">📋</div>
-          <div className="text-sm text-gray-500 mb-4">
-            {scope === 'public' ? '暂无基础套餐，点击右上角新建第一个基础套餐吧' : '暂无套餐，点击右上角新建吧'}
+            <div className="text-5xl mb-3">📋</div>
+            <div className="text-sm text-gray-500 mb-4">
+              {scope === 'public' ? '暂无基础套餐，点击右上角新建第一个基础套餐吧' :
+               isBooker ? '暂无套餐数据' : '暂无套餐，点击右上角新建吧'}
+            </div>
+            {!isBooker && (
+              <button onClick={onCreate} className={btnPrimary}>
+                <Plus size={14} /> 立即新建
+              </button>
+            )}
+            {isBooker && (
+              <button disabled className={btnPrimary + ' cursor-not-allowed'} title={readonlyTooltip}>
+                <Plus size={14} /> 立即新建
+              </button>
+            )}
           </div>
-          <button onClick={onCreate} className={btnPrimary}>
-            <Plus size={14} /> 立即新建
-          </button>
-        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {list.map(pkg => (
@@ -238,6 +259,8 @@ export default function PackagesTab() {
               key={pkg.id}
               pkg={pkg}
               isAdmin={isAdmin}
+              canWrite={canWritePackages}
+              readonlyTooltip={readonlyTooltip}
               currentUserId={user?.id}
               salesUsers={salesUsers}
               onEdit={() => onEdit(pkg)}
@@ -291,11 +314,13 @@ export default function PackagesTab() {
 
 // --------- 套餐卡片组件 ---------
 function PackageCard({
-  pkg, isAdmin, currentUserId, salesUsers,
+  pkg, isAdmin, canWrite, readonlyTooltip, currentUserId, salesUsers,
   onEdit, onClone, onDelete, onDownloadPdf, onAssign,
 }: {
   pkg: CheckupTemplate;
   isAdmin: boolean;
+  canWrite: boolean;
+  readonlyTooltip?: string;
   currentUserId?: string;
   salesUsers: SalesUser[];
   onEdit: () => void;
@@ -309,10 +334,12 @@ function PackageCard({
   const isOwner = !!(currentUserId && (pkg as any).owner_sales_id === currentUserId);
   const covers: string[] = Array.isArray((pkg as any).cover_sales_ids) ? (pkg as any).cover_sales_ids : [];
   const isAssignedToMe = !!(currentUserId && covers.includes(currentUserId));
-  // 编辑权限：管理员 或 自己创建的
-  const canEdit = isAdmin || isOwner;
-  // 删除权限：管理员（测试期保留） 或 销售自己创建（公共/分配给我的不允许删）
-  const canDelete = isAdmin || (!isPublic && isOwner && !isAssignedToMe);
+  // 编辑/克隆/删除：canWrite 为 false（如 booker）时全部禁用
+  const canEdit = canWrite && (isAdmin || isOwner);
+  const canClone = canWrite;
+  const canDelete = canWrite && (isAdmin || (!isPublic && isOwner && !isAssignedToMe));
+  // 按钮禁用样式
+  const disabledCls = ' opacity-50 cursor-not-allowed pointer-events-none';
 
   // 按快照回算每个角色的原价汇总（与套餐里保存的 original_total 做偏差比对）
   const roleRealTotals = computeRoleRealTotals(pkg as any);
@@ -428,10 +455,20 @@ function PackageCard({
 
       {/* 卡片底：操作按钮 */}
       <div className="px-3 py-2.5 border-t border-gray-100 bg-gray-50/30 flex items-center flex-wrap gap-1.5">
-        <button onClick={onEdit} className={btnGhost + ' !px-2.5 !py-1.5'}>
+        <button
+          onClick={onEdit}
+          disabled={!canEdit}
+          title={!canEdit ? (readonlyTooltip || '无编辑权限') : undefined}
+          className={btnGhost + ' !px-2.5 !py-1.5' + (!canEdit ? disabledCls : '')}
+        >
           ✏️ {pkgDriftWarning ? '重新同步' : '编辑'}
         </button>
-        <button onClick={onClone} className={btnGhost + ' !px-2.5 !py-1.5'}>
+        <button
+          onClick={onClone}
+          disabled={!canClone}
+          title={!canClone ? (readonlyTooltip || '无克隆权限') : undefined}
+          className={btnGhost + ' !px-2.5 !py-1.5' + (!canClone ? disabledCls : '')}
+        >
           <Copy size={12} /> 克隆
         </button>
         <button onClick={onDownloadPdf} className={btnGhost + ' !px-2.5 !py-1.5'}>
@@ -443,11 +480,14 @@ function PackageCard({
           </button>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          {!canEdit && <Eye size={12} className="text-gray-300" />}
+          {!canWrite && <Eye size={12} className="text-gray-400" title="只读模式" />}
           {canDelete && (
             <button onClick={onDelete} className={btnDanger}>
               <Trash2 size={11} /> 删除
             </button>
+          )}
+          {!canDelete && canWrite && !isAdmin && (
+            <Trash2 size={11} className="text-gray-300" />
           )}
         </div>
       </div>
