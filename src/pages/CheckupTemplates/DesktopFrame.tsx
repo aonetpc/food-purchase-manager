@@ -16,7 +16,7 @@ export default function CheckupDesktopFrame() {
   // 移动端：全屏展示 H5App，不加桌面框架
   if (isMobile) {
     return (
-      <div className="fixed inset-0 z-[60] bg-gray-50">
+      <div className="fixed inset-0 z-[60] bg-gray-50 overflow-auto overscroll-contain">
         <CheckupApp />
       </div>
     );
