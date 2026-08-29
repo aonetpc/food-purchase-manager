@@ -4,7 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../db');
 const { requireAuth, requireBookingWrite, requireBookingAdmin } = require('../middleware/rbac');
 const { logOperation } = require('../middleware/logger');
-const { sendBookingNotification, getWecomConfig, updateTemplateCardButton, updateTemplateCard, buildBizSummary, sendTextToUser, sendMarkdownViaWebhook } = require('./wecom');
+const { sendBookingNotification, getWecomConfig, updateTemplateCardButton, updateTemplateCard, buildBizSummary, sendTextToUser, sendMarkdownViaWebhook, sendTemplateCardToUser } = require('./wecom');
+// R4：催办模块（延迟 require 避免循环依赖，在 server.js 启动 scheduler）
+const bookingReminder = require('../utils/booking-reminder');
 
 // ============================================================
 // 业务角色判断 helper（requireBookingWrite 已放开入口白名单，
@@ -234,6 +236,51 @@ async function greyBookingCardButton(userid, responseCode, label) {
   } catch (e) {
     console.error(`[greyBookingCardButton] FAIL: ${label} user=${userid}:`, e && e.message);
   }
+}
+
+// ------------------------------------------------------------
+// R3 辅助：对比订单编辑前后的差异，返回 { time, operator, changes: [...] } 或 null
+// 字段白名单：业务字段（展示友好中文名）+ 总金额 + 业务项数量
+// ------------------------------------------------------------
+function buildEditDiff(cur, req, newItems, newTotal) {
+  const BODY_MAP = {
+    customer_name:   { bodyKey: 'customerName',   label: '客户名称' },
+    contact_name:    { bodyKey: 'contactName',    label: '联系人' },
+    contact_phone:   { bodyKey: 'contactPhone',   label: '联系电话' },
+    sales_person:    { bodyKey: 'salesPerson',    label: '销售员' },
+    payment_method:  { bodyKey: 'paymentMethod',  label: '付款方式' },
+    remark:          { bodyKey: 'remark',         label: '备注' },
+  };
+  const changes = [];
+  for (const [dbKey, cfg] of Object.entries(BODY_MAP)) {
+    const oldV = cur[dbKey] == null ? '' : String(cur[dbKey]).trim();
+    const newV = (req.body[cfg.bodyKey] ?? '') == null ? '' : String(req.body[cfg.bodyKey]).trim();
+    if (oldV !== newV) changes.push({ field: cfg.label, from: oldV || '(空)', to: newV || '(空)' });
+  }
+
+  // 总金额变动
+  const oldTotal = Number(cur.total_amount) || 0;
+  if (oldTotal !== Number(newTotal)) {
+    changes.push({ field: '订单总金额', from: `¥${oldTotal}`, to: `¥${newTotal}` });
+  }
+
+  // items 数量 / 类型变动（粗略对比）
+  const oldItemsRaw = JSON.stringify((cur.items || []).map(i => ({ t: i.item_type, d: i.date })));
+  const newItemsRaw = JSON.stringify((newItems || []).map(i => ({ t: i.item_type, d: i.date })));
+  if (oldItemsRaw !== newItemsRaw) {
+    changes.push({
+      field: '业务项',
+      from: `${(cur.items || []).length} 项`,
+      to: `${(newItems || []).length} 项`,
+    });
+  }
+
+  if (changes.length === 0) return null;
+  return {
+    time: formatNowCN(),
+    operator: (req.user && (req.user.name || req.user.realName || req.user.displayName)) || '系统',
+    changes,
+  };
 }
 
 // ------------------------------------------------------------
@@ -1683,6 +1730,10 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
           notifyError = notifyRes.salesCardError;
         }
       }
+      // R4：submit 发卡后创建催办任务（sales_confirming 阶段）
+      if (notifyRes && notifyRes.salesUserid) {
+        bookingReminder.createReminderTask(orderId, 'sales_confirming', notifyRes.salesUserid).catch(()=>{});
+      }
     } catch (e) {
       notifyError = { errmsg: e && e.message || String(e) };
       // notify 抛错不影响计数不变量（已经 UPDATE submit_resend_count）；补一个状态标签方便排查
@@ -1845,6 +1896,12 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
       console.error(`[booking sales-confirm notify] catch FAIL orderNo=${o.order_no}:`, e && e.message, e);
     }
 
+    // R4：salesConfirm 后 — 灰化销售卡历史 + 销售催办完成 + 审核阶段新建催办
+    bookingReminder.greyAllCardsOnApprove(orderId, 'sales_confirming', '已确认').catch(()=>{});
+    bookingReminder.cancelReminder(orderId).catch(()=>{});
+    const approver = (() => { try { return (notifyRes && notifyRes.approverUserid) || null; } catch(_) { return null; } })();
+    if (approver) bookingReminder.createReminderTask(orderId, 'reviewing', approver).catch(()=>{});
+
     res.json({ ok: true, data: order, _notifyDebug });
   } catch (e) {
     console.error('[booking sales-confirm] error:', e);
@@ -1941,6 +1998,9 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     }
     // 异步通知预订群+销售员
     sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
+    // R4：approve 后 — 灰化所有审核卡历史 + 取消催办
+    bookingReminder.greyAllCardsOnApprove(orderId, 'reviewing', '已审核').catch(()=>{});
+    bookingReminder.cancelReminder(orderId).catch(()=>{});
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking approve] error:', e);
@@ -2027,6 +2087,10 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
     if (o.status === 'reviewing') {
       sendBookingNotification('reject', order, { rejectionReason }).catch(e => console.error('[booking reject notify] error:', e));
     }
+    // R4：reject 后 — 灰化当前阶段所有历史卡 + 取消催办
+    const rejectStage = o.status === 'sales_confirming' ? 'sales_confirming' : 'reviewing';
+    bookingReminder.greyAllCardsOnApprove(orderId, rejectStage, '已驳回').catch(()=>{});
+    bookingReminder.cancelReminder(orderId).catch(()=>{});
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking reject] error:', e);
@@ -2207,6 +2271,13 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
         WHERE id = ?`, [orderId]);
     }
 
+    // R3：计算本次编辑的变更摘要，写入 last_edit_diff 列（booking-confirm 审批页用）
+    const diffJson = buildEditDiff(cur, req, items, totalAmount);
+    if (diffJson) {
+      await conn.query('UPDATE booking_orders SET last_edit_diff = ? WHERE id = ?',
+        [JSON.stringify(diffJson), orderId]);
+    }
+
     await conn.commit();
     logOperation(req, '预订订单', '编辑', `订单号=${cur.order_no} 原状态=${originalStatus}`, orderId);
 
@@ -2245,90 +2316,142 @@ async function handleOrderEditNotification(originalStatus, order, req) {
     const cardUrl = config.app_domain ? `${config.app_domain}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
     const cardCodes = parseMaybeJson(order.wecom_card_response_codes) || {};
 
-    // --- 给审核员发文字提醒（reviewing / confirmed 均发）---
-    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed') && config.booking_approver_userid) {
-      // 发送文字通知
-      try {
-        const text = originalStatus === 'confirmed'
-          ? `📋 订单 ${orderNo}（${customerName}）已修改，需重新审核。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`
-          : `📝 订单 ${orderNo}（${customerName}）已被修改，请重新审核。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`;
-        await sendTextToUser(config, config.booking_approver_userid, text);
-        console.log(`[handleOrderEditNotification] 审核员文字通知已发送: orderNo=${orderNo}, approver=${config.booking_approver_userid}`);
-      } catch (e) {
-        console.error(`[handleOrderEditNotification] 审核员文字通知失败:`, e && e.message);
-      }
-    }
-
     // --- 更新审核卡片内容（reviewing / confirmed 均更新）---
-    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed')) {
-      const approveCard = cardCodes.approve;
-      if (approveCard && approveCard.response_code) {
-        try {
-          const mainTitle = originalStatus === 'confirmed'
-            ? '📋 订单待审核（已变更·需重审）'
-            : '📋 订单待审核（已修改）';
-          const subTitle = `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请${originalStatus === 'confirmed' ? '重新审批' : '重新审核'}`;
-          const hContent = [
-            { keyname: '客户', value: customerName },
-            { keyname: '业务', value: bizSummary },
-            { keyname: '金额', value: `¥${order.total_amount || 0}` },
-          ];
-          if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
+    // 策略：优先 update 已有交互卡；无 response_code 时降级发新卡；都失败时 fallback 文字通知
+    let cardSent = false;
+    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed') && config.booking_approver_userid) {
+      const hContentBase = [
+        { keyname: '客户', value: customerName },
+        { keyname: '业务', value: bizSummary },
+        { keyname: '金额', value: `¥${order.total_amount || 0}` },
+      ];
+      if (order.remark) hContentBase.push({ keyname: '备注', value: order.remark });
 
-          const card = {
+      const mainTitle = originalStatus === 'confirmed'
+        ? '📋 订单待审核（已变更·需重审）'
+        : '📋 订单待审核（已修改）';
+      const subTitle = `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请${originalStatus === 'confirmed' ? '重新审批' : '重新审核'}`;
+      const btnLabel = originalStatus === 'confirmed' ? '重新审批' : '去审核';
+
+      const approveCard = cardCodes.approve;
+      const hasCode = approveCard && approveCard.response_code;
+
+      // 路径 A：已有 response_code → update 原卡
+      if (hasCode) {
+        try {
+          await updateTemplateCard(config, config.booking_approver_userid, 'button_interaction', approveCard.response_code, {
+            main_title: { title: mainTitle, desc: customerName },
+            sub_title_text: subTitle,
+            horizontal_content_list: hContentBase,
+            button_list: [{ text: btnLabel, style: 1, type: 1, key: `go_booking_${order.id}`, url: cardUrl }],
+          });
+          cardSent = true;
+          console.log(`[handleOrderEditNotification] 审核卡片已更新: orderNo=${orderNo}`);
+        } catch (e) {
+          console.warn(`[handleOrderEditNotification] 更新审核卡失败(response_code=${approveCard.response_code?.substring(0,10)}..., err=${e.message})，尝试降级新发`);
+        }
+      }
+
+      // 路径 B：无 code 或 A 失败 → 降级新发交互卡
+      if (!cardSent) {
+        try {
+          const uuid = require('uuid');
+          const newCode = uuid.v4();
+          const sendResult = await sendTemplateCardToUser(config, config.booking_approver_userid, {
             card_type: 'button_interaction',
             source: { desc: '预订管理系统' },
             main_title: { title: mainTitle, desc: customerName },
             sub_title_text: subTitle,
-            horizontal_content_list: hContent,
-            button_list: [{
-              text: originalStatus === 'confirmed' ? '重新审批' : '去审核',
-              style: 1,
-              type: 1,
-              key: `go_booking_${order.id}`,
-              url: cardUrl,
-            }],
-          };
-          await updateTemplateCard(config, config.booking_approver_userid, 'button_interaction', approveCard.response_code, {
-            main_title: card.main_title,
-            sub_title_text: card.sub_title_text,
-            horizontal_content_list: card.horizontal_content_list,
-            button_list: card.button_list,
+            horizontal_content_list: hContentBase,
+            button_list: [{ text: btnLabel, style: 1, type: 1, key: `go_booking_${order.id}`, url: cardUrl }],
           });
-          console.log(`[handleOrderEditNotification] 审核卡片已更新: orderNo=${orderNo}`);
+          // 新卡 response_code 存回 order.wecom_card_response_codes.approve
+          cardCodes.approve = {
+            userid: config.booking_approver_userid,
+            response_code: newCode,
+            at: changeTime,
+          };
+          await conn.query('UPDATE booking_orders SET wecom_card_response_codes = ? WHERE id = ?',
+            [JSON.stringify(cardCodes), order.id]);
+          cardSent = true;
+          console.log(`[handleOrderEditNotification] 审核卡降级新发成功: orderNo=${orderNo}, newCode=${newCode.substring(0,10)}...`);
+        } catch (e2) {
+          console.error(`[handleOrderEditNotification] 审核卡降级新发也失败:`, e2 && e2.message);
+        }
+      }
+
+      // 路径 C：卡都失败了 → fallback 文字通知
+      if (!cardSent) {
+        try {
+          const text = originalStatus === 'confirmed'
+            ? `📋 订单 ${orderNo}（${customerName}）已修改，需重新审核。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}${order.remark ? '\n备注：' + order.remark : ''}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`
+            : `📝 订单 ${orderNo}（${customerName}）已被修改，请重新审核。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}${order.remark ? '\n备注：' + order.remark : ''}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`;
+          await sendTextToUser(config, config.booking_approver_userid, text);
+          console.log(`[handleOrderEditNotification] 审核员文字通知已发送(fallback): orderNo=${orderNo}`);
         } catch (e) {
-          console.error(`[handleOrderEditNotification] 审核卡片更新失败:`, e && e.message);
+          console.error(`[handleOrderEditNotification] 审核员文字通知也失败:`, e && e.message);
         }
       }
     }
 
     // --- 更新销售员确认卡片（sales_confirming）---
+    // 对称审核员：优先 update；无 code 或失败则降级新发
     if (originalStatus === 'sales_confirming') {
       const salesCard = cardCodes.sales_confirm;
-      if (salesCard && salesCard.response_code) {
-        try {
-          const hContent = [
-            { keyname: '客户', value: customerName },
-            { keyname: '业务', value: bizSummary },
-            { keyname: '金额', value: `¥${order.total_amount || 0}` },
-          ];
-          if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
+      const salesUserid = salesCard && salesCard.userid;
+      const hasCode = salesCard && salesCard.response_code;
+      let salesCardSent = false;
 
-          await updateTemplateCard(config, salesCard.userid, 'button_interaction', salesCard.response_code, {
-            main_title: { title: '📋 订单待确认（已修改）', desc: customerName },
-            sub_title_text: `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请重新确认`,
-            horizontal_content_list: hContent,
-            button_list: [{
-              text: '去确认',
-              style: 1,
-              type: 1,
-              key: `go_booking_${order.id}`,
-              url: cardUrl,
-            }],
-          });
-          console.log(`[handleOrderEditNotification] 销售员确认卡片已更新: orderNo=${orderNo}`);
-        } catch (e) {
-          console.error(`[handleOrderEditNotification] 销售员卡片更新失败:`, e && e.message);
+      if (salesUserid) {
+        const hContent = [
+          { keyname: '客户', value: customerName },
+          { keyname: '业务', value: bizSummary },
+          { keyname: '金额', value: `¥${order.total_amount || 0}` },
+        ];
+        if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
+
+        if (hasCode) {
+          try {
+            await updateTemplateCard(config, salesUserid, 'button_interaction', salesCard.response_code, {
+              main_title: { title: '📋 订单待确认（已修改）', desc: customerName },
+              sub_title_text: `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请重新确认`,
+              horizontal_content_list: hContent,
+              button_list: [{ text: '去确认', style: 1, type: 1, key: `go_booking_${order.id}`, url: cardUrl }],
+            });
+            salesCardSent = true;
+            console.log(`[handleOrderEditNotification] 销售员确认卡片已更新: orderNo=${orderNo}`);
+          } catch (e) {
+            console.warn(`[handleOrderEditNotification] 销售员卡 update 失败，降级新发: ${e.message}`);
+          }
+        }
+
+        if (!salesCardSent) {
+          try {
+            const uuid = require('uuid');
+            const newCode = uuid.v4();
+            await sendTemplateCardToUser(config, salesUserid, {
+              card_type: 'button_interaction',
+              source: { desc: '预订管理系统' },
+              main_title: { title: '📋 订单待确认（已修改）', desc: customerName },
+              sub_title_text: `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请重新确认`,
+              horizontal_content_list: hContent,
+              button_list: [{ text: '去确认', style: 1, type: 1, key: `go_booking_${order.id}`, url: cardUrl }],
+            });
+            cardCodes.sales_confirm = { userid: salesUserid, response_code: newCode, at: changeTime };
+            await conn.query('UPDATE booking_orders SET wecom_card_response_codes = ? WHERE id = ?',
+              [JSON.stringify(cardCodes), order.id]);
+            salesCardSent = true;
+            console.log(`[handleOrderEditNotification] 销售员确认卡降级新发: orderNo=${orderNo}`);
+          } catch (e2) {
+            console.error(`[handleOrderEditNotification] 销售员卡降级新发也失败:`, e2.message);
+          }
+        }
+
+        if (!salesCardSent) {
+          try {
+            await sendTextToUser(config, salesUserid,
+              `📝 订单 ${orderNo}（${customerName}）已被修改，请重新确认。\n业务：${bizSummary}\n金额：¥${order.total_amount || 0}${order.remark ? '\n备注：' + order.remark : ''}\n时间：${changeTime}\n${cardUrl ? '链接：' + cardUrl : ''}`);
+          } catch (e) { /* 文字也失败就静默 */ }
         }
       }
     }
@@ -2339,6 +2462,7 @@ async function handleOrderEditNotification(originalStatus, order, req) {
         const md = `⚠️ **订单已修改（需重新审核）**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
+          (order.remark ? `> 备注：${order.remark}\n` : '') +
           `> 业务：${bizSummary}\n` +
           `> 金额：¥${order.total_amount || 0}\n` +
           `> 修改时间：${changeTime}\n` +

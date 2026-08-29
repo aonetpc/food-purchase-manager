@@ -185,5 +185,12 @@ async function fixPackageItemsIndex() {
   await fixPackageItemsIndex();
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
+    // R4：启动催办定时任务（启动成功后启动，避免未连 DB 就跑）
+    try {
+      const { startReminderScheduler } = require('./utils/booking-reminder');
+      startReminderScheduler();
+    } catch (e) {
+      console.warn('[server] 催办定时任务启动失败:', e.message);
+    }
   });
 })();
