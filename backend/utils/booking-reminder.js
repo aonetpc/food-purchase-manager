@@ -13,9 +13,9 @@ const pool = require('../db');
 const uuid = require('uuid');
 
 // 催办间隔 & 上限（可按需调整）
-const REMIND_INTERVAL_MS = 60 * 60 * 1000;   // 60h（< code 72h 有效期，留 12h 安全余量）
-const MAX_REMIND_COUNT   = 3;                // 最多催办 3 次
-const CODE_EXPIRE_MS    = 72 * 60 * 60 * 1000; // code 官方有效期 72h（过期跳过 update）
+const REMIND_INTERVAL_MS = 70 * 60 * 60 * 1000;  // 70h（< code 72h 有效期，留 2h 安全余量）
+const MAX_REMIND_COUNT   = 3;                     // 最多催办 3 次
+const CODE_EXPIRE_MS     = 72 * 60 * 60 * 1000;  // code 官方有效期 72h（过期跳过 update）
 
 // 获取 wecom config + 导出函数引用（require 延迟加载，避免循环依赖）
 let _wecom = null;
