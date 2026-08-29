@@ -23,6 +23,53 @@ function mergeDeptName(name) {
   return DEPT_MERGE_MAP[name] || name;
 }
 
+// 食材采购分类 → 原材料 L2 分类（warehouse_categories）映射
+const PURCHASE_CATEGORY_TO_RAW = {
+  '肉类': '食品食材类', '蔬菜': '食品食材类', '米面粮油': '食品食材类',
+  '豆制品': '食品食材类', '调味品': '食品食材类', '冻品': '食品食材类',
+  '干货': '食品食材类', '水产海鲜': '食品食材类', '水果': '食品食材类',
+  '点心': '食品食材类', '海鲜': '食品食材类',
+  '其他': '用具用品类',
+};
+// 反向映射：原材料 L2 名称 → 食材采购分类名集合（用于明细查询过滤）
+const RAW_TO_PURCHASE_CATEGORIES = {};
+for (const [purchaseCat, rawCat] of Object.entries(PURCHASE_CATEGORY_TO_RAW)) {
+  if (!RAW_TO_PURCHASE_CATEGORIES[rawCat]) RAW_TO_PURCHASE_CATEGORIES[rawCat] = [];
+  RAW_TO_PURCHASE_CATEGORIES[rawCat].push(purchaseCat);
+}
+
+/** 食材采购分类名 → 原材料 L2 分类名（兜底归食品食材类） */
+function mapPurchaseCategory(catName) {
+  return PURCHASE_CATEGORY_TO_RAW[catName] || '食品食材类';
+}
+
+/** 根据原材料 L2 分类名，查出所有映射到它的食材采购分类名数组 */
+function getPurchaseCatsForRaw(rawL2Name) {
+  return RAW_TO_PURCHASE_CATEGORIES[rawL2Name] || [];
+}
+
+/** 将 purchase_records 的行转换成 buildMatrix 需要的统一格式
+ *  @param purchaseRows [{ category_name, department_name, amount }]
+ *  @param rawCatNameToId  原材料 L2 名称 → { id, parent_id, parent_name } 映射
+ *  @param deptNameToIdMap  部门名称 → department_id 映射
+ */
+function transformPurchaseRows(purchaseRows, rawCatNameToId, deptNameToIdMap) {
+  return purchaseRows.map(r => {
+    const rawL2Name = mapPurchaseCategory(r.category_name);
+    const catInfo = rawCatNameToId[rawL2Name];
+    const mergedDeptName = mergeDeptName(r.department_name || '未命名部门');
+    return {
+      category_id: catInfo ? catInfo.id : null,
+      category: rawL2Name,
+      category_parent_id: catInfo ? catInfo.parent_id : null,
+      category_parent: catInfo ? catInfo.parent_name : '原材料',
+      dept_id: deptNameToIdMap[mergedDeptName] || null,
+      dept_name: mergedDeptName,
+      amount: toNum(r.amount),
+    };
+  }).filter(r => r.amount > 0);
+}
+
 /** 构建二维表数据（按分类×部门矩阵）
  *  @param rawRows [{ category_id, category, category_parent_id, category_parent, dept_id, dept_name, amount }]
  *  @param deptIdsSorted   部门ID排序（可传空则按出现顺序）
@@ -223,6 +270,46 @@ router.get('/fixed-assets', async (req, res) => {
 });
 
 /** ============== 2. 原材料当月消耗 ============== */
+async function fetchMaterialConsumptionRows({ month, catRows, deptNameToId, includePurchase = true }) {
+  // 1. stock_movements（扫码领用 + 即买即用 + 盘点盘亏）
+  const [stockRows] = await pool.query(`
+    SELECT wc.id as category_id, wc.name as category,
+           wc.parent_id as category_parent_id, wc_p.name as category_parent,
+           w.department_id as dept_id, d.name as dept_name,
+           SUM(IFNULL(sm.total_amount, 0)) as amount
+    FROM stock_movements sm
+    JOIN warehouse_items wi ON sm.item_id = wi.id
+    JOIN warehouse_categories wc ON wi.category_id = wc.id
+    LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+    LEFT JOIN warehouses w ON sm.warehouse_id = w.id
+    LEFT JOIN departments d ON w.department_id = d.id
+    WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
+           OR sm.movement_type = 'expense')
+      AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
+      AND wc_p.name = '原材料'
+    GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
+  `, [month]);
+
+  if (!includePurchase) return stockRows;
+
+  // 2. purchase_records（食材采购单 → 按分类映射归并）
+  const [purchaseRawRows] = await pool.query(`
+    SELECT pr.category_name, pr.department_name, SUM(pr.amount) as amount
+    FROM purchase_records pr
+    WHERE DATE_FORMAT(pr.date, '%Y-%m') = ?
+    GROUP BY pr.category_name, pr.department_name
+  `, [month]);
+
+  // 构建原材料 L2 名称 → { id, parent_id, parent_name } 映射
+  const rawCatNameToId = {};
+  for (const c of catRows) {
+    rawCatNameToId[c.l2Name] = { id: c.l2Id, parent_id: c.l1Id, parent_name: c.l1Name };
+  }
+
+  const purchaseRows = transformPurchaseRows(purchaseRawRows, rawCatNameToId, deptNameToId);
+  return [...stockRows, ...purchaseRows];
+}
+
 router.get('/material-consumption', async (req, res) => {
   try {
     const { month } = req.query;
@@ -235,7 +322,11 @@ router.get('/material-consumption', async (req, res) => {
     );
     const deptIdsSorted = deptRows.map(d => d.id);
     const deptNameMap = {};
-    for (const d of deptRows) deptNameMap[d.id] = d.name;
+    const deptNameToIdMap = {};
+    for (const d of deptRows) {
+      deptNameMap[d.id] = d.name;
+      deptNameToIdMap[d.name] = d.id;
+    }
 
     // 查询原材料 L1/L2 分类（确保无数据的分类也显示）
     const [catRows] = await pool.query(`
@@ -252,52 +343,23 @@ router.get('/material-consumption', async (req, res) => {
       l2Id: c.l2Id, l2Name: c.l2Name
     }));
 
-    // 扫码领料入库到部门仓 = 部门消耗（movement_type='inbound'）
-    // 即买即用消耗（movement_type='expense'）
-    const [rows] = await pool.query(`
-      SELECT wc.id as category_id, wc.name as category,
-             wc.parent_id as category_parent_id, wc_p.name as category_parent,
-             w.department_id as dept_id, d.name as dept_name,
-             SUM(IFNULL(sm.total_amount, 0)) as amount
-      FROM stock_movements sm
-      JOIN warehouse_items wi ON sm.item_id = wi.id
-      JOIN warehouse_categories wc ON wi.category_id = wc.id
-      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
-      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
-      LEFT JOIN departments d ON w.department_id = d.id
-      WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
-             OR sm.movement_type = 'expense')
-        AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
-        AND wc_p.name = '原材料'
-      GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
-    `, [month]);
+    // 合并 stock_movements + purchase_records
+    const combinedRows = await fetchMaterialConsumptionRows({
+      month, catRows, deptNameToId: deptNameToIdMap, includePurchase: true
+    });
 
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
+    const matrix = buildMatrix(combinedRows, deptIdsSorted, deptNameMap, allCategories);
 
-    // 上月环比
+    // 上月环比（同样包含 purchase_records）
     let lastMonth = null;
     try {
       const [y, m] = month.split('-').map(Number);
       const lastDate = new Date(y, m - 2, 1);
       const lastYM = `${lastDate.getFullYear()}-${String(lastDate.getMonth() + 1).padStart(2, '0')}`;
-      const [lastRows] = await pool.query(`
-        SELECT wc.id as category_id, wc.name as category,
-               wc.parent_id as category_parent_id, wc_p.name as category_parent,
-               w.department_id as dept_id, d.name as dept_name,
-               SUM(IFNULL(sm.total_amount, 0)) as amount
-        FROM stock_movements sm
-        JOIN warehouse_items wi ON sm.item_id = wi.id
-        JOIN warehouse_categories wc ON wi.category_id = wc.id
-        LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
-        LEFT JOIN warehouses w ON sm.warehouse_id = w.id
-        LEFT JOIN departments d ON w.department_id = d.id
-        WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
-               OR sm.movement_type = 'expense')
-          AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
-          AND wc_p.name = '原材料'
-        GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
-      `, [lastYM]);
-      const lastMatrix = buildMatrix(lastRows, deptIdsSorted, deptNameMap, allCategories);
+      const lastCombinedRows = await fetchMaterialConsumptionRows({
+        month: lastYM, catRows, deptNameToId: deptNameToIdMap, includePurchase: true
+      });
+      const lastMatrix = buildMatrix(lastCombinedRows, deptIdsSorted, deptNameMap, allCategories);
       lastMonth = { grandTotal: lastMatrix.grandTotal, totals: lastMatrix.totals, month: lastYM };
     } catch (e) { /* ignore */ }
 
@@ -336,14 +398,16 @@ router.get('/fixed-assets/detail', async (req, res) => {
   }
 });
 
-/** 原材料消耗明细 */
+/** 原材料消耗明细（双数据源：stock_movements + purchase_records 分类汇总） */
 router.get('/material-consumption/detail', async (req, res) => {
   try {
     const { category_id, department_id, month } = req.query;
     if (!category_id || !department_id || !month) {
       return res.status(400).json({ error: '缺少参数' });
     }
-    const [rows] = await pool.query(`
+
+    // 1. stock_movements 明细（原样，用于 Tab 1「仓库消耗」）
+    const [stockRows] = await pool.query(`
       SELECT sm.id, wi.name as item_name, sm.quantity, sm.unit,
              IFNULL(sm.unit_price, 0) as unit_price,
              IFNULL(sm.total_amount, 0) as total_amount,
@@ -359,12 +423,81 @@ router.get('/material-consumption/detail', async (req, res) => {
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
       ORDER BY sm.created_at DESC
     `, [category_id, department_id, month]);
-    res.json(rows.map(r => ({
-      ...r,
-      quantity: toNum(r.quantity),
-      unit_price: toNum(r.unit_price),
-      total_amount: toNum(r.total_amount),
-    })));
+
+    // 2. purchase_records 分类汇总（用于 Tab 2「食材采购」）
+    let purchaseSummary = [];
+    try {
+      // 2a. 查出原材料 L2 分类名 + 对应映射的食材采购分类名集合
+      const [catInfoRows] = await pool.query(`
+        SELECT wc.name as l2Name, wc_p.name as l1Name
+        FROM warehouse_categories wc
+        LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+        WHERE wc.id = ?
+      `, [category_id]);
+
+      if (catInfoRows.length > 0) {
+        const rawL2Name = catInfoRows[0].l2Name;
+        const purchaseCatNames = getPurchaseCatsForRaw(rawL2Name);
+
+        if (purchaseCatNames.length > 0) {
+          // 2b. 查出该 department_id 对应的部门名 + 所有子部门名（用于匹配 purchase_records.department_name）
+          const [deptInfoRows] = await pool.query(`
+            SELECT d.name FROM departments d WHERE d.id = ?
+          `, [department_id]);
+
+          if (deptInfoRows.length > 0) {
+            const deptName = deptInfoRows[0].name;
+            // 构建归并前的原始部门名集合：deptName + 所有被 DEPT_MERGE_MAP 归并到它的子部门名
+            const originalDeptNames = [deptName];
+            for (const [subName, parentName] of Object.entries(DEPT_MERGE_MAP)) {
+              if (parentName === deptName && !originalDeptNames.includes(subName)) {
+                originalDeptNames.push(subName);
+              }
+            }
+
+            // 2c. 按 purchase 分类名汇总
+            const placeholders = originalDeptNames.map(() => '?').join(',');
+            const catPlaceholders = purchaseCatNames.map(() => '?').join(',');
+            const [purchaseAgg] = await pool.query(`
+              SELECT pr.category_name,
+                     ROUND(SUM(pr.amount), 2) as amount,
+                     COUNT(*) as purchases_count
+              FROM purchase_records pr
+              WHERE DATE_FORMAT(pr.date, '%Y-%m') = ?
+                AND pr.department_name IN (${placeholders})
+                AND pr.category_name IN (${catPlaceholders})
+              GROUP BY pr.category_name
+              ORDER BY amount DESC
+            `, [month, ...originalDeptNames, ...purchaseCatNames]);
+
+            purchaseSummary = purchaseAgg.map(r => ({
+              category_name: r.category_name,
+              amount: toNum(r.amount),
+              purchases_count: Number(r.purchases_count),
+            }));
+          }
+        }
+      }
+    } catch (e) {
+      // 采购明细查询失败不影响主数据
+      console.warn('[material-consumption detail] purchase_summary failed:', e.message);
+    }
+
+    // 计算合计
+    const purchaseTotal = purchaseSummary.reduce((s, r) => s + toNum(r.amount), 0);
+    const purchaseTotalCount = purchaseSummary.reduce((s, r) => s + r.purchases_count, 0);
+
+    res.json({
+      stock_movements: stockRows.map(r => ({
+        ...r,
+        quantity: toNum(r.quantity),
+        unit_price: toNum(r.unit_price),
+        total_amount: toNum(r.total_amount),
+      })),
+      purchase_summary: purchaseSummary,
+      purchase_total: toNum(purchaseTotal),
+      purchase_total_count: purchaseTotalCount,
+    });
   } catch (err) {
     console.error('[material-consumption detail] error:', err);
     res.status(500).json({ error: err.message });
@@ -554,7 +687,11 @@ router.get('/pdf/material-consumption', async (req, res) => {
     const [deptRows] = await pool.query(`SELECT id, name FROM departments ORDER BY created_at ASC`);
     const deptIdsSorted = deptRows.map(d => d.id);
     const deptNameMap = {};
-    for (const d of deptRows) deptNameMap[d.id] = d.name;
+    const deptNameToIdMap = {};
+    for (const d of deptRows) {
+      deptNameMap[d.id] = d.name;
+      deptNameToIdMap[d.name] = d.id;
+    }
 
     const [catRows] = await pool.query(`
       SELECT wc.id as l2Id, wc.name as l2Name,
@@ -570,24 +707,11 @@ router.get('/pdf/material-consumption', async (req, res) => {
       l2Id: c.l2Id, l2Name: c.l2Name
     }));
 
-    const [rows] = await pool.query(`
-      SELECT wc.id as category_id, wc.name as category,
-             wc.parent_id as category_parent_id, wc_p.name as category_parent,
-             w.department_id as dept_id, d.name as dept_name,
-             SUM(IFNULL(sm.total_amount, 0)) as amount
-      FROM stock_movements sm
-      JOIN warehouse_items wi ON sm.item_id = wi.id
-      JOIN warehouse_categories wc ON wi.category_id = wc.id
-      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
-      LEFT JOIN warehouses w ON sm.warehouse_id = w.id
-      LEFT JOIN departments d ON w.department_id = d.id
-      WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
-             OR sm.movement_type = 'expense')
-        AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
-        AND wc_p.name = '原材料'
-      GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
-    `, [month]);
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
+    // 与主接口一致：合并 stock_movements + purchase_records
+    const combinedRows = await fetchMaterialConsumptionRows({
+      month, catRows, deptNameToId: deptNameToIdMap, includePurchase: true
+    });
+    const matrix = buildMatrix(combinedRows, deptIdsSorted, deptNameMap, allCategories);
     const [y, m] = month.split('-');
     const subtitle = `统计月份：${y}年${parseInt(m)}月    合计消耗：¥${toNum(matrix.grandTotal).toFixed(2)}`;
     const buf = await generateReportPDF({
