@@ -407,6 +407,33 @@ export default function BookingConfirmPage() {
           </div>
         </div>
 
+        {/* R3：最近变更（仅 lastEditDiff 有值时显示）*/}
+        {(() => {
+          const raw = (order as any).last_edit_diff ?? (order as any).lastEditDiff;
+          let diff: any = null;
+          try { diff = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { diff = null; }
+          if (!diff || !Array.isArray(diff.changes) || diff.changes.length === 0) return null;
+          return (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <div className="flex items-center gap-1.5 mb-3">
+                <span className="text-base">🔄</span>
+                <span className="text-sm font-semibold text-amber-800">最近变更</span>
+                <span className="text-xs text-amber-600 ml-1">由 {diff.operator || '—'} · {diff.time || ''}</span>
+              </div>
+              <div className="space-y-2">
+                {diff.changes.map((c: any, idx: number) => (
+                  <div key={idx} className="flex items-start gap-2 text-xs">
+                    <span className="font-medium text-gray-600 flex-shrink-0 min-w-[58px]">{c.field}</span>
+                    <span className="text-red-600 line-through">{c.from}</span>
+                    <span className="text-gray-300">→</span>
+                    <span className="text-green-700 font-medium">{c.to}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* 联系信息 */}
         <InfoCard icon={<User size={16} className="text-blue-500" />} title="联系信息">
           <Row label="联系人" value={order.contactName || '—'} />
