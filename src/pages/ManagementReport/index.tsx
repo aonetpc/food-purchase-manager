@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, FileDown, X, AlertCircle, ClipboardCheck, Search, Filter } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -105,24 +106,24 @@ function TrendBadge({ rate, compact }: { rate: number | null; compact?: boolean 
   return <span className="inline-flex items-center gap-0.5 text-gray-400 text-xs">0%</span>;
 }
 
-function DetailModal({ open, title, onClose, rows, columns }: {
+function DetailModal({
+  open, title, onClose,
+  rows, columns,
+  // Tab 模式：如果提供了 tabSections，则用 tab 切换；否则走单表模式
+  tabSections,
+}: {
   open: boolean;
   title: string;
   onClose: () => void;
-  rows: any[] | null;
-  columns: { key: string; label: string; align?: 'left' | 'right'; format?: (v: any) => string }[];
+  rows?: any[] | null;
+  columns?: { key: string; label: string; align?: 'left' | 'right'; format?: (v: any) => string }[];
+  tabSections?: { label: string; rows: any[] | null; columns: { key: string; label: string; align?: 'left' | 'right'; format?: (v: any) => string }[]; footer?: React.ReactNode }[];
 }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div
-        className="bg-white w-full sm:max-w-xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
-          <h3 className="font-semibold text-gray-800 text-sm">{title}</h3>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-md"><X size={16}/></button>
-        </div>
+  // 单表模式
+  function SingleTable() {
+    if (!open) return null;
+    return (
+      <>
         <div className="flex-1 overflow-auto">
           {!rows ? (
             <div className="py-12 text-center text-gray-400"><p className="text-xs">加载中...</p></div>
@@ -136,7 +137,7 @@ function DetailModal({ open, title, onClose, rows, columns }: {
               <table className="min-w-full">
                 <thead>
                   <tr className="bg-gray-50/60">
-                    {columns.map(col => (
+                    {columns!.map(col => (
                       <th
                         key={col.key}
                         className="px-3 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide"
@@ -150,7 +151,7 @@ function DetailModal({ open, title, onClose, rows, columns }: {
                 <tbody className="divide-y divide-gray-100">
                   {rows.map((row, i) => (
                     <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}>
-                      {columns.map(col => {
+                      {columns!.map(col => {
                         const val = row[col.key];
                         const text = col.format ? col.format(val) : (val === undefined || val === null || val === '' ? '-' : String(val));
                         return (
@@ -170,6 +171,102 @@ function DetailModal({ open, title, onClose, rows, columns }: {
             </div>
           )}
         </div>
+      </>
+    );
+  }
+
+  // Tab 模式
+  function TabbedSections() {
+    const [activeTab, setActiveTab] = useState(0);
+    const section = tabSections![activeTab];
+
+    return (
+      <>
+        {/* Tab 切换栏 */}
+        <div className="flex gap-1 px-4 pt-3 border-b border-gray-100">
+          {tabSections!.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => setActiveTab(i)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
+                i === activeTab
+                  ? 'bg-primary-50 text-primary-700 border-b-2 border-primary-500 -mb-px'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {!section.rows ? (
+            <div className="py-12 text-center text-gray-400"><p className="text-xs">加载中...</p></div>
+          ) : section.rows.length === 0 ? (
+            <div className="py-12 text-center text-gray-400">
+              <AlertCircle size={28} className="mx-auto mb-2 opacity-50"/>
+              <p className="text-xs">暂无数据</p>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="bg-gray-50/60">
+                      {section.columns.map(col => (
+                        <th
+                          key={col.key}
+                          className="px-3 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide"
+                          style={{ textAlign: col.align || 'left' }}
+                        >
+                          {col.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {section.rows.map((row, i) => (
+                      <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}>
+                        {section.columns.map(col => {
+                          const val = row[col.key];
+                          const text = col.format ? col.format(val) : (val === undefined || val === null || val === '' ? '-' : String(val));
+                          return (
+                            <td
+                              key={col.key}
+                              className="px-3 py-2 text-[11px] text-gray-700"
+                              style={{ textAlign: col.align || 'left' }}
+                            >
+                              {text}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {section.footer && (
+                <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-2.5">{section.footer}</div>
+              )}
+            </>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div
+        className="bg-white w-full sm:max-w-xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800 text-sm">{title}</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-md"><X size={16}/></button>
+        </div>
+        {tabSections ? <TabbedSections /> : <SingleTable />}
       </div>
     </div>
   );
@@ -204,8 +301,11 @@ export default function ManagementReport() {
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailTitle, setDetailTitle] = useState('');
+  // 单表模式（固定资产明细）
   const [detailRows, setDetailRows] = useState<any[] | null>(null);
   const [detailCols, setDetailCols] = useState<any[]>([]);
+  // Tab 模式（原材料消耗明细：仓库消耗 + 食材采购）
+  const [detailTabSections, setDetailTabSections] = useState<{ label: string; rows: any[] | null; columns: any[]; footer?: ReactNode }[] | null>(null);
 
   // 部门费用明细状态
   const { departments, fetchDepartments } = useDepartmentStore();
@@ -322,6 +422,7 @@ export default function ManagementReport() {
     if (!opts.value || Number(opts.value) === 0) return;
     setDetailTitle(`${opts.departmentName} · ${opts.categoryName}`);
     setDetailRows(null);
+    setDetailTabSections(null);
     setDetailOpen(true);
     try {
       if (opts.type === 'fixed') {
@@ -335,18 +436,50 @@ export default function ManagementReport() {
         ]);
         setDetailRows(Array.isArray(rows) ? rows : (rows as any).data ?? []);
       } else {
-        const rows = await api.get(`/reports/material-consumption/detail?category_id=${opts.categoryId}&department_id=${opts.departmentId}&month=${yearMonth}`);
-        setDetailCols([
+        const data = await api.get(`/reports/material-consumption/detail?category_id=${opts.categoryId}&department_id=${opts.departmentId}&month=${yearMonth}`) as any;
+        const result = Array.isArray(data) ? data : (data.data ?? data);
+
+        // Tab 1：仓库消耗（stock_movements 明细）
+        const stockCols = [
           { key: 'created_at', label: '时间' },
           { key: 'item_name', label: '物资名称' },
           { key: 'operator_name', label: '操作人' },
           { key: 'quantity', label: '数量', align: 'right' as const, format: (v: any) => Math.abs(Number(v) || 0) + ' 件' },
           { key: 'total_amount', label: '金额', align: 'right' as const, format: (v: any) => formatCurrency(Math.abs(Number(v) || 0)) },
+        ];
+
+        // Tab 2：食材采购（按采购分类汇总）
+        const purchaseCols = [
+          { key: 'category_name', label: '采购分类' },
+          { key: 'amount', label: '金额', align: 'right' as const, format: (v: any) => formatCurrency(Number(v) || 0) },
+          { key: 'purchases_count', label: '笔数', align: 'right' as const },
+        ];
+
+        setDetailTabSections([
+          {
+            label: '仓库消耗',
+            rows: result.stock_movements ?? [],
+            columns: stockCols,
+          },
+          {
+            label: '食材采购',
+            rows: result.purchase_summary ?? [],
+            columns: purchaseCols,
+            footer: (
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span className="text-gray-500">合计</span>
+                <div className="flex items-center gap-4">
+                  <span className="font-semibold text-primary-700">{formatCurrency(Number(result.purchase_total) || 0)}</span>
+                  <span className="text-gray-400">{result.purchase_total_count || 0} 笔</span>
+                </div>
+              </div>
+            ),
+          },
         ]);
-        setDetailRows(Array.isArray(rows) ? rows : (rows as any).data ?? []);
       }
     } catch (e) {
       setDetailRows([]);
+      setDetailTabSections(null);
     }
   };
 
@@ -520,7 +653,14 @@ export default function ManagementReport() {
         />
       )}
 
-      <DetailModal open={detailOpen} title={detailTitle} onClose={() => setDetailOpen(false)} rows={detailRows} columns={detailCols}/>
+      <DetailModal
+        open={detailOpen}
+        title={detailTitle}
+        onClose={() => { setDetailOpen(false); setDetailTabSections(null); }}
+        rows={detailRows}
+        columns={detailCols}
+        tabSections={detailTabSections}
+      />
     </div>
   );
 }
