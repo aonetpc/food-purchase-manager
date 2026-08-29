@@ -396,7 +396,7 @@ const onSaveAndNext = async () => {
 if (!pkg && !loading) return <div className="p-8 text-center text-gray-400">套餐不存在</div>;
 
 return (
-  <div className="min-h-screen bg-gradient-to-b from-green-50 via-[#faf7ee] to-[#f2efe3] pb-40">
+  <div className="min-h-full bg-gradient-to-b from-green-50 via-[#faf7ee] to-[#f2efe3] pb-40">
     {/* Header */}
     <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
       <div className="px-4 pt-3 pb-2 flex items-center justify-between">

@@ -44,7 +44,7 @@ export default function CheckupDesktopFrame() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto min-h-0">
         <CheckupApp />
       </div>
     </div>

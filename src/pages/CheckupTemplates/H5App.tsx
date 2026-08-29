@@ -8,7 +8,7 @@ import WizardFinish from './WizardFinish';
 
 export default function H5App() {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-full bg-gray-50">
       <Routes>
         <Route index element={<ListPage />} />
         <Route path="new" element={<WizardNew />} />

@@ -290,8 +290,16 @@ export const useAuthStore = create<AuthStore>()(
             icon: 'Calendar',
           });
         }
-        // 体检配单：由 RBAC（menu:checkup-templates 权限）控制显示，移除「所有用户可见」兜底
-        // 直接输 URL 仍可访问（作为自建应用入口），仅侧边栏菜单按权限控制
+        // 体检配单兜底：admin/boss/sales/manager 级用户可见（migration 103 可能未跑或 DB 权限缺失）
+        if (!mergedMenus.some(m => m.path === '/checkup-templates') &&
+            (isManagerUser || userRoles.includes('admin') || userRoles.includes('sales') || userRoles.includes('boss'))) {
+          mergedMenus.push({
+            code: 'menu:checkup-templates',
+            name: '体检配单',
+            path: '/checkup-templates',
+            icon: 'ClipboardCheck',
+          });
+        }
         // 体检中心：独立管理页面（体检项目库 + 体检套餐管理）。
         //  - admin/boss/manager 级用户：完整可写
         //  - booker（预订员）：可见菜单，页面内为只读模式（操作按钮禁用）
