@@ -128,9 +128,56 @@ function toNum(v) {
   return isNaN(n) ? 0 : n;
 }
 function round2(n) { return Math.round(toNum(n) * 100) / 100; }
-function isAdminOrManager(user) {
-  const role = (user.role || '').toLowerCase();
-  return role === 'admin' || role === 'boss' || role === 'manager';
+/**
+ * 判断用户是否拥有管理员/董事长/manager 级权限
+ * 三级兜底（与 rbac.js requireRole / requireBookingAdmin 保持一致）：
+ *   1. user.role 主角色命中
+ *   2. 多角色表（user_roles UNION users.role_id）兜底查询
+ *   3. permissionCodes 权限码降级（menu:permission / menu:users 等管理级权限）
+ */
+async function isAdminOrManager(user) {
+  if (!user) return false;
+  const ADMIN_ROLES = ['admin', 'boss', 'manager'];
+
+  // 1. 主角色命中
+  const mainRole = (user.role || '').toLowerCase();
+  if (ADMIN_ROLES.includes(mainRole)) return true;
+
+  // 2. 多角色表兜底查询（只有当 user.id 存在时才查库）
+  if (user.id) {
+    try {
+      const [roleCodeRows] = await pool.query(`
+        SELECT DISTINCT r.code
+        FROM (
+          SELECT role_id FROM user_roles WHERE user_id = ?
+          UNION
+          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+        ) t
+        JOIN roles r ON r.id = t.role_id
+      `, [user.id, user.id]);
+      const userRoleCodes = roleCodeRows.map(r => (r.code || '').toLowerCase());
+      if (ADMIN_ROLES.some(r => userRoleCodes.includes(r))) return true;
+    } catch (_) {
+      // 查询失败保守处理：继续走第 3 层
+    }
+  }
+
+  // 3. permissionCodes 权限码降级（有任一管理级权限即视为管理员）
+  if (user.permissionCodes && user.permissionCodes.size > 0) {
+    const adminPermCodes = [
+      'menu:permission', 'menu:users', 'menu:roles',
+      'menu:departments', 'menu:wecom', 'action:booking:config',
+    ];
+    if (adminPermCodes.some(code => user.permissionCodes.has(code))) return true;
+  }
+  // 兼容：旧场景 permissions.codes 是字符串数组
+  const permArr = (user.permissions && user.permissions.codes) ? user.permissions.codes : null;
+  if (Array.isArray(permArr) && permArr.length > 0) {
+    const adminPermCodes = ['menu:permission','menu:users','menu:roles','menu:departments','menu:wecom','action:booking:config'];
+    if (adminPermCodes.some(code => permArr.includes(code))) return true;
+  }
+
+  return false;
 }
 // SQL JSON_CONTAINS(JSON, string) 兼容 MySQL 5.7/8.0
 function coverIncludes(coverJsonField, userId) {
@@ -307,8 +354,8 @@ async function readPackageFull(packageId) {
 }
 
 // 校验可见性：当前用户能否看到某套餐
-function canUserViewPackage(user, pkg) {
-  if (isAdminOrManager(user)) return true;
+async function canUserViewPackage(user, pkg) {
+  if (await isAdminOrManager(user)) return true;
   if (pkg.is_public === 1) return true;  // 公共模板所有销售都能克隆（也能看到，保护字段不展示折扣价详情由前端控制）
   if (pkg.owner_sales_id === user.id) return true;
   // 管理员分配给我的
@@ -316,8 +363,8 @@ function canUserViewPackage(user, pkg) {
   if (Array.isArray(covers) && covers.includes(user.id)) return true;
   return false;
 }
-function canUserEditPackage(user, pkg) {
-  if (isAdminOrManager(user)) return true;
+async function canUserEditPackage(user, pkg) {
+  if (await isAdminOrManager(user)) return true;
   // 销售只能编辑自己创建的；公共模板和分配给我的只能克隆不能改
   return pkg.owner_sales_id === user.id;
 }
@@ -340,7 +387,7 @@ router.get('/', async (req, res) => {
     const args = [];
 
     // 可见性 + scope 过滤（管理员 / 销售均按 Tab 切）
-    if (!isAdminOrManager(user)) {
+    if (!(await isAdminOrManager(user))) {
       // 销售：三Tab严格区分，避免"我的套餐"混入公共模板
       if (scope === 'mine') {
         clauses.push(`owner_sales_id = ?`);
@@ -492,7 +539,7 @@ router.post('/', async (req, res) => {
     if (roleArr.length === 0) return res.status(400).json({ ok: false, error: '至少选择一种适用角色' });
 
     // 只有管理员能建公共套餐
-    const pubFlag = (is_public === true || is_public === 1) && isAdminOrManager(user) ? 1 : 0;
+    const pubFlag = (is_public === true || is_public === 1) && (await isAdminOrManager(user)) ? 1 : 0;
 
     const id = uuidv4();
     let finalCode = code && String(code).trim() ? String(code).trim() : 'PK' + Date.now().toString().slice(-8);
@@ -567,7 +614,7 @@ router.get('/brand-config', async (req, res) => {
 // ---- 品牌配置：写（管理员） ----
 router.put('/brand-config', async (req, res) => {
   try {
-    if (!isAdminOrManager(req.user)) return res.status(403).json({ ok: false, error: '仅管理员可设置品牌信息' });
+    if (!(await isAdminOrManager(req.user))) return res.status(403).json({ ok: false, error: '仅管理员可设置品牌信息' });
     const b = req.body || {};
     // 字段映射：同时兼容前端短名(phone/address)和DB长名(company_phone/company_address)
     const pick = (keys) => {
@@ -706,7 +753,7 @@ router.get('/:id', async (req, res) => {
   try {
     const pkg = await readPackageFull(req.params.id);
     if (!pkg) return res.status(404).json({ ok: false, error: '套餐不存在' });
-    if (!canUserViewPackage(req.user, pkg)) {
+    if (!(await canUserViewPackage(req.user, pkg))) {
       return res.status(403).json({ ok: false, error: '无权查看此套餐' });
     }
     res.json({ ok: true, data: pkg });
@@ -726,7 +773,7 @@ router.put('/:id', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM booking_packages WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
     const pkg = rows[0];
-    if (!canUserEditPackage(req.user, pkg)) {
+    if (!(await canUserEditPackage(req.user, pkg))) {
       return res.status(403).json({ ok: false, error: '无权编辑此套餐' });
     }
     const {
@@ -778,7 +825,7 @@ router.delete('/:id', async (req, res) => {
     const [rows] = await conn.query('SELECT * FROM booking_packages WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
     const pkg = rows[0];
-    if (!canUserEditPackage(req.user, pkg)) {
+    if (!(await canUserEditPackage(req.user, pkg))) {
       return res.status(403).json({ ok: false, error: '无权删除此套餐' });
     }
     await conn.query('DELETE FROM booking_package_items WHERE package_id = ?', [pkg.id]);
@@ -810,7 +857,7 @@ router.post('/:id/clone', async (req, res) => {
     if (src.length === 0) return res.status(404).json({ ok: false, error: '源套餐不存在' });
     const srcPkg = src[0];
     // 可见性：公共的谁都能克隆；自己的可以克隆；管理员可克隆任何
-    if (!isAdminOrManager(req.user)
+    if (!(await isAdminOrManager(req.user))
         && !(srcPkg.is_public === 1)
         && !(srcPkg.owner_sales_id === req.user.id)) {
       return res.status(403).json({ ok: false, error: '无权克隆此套餐' });
@@ -820,7 +867,7 @@ router.post('/:id/clone', async (req, res) => {
       ? applicable_roles.filter(r => ROLES.includes(r))
       : parseMaybeJson(srcPkg.applicable_roles) || ROLES;
     const newName = String(name || `${srcPkg.name}副本`).trim();
-    const adminMode = isAdminOrManager(req.user);
+    const adminMode = await isAdminOrManager(req.user);
     const newId = uuidv4();
     const code = (srcPkg.code ? srcPkg.code : 'PK') + '_' + Date.now().toString().slice(-6);
 
@@ -904,7 +951,7 @@ router.put('/:id/items-batch', async (req, res) => {
     const [rows] = await conn.query('SELECT * FROM booking_packages WHERE id = ? FOR UPDATE', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
     const pkg = rows[0];
-    if (!canUserEditPackage(req.user, pkg)) {
+    if (!(await canUserEditPackage(req.user, pkg))) {
       return res.status(403).json({ ok: false, error: '无权编辑此套餐' });
     }
     const { role_plans: rolePlansInput = {} } = req.body || {};
@@ -1070,7 +1117,7 @@ router.put('/:id/items-batch', async (req, res) => {
  */
 router.put('/:id/cover-sales', async (req, res) => {
   try {
-    if (!isAdminOrManager(req.user)) return res.status(403).json({ ok: false, error: '仅管理员可分配套餐' });
+    if (!(await isAdminOrManager(req.user))) return res.status(403).json({ ok: false, error: '仅管理员可分配套餐' });
     const [rows] = await pool.query('SELECT * FROM booking_packages WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
     const { sales_ids = [] } = req.body || {};
@@ -1180,10 +1227,10 @@ router.post('/:id/share', async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
     const pkg = rows[0];
     // 分享权限：能看 + （管理员/自己创建/公共模板/分配给我）
-    if (!canUserViewPackage(req.user, pkg)) {
+    if (!(await canUserViewPackage(req.user, pkg))) {
       return res.status(403).json({ ok: false, error: '无权生成分享链接' });
     }
-    if (!isAdminOrManager(req.user) && pkg.owner_sales_id !== req.user.id) {
+    if (!(await isAdminOrManager(req.user)) && pkg.owner_sales_id !== req.user.id) {
       const covers = parseMaybeJson(pkg.cover_sales_ids);
       const isAssigned = Array.isArray(covers) && covers.includes(req.user.id);
       if (!pkg.is_public && !isAssigned) {
@@ -1376,7 +1423,7 @@ router.get('/:id/pdf', async (req, res) => {
     const { role = 'all' } = req.query;
     const pkg = await readPackageFull(req.params.id);
     if (!pkg) return res.status(404).json({ ok: false, error: '套餐不存在' });
-    if (!canUserViewPackage(req.user, pkg)) {
+    if (!(await canUserViewPackage(req.user, pkg))) {
       // 也接受token方式：/pdf?share_token=xxx
       const t = req.query.share_token;
       if (!t || pkg.share_token !== t) {
