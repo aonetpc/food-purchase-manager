@@ -1374,47 +1374,122 @@ function findChineseBoldFont() {
 }
 
 /** PDF 明细渲染 helper：按分类输出项目 + 组合子项缩进灰字。
- *  用户要求：
+ *  用户要求 (feat/106)：
  *    - 不显示数量 / 单价 / 小计三列（不输出表头，只输出项目名单列），
  *      套餐顶部的"原价 / 折后价"与底部"合计"金额保持不变。
  *    - 组合项目若 booking_item_sub_items 配过子项 → 项目名下方灰字缩进逐行显示子项目名（· 前缀）；
  *      没配子项 → 不显示任何灰色字。
- *    - 除了这些变化，其他页面 / 页眉页脚 / 合计样式完全保持，不做任何改动。
+ *    - feat/106 追加：
+ *      (a) 每个分类渲染前预判剩余空间，不够就换页（避免「分类标题 + 1 行」孤零零飘在页底）
+ *      (b) 行距统一增量（doc.y 推进 6px / 项），修复旧版「y += 18」和 doc.text() 自增叠加导致的间隙越来越大
+ *      (c) 分类之间加分隔横线（strokeColor '#eee8dd'），避免糊成一团
+ *      (d) 子项字号 8→8.5pt、颜色 #888→#6b7280，提升可读性
+ *      (e) 按 "category + sub_category" 两级分类（与前端一致），sub 不同就拆开显示
  */
 function renderPdfItemsSection(doc, items, ctx) {
   const { FONT_REG, FONT_BOLD } = ctx;
-  const byCat = new Map();
-  for (const it of items) {
-    const c = it.category || '其他';
-    if (!byCat.has(c)) byCat.set(c, []);
-    byCat.get(c).push(it);
+  const PAGE_BOTTOM = 800;        // 页面内容区下边界（A4 margin 40 预留 40）
+  const PAGE_TOP_AFTER_BREAK = 60;
+
+  // 分类 key：category + '|' + (sub_category || '')，两级分类与前端 SharePage.groupByCategory 对齐
+  const bySub = new Map();
+  const SUB_DISPLAY_NAME = ctx.SUB_DISPLAY_NAME || {
+    '体格检查': '基础体检',
+    '五官科': '基础体检',
+    '耳鼻喉科': '基础体检',
+    '检验科-basic': '基础体检',
+    '检验科-lipid': '心脑血管与血脂',
+    '心电图': '心脑血管与血脂',
+    '超声科-vascular': '心脑血管与血脂',
+    '功能科-vascular': '心脑血管与血脂',
+    '放射科': '影像检查',
+    '超声科-imaging': '影像检查',
+    '检验科-hepatic': '肝胆功能',
+    '检验科-renal': '肾功能',
+    '检验科-glucose': '糖尿病筛查',
+    '检验科-tumor': '肿瘤标志物',
+    '病理科': '妇科两癌筛查',
+    '妇科': '妇科两癌筛查',
+  };
+  function displaySub(it) {
+    if (it.sub_category) return it.sub_category;
+    if (SUB_DISPLAY_NAME[it.category]) return SUB_DISPLAY_NAME[it.category];
+    // 兜底：按 item 关键词推断
+    const nm = (it.item_name_snapshot || it.item_id || it.name || '').toString();
+    if (/TCT|液基|HPV|乳头瘤|妇科|两癌/i.test(nm)) return '妇科两癌筛查';
+    if (/PSA|AFP|CEA|CA\d|肿瘤|癌标/i.test(nm)) return '肿瘤标志物';
+    if (/CT|DR|彩超|钼靶|放射|影像|超声/i.test(nm)) return '影像检查';
+    if (/心电|血脂|胆固醇|同型|动脉硬化|动脉|LDL|HDL|甘油|肌酸|载脂|胱抑/i.test(nm)) return '心脑血管与血脂';
+    if (/胆红素|ALT|AST|谷丙|谷草|蛋白|GGT|ALP|肝胆/i.test(nm)) return '肝胆功能';
+    if (/尿酸|尿素|肌酐|肾|Cys|肾小球|β2|微球/i.test(nm)) return '肾功能';
+    if (/血糖|糖化|胰岛素|GLU|HbA1c/i.test(nm)) return '糖尿病筛查';
+    return it.category || '其他';
   }
-  for (const [cat, catItems] of byCat.entries()) {
-    if (doc.y + 3 * 18 > 800) doc.addPage();
-    doc.fontSize(11).font(FONT_BOLD).fillColor('#1f2937').text(`【${cat}】`);
-    doc.font(FONT_REG);
-    // 按用户要求：去掉数量/单价/小计表头，只保留项目名列表
-    // 分隔横线 + 项目 + 子项灰字缩进逐行
-    let y = doc.y + 2;
+
+  for (const it of items) {
+    const sub = displaySub(it);
+    if (!bySub.has(sub)) bySub.set(sub, []);
+    bySub.get(sub).push(it);
+  }
+
+  // 预估单个分类需要多少高度（像素）
+  function estimateCategoryHeight(catItems) {
+    let h = 22; // 分类标题行
     for (const it of catItems) {
-      const name = it.item_name_snapshot || it.item_id || '-';
+      h += 14; // 主项行 (10pt 行高)
       const subs = Array.isArray(it.sub_item_names) ? it.sub_item_names : null;
-      doc.moveTo(40, y).lineTo(560, y).strokeColor('#eee').stroke();
-      doc.fontSize(10).fillColor('#000').font(FONT_REG)
-         .text(name, 40, y + 3, { width: 510 });
-      y = doc.y + 4;
       if (subs && subs.length > 0) {
-        doc.fontSize(8).fillColor('#888').font(FONT_REG);
-        for (const s of subs) {
-          if (y > 798) { doc.addPage(); y = 60; }
-          doc.text(`· ${s}`, 58, y, { width: 490 });
-          y = doc.y + 2;
-        }
-        y += 2;
+        h += 6 + subs.length * 10.5; // 子项 8.5pt 行高 10.5
       }
-      if (y > 800) { doc.addPage(); y = 60; }
     }
-    doc.y = Math.max(doc.y, y + 5);
+    h += 10; // 分类之间分隔 + 空白
+    return h;
+  }
+
+  let y;
+  for (const [sub, catItems] of bySub.entries()) {
+    const est = estimateCategoryHeight(catItems);
+    // 如果当前页剩余空间不足以放下整段分类（含底部留白 30px），直接换页 — 彻底解决「一页只有几个字」
+    if (doc.y + est > PAGE_BOTTOM - 30) {
+      doc.addPage();
+      doc.y = PAGE_TOP_AFTER_BREAK;
+    }
+    // 分类标题
+    doc.fontSize(11).font(FONT_BOLD).fillColor('#111827').text(`【${sub}】`);
+    // 分类之间分隔横线（柔和浅棕，避免糊成一团）
+    y = doc.y + 4;
+    doc.moveTo(40, y).lineTo(560, y).strokeColor('#eee8dd').lineWidth(0.6).stroke();
+    doc.lineWidth(1);
+    y += 4;
+    doc.y = y;
+
+    for (const it of catItems) {
+      const name = it.item_name_snapshot || it.item_id || it.name || '-';
+      const subs = Array.isArray(it.sub_item_names) ? it.sub_item_names : null;
+      // 主项分页保护：如果剩余 < 30px 就换页（避免主项在页底、子项翻到下一页断开）
+      if (doc.y + (subs && subs.length ? 30 : 18) > PAGE_BOTTOM - 10) {
+        doc.addPage();
+        doc.y = PAGE_TOP_AFTER_BREAK;
+      }
+      doc.fontSize(10).fillColor('#111827').font(FONT_REG)
+         .text(name, 44, doc.y, { width: 506 });
+      doc.y = doc.y + 6;   // 统一主项后增量（不再 y += 18 硬编码）
+
+      if (subs && subs.length > 0) {
+        doc.fontSize(8.5).fillColor('#6b7280').font(FONT_REG); // 字号略升 + 颜色提深
+        for (const s of subs) {
+          if (doc.y > PAGE_BOTTOM - 12) {
+            doc.addPage();
+            doc.y = PAGE_TOP_AFTER_BREAK;
+            doc.fontSize(8.5).fillColor('#6b7280').font(FONT_REG);
+          }
+          doc.text(`· ${s}`, 62, doc.y, { width: 490 });
+          doc.y = doc.y + 4.5;
+        }
+        doc.y = doc.y + 2;
+      }
+    }
+    doc.y = doc.y + 8;   // 分类尾部留白
   }
 }
 
@@ -1589,41 +1664,13 @@ sharePublicRouter.get('/:token/pdf', async (req, res) => {
       const meta = ROLE_META[r] || { name: r, emoji: '' };
       const plan = full.role_plans[r] || { original_total: 0, discount_price: 0, discount_rate: 100 };
       const items = (full.role_items[r] && full.role_items[r].items) || [];
-      doc.fontSize(14).font(FONT_BOLD).fillColor('#1f4e3d').text(`${meta.emoji} ${meta.name}方案`);
+      doc.fontSize(14).font(FONT_BOLD).fillColor('#134e3a').text(`${meta.emoji} ${meta.name}方案`);
       doc.fontSize(11).font(FONT_REG).fillColor('#000')
          .text(`原价：¥${round2(plan.original_total).toFixed(2)}    折后价：¥${round2(plan.discount_price).toFixed(2)}    折扣率：${round2(plan.discount_rate).toFixed(2)}%`);
       if (plan.remark) doc.text(`备注：${plan.remark}`);
       doc.moveDown(0.2);
-      const byCat = new Map();
-      for (const it of items) {
-        const c = it.category || '其他';
-        if (!byCat.has(c)) byCat.set(c, []);
-        byCat.get(c).push(it);
-      }
-      for (const [cat, catItems] of byCat.entries()) {
-        doc.fontSize(11).font(FONT_BOLD).fillColor('#1f2937').text(`【${cat}】`);
-        doc.font(FONT_REG);
-        const yH = doc.y;
-        doc.fontSize(9).fillColor('#555').text('项目名称', 40, yH, { width: 300 });
-        doc.text('数量', 340, yH, { width: 60 });
-        doc.text('单价', 400, yH, { width: 70 });
-        doc.text('小计', 470, yH, { width: 70 });
-        let y = doc.y + 2;
-        for (const it of catItems) {
-          const qty = Math.max(1, toNum(it.quantity) || 1);
-          const unit = toNum(it.item_price);
-          const sub = round2(qty * unit);
-          doc.moveTo(40, y).lineTo(560, y).strokeColor('#eee').stroke();
-          doc.fontSize(10).fillColor('#000')
-             .text(it.item_name_snapshot || it.item_id || '-', 40, y + 3, { width: 295 });
-          doc.text(`x${qty}`, 340, y + 3, { width: 55 });
-          doc.text(`¥${unit.toFixed(2)}`, 400, y + 3, { width: 65 });
-          doc.text(`¥${sub.toFixed(2)}`, 470, y + 3, { width: 80, align: 'right' });
-          y += 18;
-          if (y > 800) { doc.addPage(); y = 60; }
-        }
-        doc.y = y + 5;
-      }
+      // feat/106：直接复用升级后的 renderPdfItemsSection（自动去价格列 + 两级分类 + 智能分页 + 分隔线）
+      renderPdfItemsSection(doc, items, { FONT_REG, FONT_BOLD });
       doc.moveDown(0.3);
       doc.fontSize(11).font(FONT_BOLD).fillColor('#b91c1c')
          .text(`${meta.name} 合计：¥${round2(plan.discount_price).toFixed(2)}（原价¥${round2(plan.original_total).toFixed(2)}，折扣${round2(plan.discount_rate).toFixed(2)}%）`, { align: 'right' });
