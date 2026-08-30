@@ -1600,7 +1600,7 @@ function buildCompanyFromCfg(cfg) {
     service_hours: cfg.service_hours || null,
     qualification: cfg.qualification || null,
     wechat_qrcode: cfg.wechat_qrcode || null,
-    primary_color: cfg.primary_color || '#0f5132',
+    primary_color: cfg.primary_color || '#1dbf9a',
   };
 }
 
@@ -1664,7 +1664,7 @@ sharePublicRouter.get('/:token/pdf', async (req, res) => {
       const meta = ROLE_META[r] || { name: r, emoji: '' };
       const plan = full.role_plans[r] || { original_total: 0, discount_price: 0, discount_rate: 100 };
       const items = (full.role_items[r] && full.role_items[r].items) || [];
-      doc.fontSize(14).font(FONT_BOLD).fillColor('#134e3a').text(`${meta.emoji} ${meta.name}方案`);
+      doc.fontSize(14).font(FONT_BOLD).fillColor(company_primary || '#1dbf9a').text(`${meta.emoji} ${meta.name}方案`);
       doc.fontSize(11).font(FONT_REG).fillColor('#000')
          .text(`原价：¥${round2(plan.original_total).toFixed(2)}    折后价：¥${round2(plan.discount_price).toFixed(2)}    折扣率：${round2(plan.discount_rate).toFixed(2)}%`);
       if (plan.remark) doc.text(`备注：${plan.remark}`);
