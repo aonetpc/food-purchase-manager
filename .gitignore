@@ -31,3 +31,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local deploy helper (user machine only, NEVER commit into repository — per project-memory encoding rule, .bat must be pure ASCII English and stay local)
+push-deploy.bat
