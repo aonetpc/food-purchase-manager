@@ -1351,13 +1351,19 @@ router.get('/orders/search', requireAuth, async (req, res) => {
     const [countRows] = await pool.query(`SELECT COUNT(*) AS cnt FROM booking_orders o ${whereSql}`, params);
     const total = Number(countRows[0]?.cnt) || 0;
 
+    // 【Out of sort memory 修复 · 延迟排序(late row lookup)】同 /orders：
+    // 先子查询窄行(id)排序分页，再 JOIN 回主表取宽列 + 聚合，避免 sort_buffer 装签字 JSON 爆。
     const [rows] = await pool.query(`
-      SELECT o.*,
-             (SELECT COALESCE(SUM(bi.pax * bi.amount), 0) FROM booking_items bi WHERE bi.order_id = o.id) AS calc_total
-      FROM booking_orders o
-      ${whereSql}
-      ORDER BY o.created_at DESC
-      LIMIT ? OFFSET ?
+      SELECT orig.*,
+             (SELECT COALESCE(SUM(bi.pax * bi.amount), 0) FROM booking_items bi WHERE bi.order_id = orig.id) AS calc_total
+      FROM (
+        SELECT o.id FROM booking_orders o
+        ${whereSql}
+        ORDER BY o.created_at DESC
+        LIMIT ? OFFSET ?
+      ) AS pick
+      JOIN booking_orders orig ON orig.id = pick.id
+      ORDER BY orig.created_at DESC
     `, [...params, ps, offset]);
 
     const result = [];
@@ -1468,11 +1474,19 @@ router.get('/orders', requireAuth, async (req, res) => {
 
     const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
+    // 【Out of sort memory 修复 · 延迟排序(late row lookup)】
+    // 不要 SELECT o.* 再 ORDER BY（booking_orders 宽列: confirmed_signature(base64签字) /
+    //   wecom_card_response_codes(JSON) / last_edit_diff(JSON) 等会把 sort_buffer 撑爆）。
+    // 改为先在子查询里只 SELECT id 排序(LIMIT 500 窄行不占内存)，再 JOIN 回主表取全字段。
     const [rows] = await conn.query(`
-      SELECT o.* FROM booking_orders o
-      ${whereSql}
-      ORDER BY o.created_at DESC
-      LIMIT 500
+      SELECT orig.* FROM (
+        SELECT o.id FROM booking_orders o
+        ${whereSql}
+        ORDER BY o.created_at DESC
+        LIMIT 500
+      ) AS pick
+      JOIN booking_orders orig ON orig.id = pick.id
+      ORDER BY orig.created_at DESC
     `, params);
 
     if (!rows || rows.length === 0) {
