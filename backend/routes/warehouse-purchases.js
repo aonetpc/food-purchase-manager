@@ -2343,7 +2343,97 @@ router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
   }
 });
 
-// 6. POST /:id/receive — 录入实际收货
+// ================================================
+// 通用辅助：冲回采购单关联的库存和流水
+//   - 删除/修改已收货的采购单时调用
+//   - 严格校验：冲回后库存不能为负，否则拒绝操作
+// ================================================
+async function reversePurchaseStock(connection, purchaseId, strict = true) {
+  // 1. 查该采购单关联的所有 stock_movements
+  const [oldMoves] = await connection.query(
+    `SELECT id, warehouse_id, item_id, quantity, movement_type
+     FROM stock_movements WHERE related_type='purchase' AND related_id=?
+     ORDER BY id ASC`,
+    [purchaseId]
+  );
+
+  if (oldMoves.length === 0) {
+    return { reversed: false, reason: '无关联流水需要冲回' };
+  }
+
+  // 2. 校验 + 逐条冲回库存
+  for (const m of oldMoves) {
+    const [invRows] = await connection.query(
+      'SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ?',
+      [m.warehouse_id, m.item_id]
+    );
+    const currentQty = invRows.length > 0 ? toNum(invRows[0].quantity) : 0;
+    // inbound 流水：库存增加过 +qty，冲回需 -qty
+    // expense 流水：库存减少过 -qty，冲回需 +qty
+    let delta;
+    if (m.movement_type === 'inbound') {
+      delta = -toNum(m.quantity);
+    } else if (m.movement_type === 'expense') {
+      delta = toNum(m.quantity); // expense 的 quantity 是负数，直接加回来等于恢复
+    } else {
+      continue; // 其他 movement_type 暂不处理
+    }
+
+    if (strict) {
+      const newQty = currentQty + delta;
+      if (newQty < 0) {
+        throw new Error(
+          `冲回库存失败：仓库/物资 ${m.warehouse_id}/${m.item_id} 当前库存 ${currentQty}，` +
+          `冲回后将变为 ${newQty}（负数）。可能已有其他出库操作，请先盘点调账。`
+        );
+      }
+    }
+
+    if (invRows.length > 0) {
+      await connection.query(
+        'UPDATE inventory SET quantity = quantity + ? WHERE warehouse_id = ? AND item_id = ?',
+        [delta, m.warehouse_id, m.item_id]
+      );
+    }
+    // 如果 inventory 记录已被删除（极端情况），也不再补，保持现状
+  }
+
+  // 3. 删除旧流水
+  await connection.query(
+    'DELETE FROM stock_movements WHERE related_type = ? AND related_id = ?',
+    ['purchase', purchaseId]
+  );
+
+  return { reversed: true, moveCount: oldMoves.length };
+}
+
+// ================================================
+// 通用辅助：检查采购单是否被预付款核销/月结账单关联
+//   用于判断是否允许删除
+// ================================================
+async function checkPurchaseNoBlocked(connection, purchaseId) {
+  // 检查预付款核销关联
+  const [writeOffRows] = await connection.query(
+    `SELECT id FROM prepay_writeoffs WHERE related_purchase_id = ? LIMIT 1`,
+    [purchaseId]
+  );
+  if (writeOffRows.length > 0) {
+    return { blocked: true, reason: '该采购单已关联预付款核销，无法删除' };
+  }
+
+  // 检查月结账单关联
+  const [monthlyRows] = await connection.query(
+    `SELECT id FROM warehouse_monthly_bill_items WHERE purchase_id = ? LIMIT 1`,
+    [purchaseId]
+  );
+  if (monthlyRows.length > 0) {
+    return { blocked: true, reason: '该采购单已关联月结账单，无法删除' };
+  }
+
+  return { blocked: false };
+}
+
+// 6. POST /:id/receive — 录入实际收货（支持对已收货的采购单重新录入 = 修改收货）
 router.post('/:id/receive', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();
   try {
@@ -2357,15 +2447,26 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const purchaseRow = rows[0];
-    // 允许审批通过的采购单录入收货，也允许状态异常（confirmed但无收货数据）的预付订单重新录入
+    // 允许审批通过 + 已收货 的采购单录入收货（已收货状态 = 修改收货），也允许状态异常（confirmed但无收货数据）的预付订单重新录入
+    const canReceive = ['approved', 'received'].includes(purchaseRow.status);
     const isPrepayFix = purchaseRow.purchase_type === 'prepay' && purchaseRow.status === 'confirmed' && toNum(purchaseRow.actual_amount) <= 0;
-    if (purchaseRow.status !== 'approved' && !isPrepayFix) {
+    if (!canReceive && !isPrepayFix) {
       await connection.rollback();
-      return res.status(400).json({ error: '只有审批通过的采购单可以录入收货' });
+      return res.status(400).json({ error: '只有审批通过或已收货的采购单可以录入/修改收货' });
     }
     if (!Array.isArray(items) || items.length === 0) {
       await connection.rollback();
       return res.status(400).json({ error: '收货明细不能为空' });
+    }
+
+    // 如果已经收货过，先冲回旧库存和流水（严格校验不允许负库存）
+    if (purchaseRow.status === 'received') {
+      try {
+        await reversePurchaseStock(connection, id, true);
+      } catch (reverseErr) {
+        await connection.rollback();
+        return res.status(400).json({ error: reverseErr.message });
+      }
     }
 
     let actualAmount = 0;
@@ -3047,19 +3148,44 @@ router.delete('/:id', requireAuth, async (req, res) => {
     }
 
     const row = rows[0];
-    const userRole = req.user?.role;
-    const isAdmin = userRole === 'admin';
+    // 兼容多角色：req.user.role 单值 + req.user.roles 数组
+    const roleCodes = [req.user?.role, ...(req.user?.roles || []).map(r => typeof r === 'string' ? r : (r && r.code))].filter(Boolean);
+    const isAdmin = roleCodes.includes('admin');
     const isDraftOwner = row.status === 'draft' && row.created_by === req.user.id;
+    const isPendingOwner = row.status === 'pending_approval' && row.created_by === req.user.id; // 审批中创建人可撤回
 
-    if (!isAdmin && !isDraftOwner) {
+    // 1. 非草稿/非审批中 + 非管理员 → 拒绝
+    if (!isAdmin && !isDraftOwner && !isPendingOwner) {
       await connection.rollback();
-      // 区分错误信息：非草稿 / 非本人
-      if (row.status !== 'draft') {
-        return res.status(400).json({ error: '只能删除草稿状态的采购单' });
+      if (row.status === 'draft') {
+        return res.status(403).json({ error: '无权限删除他人创建的采购单' });
       }
-      return res.status(403).json({ error: '无权限删除他人创建的采购单' });
+      if (row.status === 'pending_approval') {
+        return res.status(403).json({ error: '审批中的采购单只有创建人可撤回' });
+      }
+      return res.status(400).json({ error: '该状态的采购单不允许删除（仅管理员可删除已收货/已确认订单）' });
     }
 
+    // 2. 管理员删除已收货/已确认订单：检查是否被预付款核销/月结账单关联
+    if (isAdmin && ['received', 'confirming', 'confirmed'].includes(row.status)) {
+      const blockCheck = await checkPurchaseNoBlocked(connection, id);
+      if (blockCheck.blocked) {
+        await connection.rollback();
+        return res.status(400).json({ error: blockCheck.reason });
+      }
+    }
+
+    // 3. 冲回已产生的库存和流水（received/confirming/confirmed 状态）
+    if (['received', 'confirming', 'confirmed'].includes(row.status)) {
+      try {
+        await reversePurchaseStock(connection, id, true);
+      } catch (reverseErr) {
+        await connection.rollback();
+        return res.status(400).json({ error: reverseErr.message });
+      }
+    }
+
+    // 4. 删除明细 + 主表
     await connection.query('DELETE FROM warehouse_purchase_items WHERE purchase_id = ?', [id]);
     await connection.query('DELETE FROM warehouse_purchases WHERE id = ?', [id]);
 

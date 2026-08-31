@@ -1106,19 +1106,31 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* received: 发送确认通知 */}
+                          {/* received: 发送确认通知 + 修改收货 */}
                           {p.status === 'received' && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSendConfirm(p);
-                              }}
-                              disabled={actioningId === p.id}
-                              className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
-                            >
-                              <Bell size={14} />
-                              发送确认通知
-                            </button>
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSendConfirm(p);
+                                }}
+                                disabled={actioningId === p.id}
+                                className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
+                              >
+                                <Bell size={14} />
+                                发送确认通知
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openReceiveModal(p);
+                                }}
+                                className="btn-secondary text-xs flex items-center gap-1 text-teal-600 hover:bg-teal-50"
+                              >
+                                <Pencil size={14} />
+                                修改收货
+                              </button>
+                            </>
                           )}
 
                           {/* confirming: 查看确认进度（展开即查看，提供刷新） */}
@@ -1362,8 +1374,23 @@ export default function WarehousePurchaseList() {
                             </>
                           )}
 
-                          {/* 管理员：删除非草稿状态采购单（草稿状态已在上方块内显示删除按钮） */}
-                          {isAdmin && p.status !== 'draft' && (
+                          {/* 非草稿/非审批中：仅管理员可删除已收货/已确认订单 */}
+                          {isAdmin && ['received', 'confirming', 'confirmed'].includes(p.status) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              title="删除已收货采购单将自动冲回库存和流水，如已关联预付款核销或月结账单则无法删除"
+                              className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto disabled:opacity-50"
+                            >
+                              <Trash2 size={14} />
+                              删除
+                            </button>
+                          )}
+                          {/* pending_approval 审批中：创建人自己可撤回 */}
+                          {p.status === 'pending_approval' && p.created_by === user?.id && !isAdmin && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1373,7 +1400,7 @@ export default function WarehousePurchaseList() {
                               className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 ml-auto disabled:opacity-50"
                             >
                               <Trash2 size={14} />
-                              删除
+                              撤回
                             </button>
                           )}
                         </div>
