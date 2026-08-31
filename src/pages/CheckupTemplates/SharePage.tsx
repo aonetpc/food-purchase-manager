@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { checkupApi } from './api';
 import { useToast } from '@/components/Toast';
 
@@ -130,6 +130,8 @@ function truncate(s: string, n = 6): string {
   if (!s) return '';
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
+/* unused after highlight rewrite */
+void truncate;
 
 /* =========================================================
    DEMO 模式：?demo=1 → 无需后端即可预览全套 UI
@@ -156,7 +158,7 @@ function makeDemoPkg(): TemplatePkg {
       const names = cat[1].slice(0, Math.min(count, cat[1].length));
       for (let i = 0; i < names.length; i++) {
         const subs = extraSub?.[`${key}-${i}`];
-        out.push({ id: idSeed++, name: names[i], qty: 1, sub_category: key, unit: '项', sub_item_names: subs });
+        out.push({ id: idSeed++, name: names[i], qty: 1, sub_category: key, sub_item_names: subs });
       }
     }
     return out;
@@ -188,7 +190,7 @@ function makeDemoPkg(): TemplatePkg {
     id: 'demo-123',
     name: '18人保套餐123（演示）',
     applicable_roles: ['male', 'female_married', 'female_unmarried'],
-    remark: '专注高端人群健康管理，涵盖心脑血管、肿瘤、影像等核心检查项目，三工作日出报告，由主任级医师一对一解读。',
+    remark: '专注高端人群健康管理，涵盖心脑血管、肿瘤、影像等核心检查项目，7 个工作日出具完成报告，由主任级医师一对一解读。',
     primary_color: '#1dbf9a',
     expire_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
     created_at: new Date().toISOString(),
@@ -208,7 +210,6 @@ function makeDemoPkg(): TemplatePkg {
 export default function SharePage() {
   const { id } = useParams();
   const [sp] = useSearchParams();
-  const nav = useNavigate();
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -289,37 +290,17 @@ export default function SharePage() {
     return Array.from(merged.values());
   }, [pkg]);
 
-  const totalItems = useMemo(() =>
-    rolePkgs.reduce((acc, rp) => acc + (rp?.items?.reduce((a, it) => a + (it.qty || 1), 0) || 0), 0)
-  , [rolePkgs]);
-  const allItems = useMemo(() => rolePkgs.flatMap((rp) => rp?.items || []), [rolePkgs]);
-
-  // ===== 亮点：动态 1~3 条 =====
+  // ===== 亮点：3 条固定卖点 + 第3条角色专属特色（有则显示，没有就降级）=====
   const HIGHLIGHT_DOT_COLORS = ['#1dbf9a', '#0ea5e9', '#a855f7'];
   const highlights = useMemo<{ text: string; dot: string }[]>(() => {
     if (!pkg) return [];
-    const hs: { text: string; dot: string }[] = [];
-    hs.push({ text: `🧪 ${totalItems} 项深度检查`, dot: HIGHLIGHT_DOT_COLORS[0] });
-    const catCount = new Map<string, number>();
-    for (const it of allItems) {
-      const bucket = displayCategory(it);
-      catCount.set(bucket, (catCount.get(bucket) || 0) + (it.qty || 1));
-    }
-    let topCat = ''; let topCount = 0;
-    for (const [c, n] of catCount) if (n > topCount) { topCat = c; topCount = n; }
-    if (topCat && topCount >= 3) {
-      const label = subInfo(topCat).name;
-      const samples = allItems
-        .filter((it) => displayCategory(it) === topCat)
-        .map((it) => it.name).filter(Boolean) as string[];
-      const uniqSamples = Array.from(new Set(samples));
-      const take = uniqSamples.slice(0, 3).map((s) => truncate(s, 5)).filter(Boolean).join('、');
-      hs.push({
-        text: `📊 ${label} ${topCount} 项：${take || '全面覆盖'}，含${uniqSamples.length}项细分指标，深度不缩水`,
-        dot: HIGHLIGHT_DOT_COLORS[1 % HIGHLIGHT_DOT_COLORS.length],
-      });
-    }
+    const hs: { text: string; dot: string }[] = [
+      { text: '🏥 主任级医师主检 + 三甲合作影像审图', dot: HIGHLIGHT_DOT_COLORS[0] },
+      { text: '⏱ 7 个工作日出具完成报告 · 主任级医师一对一解读', dot: HIGHLIGHT_DOT_COLORS[1] },
+    ];
+    // 第 3 条：角色专属特色（动态匹配，没有就不显示）
     const roles = (pkg.applicable_roles || []).map(NORM_ROLE).filter(Boolean) as RoleNorm[];
+    let matched3 = false;
     if (roles.includes('female_married')) {
       const fmItems = rolePkgs.find((r) => r.norm === 'female_married')?.items || [];
       const joined = fmItems.map((it) => (it.name || '')).join('|').toUpperCase();
@@ -327,19 +308,21 @@ export default function SharePage() {
       const hasHPV = joined.includes('HPV') || joined.includes('人乳头瘤');
       if (hasTCT && hasHPV) {
         hs.push({ text: '♀ 已婚女专属 · 含 TCT + HPV 两癌筛查', dot: HIGHLIGHT_DOT_COLORS[2] });
+        matched3 = true;
       } else if (hasTCT || hasHPV) {
         hs.push({ text: `♀ 已婚女专属 · 含 ${hasTCT ? 'TCT 宫颈液基' : 'HPV 病毒分型'} 重点筛查`, dot: HIGHLIGHT_DOT_COLORS[2] });
+        matched3 = true;
       }
     }
-    if (!hs.find((h) => h.dot === HIGHLIGHT_DOT_COLORS[2]) && roles.includes('male')) {
+    if (!matched3 && roles.includes('male')) {
       const maleItems = rolePkgs.find((r) => r.norm === 'male')?.items || [];
       const joined = maleItems.map((it) => (it.name || '')).join('|').toUpperCase();
       if (joined.includes('PSA') || joined.includes('前列腺')) {
-        hs.push({ text: '♂ 男性专属 · 含 PSA + 前列腺 双维度筛查', dot: HIGHLIGHT_DOT_COLORS[2] });
+        hs.push({ text: '♂ 男性专属 · 含 PSA + 前列腺早筛', dot: HIGHLIGHT_DOT_COLORS[2] });
       }
     }
     return hs;
-  }, [pkg, totalItems, allItems, rolePkgs]);
+  }, [pkg, rolePkgs]);
 
   const jumpToRole = (r: RoleNorm) => {
     setExpanded((p) => ({ ...p, [r]: true }));
@@ -363,18 +346,7 @@ export default function SharePage() {
       toast.error('复制失败，请长按号码文本手动复制');
     }
   };
-  // 项目暂无独立预约页路由，统一走客户经理咨询预约（保证功能可用不 404）
-  const goConsultAppointment = () => {
-    const packTitle = pkg?.name || '体检套餐';
-    const msg = `您好，想咨询${packTitle}的预约`;
-    const phone = salesman?.phone || company?.phone;
-    if (phone) {
-      window.location.href = `tel:${phone}`;
-    } else {
-      toast.info(msg);
-    }
-    void nav; // 未使用，占位防止未来引入路由未使用 lint
-  };
+  // 项目暂无独立预约页路由，用户统一通过底部客户经理拨号咨询预约
   const downloadPdf = () => {
     if (!id && !isDemo) { toast.error('暂无可下载的套餐'); return; }
     if (isDemo) {
@@ -627,14 +599,6 @@ export default function SharePage() {
                       );
                     })}
 
-                    <button
-                      type="button"
-                      onClick={goConsultAppointment}
-                      className="mt-4 w-full rounded-xl py-3 text-[14.5px] font-semibold text-white transition active:opacity-90"
-                      style={ctaStyle}
-                    >
-                      为该角色预约 · 三工作日出报告
-                    </button>
                   </div>
                 )}
               </div>
@@ -763,7 +727,6 @@ function ItemRow({ it }: { it: CheckupItem }) {
       >
         <div className="text-[13.5px] text-slate-800 leading-snug flex-1 min-w-0">
           <span className="font-medium">{it.name}</span>
-          {it.unit && <span className="text-[11.5px] text-slate-400 ml-1.5">{it.unit}</span>}
           {(it.qty ?? 0) > 1 && <span className="text-[11.5px] text-slate-400 ml-1.5">× {it.qty}</span>}
           {it.remark && <div className="text-[11.5px] text-slate-500 mt-0.5 leading-snug">{it.remark}</div>}
         </div>
