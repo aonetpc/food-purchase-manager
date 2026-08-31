@@ -208,12 +208,14 @@ function makeDemoPkg(): TemplatePkg {
    页面组件
    ========================================================= */
 export default function SharePage() {
-  const { id } = useParams();
+  // Fix#1: 路由 App.tsx 是 :token 参数，不能用 id 解包（id 永远 undefined → 直接空页）
+  const { token } = useParams();
   const [sp] = useSearchParams();
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
   const [pkg, setPkg] = useState<TemplatePkg | null>(null);
+  const [errType, setErrType] = useState<'gone' | 'net' | null>(null); // Fix#5: 区分「过期」vs「网络错误」
   const [expanded, setExpanded] = useState<Record<RoleNorm, boolean>>({ male: false, female_married: false, female_unmarried: false });
   const [catShowAll, setCatShowAll] = useState<Record<string, boolean>>({});
   const DEFAULT_CAT_ITEMS_SHOW = 4;
@@ -229,6 +231,7 @@ export default function SharePage() {
     let aborted = false;
     async function load() {
       setLoading(true);
+      setErrType(null);
       try {
         if (isDemo) {
           if (aborted) return;
@@ -236,15 +239,24 @@ export default function SharePage() {
           setLoading(false);
           return;
         }
-        if (!id) { setPkg(null); setLoading(false); return; }
+        if (!token) { setPkg(null); setLoading(false); return; }
         // 免登录公开分享端点
-        const res: any = await checkupApi.sharePublic(id);
+        const res: any = await checkupApi.sharePublic(token);
         if (aborted) return;
-        setPkg(res?.template || res || null);
+        // Fix#1: 后端返回 { ok:true, data:{...} }；res.data 就是 package 对象
+        const payload = res?.data || res?.template || res;
+        setPkg(payload || null);
       } catch (e: any) {
         if (!aborted) {
           console.error('load package failed:', e);
-          toast.error(e?.message || '套餐加载失败');
+          // Fix#5: HTTP 状态 404（不存在）/ 410（过期/停用）= gone；其他 = net
+          const msg = String(e?.message || '').toLowerCase();
+          const status = Number((e as any)?.status) || 0;
+          const isGone = status === 404 || status === 410
+            || msg.includes('不存在') || msg.includes('过期') || msg.includes('已停用') || msg.includes('404') || msg.includes('410');
+          setErrType(isGone ? 'gone' : 'net');
+          toast.error(e?.message || (isGone ? '分享链接不存在或已过期' : '网络异常，请稍后重试'));
+          setPkg(null);
         }
       } finally {
         if (!aborted) setLoading(false);
@@ -252,25 +264,67 @@ export default function SharePage() {
     }
     load();
     return () => { aborted = true; };
-  }, [id, isDemo, toast]);
+  }, [token, isDemo, toast]);
 
   const company = pkg?.company;
-  const salesman = pkg?.salesman;
+  // Fix#3: 后端字段名是 sales_profile（checkup 客户经理名片表）+ created_by（users 表），前端期待 salesman
+  const salesmanRaw: any = (pkg as any)?.sales_profile || (pkg as any)?.created_by;
+  const salesman = salesmanRaw ? {
+    name: salesmanRaw.name,
+    title: salesmanRaw.title || '客户经理',
+    phone: salesmanRaw.phone,
+  } : null;
   const expireAt = parseDD(pkg?.expire_at);
-  const primaryColor = (pkg?.primary_color && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(pkg.primary_color))
-    ? pkg.primary_color
+  // Fix#3: 后端品牌色放在 company.primary_color；前端也保留 pkg.primary_color 兼容旧场景
+  const rawPrimary = (pkg?.company as any)?.primary_color || (pkg as any)?.primary_color;
+  const primaryColor = (rawPrimary && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(rawPrimary))
+    ? rawPrimary
     : DEFAULT_PRIMARY;
 
   // ===== 聚合（统一 female_single → female_unmarried 归一）=====
+  // Fix#2: 后端实际返回结构：
+  //   pkg.role_items[role] = { total, item_count, items: [...] }
+  //   pkg.role_plans[role] = { original_total, discount_price, discount_rate, remark }
+  // 之前读 pkg.role_packages / pkg._male / _female_xxx 永远为空 → 角色卡不显示
   const rolePkgs = useMemo<(RolePkg & { norm: RoleNorm })[]>(() => {
     if (!pkg) return [];
     const list: RolePkg[] = [];
-    if (Array.isArray(pkg.role_packages) && pkg.role_packages.length > 0) list.push(...pkg.role_packages);
-    else {
-      for (const raw of ['male', 'female_married', 'female_unmarried', 'female_single'] as const) {
-        const k = `_${raw}` as const;
-        const rp = (pkg as any)[k] as RolePkg | undefined;
-        if (rp) list.push(rp);
+    const role_items = (pkg as any)?.role_items;
+    const role_plans = (pkg as any)?.role_plans;
+    // 后端返回 role_items 走新格式（部署后）
+    if (role_items && typeof role_items === 'object') {
+      for (const raw of ['male', 'female_married', 'female_single', 'female_unmarried'] as const) {
+        const ri = role_items[raw];
+        const rp = role_plans?.[raw] || {};
+        if (!ri) continue;
+        const items = Array.isArray(ri.items) ? ri.items.map((it: any) => ({
+          id: it.id || it.item_id,
+          name: it.item_name_snapshot || it.name || it.item_id,
+          qty: it.quantity || 1,
+          sub_category: it.sub_category,
+          sub_item_names: it.sub_item_names,
+          unit: it.unit,
+          remark: it.remark,
+          price: it.item_price,
+        })) : [];
+        list.push({
+          role: raw,
+          items,
+          price: rp.discount_price ?? ri.total ?? 0,
+          original_price: rp.original_total ?? ri.total ?? undefined,
+          remark: rp.remark,
+        });
+      }
+    }
+    // fallback：老前端可能缓存的老格式 role_packages（数组）或 _male / _female 扁平 key（Demo 也走这里）
+    if (list.length === 0) {
+      if (Array.isArray(pkg.role_packages) && pkg.role_packages.length > 0) list.push(...pkg.role_packages);
+      else {
+        for (const raw of ['male', 'female_married', 'female_unmarried', 'female_single'] as const) {
+          const k = `_${raw}` as const;
+          const rp = (pkg as any)[k] as RolePkg | undefined;
+          if (rp) list.push(rp);
+        }
       }
     }
     // 归并同角色（防止同时出现 female_single + female_unmarried 两个 key）

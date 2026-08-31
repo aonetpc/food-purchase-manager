@@ -102,7 +102,13 @@ if (!fs.existsSync(PDF_DIR)) {
 }
 
 // 三个角色枚举
-const ROLES = ['male', 'female_married', 'female_single'];
+const ROLES = ['male', 'female_married', 'female_single', 'female_unmarried'];
+// feat/107 Fix#4: female_unmarried 别名归一：防止 DB applicable_roles / 前端传来 female_unmarried
+//   逻辑：female_single 和 female_unmarried 是同一个语义，aggregate/readPackageFull 末尾合并
+const ROLE_NORM = (r) => {
+  if (r === 'female_unmarried' || r === 'female_single') return 'female_single';
+  return r;
+};
 const ROLE_META = {
   male:             { name: '男性',    emoji: '👨' },
   female_married:   { name: '已婚女性', emoji: '👩' },
@@ -254,19 +260,20 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
   const commons = items.filter(i => !i.role || i.role === 'common');
   const result = {};
   for (const role of ROLES) {
-    if (!enabled.includes(role)) { result[role] = { total: 0, item_count: 0, items: [] }; continue; }
-    const roleItems = items.filter(i => i.role === role);
+    // feat/107 Fix#4: 归一后 enabled 判断，female_unmarried 和 female_single 视为都能过
+    const norm = ROLE_NORM(role);
+    const enabledMatch = enabled.includes(role) || (norm !== role && enabled.includes(norm));
+    if (!enabledMatch) { result[role] = { total: 0, item_count: 0, items: [] }; continue; }
+    const roleItems = items.filter(i => ROLE_NORM(i.role) === norm);
     // 以 item_id 去重：单独角色项优先覆盖 common（同 item_id 出现两次时用 role 那一条的 qty/price）
     const map = new Map();
     for (const c of commons) {
       // common 区只合并对该角色适用的项目（妇科不计入男性等）
-      if (!isItemVisibleForRole(c, role)) continue;
+      if (!isItemVisibleForRole(c, norm)) continue;
       map.set(c.item_id + '|common', { ...c, role });
     }
     for (const r of roleItems) {
-      // 角色级项目也需要可见性检查（防止历史脏数据：如盆腔错误存到male）
-      if (!isItemVisibleForRole(r, role)) continue;
-      // 如果 common 里有相同 item_id，覆盖
+      if (!isItemVisibleForRole(r, norm)) continue;
       const commonKey = r.item_id + '|common';
       if (map.has(commonKey)) map.delete(commonKey);
       map.set(r.item_id + '|' + role, r);
@@ -283,7 +290,33 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
       items: merged,
     };
   }
+  // feat/107 Fix#4 归一合并：female_single 和 female_unmarried 同语义 → 两套去重叠加后两边都有值
+  const fs = result.female_single;
+  const fu = result.female_unmarried;
+  if (fs && fu && fs.item_count !== fu.item_count) {
+    const merged = mergeRoleBucket([fs, fu]);
+    result.female_single = merged;
+    result.female_unmarried = merged;
+  } else if (fu && (!fs || fs.item_count === 0)) {
+    result.female_single = fu;
+  } else if (fs && (!fu || fu.item_count === 0)) {
+    result.female_unmarried = fs;
+  }
   return result;
+}
+// 辅助：合并多个 role bucket（按 item_id 去重叠加 items，total 求和去重）
+function mergeRoleBucket(buckets) {
+  const m = new Map();
+  for (const b of buckets) {
+    for (const it of (b.items || [])) {
+      const k = String(it.item_id ?? it.id);
+      if (!m.has(k)) m.set(k, it);
+    }
+  }
+  const items = [...m.values()];
+  let total = 0;
+  for (const it of items) total += toNum(it.item_price) * Math.max(1, toNum(it.quantity) || 1);
+  return { total: round2(total), item_count: items.length, items };
 }
 
 // 归一化：原价为0但折扣价有值时，用折扣价当原价（老套餐未写original_total的兜底）
@@ -316,6 +349,11 @@ async function readPackageFull(packageId) {
       pkg.role_plans[r] = { original_total: 0, discount_price: 0, discount_rate: 100, remark: null };
     }
   }
+  // feat/107 Fix#4 别名归一：DB 存的是 female_single 但前端查 female_unmarried → 给 role_plans 两边都写
+  const fu = pkg.role_plans.female_unmarried;
+  const fs = pkg.role_plans.female_single;
+  if (!fu && fs) pkg.role_plans.female_unmarried = fs;
+  if (!fs && fu) pkg.role_plans.female_single = fu;
   // 明细：按 role 拆
   const allItems = await listPackageItems(packageId);
   const agg = aggregateRoleItems(allItems, pkg.applicable_roles);
@@ -342,13 +380,18 @@ async function readPackageFull(packageId) {
       discount_price: price,
     };
   }
+  // feat/107 Fix#4: role_plans 价格对齐后再同步一次别名（归一时新增的 role_plans 条目也需要被处理）
+  if (!pkg.role_plans.female_unmarried && pkg.role_plans.female_single) pkg.role_plans.female_unmarried = pkg.role_plans.female_single;
+  if (!pkg.role_plans.female_single && pkg.role_plans.female_unmarried) pkg.role_plans.female_single = pkg.role_plans.female_unmarried;
 
   // 原始明细（前端编辑用，按 role 分组）
-  const byRole = { common: [], male: [], female_married: [], female_single: [] };
+  const byRole = { common: [], male: [], female_married: [], female_single: [], female_unmarried: [] };
   for (const it of allItems) {
     const key = it.role && byRole[it.role] ? it.role : 'common';
     byRole[key].push(it);
   }
+  // female_unmarried 别名也同步一份
+  byRole.female_unmarried = byRole.female_single;
   pkg.items_by_role = byRole;
   return pkg;
 }

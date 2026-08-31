@@ -9,6 +9,25 @@ const { sendBookingNotification, getWecomConfig, updateTemplateCardButton, updat
 const bookingReminder = require('../utils/booking-reminder');
 
 // ============================================================
+// 签字(signature)尺寸上限 —— 防止 base64 PNG 失控(几MB)导致 booking_orders 行宽膨胀,
+//   进而触发 GET /orders ORDER BY 时 MySQL sort_buffer_size 默认 256KB 装不下 → Out of sort memory。
+//   正常手写签字 PNG 3~30KB，200KB 是约 10 倍安全余量；超过时 400 拦截让用户重画。
+// ============================================================
+const SIG_MAX_BYTES = 200 * 1024;  // 204,800 bytes
+function validateSignatureSize(signatureData, res) {
+  if (!signatureData) return true;
+  const bytes = Buffer.byteLength(signatureData, 'utf8');
+  if (bytes <= SIG_MAX_BYTES) return true;
+  const kb = Math.round(bytes / 1024);
+  const limitKb = Math.round(SIG_MAX_BYTES / 1024);
+  res.status(400).json({
+    ok: false,
+    error: `签字图过大(${kb}KB，上限 ${limitKb}KB)，请重新签字(不要画得过密或重复涂画，保持线条清晰简单即可)`
+  });
+  return false;
+}
+
+// ============================================================
 // 业务角色判断 helper（requireBookingWrite 已放开入口白名单，
 //                    这里做细粒度"谁能操作什么"的限制）
 // ============================================================
@@ -1789,6 +1808,7 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
     if (!signatureData) {
       return res.status(400).json({ ok: false, error: '请先签字再确认' });
     }
+    if (!validateSignatureSize(signatureData, res)) return;
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
@@ -1960,6 +1980,7 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     if (!signatureData) {
       return res.status(400).json({ ok: false, error: '请先签字再审核通过' });
     }
+    if (!validateSignatureSize(signatureData, res)) return;
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
@@ -2122,6 +2143,7 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
     if (!signatureData) {
       return res.status(400).json({ ok: false, error: '请先签字再标记完成' });
     }
+    if (!validateSignatureSize(signatureData, res)) return;
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
