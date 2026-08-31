@@ -158,11 +158,8 @@ export const useAuthStore = create<AuthStore>()(
       },
 
       isAdmin: () => {
-        const user = get().user;
-        if (!user) return false;
-        if (user.role === 'admin') return true;
-        if (user.roles && user.roles.includes('admin')) return true;
-        return false;
+        // 复用 hasRole 的完善逻辑：兼容 role 单值 + roles 对象/字符串数组
+        return get().hasRole('admin');
       },
 
       hasRole: (role) => {
