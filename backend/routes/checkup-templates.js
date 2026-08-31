@@ -1373,26 +1373,49 @@ function findChineseBoldFont() {
   return null;
 }
 
-/** PDF 明细渲染 helper：按分类输出项目 + 组合子项缩进灰字。
- *  用户要求 (feat/106)：
- *    - 不显示数量 / 单价 / 小计三列（不输出表头，只输出项目名单列），
- *      套餐顶部的"原价 / 折后价"与底部"合计"金额保持不变。
- *    - 组合项目若 booking_item_sub_items 配过子项 → 项目名下方灰字缩进逐行显示子项目名（· 前缀）；
- *      没配子项 → 不显示任何灰色字。
- *    - feat/106 追加：
- *      (a) 每个分类渲染前预判剩余空间，不够就换页（避免「分类标题 + 1 行」孤零零飘在页底）
- *      (b) 行距统一增量（doc.y 推进 6px / 项），修复旧版「y += 18」和 doc.text() 自增叠加导致的间隙越来越大
- *      (c) 分类之间加分隔横线（strokeColor '#eee8dd'），避免糊成一团
- *      (d) 子项字号 8→8.5pt、颜色 #888→#6b7280，提升可读性
- *      (e) 按 "category + sub_category" 两级分类（与前端一致），sub 不同就拆开显示
+/** PDF 明细渲染 helper v3：分类有序 + items 有序 + 高度统一 + 分页精准。
+ *  修复 feat/106 遗留的 5 个「格式乱序」根因：
+ *    Bug-1 分类无序：Map.entries() 按插入顺序遍历（= DB 插入顺序），导致「影像→肿瘤→影像」反复跳
+ *    Bug-2 items 无序：同一分类下也按 DB 顺序，没按 sort_order/id 稳定排序
+ *    Bug-3 高度不一致：estimateCategoryHeight 用 +14 但实际渲染 +6，分页预判与实际对不上
+ *    Bug-4 PAGE_BOTTOM 硬编码 800：改成 doc.page.height - margin_bottom 动态取值
+ *    Bug-5 行距增量混乱：text() 多行时 doc.y 已被 pdfkit 推进，再加 +6 就跳太多 → 改用 moveDown(12)
  */
 function renderPdfItemsSection(doc, items, ctx) {
   const { FONT_REG, FONT_BOLD } = ctx;
-  const PAGE_BOTTOM = 800;        // 页面内容区下边界（A4 margin 40 预留 40）
-  const PAGE_TOP_AFTER_BREAK = 60;
 
-  // 分类 key：category + '|' + (sub_category || '')，两级分类与前端 SharePage.groupByCategory 对齐
-  const bySub = new Map();
+  // ===== 动态页边界 =====
+  const MARGIN_TOP = doc.page.margins.top || 40;
+  const MARGIN_BOTTOM = doc.page.margins.bottom || 40;
+  const PAGE_BOTTOM = doc.page.height - MARGIN_BOTTOM;
+  const PAGE_TOP_AFTER_BREAK = MARGIN_TOP + 20;
+
+  // ===== 分类优先级（和前端 SUB_DISPLAY_NAME 对齐）=====
+  const SUB_ORDER = [
+    '一般检查', '体格检查', '五官科', '耳鼻喉科',
+    '实验室检查', '检验科', '检验科-basic',
+    '心脑血管与血脂', '检验科-lipid', '心电图', '超声科-vascular', '功能科-vascular',
+    '影像检查', '放射科', '超声科-imaging',
+    '肝胆功能', '检验科-hepatic',
+    '肾功能', '检验科-renal',
+    '糖尿病筛查', '检验科-glucose',
+    '肿瘤标志物', '检验科-tumor',
+    '妇科两癌筛查', '妇科', '病理科',
+    '妇科检查',
+    '眼科检查',
+    '耳鼻喉/口腔',
+    '内分泌代谢',
+    '消化系统',
+    '呼吸系统',
+    '骨密度/骨科',
+    '其他项目', '其他',
+  ];
+  const subRank = new Map(SUB_ORDER.map((s, i) => [s, i]));
+  function rankOf(sub) {
+    return subRank.has(sub) ? subRank.get(sub) : SUB_ORDER.length;
+  }
+
+  // ===== displaySub（推断 sub_category，与前端对齐）=====
   const SUB_DISPLAY_NAME = ctx.SUB_DISPLAY_NAME || {
     '体格检查': '基础体检',
     '五官科': '基础体检',
@@ -1414,7 +1437,6 @@ function renderPdfItemsSection(doc, items, ctx) {
   function displaySub(it) {
     if (it.sub_category) return it.sub_category;
     if (SUB_DISPLAY_NAME[it.category]) return SUB_DISPLAY_NAME[it.category];
-    // 兜底：按 item 关键词推断
     const nm = (it.item_name_snapshot || it.item_id || it.name || '').toString();
     if (/TCT|液基|HPV|乳头瘤|妇科|两癌/i.test(nm)) return '妇科两癌筛查';
     if (/PSA|AFP|CEA|CA\d|肿瘤|癌标/i.test(nm)) return '肿瘤标志物';
@@ -1426,70 +1448,99 @@ function renderPdfItemsSection(doc, items, ctx) {
     return it.category || '其他';
   }
 
+  // ===== 1) 按 sub_category 分组 =====
+  const bySub = new Map();
   for (const it of items) {
     const sub = displaySub(it);
     if (!bySub.has(sub)) bySub.set(sub, []);
     bySub.get(sub).push(it);
   }
 
-  // 预估单个分类需要多少高度（像素）
+  // ===== 2) 分组内 items 稳定排序：sort_order ASC, id ASC =====
+  for (const [, arr] of bySub) {
+    arr.sort((a, b) => {
+      const soA = Number(a.sort_order || 0);
+      const soB = Number(b.sort_order || 0);
+      if (soA !== soB) return soA - soB;
+      const idA = Number(a.id || a.item_id || 0);
+      const idB = Number(b.id || b.item_id || 0);
+      return idA - idB;
+    });
+  }
+
+  // ===== 3) 分类排序：按 SUB_ORDER 优先级 =====
+  const sortedSubs = Array.from(bySub.keys()).sort((a, b) => rankOf(a) - rankOf(b));
+
+  // ===== 4) 统一高度常量 =====
+  // 主项行：fontSize 10pt → line-height ≈ 14pt，取 moveDown(12) 留呼吸空间
+  // 子项行：fontSize 8.5pt → line-height ≈ 12pt，取 moveDown(9)
+  const MAIN_LINE_H = 12;
+  const SUB_LINE_H = 9;
+  const CAT_TITLE_H = 22;   // 分类标题行（fontSize 11 粗体 + 4pt 分隔线 + 4pt 间距）
+  const CAT_BOTTOM_GAP = 10; // 分类尾部留白
   function estimateCategoryHeight(catItems) {
-    let h = 22; // 分类标题行
+    let h = CAT_TITLE_H + CAT_BOTTOM_GAP;
     for (const it of catItems) {
-      h += 14; // 主项行 (10pt 行高)
+      h += MAIN_LINE_H;
       const subs = Array.isArray(it.sub_item_names) ? it.sub_item_names : null;
-      if (subs && subs.length > 0) {
-        h += 6 + subs.length * 10.5; // 子项 8.5pt 行高 10.5
-      }
+      if (subs && subs.length > 0) h += 2 + subs.length * SUB_LINE_H;
     }
-    h += 10; // 分类之间分隔 + 空白
     return h;
   }
 
-  let y;
-  for (const [sub, catItems] of bySub.entries()) {
+  // ===== 5) 渲染循环（y 增量统一用 moveDown 常量，不再硬编码）=====
+  for (const sub of sortedSubs) {
+    const catItems = bySub.get(sub);
     const est = estimateCategoryHeight(catItems);
-    // 如果当前页剩余空间不足以放下整段分类（含底部留白 30px），直接换页 — 彻底解决「一页只有几个字」
+
+    // 分页预判：剩余空间不够 → 换页
     if (doc.y + est > PAGE_BOTTOM - 30) {
       doc.addPage();
       doc.y = PAGE_TOP_AFTER_BREAK;
     }
-    // 分类标题
-    doc.fontSize(11).font(FONT_BOLD).fillColor('#111827').text(`【${sub}】`);
-    // 分类之间分隔横线（柔和浅棕，避免糊成一团）
-    y = doc.y + 4;
-    doc.moveTo(40, y).lineTo(560, y).strokeColor('#eee8dd').lineWidth(0.6).stroke();
+
+    // === 分类标题 ===
+    doc.fontSize(11).font(FONT_BOLD).fillColor('#111827');
+    doc.text(`【${sub}】`, 40, doc.y, { continued: false });
+    // 分隔横线
+    const lineY = doc.y + 4;
+    doc.moveTo(40, lineY).lineTo(560, lineY).strokeColor('#eee8dd').lineWidth(0.6).stroke();
     doc.lineWidth(1);
-    y += 4;
-    doc.y = y;
+    doc.y = lineY + 4;
 
     for (const it of catItems) {
       const name = it.item_name_snapshot || it.item_id || it.name || '-';
       const subs = Array.isArray(it.sub_item_names) ? it.sub_item_names : null;
-      // 主项分页保护：如果剩余 < 30px 就换页（避免主项在页底、子项翻到下一页断开）
-      if (doc.y + (subs && subs.length ? 30 : 18) > PAGE_BOTTOM - 10) {
+
+      // 主项分页保护：剩余 < 主项高度就换页
+      const mainNeeds = MAIN_LINE_H + (subs && subs.length ? 2 + subs.length * SUB_LINE_H : 0);
+      if (doc.y + mainNeeds > PAGE_BOTTOM - 10) {
         doc.addPage();
         doc.y = PAGE_TOP_AFTER_BREAK;
       }
-      doc.fontSize(10).fillColor('#111827').font(FONT_REG)
-         .text(name, 44, doc.y, { width: 506 });
-      doc.y = doc.y + 6;   // 统一主项后增量（不再 y += 18 硬编码）
 
+      // === 主项 ===
+      doc.fontSize(10).font(FONT_REG).fillColor('#111827');
+      doc.text(name, 44, doc.y, { width: 506, continued: false });
+      doc.moveDown(MAIN_LINE_H / 12); // 12pt ≈ 1 line（pdfkit moveDown 单位是 "lines"，按 fontSize=10 计算）
+
+      // === 子项 ===
       if (subs && subs.length > 0) {
-        doc.fontSize(8.5).fillColor('#6b7280').font(FONT_REG); // 字号略升 + 颜色提深
+        // 重置子项字号 + 颜色（避免残留）
+        doc.fontSize(8.5).font(FONT_REG).fillColor('#6b7280');
         for (const s of subs) {
           if (doc.y > PAGE_BOTTOM - 12) {
             doc.addPage();
             doc.y = PAGE_TOP_AFTER_BREAK;
-            doc.fontSize(8.5).fillColor('#6b7280').font(FONT_REG);
+            doc.fontSize(8.5).font(FONT_REG).fillColor('#6b7280');
           }
-          doc.text(`· ${s}`, 62, doc.y, { width: 490 });
-          doc.y = doc.y + 4.5;
+          doc.text(`· ${s}`, 62, doc.y, { width: 490, continued: false });
+          doc.moveDown(SUB_LINE_H / 12); // 9pt / 12pt per line
         }
-        doc.y = doc.y + 2;
+        doc.moveDown(2 / 12);
       }
     }
-    doc.y = doc.y + 8;   // 分类尾部留白
+    doc.moveDown(CAT_BOTTOM_GAP / 12);
   }
 }
 
