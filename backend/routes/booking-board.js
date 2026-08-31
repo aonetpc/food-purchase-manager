@@ -2272,10 +2272,18 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     }
 
     // R3：计算本次编辑的变更摘要，写入 last_edit_diff 列（booking-confirm 审批页用）
+    // 【方案S：兼容迁移104未跑】列缺失时降级不写（部署竞态窗口：代码先到 vs 迁移后到）
+    //   迁移 104 跑后自动恢复写 diff；降级期间审批页 diff 块不显示即可，编辑保存主体不受影响
     const diffJson = buildEditDiff(cur, req, items, totalAmount);
     if (diffJson) {
-      await conn.query('UPDATE booking_orders SET last_edit_diff = ? WHERE id = ?',
-        [JSON.stringify(diffJson), orderId]);
+      try {
+        await conn.query('UPDATE booking_orders SET last_edit_diff = ? WHERE id = ?',
+          [JSON.stringify(diffJson), orderId]);
+      } catch (eDiff) {
+        const msg = String(eDiff && eDiff.message || '');
+        if (!/Unknown column 'last_edit_diff' in 'field list'/i.test(msg)) throw eDiff;
+        console.warn(`[booking PUT] last_edit_diff列缺失，降级不写diff(orderId=${orderId}, orderNo=${cur.order_no})：请尽快执行 migrations/104_booking_last_edit_diff.sql`);
+      }
     }
 
     await conn.commit();

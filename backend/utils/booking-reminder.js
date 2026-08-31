@@ -25,6 +25,20 @@ function getWecom() {
 }
 
 let _running = false;  // 定时任务防重入
+let _tableMissingWarned = false;  // 表缺失只告警一次，避免每分钟刷屏
+
+// 判断错误是否是「表不存在」/「列不存在」这一类 migration 还没跑的竞态错误
+function _isMigrationRaceError(e) {
+  const msg = String(e && e.message || '');
+  return /Table.*doesn't exist/i.test(msg) || /Unknown column/i.test(msg);
+}
+
+// 表缺失只 warn 一次
+function _warnTableMissingOnce(location) {
+  if (_tableMissingWarned) return;
+  _tableMissingWarned = true;
+  console.warn(`[reminder] ${location}：booking_reminder_tasks 表缺失（或相关列未创建）。请尽快执行 migrations/105_booking_reminder_tasks.sql。后续同类错误不再重复报警。`);
+}
 
 // ============================================================
 // 1. 发卡时创建催办任务（提交订单 / 销售员确认 / 审核 通过 后调用）
@@ -41,6 +55,11 @@ async function createReminderTask(orderId, stage, userid) {
     console.log(`[reminder] 创建催办任务: order=${orderId}, stage=${stage}, user=${userid}, next=${nextRemindAt.toISOString()}`);
     return taskId;
   } catch (e) {
+    // 【方案S：兼容迁移105未跑】表不存在时只告警一次，不阻塞提交/审核流程
+    if (_isMigrationRaceError(e)) {
+      _warnTableMissingOnce('createReminderTask');
+      return null;
+    }
     console.error('[reminder] 创建催办任务失败:', e.message);
     return null;
   }
@@ -52,24 +71,41 @@ async function createReminderTask(orderId, stage, userid) {
 async function runPendingReminders() {
   if (_running) return;
   _running = true;
+  let rows = [];
   try {
-    const [rows] = await pool.query(`
+    const [res] = await pool.query(`
       SELECT * FROM booking_reminder_tasks
       WHERE status = 'pending' AND next_remind_at <= NOW()
       LIMIT 30
     `);
+    rows = res;
+  } catch (eQuery) {
+    // 【方案S：兼容迁移105未跑】表不存在直接 return，不阻塞、不刷屏
+    if (_isMigrationRaceError(eQuery)) {
+      _warnTableMissingOnce('runPendingReminders');
+      _running = false;
+      return;
+    }
+    _running = false;
+    throw eQuery;
+  }
+  try {
     if (!rows.length) return;
 
     const wecom = getWecom();
     const config = await wecom.getWecomConfig().catch(() => null);
-    if (!config) { _running = false; return; }
+    if (!config) return;
 
     for (const task of rows) {
       try {
         await executeOneReminder(config, task);
       } catch (e) {
+        // 单任务失败不阻塞其他任务：表缺失类归为降级不报错
+        if (_isMigrationRaceError(e)) {
+          _warnTableMissingOnce(`executeOneReminder(task=${task.id})`);
+          continue;
+        }
         console.error(`[reminder] 催办任务 ${task.id} 异常:`, e.message);
-        // 失败不阻塞后续任务
       }
     }
   } finally {
@@ -81,14 +117,16 @@ async function executeOneReminder(config, task) {
   // 1. 查订单
   const [orderRows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [task.order_id]);
   if (!orderRows.length) {
-    await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE id=?", [task.id]);
+    try { await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE id=?", [task.id]); }
+    catch (e) { if (_isMigrationRaceError(e)) _warnTableMissingOnce('executeOneReminder UPDATE completed(L120)'); }
     return;
   }
   const order = orderRows[0];
 
   // 已关闭/已完成 → 自动结束催办
   if (['confirmed', 'rejected', 'completed'].includes(order.status)) {
-    await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE id=?", [task.id]);
+    try { await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE id=?", [task.id]); }
+    catch (e) { if (_isMigrationRaceError(e)) _warnTableMissingOnce('executeOneReminder UPDATE completed(L127)'); }
     return;
   }
 
@@ -159,15 +197,26 @@ async function executeOneReminder(config, task) {
     [JSON.stringify(cardCodes), order.id]);
 
   // 5. 更新催办任务状态
+  // 【方案S：迁移105未跑 → 表缺失降级】UPDATE 失败不阻塞（灰化+发新卡已经做了）
   if (newRemindCount >= task.max_remind) {
-    await pool.query("UPDATE booking_reminder_tasks SET status='completed', remind_count=?, last_response_code=?, last_response_at=NOW() WHERE id=?",
-      [newRemindCount, newCode, task.id]);
-    console.log(`[reminder] 达到最大催办次数，停止催办: order=${task.order_id}, count=${newRemindCount}`);
+    try {
+      await pool.query("UPDATE booking_reminder_tasks SET status='completed', remind_count=?, last_response_code=?, last_response_at=NOW() WHERE id=?",
+        [newRemindCount, newCode, task.id]);
+      console.log(`[reminder] 达到最大催办次数，停止催办: order=${task.order_id}, count=${newRemindCount}`);
+    } catch (e) {
+      if (_isMigrationRaceError(e)) _warnTableMissingOnce('executeOneReminder UPDATE max-count(L201)');
+      else throw e;
+    }
   } else {
-    const nextAt = new Date(Date.now() + REMIND_INTERVAL_MS);
-    await pool.query("UPDATE booking_reminder_tasks SET remind_count=?, next_remind_at=?, last_response_code=?, last_response_at=NOW(), updated_at=NOW() WHERE id=?",
-      [newRemindCount, nextAt, newCode, task.id]);
-    console.log(`[reminder] 催办完成: order=${task.order_id}, count=${newRemindCount}, next=${nextAt.toISOString()}`);
+    try {
+      const nextAt = new Date(Date.now() + REMIND_INTERVAL_MS);
+      await pool.query("UPDATE booking_reminder_tasks SET remind_count=?, next_remind_at=?, last_response_code=?, last_response_at=NOW(), updated_at=NOW() WHERE id=?",
+        [newRemindCount, nextAt, newCode, task.id]);
+      console.log(`[reminder] 催办完成: order=${task.order_id}, count=${newRemindCount}, next=${nextAt.toISOString()}`);
+    } catch (e) {
+      if (_isMigrationRaceError(e)) _warnTableMissingOnce('executeOneReminder UPDATE next(L206)');
+      else throw e;
+    }
   }
 }
 
@@ -222,7 +271,16 @@ async function greyAllCardsOnApprove(orderId, stage, resultLabel) {
     }
 
     // 4. 取消催办任务
-    await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE order_id=?", [orderId]);
+    // 【方案S：迁移105未跑 → 表缺失降级】UPDATE 失败不阻塞卡片灰化
+    try {
+      await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE order_id=?", [orderId]);
+    } catch (eTask) {
+      if (_isMigrationRaceError(eTask)) {
+        _warnTableMissingOnce('greyAllCardsOnApprove UPDATE completed');
+      } else {
+        console.warn('[reminder-grey] 取消催办任务失败:', eTask.message);
+      }
+    }
 
     console.log(`[reminder-grey] 审批完成灰化: order=${orderId}, success=${successCount}/${allCodes.length}`);
   } catch (e) {
@@ -237,7 +295,13 @@ async function cancelReminder(orderId) {
   if (!orderId) return;
   try {
     await pool.query("UPDATE booking_reminder_tasks SET status='cancelled' WHERE order_id=?", [orderId]);
-  } catch (e) { /* 忽略 */ }
+  } catch (e) {
+    // 【方案S：迁移105未跑 → 表缺失降级】静默跳过
+    if (_isMigrationRaceError(e)) {
+      _warnTableMissingOnce('cancelReminder UPDATE cancelled');
+    }
+    // 其他错误也静默（撤回/删除流程不应该因为催办表问题而失败）
+  }
 }
 
 // ============================================================
