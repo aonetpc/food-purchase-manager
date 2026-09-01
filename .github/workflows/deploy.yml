@@ -191,17 +191,24 @@ jobs:
           command_timeout: 10m
           script: |
             set -euo pipefail
-            # ================ 服务名探测：按"实际存在概率"排序，不先写死不存在的 food-backend ================
+            # ================ 服务名探测：用 awk 取第一列精确匹配，避免 systemctl 输出里制表符/空格导致 ^ 锚定 grep 失败 ================
+            detect_service() {
+              local svc="$1.service"
+              systemctl list-unit-files --type=service --no-legend 2>/dev/null \
+                | awk '{print $1}' \
+                | grep -Fxq "$svc"
+            }
             SERVICE_NAME=""
-            if systemctl list-unit-files --type=service | grep -q "^food-purchase-backend\.service"; then
+            if detect_service "food-purchase-backend"; then
               SERVICE_NAME="food-purchase-backend"
-            elif systemctl list-unit-files --type=service | grep -q "^food-backend\.service"; then
+            elif detect_service "food-backend"; then
               SERVICE_NAME="food-backend"
-            elif systemctl list-unit-files --type=service | grep -q "^oa-backend\.service"; then
+            elif detect_service "oa-backend"; then
               SERVICE_NAME="oa-backend"
             else
               echo "❌ 找不到任何已知 backend service: food-purchase-backend / food-backend / oa-backend"
-              systemctl list-unit-files --type=service | grep -iE "oa|food|backend" || true
+              echo "   systemctl list-unit-files --type=service 第一列候选："
+              systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}' | grep -iE "oa|food|backend" || echo "(无匹配)"
               exit 1
             fi
             echo "✅ 探测到 backend service: $SERVICE_NAME"
