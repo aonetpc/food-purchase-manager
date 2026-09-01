@@ -458,7 +458,7 @@ async function readOrderFull(orderId) {
   const [orderRows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
   if (!orderRows || orderRows.length === 0) return null;
   const order = orderRows[0];
-  const [itemRows] = await pool.query('SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC', [orderId]);
+  const itemRows = await fetchBookingItemsSafely(pool, 'WHERE order_id = ?', [orderId]);
   const items = itemRows.map(normalizeItem);
   return {
     ...order,
@@ -583,6 +583,32 @@ async function fetchOrderRowsByTempTable(conn, tempName, withCalcTotal, orderedB
 async function cleanupOrderTempTable(conn, tempName) {
   if (!conn || !tempName) return;
   try { await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${tempName}\``); } catch (_) {}
+}
+
+/**
+ * booking_items 两阶段排序查询（避免 SELECT * + ORDER BY 把 extra JSON 塞进 sort_buffer → Out of sort memory）。
+ *   阶段1：仅取 id 排序（窄列 VARCHAR36 + INT，sort_buffer 无视 extra 大小）
+ *   阶段2：按顺序 PK JOIN 回原表取全列（包括 extra JSON 宽列，不触发 filesort）
+ * @param conn  pool 或 connection（pool.getConnection 得到的对象均可）
+ * @param whereSql   WHERE 条件片段（含 ? 占位）
+ * @param params     参数数组
+ * @returns {Promise<Array>} 排序后的完整 booking_items 行
+ */
+async function fetchBookingItemsSafely(conn, whereSql, params) {
+  // 阶段1：仅取窄列 id + sort_order 做 filesort
+  const [idRows] = await conn.query(
+    `SELECT id FROM booking_items ${whereSql} ORDER BY sort_order ASC, id ASC`,
+    params
+  );
+  if (!idRows || idRows.length === 0) return [];
+  const ids = idRows.map(r => r.id);
+  // 阶段2：按 PK 顺序回表取全列（用 FIELD() 保证顺序，避免外层 ORDER BY 再次 filesort）
+  const placeholders = ids.map(() => '?').join(',');
+  const [rows] = await conn.query(
+    `SELECT * FROM booking_items WHERE id IN (${placeholders}) ORDER BY FIELD(id,${placeholders})`,
+    [...ids, ...ids]
+  );
+  return rows || [];
 }
 
 // ============================================================
@@ -1586,10 +1612,11 @@ router.get('/orders', requireAuth, async (req, res) => {
     }
 
     const orderIds = rows.map(r => r.id);
-    const [itemRows] = await conn.query(`
-      SELECT * FROM booking_items WHERE order_id IN (${orderIds.map(() => '?').join(',')})
-      ORDER BY sort_order ASC, id ASC
-    `, orderIds);
+    const itemRows = await fetchBookingItemsSafely(
+      conn,
+      `WHERE order_id IN (${orderIds.map(() => '?').join(',')})`,
+      orderIds
+    );
 
     const itemsByOrder = {};
     itemRows.forEach(r => {
@@ -1693,10 +1720,7 @@ router.post('/orders/:id/duplicate', requireAuth, requireBookingWrite, async (re
       return res.status(404).json({ ok: false, error: '原订单不存在' });
     }
     const src = rows[0];
-    const [srcItems] = await conn.query(
-      'SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC',
-      [orderId]
-    );
+    const srcItems = await fetchBookingItemsSafely(conn, 'WHERE order_id = ?', [orderId]);
 
     // 复制规则：清空 rejected_* / confirmed_* / completed_* / rejected_at 等，状态回到 pending
     // 订单号重新生成，复制销售员企微userid快照
@@ -2628,10 +2652,7 @@ async function cloneOrderAsTemplate(conn, sourceOrderId, templateName, operatorI
   ]);
 
   // 克隆 items（与迁移 064 表结构一致：item_type/date/start_time/end_time/pax/extra/amount/sort_order）
-  const [origItems] = await conn.query(
-    'SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC',
-    [sourceOrderId]
-  );
+  const origItems = await fetchBookingItemsSafely(conn, 'WHERE order_id = ?', [sourceOrderId]);
   if (origItems && origItems.length) {
     const itemPlaceholders = origItems.map(() =>
       `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2794,8 +2815,9 @@ router.get('/templates', requireAuth, async (req, res) => {
     `);
     if (!rows || rows.length === 0) return res.json({ ok: true, data: [] });
     const ids = rows.map(r => r.id);
-    const [itemRows] = await conn.query(
-      `SELECT * FROM booking_items WHERE order_id IN (${ids.map(() => '?').join(',')}) ORDER BY sort_order ASC, id ASC`,
+    const itemRows = await fetchBookingItemsSafely(
+      conn,
+      `WHERE order_id IN (${ids.map(() => '?').join(',')})`,
       ids
     );
     const itemsMap = {};
@@ -2861,7 +2883,7 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
 
     // 复制 items，同时日期偏移：以模板第一个 item 的日期为基准，对齐到"今天所在周"
     // 字段与迁移 064 保持一致：item_type/date/start_time/end_time/pax/extra/amount/sort_order
-    const [origItems] = await conn.query('SELECT * FROM booking_items WHERE order_id = ? ORDER BY sort_order ASC, id ASC', [tpl.id]);
+    const origItems = await fetchBookingItemsSafely(conn, 'WHERE order_id = ?', [tpl.id]);
     let baseOrigDate = null;
     origItems.forEach(ri => { if (ri.date && !baseOrigDate) baseOrigDate = new Date(String(ri.date).slice(0, 10)); });
     const dow = (today.getDay() + 6) % 7; // 今天是周几(0=周一)
