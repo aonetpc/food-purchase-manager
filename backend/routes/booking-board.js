@@ -595,20 +595,30 @@ async function cleanupOrderTempTable(conn, tempName) {
  * @returns {Promise<Array>} 排序后的完整 booking_items 行
  */
 async function fetchBookingItemsSafely(conn, whereSql, params) {
-  // 阶段1：仅取窄列 id + sort_order 做 filesort
+  // 阶段1：仅取窄列 id + sort_order 做 filesort — sort_buffer 只碰到 VARCHAR(36)+INT，永远不炸
   const [idRows] = await conn.query(
     `SELECT id FROM booking_items ${whereSql} ORDER BY sort_order ASC, id ASC`,
     params
   );
   if (!idRows || idRows.length === 0) return [];
   const ids = idRows.map(r => r.id);
-  // 阶段2：按 PK 顺序回表取全列（用 FIELD() 保证顺序，避免外层 ORDER BY 再次 filesort）
+  // 阶段2：纯 PK 范围回表取全列 —— 绝对不加 ORDER BY，避免把 extra/签字宽列塞进 sort_buffer
+  //   MySQL WHERE id IN (...) 命中 PRIMARY KEY 索引范围扫描，0 filesort。
+  //   返回顺序可能和 ids 不一致，下面用 Map + 按 ids 数组索引还原顺序。
   const placeholders = ids.map(() => '?').join(',');
-  const [rows] = await conn.query(
-    `SELECT * FROM booking_items WHERE id IN (${placeholders}) ORDER BY FIELD(id,${placeholders})`,
-    [...ids, ...ids]
+  const [rawRows] = await conn.query(
+    `SELECT * FROM booking_items WHERE id IN (${placeholders})`,
+    ids
   );
-  return rows || [];
+  if (!rawRows || rawRows.length === 0) return [];
+  // Map O(1) 查行，按 ids 原序重组结果（阶段 1 已经按 sort_order ASC, id ASC 排好）
+  const rowMap = new Map(rawRows.map(r => [r.id, r]));
+  const ordered = [];
+  for (const id of ids) {
+    const r = rowMap.get(id);
+    if (r) ordered.push(r);
+  }
+  return ordered;
 }
 
 // ============================================================
