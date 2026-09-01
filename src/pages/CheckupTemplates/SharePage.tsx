@@ -57,13 +57,17 @@ const ROLE_LABEL: Record<RoleNorm, string> = {
 const ROLE_EMOJI: Record<RoleNorm, string> = { male: '👨', female_married: '👩', female_unmarried: '👧' };
 
 // iOS 健康 App 同款低饱和色板（分类用，避开深 800 档）
+// feat/108 P01：同时支持「英文小类（general/lab...）+ 中文大类（一般检查/检验科...）」
+//   后端 listPackageItems SQL 215 行 SELECT: ci.category（中文） + ci.sub_category（英文）
+//   中文大类优先匹配，命中则有固定颜色；英文小类兜底；再不行 hash 随机色
 const SUB_DISPLAY_NAME: Record<string, { name: string; color: string }> = {
+  // — 英文小类（旧兼容）—
   general:   { name: '一般检查', color: '#059669' },
   lab:       { name: '实验室检查', color: '#0d9488' },
   imaging:   { name: '影像检查', color: '#6366f1' },
   function:  { name: '功能检查', color: '#8b5cf6' },
   tumor:     { name: '肿瘤筛查', color: '#d946ef' },
-  endocrine:  { name: '内分泌代谢', color: '#f43f5e' },
+  endocrine: { name: '内分泌代谢', color: '#f43f5e' },
   cardio:    { name: '心脑血管', color: '#ea580c' },
   digestive: { name: '消化系统', color: '#65a30d' },
   resp:      { name: '呼吸系统', color: '#0891b2' },
@@ -72,6 +76,50 @@ const SUB_DISPLAY_NAME: Record<string, { name: string; color: string }> = {
   ent:       { name: '耳鼻喉/口腔', color: '#fb923c' },
   gynecology:{ name: '妇科检查', color: '#ec4899' },
   other:     { name: '其他项目', color: '#64748b' },
+  // — 中文大类（后端 ci.category 真实值，管理端体检配单里的分类条）—
+  '综合检查':   { name: '综合检查', color: '#64748b' },
+  '一般检查':   { name: '一般检查', color: '#059669' },
+  '体格检查':   { name: '基础体检', color: '#059669' },
+  '五官科':     { name: '耳鼻喉/口腔', color: '#fb923c' },
+  '耳鼻喉科':   { name: '耳鼻喉/口腔', color: '#fb923c' },
+  '耳鼻喉':     { name: '耳鼻喉/口腔', color: '#fb923c' },
+  '眼科检查':   { name: '眼科检查', color: '#4ade80' },
+  '检验科':     { name: '实验室检查', color: '#0d9488' },
+  '实验室检查': { name: '实验室检查', color: '#0d9488' },
+  '检验科-basic':   { name: '实验室检查', color: '#0d9488' },
+  '检验科-lipid':   { name: '心脑血管', color: '#ea580c' },
+  '检验科-hepatic': { name: '肝胆功能', color: '#65a30d' },
+  '检验科-renal':   { name: '肾功能', color: '#4f46e5' },
+  '检验科-glucose': { name: '糖尿病筛查', color: '#f43f5e' },
+  '检验科-tumor':   { name: '肿瘤筛查', color: '#d946ef' },
+  '肝胆功能':   { name: '肝胆功能', color: '#65a30d' },
+  '肾功能':     { name: '肾功能', color: '#4f46e5' },
+  '糖尿病筛查': { name: '糖尿病筛查', color: '#f43f5e' },
+  '肿瘤筛查':   { name: '肿瘤筛查', color: '#d946ef' },
+  '肿瘤标志物': { name: '肿瘤筛查', color: '#d946ef' },
+  '妇科两癌筛查': { name: '妇科两癌筛查', color: '#ec4899' },
+  '妇科检查':   { name: '妇科检查', color: '#ec4899' },
+  '妇科':       { name: '妇科检查', color: '#ec4899' },
+  '病理科':     { name: '妇科两癌筛查', color: '#ec4899' },
+  '心脑血管与血脂': { name: '心脑血管', color: '#ea580c' },
+  '心脑血管':   { name: '心脑血管', color: '#ea580c' },
+  '心电图':     { name: '心脑血管', color: '#ea580c' },
+  '放射科':     { name: '影像检查', color: '#6366f1' },
+  '超声科':     { name: '影像检查', color: '#6366f1' },
+  '超声科-imaging': { name: '影像检查', color: '#6366f1' },
+  '超声科-vascular':{ name: '心脑血管', color: '#ea580c' },
+  '影像检查':   { name: '影像检查', color: '#6366f1' },
+  '功能科':     { name: '功能检查', color: '#8b5cf6' },
+  '功能检查':   { name: '功能检查', color: '#8b5cf6' },
+  '功能科-vascular': { name: '心脑血管', color: '#ea580c' },
+  '内分泌代谢': { name: '内分泌代谢', color: '#f43f5e' },
+  '消化系统':   { name: '消化系统', color: '#65a30d' },
+  '消化':       { name: '消化系统', color: '#65a30d' },
+  '呼吸系统':   { name: '呼吸系统', color: '#0891b2' },
+  '呼吸':       { name: '呼吸系统', color: '#0891b2' },
+  '骨密度/骨科':{ name: '骨密度/骨科', color: '#4f46e5' },
+  '其他项目':   { name: '其他项目', color: '#64748b' },
+  '其他':       { name: '其他项目', color: '#64748b' },
 };
 const SUB_FALLBACK_COLORS = Object.values(SUB_DISPLAY_NAME).map((c) => c.color);
 function subInfo(subKey?: string) {
@@ -108,8 +156,13 @@ function shade(hex: string, percent: number): string {
   }
   return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
 }
+// feat/108 P01：优先读后端 ci.category（中文大类，管理端体检配单分类条用的就是这个）；
+//   兼容老数据 fallback 读 sub_category（英文小类 lab/tumor 等）；再没有→综合检查
 function displayCategory(it: CheckupItem): string {
-  return it.sub_category || '综合检查';
+  const cat = (it as any).category;
+  if (typeof cat === 'string' && cat.trim()) return cat.trim();
+  if (it.sub_category) return it.sub_category;
+  return '综合检查';
 }
 function parseDD(dateStr?: string | null) {
   if (!dateStr) return null;
@@ -292,8 +345,11 @@ export default function SharePage() {
     const role_items = (pkg as any)?.role_items;
     const role_plans = (pkg as any)?.role_plans;
     // 后端返回 role_items 走新格式（部署后）
+    // feat/108 P02：只遍历「3 规范 key」male/female_married/female_unmarried；
+    //   不再读 female_single，因为后端 readPackageFull 已经把它通过同引用别名写到 female_unmarried 上了，
+    //   读两次会被 L330~L342 归并 Map 再叠加一次，导致未婚女项目数异常（32 变 104）
     if (role_items && typeof role_items === 'object') {
-      for (const raw of ['male', 'female_married', 'female_single', 'female_unmarried'] as const) {
+      for (const raw of ['male', 'female_married', 'female_unmarried'] as const) {
         const ri = role_items[raw];
         const rp = role_plans?.[raw] || {};
         if (!ri) continue;
@@ -302,6 +358,8 @@ export default function SharePage() {
           name: it.item_name_snapshot || it.name || it.item_id,
           qty: it.quantity || 1,
           sub_category: it.sub_category,
+          // feat/108 P01 同步 category：后端 listPackageItems SQL 新增 ci.category 中文大类
+          category: it.category,
           sub_item_names: it.sub_item_names,
           unit: it.unit,
           remark: it.remark,
