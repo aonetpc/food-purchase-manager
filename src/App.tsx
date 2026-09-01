@@ -4,6 +4,17 @@ import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import PageLoading from '@/components/PageLoading';
 import { ToastProvider } from '@/components/Toast';
+import { useAuthStore } from '@/store/authStore';
+
+/** 根据用户权限动态跳转到其第一个可见菜单，避免所有人硬跳 /daily */
+function DefaultHome() {
+  const getUserMenus = useAuthStore((s) => s.getUserMenus);
+  const menus = getUserMenus();
+  // 过滤掉手机端路由，PC 默认首页应指向 PC 菜单
+  const pcMenus = menus.filter((m: any) => !m.path.startsWith('/m/'));
+  const firstPath = pcMenus[0]?.path || '/profile';
+  return <Navigate to={firstPath} replace />;
+}
 
 const DailyPurchase = lazy(() => import('@/pages/DailyPurchase'));
 const MonthlyAnalysis = lazy(() => import('@/pages/MonthlyAnalysis'));
@@ -108,20 +119,32 @@ export default function App() {
           <Route path="/booking-confirm" element={<BookingConfirmPage />} />
           
           <Route path="/" element={<Layout />}>
-            <Route index element={<Navigate to="/daily" replace />} />
+            <Route index element={<DefaultHome />} />
             <Route path="purchase-entry" element={
               <ProtectedRoute requiredPermission="action:entry:create">
                 <PurchaseEntry />
               </ProtectedRoute>
             } />
-            <Route path="daily" element={<DailyPurchase />} />
+            <Route path="daily" element={
+              <ProtectedRoute requiredPermission="menu:daily">
+                <DailyPurchase />
+              </ProtectedRoute>
+            } />
             <Route path="monthly" element={
               <ProtectedRoute requiredPermission="menu:monthly">
                 <MonthlyAnalysis />
               </ProtectedRoute>
             } />
-            <Route path="yearly" element={<YearlyPrice />} />
-            <Route path="ingredients" element={<IngredientQuery />} />
+            <Route path="yearly" element={
+              <ProtectedRoute requiredPermission="menu:yearly">
+                <YearlyPrice />
+              </ProtectedRoute>
+            } />
+            <Route path="ingredients" element={
+              <ProtectedRoute requiredPermission="menu:ingredients">
+                <IngredientQuery />
+              </ProtectedRoute>
+            } />
             <Route path="categories" element={
               <ProtectedRoute requiredPermission="action:category:manage">
                 <Navigate to="/ingredient-manager#categories" replace />
@@ -243,15 +266,27 @@ export default function App() {
                 <TempStats />
               </ProtectedRoute>
             } />
-            <Route path="booking-board" element={<BookingBoard />} />
-            <Route path="checkup-templates" element={<CheckupTemplatesPage />} />
+            <Route path="booking-board" element={
+              <ProtectedRoute requiredPermission="menu:booking-board">
+                <BookingBoard />
+              </ProtectedRoute>
+            } />
+            <Route path="checkup-templates" element={
+              <ProtectedRoute requiredPermission="menu:checkup-templates">
+                <CheckupTemplatesPage />
+              </ProtectedRoute>
+            } />
             {/* 体检配单 H5 嵌入 PC 框架：在框架内全屏展示 H5App，带返回按钮 */}
             <Route path="h/checkup-templates/*" element={
               <ProtectedRoute>
                 <CheckupDesktopFrame />
               </ProtectedRoute>
             } />
-            <Route path="checkup-center" element={<CheckupCenter />} />
+            <Route path="checkup-center" element={
+              <ProtectedRoute requiredPermission="menu:checkup-center">
+                <CheckupCenter />
+              </ProtectedRoute>
+            } />
           </Route>
         </Routes>
       </Suspense>
