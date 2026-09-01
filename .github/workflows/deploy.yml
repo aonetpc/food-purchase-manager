@@ -191,24 +191,27 @@ jobs:
           command_timeout: 10m
           script: |
             set -euo pipefail
-            # ================ 服务名探测：用 awk 取第一列精确匹配，避免 systemctl 输出里制表符/空格导致 ^ 锚定 grep 失败 ================
-            detect_service() {
-              local svc="$1.service"
-              systemctl list-unit-files --type=service --no-legend 2>/dev/null \
-                | awk '{print $1}' \
-                | grep -Fxq "$svc"
-            }
+            # ================ 服务名探测：用 systemctl cat 原生判断存在性，完全绕开文本解析 ================
+            #   之前 4 次 restart job 失败，根因都是：GitHub Actions appleboy/ssh-action 的 PTY 会在命令输出里
+            #   注入 ANSI 颜色转义 + 行尾 \r（Windows CRLF），导致：
+            #     1) grep "^food-purchase-backend\.service" → ^ 行首锚定被 \x1b[0m 前导破坏
+            #     2) awk '{print $1}' | grep -Fx → 字段末尾带 \r 精确匹配失败
+            #   改用 systemctl cat $SERVICE 作为"服务是否存在"的原子查询：
+            #     - 服务存在 → exit 0 且输出 unit 文件
+            #     - 服务不存在 → 非 0 退出码，完全不依赖 stdout/stderr 文本
+            # ================
             SERVICE_NAME=""
-            if detect_service "food-purchase-backend"; then
-              SERVICE_NAME="food-purchase-backend"
-            elif detect_service "food-backend"; then
-              SERVICE_NAME="food-backend"
-            elif detect_service "oa-backend"; then
-              SERVICE_NAME="oa-backend"
-            else
+            for cand in food-purchase-backend food-backend oa-backend; do
+              if systemctl cat "$cand" >/dev/null 2>&1; then
+                SERVICE_NAME="$cand"
+                break
+              fi
+            done
+            if [ -z "$SERVICE_NAME" ]; then
               echo "❌ 找不到任何已知 backend service: food-purchase-backend / food-backend / oa-backend"
-              echo "   systemctl list-unit-files --type=service 第一列候选："
-              systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}' | grep -iE "oa|food|backend" || echo "(无匹配)"
+              echo "   systemctl list-units --type=service 原始输出（含 backend/food/oa 关键字）："
+              (systemctl list-units --type=service --no-legend --no-pager 2>&1 || systemctl list-unit-files --type=service --no-legend --no-pager 2>&1) \
+                | cat -v | grep -iE "oa|food|backend" || echo "(无匹配)"
               exit 1
             fi
             echo "✅ 探测到 backend service: $SERVICE_NAME"
@@ -220,31 +223,37 @@ jobs:
               sudo journalctl -u "$SERVICE_NAME" -n 30 --no-pager
               exit 1
             fi
-            # ================ 健康检查：每轮重新探测端口 + 遍历 3001/4000/3000，避免重启端口空窗期误判 ================
+            # ================ 健康检查：3 端口逐个 curl，不先解析 ss 文本 ================
+            #   ss/awk/grep 的组合同样受 ANSI/\r 污染，不如直接依次 curl 三个候选端口。
+            #   每个端口最多 4 轮（共 36s），任何一个端口返回 status:ok 就通过。
+            # ================
+            PORTS="3001 4000 3000"
             for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-              HEALTH_PORT=""
-              for p in 3001 4000 3000; do
-                if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then
-                  HEALTH_PORT="$p"; break
+              HIT=""
+              for p in $PORTS; do
+                echo "  attempt $i/12: 探测端口 $p..."
+                RESP=$(curl -sS --max-time 3 "http://127.0.0.1:${p}/api/health" 2>&1) || true
+                if echo "$RESP" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+                  echo ""
+                  echo "✅ Backend service is healthy (attempt $i/12, port $p)"
+                  echo "   响应: $RESP"
+                  exit 0
+                fi
+                if [ -n "$RESP" ]; then
+                  HIT="$p"
+                  echo "    端口 $p 有响应但非 status:ok: $RESP"
                 fi
               done
-              if [ -z "$HEALTH_PORT" ]; then
-                echo "  attempt $i/12: 后端端口尚未就绪（3001/4000/3000 均未监听），等待 3s..."
-                sleep 3
-                continue
+              if [ -n "$HIT" ]; then
+                echo "  attempt $i/12: 端口 $HIT 有响应但 /api/health 未就绪，等 3s 重试"
+              else
+                echo "  attempt $i/12: 3 个端口均未就绪，等 3s 重试"
               fi
-              echo "🔍  attempt $i/12: 探测监听端口 $HEALTH_PORT，执行 health check"
-              if curl -sf --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/api/health"; then
-                echo ""
-                echo "✅ Backend service is healthy (attempt $i/12, port $HEALTH_PORT)"
-                exit 0
-              fi
-              echo "  attempt $i/12: health check 失败，端口 $HEALTH_PORT 监听但 /api/health 异常，等 3s 重试"
               sleep 3
             done
             echo "❌ Backend did not become healthy after 36s"
-            echo "   最近 50 条 journal："
-            sudo journalctl -u "$SERVICE_NAME" -n 50 --no-pager
+            echo "   最近 50 条 journal（$SERVICE_NAME）："
+            sudo journalctl -u "$SERVICE_NAME" -n 50 --no-pager --no-hostname 2>&1 || true
             echo "   当前监听端口："
-            ss -ltn 2>/dev/null | awk 'NR<=20 {print $4}'
+            ss -ltn 2>/dev/null || true
             exit 1
