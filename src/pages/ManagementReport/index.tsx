@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, FileDown, X, AlertCircle, ClipboardCheck, Search, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, FileDown, X, AlertCircle, ClipboardCheck, Search, Filter } from 'lucide-react';
 import { format, subMonths, addMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { api } from '@/lib/api';
@@ -17,7 +17,7 @@ interface CategoryNode {
   children?: CategoryNode[];
 }
 
-type TabKey = 'fixed-assets' | 'material-consumption' | 'expense-detail';
+type TabKey = 'fixed-assets' | 'material-consumption' | 'expense-detail' | 'supplier-statistics';
 
 type MatrixData = {
   departments: string[];
@@ -64,6 +64,14 @@ type ExpenseDetailData = {
   total_amount: number;
   list: ExpenseRow[];
 };
+
+type SupplierStatsData = {
+  month: string;
+  suppliers: Array<{ supplier_id: string; supplier_name: string; amount: number }>;
+  total: number;
+};
+
+type SupplierDetailItem = { l1_id: string; l1_name: string; amount: number };
 
 type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed';
 
@@ -322,6 +330,13 @@ export default function ManagementReport() {
   const [stockTakeProgress, setStockTakeProgress] = useState<StockTakeProgressItem[]>([]);
   const [stockTakeLoading, setStockTakeLoading] = useState(false);
 
+  // 供应商统计
+  const [supplierData, setSupplierData] = useState<SupplierStatsData | null>(null);
+  const [supplierLoading, setSupplierLoading] = useState(false);
+  const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
+  // 缓存：supplier_key(month+supplier_id) → 分类明细数组；null=加载中、undefined=未请求
+  const [supplierDetailCache, setSupplierDetailCache] = useState<Record<string, SupplierDetailItem[] | null | undefined>>({});
+
   const yearMonth = format(currentMonth, 'yyyy-MM');
   const monthLabel = format(currentMonth, 'yyyy年MM月', { locale: zhCN });
 
@@ -367,6 +382,41 @@ export default function ManagementReport() {
     } finally { setExpLoading(false); }
   }, [expFilterDept, expFilterL1, expFilterL2, expKeyword]);
 
+  const loadSupplier = useCallback(async (ym: string) => {
+    setSupplierLoading(true);
+    setExpandedSupplier(null);
+    setSupplierDetailCache({});
+    try {
+      const data = await api.get(`/reports/supplier-statistics?month=${ym}`);
+      setSupplierData(data as SupplierStatsData);
+    } catch (e) {
+      console.error(e);
+      setSupplierData(null);
+    } finally { setSupplierLoading(false); }
+  }, []);
+
+  // 切换供应商行展开/收起，按需加载分类明细（带缓存）
+  const toggleSupplier = useCallback(async (supplierId: string) => {
+    const key = `${yearMonth}::${supplierId}`;
+    if (expandedSupplier === supplierId) {
+      setExpandedSupplier(null);
+      return;
+    }
+    setExpandedSupplier(supplierId);
+    // 缓存命中：undefined=未请求，null=加载中，数组=已加载
+    if (supplierDetailCache[key] === undefined) {
+      setSupplierDetailCache(prev => ({ ...prev, [key]: null }));
+      try {
+        const data = await api.get(`/reports/supplier-statistics/detail?supplier_id=${encodeURIComponent(supplierId)}&month=${yearMonth}`);
+        const list = Array.isArray(data) ? (data as SupplierDetailItem[]) : ((data as any)?.data ?? []);
+        setSupplierDetailCache(prev => ({ ...prev, [key]: list }));
+      } catch (e) {
+        console.error(e);
+        setSupplierDetailCache(prev => ({ ...prev, [key]: [] }));
+      }
+    }
+  }, [expandedSupplier, supplierDetailCache, yearMonth]);
+
   useEffect(() => { loadFixed(); fetchDepartments(); }, [loadFixed, fetchDepartments]);
   useEffect(() => { loadMaterial(yearMonth); }, [yearMonth, loadMaterial]);
   useEffect(() => {
@@ -384,6 +434,13 @@ export default function ManagementReport() {
       loadExpense(yearMonth, 1);
     }
   }, [tab, yearMonth, loadExpense]);
+
+  // 供应商统计：进入 Tab 或月份切换时加载主表
+  useEffect(() => {
+    if (tab === 'supplier-statistics') {
+      loadSupplier(yearMonth);
+    }
+  }, [tab, yearMonth, loadSupplier]);
 
   // 月份变化时获取该月各仓库盘点状态
   useEffect(() => {
@@ -503,6 +560,9 @@ export default function ManagementReport() {
       if (expKeyword.trim()) params.set('keyword', expKeyword.trim());
       url = `${apiBase}/reports/pdf/expense-detail?${params.toString()}`;
       filename = `部门费用明细_${yearMonth}.pdf`;
+    } else if (tab === 'supplier-statistics') {
+      url = `${apiBase}/reports/pdf/supplier-statistics?month=${yearMonth}`;
+      filename = `供应商统计_${yearMonth}.pdf`;
     } else {
       return;
     }
@@ -579,6 +639,7 @@ export default function ManagementReport() {
             {tab === 'fixed-assets' && '各部门固定资产库存价值，实时快照'}
             {tab === 'material-consumption' && '各部门当月原材料消耗（扫码领用）'}
             {tab === 'expense-detail' && '当月扫码领用消耗明细，支持筛选和导出'}
+            {tab === 'supplier-statistics' && '当月各供应商仓库采购金额，行内展开查看分类明细'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -587,7 +648,7 @@ export default function ManagementReport() {
             <div className="px-4 py-1 min-w-[120px] text-center font-medium text-sm">{monthLabel}</div>
             <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-md"><ChevronRight size={18}/></button>
           </div>
-          {(tab === 'fixed-assets' || tab === 'material-consumption' || tab === 'expense-detail') && (
+          {(tab === 'fixed-assets' || tab === 'material-consumption' || tab === 'expense-detail' || tab === 'supplier-statistics') && (
             <button
               onClick={downloadPDF}
               className="btn-primary flex items-center gap-1.5 text-sm"
@@ -603,6 +664,7 @@ export default function ManagementReport() {
         <TabButton label="固定资产库存" active={tab === 'fixed-assets'} onClick={() => setTab('fixed-assets')} />
         <TabButton label="原材料消耗" active={tab === 'material-consumption'} onClick={() => setTab('material-consumption')} />
         <TabButton label="部门费用明细" active={tab === 'expense-detail'} onClick={() => setTab('expense-detail')} />
+        <TabButton label="供应商统计" active={tab === 'supplier-statistics'} onClick={() => setTab('supplier-statistics')} />
       </div>
 
       {/* Content */}
@@ -642,6 +704,16 @@ export default function ManagementReport() {
             monthLabel={monthLabel}
           />
         </>
+      ) : tab === 'supplier-statistics' ? (
+        <SupplierStatsCard
+          data={supplierData}
+          loading={supplierLoading}
+          expandedSupplier={expandedSupplier}
+          detailCache={supplierDetailCache}
+          monthLabel={monthLabel}
+          yearMonth={yearMonth}
+          onToggle={toggleSupplier}
+        />
       ) : (
         <MatrixCard
           title="固定资产 · 库存价值"
@@ -1101,6 +1173,135 @@ function ExpenseDetailCard({
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/** 供应商统计卡片：主表行=供应商、列=当月采购金额；行内展开显示各 L1 大类金额 */
+function SupplierStatsCard({
+  data, loading, expandedSupplier, detailCache, monthLabel, yearMonth, onToggle,
+}: {
+  data: SupplierStatsData | null;
+  loading: boolean;
+  expandedSupplier: string | null;
+  detailCache: Record<string, SupplierDetailItem[] | null | undefined>;
+  monthLabel: string;
+  yearMonth: string;
+  onToggle: (supplierId: string) => void;
+}) {
+  return (
+    <div className="card">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-gray-800">供应商 · 当月采购</h2>
+          <p className="text-[11px] text-gray-400 mt-0.5">{monthLabel}</p>
+        </div>
+        {data && (
+          <div className="text-right">
+            <p className="text-[11px] text-gray-400">采购总额</p>
+            <p className="text-xl font-bold text-primary-600">{formatCurrency(data.total)}</p>
+          </div>
+        )}
+      </div>
+
+      {loading && <div className="py-16 text-center text-gray-400">加载中...</div>}
+
+      {!loading && (!data || data.suppliers.length === 0) && (
+        <div className="py-16 text-center text-gray-400">
+          <AlertCircle size={36} className="mx-auto mb-2 opacity-50"/>
+          <p>当月暂无仓库采购记录</p>
+          <p className="text-xs mt-1">建议切换月份或确认是否有仓库采购单</p>
+        </div>
+      )}
+
+      {!loading && data && data.suppliers.length > 0 && (
+        <div className="overflow-x-auto -mx-6 px-6 sm:-mx-8 sm:px-8">
+          <div className="min-w-[420px]">
+            <table className="data-table w-full text-xs">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 bg-gray-50 z-10 min-w-[180px]">供应商</th>
+                  <th className="min-w-[120px] text-right whitespace-nowrap">采购金额</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.suppliers.map((s, idx) => {
+                  const isExpanded = expandedSupplier === s.supplier_id;
+                  const cacheKey = `${yearMonth}::${s.supplier_id}`;
+                  const detail = detailCache[cacheKey];
+                  // null=加载中, undefined=未请求（展开时父组件触发请求）, 数组=已加载
+                  const isLoadingDetail = isExpanded && detail === null;
+                  return (
+                    <Fragment key={`s_${s.supplier_id}_${idx}`}>
+                      <tr
+                        className={`hover:bg-primary-50/40 transition-colors cursor-pointer ${isExpanded ? 'bg-primary-50/60' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60')}`}
+                        onClick={() => onToggle(s.supplier_id)}
+                      >
+                        <td className="sticky left-0 bg-inherit z-[1]">
+                          <div className="flex items-center gap-1.5">
+                            {isExpanded
+                              ? <ChevronDown size={14} className="text-primary-600 flex-shrink-0" />
+                              : <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />}
+                            <span className={`font-medium truncate ${isExpanded ? 'text-primary-700' : 'text-gray-800'}`}>
+                              {s.supplier_name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="text-right font-bold text-gray-800 whitespace-nowrap">
+                          {s.amount === 0
+                            ? <span className="text-gray-300">—</span>
+                            : formatCurrency(s.amount)}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-slate-50/40">
+                          <td colSpan={2} className="p-0">
+                            <div className="pl-7 pr-3 py-2">
+                              {isLoadingDetail ? (
+                                <div className="py-4 text-center text-xs text-gray-400">加载分类明细中...</div>
+                              ) : !detail || detail.length === 0 ? (
+                                <div className="py-4 text-center text-xs text-gray-400">暂无分类明细</div>
+                              ) : (
+                                <div className="space-y-1">
+                                  {detail.map((c, i) => (
+                                    <div key={`c_${c.l1_id}_${i}`} className="flex items-center justify-between text-xs py-1.5 border-b border-gray-100 last:border-0">
+                                      <div className="flex items-center gap-1.5 text-gray-600">
+                                        <span className="text-gray-300">└─</span>
+                                        <span>{c.l1_name}</span>
+                                      </div>
+                                      <span className="font-semibold text-gray-700 whitespace-nowrap">
+                                        {c.amount === 0 ? <span className="text-gray-300">—</span> : formatCurrency(c.amount)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  <div className="flex items-center justify-between text-xs pt-1.5 mt-1 border-t border-gray-200">
+                                    <span className="font-semibold text-gray-700">合计</span>
+                                    <span className="font-bold text-primary-700 whitespace-nowrap">
+                                      {formatCurrency(detail.reduce((sum, c) => sum + (Number(c.amount) || 0), 0))}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                <tr className="bg-gradient-to-r from-gray-100 to-gray-50 border-t-2 border-gray-300 shadow-sm">
+                  <td className="sticky left-0 bg-gradient-to-r from-gray-100 to-gray-50 z-[2] font-bold text-gray-700">合计</td>
+                  <td className="text-right font-extrabold text-primary-700 whitespace-nowrap">
+                    {formatCurrency(data.total)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-gray-400 mt-2 sm:hidden">💡 点击供应商行展开查看各分类金额</p>
+          <p className="text-[11px] text-gray-400 mt-2 hidden sm:block">💡 点击供应商行展开查看各 L1 大类金额；点击右上角导出PDF</p>
+        </div>
       )}
     </div>
   );
