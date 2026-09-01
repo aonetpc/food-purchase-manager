@@ -67,11 +67,11 @@ type ExpenseDetailData = {
 
 type SupplierStatsData = {
   month: string;
-  suppliers: Array<{ supplier_id: string; supplier_name: string; amount: number }>;
+  suppliers: Array<{ supplier_id: string; supplier_name: string; group_key: string; amount: number }>;
   total: number;
 };
 
-type SupplierDetailItem = { l1_id: string; l1_name: string; amount: number };
+type SupplierDetailItem = { cat_name: string; amount: number };
 
 type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed';
 
@@ -396,18 +396,18 @@ export default function ManagementReport() {
   }, []);
 
   // 切换供应商行展开/收起，按需加载分类明细（带缓存）
-  const toggleSupplier = useCallback(async (supplierId: string) => {
-    const key = `${yearMonth}::${supplierId}`;
-    if (expandedSupplier === supplierId) {
+  const toggleSupplier = useCallback(async (groupKey: string) => {
+    const key = `${yearMonth}::${groupKey}`;
+    if (expandedSupplier === groupKey) {
       setExpandedSupplier(null);
       return;
     }
-    setExpandedSupplier(supplierId);
+    setExpandedSupplier(groupKey);
     // 缓存命中：undefined=未请求，null=加载中，数组=已加载
     if (supplierDetailCache[key] === undefined) {
       setSupplierDetailCache(prev => ({ ...prev, [key]: null }));
       try {
-        const data = await api.get(`/reports/supplier-statistics/detail?supplier_id=${encodeURIComponent(supplierId)}&month=${yearMonth}`);
+        const data = await api.get(`/reports/supplier-statistics/detail?group_key=${encodeURIComponent(groupKey)}&month=${yearMonth}`);
         const list = Array.isArray(data) ? (data as SupplierDetailItem[]) : ((data as any)?.data ?? []);
         setSupplierDetailCache(prev => ({ ...prev, [key]: list }));
       } catch (e) {
@@ -1188,14 +1188,14 @@ function SupplierStatsCard({
   detailCache: Record<string, SupplierDetailItem[] | null | undefined>;
   monthLabel: string;
   yearMonth: string;
-  onToggle: (supplierId: string) => void;
+  onToggle: (groupKey: string) => void;
 }) {
   return (
     <div className="card">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
         <div>
           <h2 className="text-base font-semibold text-gray-800">供应商 · 当月采购</h2>
-          <p className="text-[11px] text-gray-400 mt-0.5">{monthLabel}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{monthLabel} · 仅统计已入库订单</p>
         </div>
         {data && (
           <div className="text-right">
@@ -1210,8 +1210,8 @@ function SupplierStatsCard({
       {!loading && (!data || data.suppliers.length === 0) && (
         <div className="py-16 text-center text-gray-400">
           <AlertCircle size={36} className="mx-auto mb-2 opacity-50"/>
-          <p>当月暂无仓库采购记录</p>
-          <p className="text-xs mt-1">建议切换月份或确认是否有仓库采购单</p>
+          <p>当月暂无已入库的仓库采购</p>
+          <p className="text-xs mt-1">建议切换月份或确认采购单是否已完成入库</p>
         </div>
       )}
 
@@ -1227,16 +1227,16 @@ function SupplierStatsCard({
               </thead>
               <tbody>
                 {data.suppliers.map((s, idx) => {
-                  const isExpanded = expandedSupplier === s.supplier_id;
-                  const cacheKey = `${yearMonth}::${s.supplier_id}`;
+                  const isExpanded = expandedSupplier === s.group_key;
+                  const cacheKey = `${yearMonth}::${s.group_key}`;
                   const detail = detailCache[cacheKey];
                   // null=加载中, undefined=未请求（展开时父组件触发请求）, 数组=已加载
                   const isLoadingDetail = isExpanded && detail === null;
                   return (
-                    <Fragment key={`s_${s.supplier_id}_${idx}`}>
+                    <Fragment key={`s_${s.group_key}_${idx}`}>
                       <tr
                         className={`hover:bg-primary-50/40 transition-colors cursor-pointer ${isExpanded ? 'bg-primary-50/60' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60')}`}
-                        onClick={() => onToggle(s.supplier_id)}
+                        onClick={() => onToggle(s.group_key)}
                       >
                         <td className="sticky left-0 bg-inherit z-[1]">
                           <div className="flex items-center gap-1.5">
@@ -1265,10 +1265,10 @@ function SupplierStatsCard({
                               ) : (
                                 <div className="space-y-1">
                                   {detail.map((c, i) => (
-                                    <div key={`c_${c.l1_id}_${i}`} className="flex items-center justify-between text-xs py-1.5 border-b border-gray-100 last:border-0">
+                                    <div key={`c_${c.cat_name}_${i}`} className="flex items-center justify-between text-xs py-1.5 border-b border-gray-100 last:border-0">
                                       <div className="flex items-center gap-1.5 text-gray-600">
                                         <span className="text-gray-300">└─</span>
-                                        <span>{c.l1_name}</span>
+                                        <span>{c.cat_name}</span>
                                       </div>
                                       <span className="font-semibold text-gray-700 whitespace-nowrap">
                                         {c.amount === 0 ? <span className="text-gray-300">—</span> : formatCurrency(c.amount)}
