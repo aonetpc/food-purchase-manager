@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy, RefreshCw } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, DisplayStatus, OrderStatus, PaxEntry, CustomPackageItem } from './types';
 import {
   BUSINESS,
@@ -2079,6 +2079,7 @@ export default function BookingBoard() {
   const [mobileDate, setMobileDate] = useState<string>(() => todayStr());
   const [createDrawer, setCreateDrawer] = useState<null | { mode: 'create' | 'edit' | 'copy'; order?: BookingOrder; defaultDate?: string }>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshingBtn, setRefreshingBtn] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -2253,6 +2254,82 @@ export default function BookingBoard() {
       setOrders([]);
     }
   }, [weekStart]);
+
+  // 手动刷新（复用 loadOrders，独立维护 loading + 按钮短暂旋转反馈）
+  const manualRefresh = useCallback(async () => {
+    if (loading) return;
+    setRefreshingBtn(true);
+    setLoading(true);
+    try {
+      await loadOrders();
+    } catch (e) {
+      console.error('[BookingBoard] 手动刷新失败:', e);
+    } finally {
+      setLoading(false);
+      // 按钮旋转 1.5s 后恢复
+      setTimeout(() => setRefreshingBtn(false), 1500);
+    }
+  }, [loading, loadOrders]);
+
+  // 30 分钟智能自动刷新 + 页面可见性感知
+  //   策略：load 完成后再 setTimeout 下一次（防堆积），页面隐藏时暂停，可见时立即补刷一次
+  const _autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const _autoRefreshVisibleRef = useRef(true);
+  // 桥接 ref：让空依赖 useEffect 能始终读到最新的 loadOrders / loading
+  const _loadOrdersRef = useRef(loadOrders);
+  _loadOrdersRef.current = loadOrders;
+  const _loadingRef = useRef(loading);
+  _loadingRef.current = loading;
+
+  useEffect(() => {
+    const scheduleNext = () => {
+      if (_autoRefreshTimerRef.current) clearTimeout(_autoRefreshTimerRef.current);
+      _autoRefreshTimerRef.current = setTimeout(async () => {
+        if (!_autoRefreshVisibleRef.current) {
+          scheduleNext();
+          return;
+        }
+        // 正在加载中就跳过这次，等下一个 30min
+        if (!_loadingRef.current) {
+          try {
+            await _loadOrdersRef.current();
+          } catch (e) {
+            console.error('[BookingBoard] 自动刷新失败:', e);
+          }
+        }
+        scheduleNext();
+      }, 30 * 60 * 1000); // 30 分钟
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        _autoRefreshVisibleRef.current = false;
+        if (_autoRefreshTimerRef.current) {
+          clearTimeout(_autoRefreshTimerRef.current);
+          _autoRefreshTimerRef.current = null;
+        }
+      } else {
+        _autoRefreshVisibleRef.current = true;
+        // 切回可见后，先手动刷一次（页面被挂后台可能错过了变化）
+        if (!_loadingRef.current) {
+          _loadOrdersRef.current().catch(e => console.error('[BookingBoard] 可见恢复刷新失败:', e));
+        }
+        scheduleNext();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    scheduleNext();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (_autoRefreshTimerRef.current) {
+        clearTimeout(_autoRefreshTimerRef.current);
+        _autoRefreshTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 只在挂载/卸载时注册一次，内部通过 ref 拿最新值
 
   // 切换周时从后端加载订单数据
   useEffect(() => {
@@ -2585,7 +2662,7 @@ export default function BookingBoard() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-gray-900">预订调度画板</h1>
-            <div className="text-xs text-gray-500 mt-0.5">康养中心 · 7天预订调度</div>
+            <div className="text-xs text-gray-500 mt-0.5">画一 · 7天预订调度</div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <button
@@ -2613,6 +2690,16 @@ export default function BookingBoard() {
               className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center gap-1"
             >
               <Calendar size={12} /> 今天
+            </button>
+            {/* 刷新按钮 - 通用无权限要求（手动点击 + 30min 自动刷新） */}
+            <button
+              type="button"
+              onClick={manualRefresh}
+              disabled={loading}
+              title="刷新订单（30分钟自动刷新）"
+              className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <RefreshCw size={12} className={refreshingBtn ? 'animate-spin' : ''} /> 刷新
             </button>
             {/* 历史搜索 - 所有登录用户可用 */}
             <button
