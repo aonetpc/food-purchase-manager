@@ -1035,9 +1035,14 @@ router.get('/pdf/expense-detail', async (req, res) => {
   }
 });
 
-/** ============== 6. 供应商统计（当月各供应商仓库采购金额） ============== */
-// 金额优先 actual_amount，无则回退 total_amount（与 warehouse-purchases.js 现有一致）
-// 状态排除 draft / cancelled；未指定供应商单独成行
+/** ============== 6. 供应商统计（当月已入库订单按供应商聚合） ==============
+ * 筛选规则：status IN (received, confirming, confirmed, reimbursing, reimbursed) = 已入库
+ *   （与 warehouse-purchases.js L3179 冲回库存的判定一致；这些状态已产生 stock_movements 入库流水）
+ * 供应商分组优先级：supplier_id（关联 suppliers 表取标准名称） > supplier_name（临时输入） > 无供应商
+ * 分类展示：L1·L2 两级组合（如"原材料·绿化工程类"）
+ */
+
+/** 主表：当月已入库订单按供应商聚合金额 */
 router.get('/supplier-statistics', async (req, res) => {
   try {
     const { month } = req.query;
@@ -1047,22 +1052,35 @@ router.get('/supplier-statistics', async (req, res) => {
 
     const [rows] = await pool.query(`
       SELECT
-        IFNULL(NULLIF(wp.supplier_id, ''), '') as supplier_id,
-        IFNULL(NULLIF(wp.supplier_name, ''), '未指定供应商') as supplier_name,
+        -- 分组键：supplier_id 优先（关联 suppliers 表），其次 supplier_name（临时输入），最后无供应商
+        CASE
+          WHEN wp.supplier_id IS NOT NULL AND wp.supplier_id <> '' THEN wp.supplier_id
+          WHEN wp.supplier_name IS NOT NULL AND wp.supplier_name <> '' THEN CONCAT('temp:', wp.supplier_name)
+          ELSE 'none'
+        END as group_key,
+        -- 显示名：supplier_name 优先（含临时输入），其次 suppliers 表标准名，最后兜底
+        COALESCE(
+          NULLIF(wp.supplier_name, ''),
+          s.name,
+          '无供应商采购'
+        ) as supplier_name,
+        COALESCE(NULLIF(wp.supplier_id, ''), '') as supplier_id,
         SUM(CASE
           WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
           ELSE IFNULL(wp.total_amount, 0)
         END) as amount
       FROM warehouse_purchases wp
-      WHERE wp.status NOT IN ('draft', 'cancelled')
+      LEFT JOIN suppliers s ON wp.supplier_id = s.id
+      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
         AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
-      GROUP BY supplier_id, supplier_name
+      GROUP BY group_key, supplier_name, supplier_id
       ORDER BY amount DESC
     `, [month]);
 
     const suppliers = rows.map(r => ({
       supplier_id: r.supplier_id || '',
       supplier_name: r.supplier_name,
+      group_key: r.group_key,
       amount: toNum(r.amount),
     }));
 
@@ -1075,20 +1093,27 @@ router.get('/supplier-statistics', async (req, res) => {
   }
 });
 
-/** 供应商明细：当月该供应商各 L1 大类金额（行内展开加载用） */
+/** 供应商明细：当月该供应商各 L1·L2 组合金额（行内展开加载用） */
 router.get('/supplier-statistics/detail', async (req, res) => {
   try {
-    const { supplier_id, month } = req.query;
+    const { group_key, month } = req.query;
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
       return res.status(400).json({ error: '参数 month 格式错误，需要 YYYY-MM' });
     }
-    // supplier_id 为空串 → 未指定供应商（IS NULL 或 ''）
-    const sid = supplier_id || '';
+    const gk = group_key || 'none';
 
+    // 分类链路：warehouse_items.category_id → wc(原始层级)
+    // → wc_l2(level 2 或 self) → wc_l1(level 1 父级)
+    // 展示：L1·L2 两级组合
     const [rows] = await pool.query(`
       SELECT
-        IFNULL(wc_p.id, '') as l1_id,
-        COALESCE(wc_p.name, '未分类') as l1_name,
+        COALESCE(
+          IF(wc_l1.name IS NOT NULL AND wc_l2.name IS NOT NULL, CONCAT(wc_l1.name, '·', wc_l2.name), NULL),
+          wc_l1.name,
+          wc_l2.name,
+          wc.name,
+          '未分类'
+        ) as cat_name,
         SUM(CASE
           WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
           ELSE IFNULL(wpi.requested_amount, 0)
@@ -1097,18 +1122,30 @@ router.get('/supplier-statistics/detail', async (req, res) => {
       JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
       LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
       LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
-      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
-      WHERE wp.status NOT IN ('draft', 'cancelled')
+      -- 找 L2：wc 本身是 level 2 或 wc 的父级是 level 2
+      LEFT JOIN warehouse_categories wc_l2 ON (
+        (wc.level = 3 AND wc.parent_id = wc_l2.id) OR
+        (wc.level = 2 AND wc.id = wc_l2.id)
+      )
+      -- L1 = L2 的父级
+      LEFT JOIN warehouse_categories wc_l1 ON wc_l2.parent_id = wc_l1.id
+      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
         AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
-        AND ((? = '' AND (wp.supplier_id IS NULL OR wp.supplier_id = ''))
-             OR wp.supplier_id = ?)
-      GROUP BY l1_id, l1_name
+        AND (
+          -- group_key = 'none' → supplier_id 和 supplier_name 都为空
+          (? = 'none' AND (wp.supplier_id IS NULL OR wp.supplier_id = '')
+                       AND (wp.supplier_name IS NULL OR wp.supplier_name = ''))
+          -- group_key 以 'temp:' 开头 → 匹配 supplier_name（临时供应商）
+          OR (? LIKE 'temp:%' AND wp.supplier_id IS NULL AND wp.supplier_name = SUBSTRING(?, 6))
+          -- 否则是 supplier_id（真实供应商）
+          OR (? NOT LIKE 'temp:%' AND ? <> 'none' AND wp.supplier_id = ?)
+        )
+      GROUP BY cat_name
       ORDER BY amount DESC
-    `, [month, sid, sid]);
+    `, [month, gk, gk, gk, gk, gk, gk]);
 
     const categories = rows.map(r => ({
-      l1_id: r.l1_id || '',
-      l1_name: r.l1_name,
+      cat_name: r.cat_name,
       amount: toNum(r.amount),
     }));
 
@@ -1129,39 +1166,50 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
 
     const [rows] = await pool.query(`
       SELECT
-        IFNULL(NULLIF(wp.supplier_id, ''), '') as supplier_id,
-        IFNULL(NULLIF(wp.supplier_name, ''), '未指定供应商') as supplier_name,
+        CASE
+          WHEN wp.supplier_id IS NOT NULL AND wp.supplier_id <> '' THEN wp.supplier_id
+          WHEN wp.supplier_name IS NOT NULL AND wp.supplier_name <> '' THEN CONCAT('temp:', wp.supplier_name)
+          ELSE 'none'
+        END as group_key,
+        COALESCE(
+          NULLIF(wp.supplier_name, ''),
+          s.name,
+          '无供应商采购'
+        ) as supplier_name,
         SUM(CASE
           WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
           ELSE IFNULL(wp.total_amount, 0)
         END) as amount
       FROM warehouse_purchases wp
-      WHERE wp.status NOT IN ('draft', 'cancelled')
+      LEFT JOIN suppliers s ON wp.supplier_id = s.id
+      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
         AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
-      GROUP BY supplier_id, supplier_name
+      GROUP BY group_key, supplier_name
       ORDER BY amount DESC
     `, [month]);
+
+    const grandTotal = toNum(rows.reduce((s, r) => s + toNum(r.amount), 0));
 
     const matrix = {
       departments: ['采购金额'],
       departmentIds: ['amount'],
-      rows: rows.map(r => ({
+      rows: rows.map((r, idx) => ({
         l1Id: '',
         l1Name: '',
-        l2Id: r.supplier_id || `s_${rows.indexOf(r)}`,
+        l2Id: r.group_key || `s_${idx}`,
         l2Name: r.supplier_name,
         category: r.supplier_name,
         values: [toNum(r.amount)],
         total: toNum(r.amount),
       })),
-      totals: [toNum(rows.reduce((s, r) => s + toNum(r.amount), 0))],
-      grandTotal: toNum(rows.reduce((s, r) => s + toNum(r.amount), 0)),
+      totals: [grandTotal],
+      grandTotal,
     };
 
     const [y, m] = month.split('-');
     const buf = await generateReportPDF({
       title: '供应商采购统计表',
-      subtitle: `${y}年${parseInt(m)}月    供应商数：${rows.length}    合计：¥${toNum(matrix.grandTotal).toFixed(2)}`,
+      subtitle: `${y}年${parseInt(m)}月    供应商数：${rows.length}    合计：¥${grandTotal.toFixed(2)}`,
       matrix,
     });
     res.setHeader('Content-Type', 'application/pdf');
