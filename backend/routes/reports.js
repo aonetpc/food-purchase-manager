@@ -1035,4 +1035,143 @@ router.get('/pdf/expense-detail', async (req, res) => {
   }
 });
 
+/** ============== 6. 供应商统计（当月各供应商仓库采购金额） ============== */
+// 金额优先 actual_amount，无则回退 total_amount（与 warehouse-purchases.js 现有一致）
+// 状态排除 draft / cancelled；未指定供应商单独成行
+router.get('/supplier-statistics', async (req, res) => {
+  try {
+    const { month } = req.query;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '参数 month 格式错误，需要 YYYY-MM' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        IFNULL(NULLIF(wp.supplier_id, ''), '') as supplier_id,
+        IFNULL(NULLIF(wp.supplier_name, ''), '未指定供应商') as supplier_name,
+        SUM(CASE
+          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+          ELSE IFNULL(wp.total_amount, 0)
+        END) as amount
+      FROM warehouse_purchases wp
+      WHERE wp.status NOT IN ('draft', 'cancelled')
+        AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
+      GROUP BY supplier_id, supplier_name
+      ORDER BY amount DESC
+    `, [month]);
+
+    const suppliers = rows.map(r => ({
+      supplier_id: r.supplier_id || '',
+      supplier_name: r.supplier_name,
+      amount: toNum(r.amount),
+    }));
+
+    const total = suppliers.reduce((s, r) => s + toNum(r.amount), 0);
+
+    res.json({ month, suppliers, total: toNum(total) });
+  } catch (err) {
+    console.error('[supplier-statistics] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** 供应商明细：当月该供应商各 L1 大类金额（行内展开加载用） */
+router.get('/supplier-statistics/detail', async (req, res) => {
+  try {
+    const { supplier_id, month } = req.query;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '参数 month 格式错误，需要 YYYY-MM' });
+    }
+    // supplier_id 为空串 → 未指定供应商（IS NULL 或 ''）
+    const sid = supplier_id || '';
+
+    const [rows] = await pool.query(`
+      SELECT
+        IFNULL(wc_p.id, '') as l1_id,
+        COALESCE(wc_p.name, '未分类') as l1_name,
+        SUM(CASE
+          WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
+          ELSE IFNULL(wpi.requested_amount, 0)
+        END) as amount
+      FROM warehouse_purchases wp
+      JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
+      LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
+      LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+      LEFT JOIN warehouse_categories wc_p ON wc.parent_id = wc_p.id
+      WHERE wp.status NOT IN ('draft', 'cancelled')
+        AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
+        AND ((? = '' AND (wp.supplier_id IS NULL OR wp.supplier_id = ''))
+             OR wp.supplier_id = ?)
+      GROUP BY l1_id, l1_name
+      ORDER BY amount DESC
+    `, [month, sid, sid]);
+
+    const categories = rows.map(r => ({
+      l1_id: r.l1_id || '',
+      l1_name: r.l1_name,
+      amount: toNum(r.amount),
+    }));
+
+    res.json(categories);
+  } catch (err) {
+    console.error('[supplier-statistics detail] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** 供应商统计 PDF 导出（适配 generateReportPDF 的 matrix 结构：单列「采购金额」） */
+router.get('/pdf/supplier-statistics', async (req, res) => {
+  try {
+    const { month } = req.query;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '参数 month 格式错误' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        IFNULL(NULLIF(wp.supplier_id, ''), '') as supplier_id,
+        IFNULL(NULLIF(wp.supplier_name, ''), '未指定供应商') as supplier_name,
+        SUM(CASE
+          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+          ELSE IFNULL(wp.total_amount, 0)
+        END) as amount
+      FROM warehouse_purchases wp
+      WHERE wp.status NOT IN ('draft', 'cancelled')
+        AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
+      GROUP BY supplier_id, supplier_name
+      ORDER BY amount DESC
+    `, [month]);
+
+    const matrix = {
+      departments: ['采购金额'],
+      departmentIds: ['amount'],
+      rows: rows.map(r => ({
+        l1Id: '',
+        l1Name: '',
+        l2Id: r.supplier_id || `s_${rows.indexOf(r)}`,
+        l2Name: r.supplier_name,
+        category: r.supplier_name,
+        values: [toNum(r.amount)],
+        total: toNum(r.amount),
+      })),
+      totals: [toNum(rows.reduce((s, r) => s + toNum(r.amount), 0))],
+      grandTotal: toNum(rows.reduce((s, r) => s + toNum(r.amount), 0)),
+    };
+
+    const [y, m] = month.split('-');
+    const buf = await generateReportPDF({
+      title: '供应商采购统计表',
+      subtitle: `${y}年${parseInt(m)}月    供应商数：${rows.length}    合计：¥${toNum(matrix.grandTotal).toFixed(2)}`,
+      matrix,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    const safeName = encodeURIComponent(`供应商统计_${month}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename="report.pdf"; filename*=UTF-8''${safeName}`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[pdf supplier-statistics] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
