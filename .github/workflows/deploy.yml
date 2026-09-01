@@ -190,17 +190,45 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           command_timeout: 10m
           script: |
-            set -e
-            echo "🔄 Restarting backend service..."
-            sudo systemctl restart food-purchase-backend || echo "⚠️ systemctl restart failed, trying alternative..."
-            sleep 5
-            for i in 1 2 3 4 5; do
-              if curl -s http://127.0.0.1:3001/api/health; then
-                echo "✅ Backend service is healthy (attempt $i/5)"
+            set -euo pipefail
+            SERVICE_NAME="food-backend"
+            # 优先用约定的 food-backend，不存在时兜底 food-purchase-backend / oa-backend
+            if ! systemctl list-unit-files --type=service | grep -q "^${SERVICE_NAME}\.service"; then
+              if systemctl list-unit-files --type=service | grep -q "^food-purchase-backend\.service"; then
+                SERVICE_NAME="food-purchase-backend"
+              elif systemctl list-unit-files --type=service | grep -q "^oa-backend\.service"; then
+                SERVICE_NAME="oa-backend"
+              else
+                echo "❌ 找不到任何已知 backend service: food-backend / food-purchase-backend / oa-backend"
+                systemctl list-unit-files --type=service | grep -iE "oa|food|backend" || true
+                exit 1
+              fi
+              echo "⚠️ 约定的 food-backend 不存在，自动回退到: $SERVICE_NAME"
+            fi
+            echo "🔄 Restarting backend service: $SERVICE_NAME"
+            sudo systemctl restart "$SERVICE_NAME"
+            sleep 3
+            if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+              echo "❌ $SERVICE_NAME restart 失败，最近 30 条日志:"
+              sudo journalctl -u "$SERVICE_NAME" -n 30 --no-pager
+              exit 1
+            fi
+            # 端口按 3001→4000→3000 顺序探测（兼容不同部署配置）
+            HEALTH_PORT=""
+            for p in 3001 4000 3000; do
+              if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then
+                HEALTH_PORT="$p"; break
+              fi
+            done
+            [ -z "$HEALTH_PORT" ] && HEALTH_PORT=3001
+            echo "🔍 健康检查端口探测结果: $HEALTH_PORT"
+            for i in 1 2 3 4 5 6 7 8; do
+              if curl -sf --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/api/health"; then
+                echo "✅ Backend service is healthy (attempt $i/8, port $HEALTH_PORT)"
                 exit 0
               fi
-              echo "  Waiting for backend... attempt $i/5"
+              echo "  Waiting for backend... attempt $i/8"
               sleep 3
             done
-            echo "❌ Backend did not become healthy"
+            echo "❌ Backend did not become healthy after 24s"
             exit 1

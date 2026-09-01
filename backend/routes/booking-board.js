@@ -510,6 +510,82 @@ const BIZ_MAP = {
 const EDITABLE_STATUS = ['pending', 'rejected', 'sales_confirming', 'reviewing', 'confirmed'];
 
 // ============================================================
+// Out of sort 终极修复：TEMPORARY TABLE + STRAIGHT_JOIN 分页取单
+//   把「WHERE + ORDER BY created_at DESC + LIMIT」阶段与「SELECT o.* 宽列装载」彻底拆开：
+//     阶段 1：TEMP 表里只塞 id (CHAR(36) PK) —— filesort sort_buffer 只装 id × LIMIT，
+//             签字 100MB / JSON 再大也不影响 sort。
+//     阶段 2：STRAIGHT_JOIN booking_orders orig ON orig.id = temp.id —— 强制小表 temp
+//             先全表扫描，再回 booking_orders 按 PK 精确点查，完全避免优化器走反。
+//   MySQL TEMPORARY TABLE 特性：仅当前 DB session 可见，session 归还池自动销毁；
+//   为防止 mysql2 默认 reset-after-release 不彻底导致残留，所有函数 try/finally DROP。
+// ============================================================
+/**
+ * 阶段1: 创建 session 级临时表，把符合 whereSql 的订单 id(仅 id)按 created_at DESC
+ *       插入临时表（已内建 LIMIT/OFFSET，sort_buffer 绝不触碰宽列）。
+ * @param conn          当前持有的连接（pool.getConnection 拿到的那条，保证 TEMP 可见性）
+ * @param whereSql      WHERE xxx 片段（含参数占位 ?）
+ * @param params        对应 ? 实参数组
+ * @param limit         LIMIT 行数（/orders 传 500，/orders/search 传 pageSize）
+ * @param [offset=0]    OFFSET（/orders/search 分页传，/orders 不传=0）
+ * @returns 临时表名，供 fetchOrderRowsByTempTable / cleanupOrderTempTable 使用
+ */
+async function buildOrderIdTempTable(conn, whereSql, params, limit, offset) {
+  const suffix = Math.random().toString(36).slice(2, 9);
+  const tempName = `_tmp_order_pick_${suffix}`;
+  await conn.query(
+    `CREATE TEMPORARY TABLE \`${tempName}\` (
+       id VARCHAR(36) NOT NULL PRIMARY KEY,
+       __seq INT NOT NULL AUTO_INCREMENT UNIQUE KEY
+     ) ENGINE=MEMORY`
+  );
+  try {
+    // MEMORY 不支持 ORDER BY + INSERT...SELECT 里的 AUTO_INCREMENT 排序定位 → 改为分步：
+    //   1) 先 INSERT ... WHERE ... ORDER BY created_at DESC LIMIT ?,? （没有 __seq，只有 id，按插入序 = 排序正确顺序）
+    //   2) 再读回来按逐行写入得到 seq（或者直接简单一点：INSERT 时用用户变量 @rn）
+    // 最简洁用户变量：
+    await conn.query(
+      `INSERT INTO \`${tempName}\` (id, __seq)
+       SELECT o.id, (@row := @row + 1) AS __seq
+       FROM booking_orders o, (SELECT @row := ${Number(offset) || 0}) AS _r
+       ${whereSql}
+       ORDER BY o.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, Math.max(0, Number(limit) | 0), Math.max(0, Number(offset) | 0)]
+    );
+  } catch (e) {
+    // 任何失败先清理临时表再抛
+    try { await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${tempName}\``); } catch (_) {}
+    throw e;
+  }
+  return tempName;
+}
+
+/**
+ * 阶段2: STRAIGHT_JOIN 强制临时表（小表）做驱动表 → 再按 PK 回 booking_orders 取宽列。
+ * @param withCalcTotal 是否附加 (SELECT SUM(pax*amount)) calc_total 标量子列（/orders/search 用）
+ * @param orderedBySeq 结果是否按临时表的 __seq 重新排一遍（确保 = 原 ORDER BY created_at DESC 的顺序）
+ */
+async function fetchOrderRowsByTempTable(conn, tempName, withCalcTotal, orderedBySeq = true) {
+  const calcCol = withCalcTotal
+    ? `, (SELECT COALESCE(SUM(bi.pax * bi.amount), 0) FROM booking_items bi WHERE bi.order_id = orig.id) AS calc_total`
+    : '';
+  const orderSql = orderedBySeq ? `ORDER BY pick.__seq ASC` : ''; // __seq 递增 = created_at DESC 的插入序
+  const [rows] = await conn.query(
+    `SELECT orig.* ${calcCol}
+     FROM \`${tempName}\` pick
+     STRAIGHT_JOIN booking_orders orig ON orig.id = pick.id
+     ${orderSql}`
+  );
+  return rows;
+}
+
+/** finally 清理（防止连接归还后仍残留 — mysql2 的 reset-after-release 对某些版本 TEMP 表不保证）*/
+async function cleanupOrderTempTable(conn, tempName) {
+  if (!conn || !tempName) return;
+  try { await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${tempName}\``); } catch (_) {}
+}
+
+// ============================================================
 // GET /api/booking/config  业务常量（套餐/房型/会议厅/康乐）
 // （固定路由，放最前）
 // ============================================================
@@ -1334,6 +1410,8 @@ makeBizConfigCrud({
 //       page=1&page_size=20（可选）
 // ============================================================
 router.get('/orders/search', requireAuth, async (req, res) => {
+  const conn = await pool.getConnection();
+  let tempTable = null;
   try {
     const { keyword, bizTypes, statuses, page = 1, page_size = 20 } = req.query;
     const kw = String(keyword || '').trim();
@@ -1367,38 +1445,34 @@ router.get('/orders/search', requireAuth, async (req, res) => {
 
     const whereSql = `WHERE ${wheres.join(' AND ')}`;
 
-    const [countRows] = await pool.query(`SELECT COUNT(*) AS cnt FROM booking_orders o ${whereSql}`, params);
+    const [countRows] = await conn.query(`SELECT COUNT(*) AS cnt FROM booking_orders o ${whereSql}`, params);
     const total = Number(countRows[0]?.cnt) || 0;
 
-    // 【Out of sort memory 修复 · 延迟排序(late row lookup)】同 /orders：
-    // 先子查询窄行(id)排序分页，再 JOIN 回主表取宽列 + 聚合，避免 sort_buffer 装签字 JSON 爆。
-    const [rows] = await pool.query(`
-      SELECT orig.*,
-             (SELECT COALESCE(SUM(bi.pax * bi.amount), 0) FROM booking_items bi WHERE bi.order_id = orig.id) AS calc_total
-      FROM (
-        SELECT o.id FROM booking_orders o
-        ${whereSql}
-        ORDER BY o.created_at DESC
-        LIMIT ? OFFSET ?
-      ) AS pick
-      JOIN booking_orders orig ON orig.id = pick.id
-      ORDER BY orig.created_at DESC
-    `, [...params, ps, offset]);
+    if (total === 0) {
+      return res.json({
+        ok: true,
+        data: { total, page: p, page_size: ps, orders: [] },
+      });
+    }
+
+    // 【Out of sort 终极修复 · TEMP TABLE + STRAIGHT_JOIN】 同 /orders
+    // Phase1: MEMORY TEMP 表只放 id+seq，sort_buffer 从不碰宽列；支持分页 offset
+    tempTable = await buildOrderIdTempTable(conn, whereSql, params, ps, offset);
+    const rows = await fetchOrderRowsByTempTable(conn, tempTable, /*withCalcTotal*/ true, /*orderedBySeq*/ true);
 
     const result = [];
     for (const o of rows) {
-      const [typeRows] = await pool.query(
+      const [typeRows] = await conn.query(
         'SELECT DISTINCT item_type FROM booking_items WHERE order_id = ?',
         [o.id]
       );
       const bizTypesArr = typeRows.map(t => t.item_type);
-      const [paxRow] = await pool.query(
+      const [paxRow] = await conn.query(
         'SELECT COALESCE(SUM(pax), 0) AS total FROM booking_items WHERE order_id = ? AND item_type = "checkup"',
         [o.id]
       );
       const totalPeople = Number(paxRow[0]?.total) || 0;
 
-      // 优先使用订单自身的 total_amount，其次用子查询计算值
       const totalAmount = Number(o.total_amount) > 0
         ? Number(o.total_amount)
         : Number(o.calc_total) || 0;
@@ -1429,6 +1503,9 @@ router.get('/orders/search', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[booking search] error:', e);
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    await cleanupOrderTempTable(conn, tempTable);
+    conn.release();
   }
 });
 
@@ -1443,6 +1520,7 @@ router.get('/orders/search', requireAuth, async (req, res) => {
 // ============================================================
 router.get('/orders', requireAuth, async (req, res) => {
   const conn = await pool.getConnection();
+  let tempTable = null;
   try {
     // 打开订单页时也自动触发历史模板修复（确保被误转为模板的订单立即恢复可见）
     await ensureFixLegacyTemplates(conn);
@@ -1493,20 +1571,11 @@ router.get('/orders', requireAuth, async (req, res) => {
 
     const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
-    // 【Out of sort memory 修复 · 延迟排序(late row lookup)】
-    // 不要 SELECT o.* 再 ORDER BY（booking_orders 宽列: confirmed_signature(base64签字) /
-    //   wecom_card_response_codes(JSON) / last_edit_diff(JSON) 等会把 sort_buffer 撑爆）。
-    // 改为先在子查询里只 SELECT id 排序(LIMIT 500 窄行不占内存)，再 JOIN 回主表取全字段。
-    const [rows] = await conn.query(`
-      SELECT orig.* FROM (
-        SELECT o.id FROM booking_orders o
-        ${whereSql}
-        ORDER BY o.created_at DESC
-        LIMIT 500
-      ) AS pick
-      JOIN booking_orders orig ON orig.id = pick.id
-      ORDER BY orig.created_at DESC
-    `, params);
+    // 【Out of sort 终极修复 · TEMP TABLE + STRAIGHT_JOIN】
+    // Phase1: MEMORY TEMP 表仅存 id + seq（CHAR(36) × LIMIT 500 约 18KB，sort_buffer 永远不会因签字爆）
+    // Phase2: STRAIGHT_JOIN force 小表 pick 驱动回 PK 查 booking_orders
+    tempTable = await buildOrderIdTempTable(conn, whereSql, params, 500, 0);
+    const rows = await fetchOrderRowsByTempTable(conn, tempTable, /*withCalcTotal*/ false);
 
     if (!rows || rows.length === 0) {
       return res.json({
@@ -1546,6 +1615,7 @@ router.get('/orders', requireAuth, async (req, res) => {
     console.error('[booking GET /orders] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   } finally {
+    await cleanupOrderTempTable(conn, tempTable);
     conn.release();
   }
 });
