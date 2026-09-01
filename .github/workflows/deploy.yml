@@ -191,20 +191,20 @@ jobs:
           command_timeout: 10m
           script: |
             set -euo pipefail
-            SERVICE_NAME="food-backend"
-            # 优先用约定的 food-backend，不存在时兜底 food-purchase-backend / oa-backend
-            if ! systemctl list-unit-files --type=service | grep -q "^${SERVICE_NAME}\.service"; then
-              if systemctl list-unit-files --type=service | grep -q "^food-purchase-backend\.service"; then
-                SERVICE_NAME="food-purchase-backend"
-              elif systemctl list-unit-files --type=service | grep -q "^oa-backend\.service"; then
-                SERVICE_NAME="oa-backend"
-              else
-                echo "❌ 找不到任何已知 backend service: food-backend / food-purchase-backend / oa-backend"
-                systemctl list-unit-files --type=service | grep -iE "oa|food|backend" || true
-                exit 1
-              fi
-              echo "⚠️ 约定的 food-backend 不存在，自动回退到: $SERVICE_NAME"
+            # ================ 服务名探测：按"实际存在概率"排序，不先写死不存在的 food-backend ================
+            SERVICE_NAME=""
+            if systemctl list-unit-files --type=service | grep -q "^food-purchase-backend\.service"; then
+              SERVICE_NAME="food-purchase-backend"
+            elif systemctl list-unit-files --type=service | grep -q "^food-backend\.service"; then
+              SERVICE_NAME="food-backend"
+            elif systemctl list-unit-files --type=service | grep -q "^oa-backend\.service"; then
+              SERVICE_NAME="oa-backend"
+            else
+              echo "❌ 找不到任何已知 backend service: food-purchase-backend / food-backend / oa-backend"
+              systemctl list-unit-files --type=service | grep -iE "oa|food|backend" || true
+              exit 1
             fi
+            echo "✅ 探测到 backend service: $SERVICE_NAME"
             echo "🔄 Restarting backend service: $SERVICE_NAME"
             sudo systemctl restart "$SERVICE_NAME"
             sleep 3
@@ -213,22 +213,31 @@ jobs:
               sudo journalctl -u "$SERVICE_NAME" -n 30 --no-pager
               exit 1
             fi
-            # 端口按 3001→4000→3000 顺序探测（兼容不同部署配置）
-            HEALTH_PORT=""
-            for p in 3001 4000 3000; do
-              if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then
-                HEALTH_PORT="$p"; break
+            # ================ 健康检查：每轮重新探测端口 + 遍历 3001/4000/3000，避免重启端口空窗期误判 ================
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              HEALTH_PORT=""
+              for p in 3001 4000 3000; do
+                if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then
+                  HEALTH_PORT="$p"; break
+                fi
+              done
+              if [ -z "$HEALTH_PORT" ]; then
+                echo "  attempt $i/12: 后端端口尚未就绪（3001/4000/3000 均未监听），等待 3s..."
+                sleep 3
+                continue
               fi
-            done
-            [ -z "$HEALTH_PORT" ] && HEALTH_PORT=3001
-            echo "🔍 健康检查端口探测结果: $HEALTH_PORT"
-            for i in 1 2 3 4 5 6 7 8; do
+              echo "🔍  attempt $i/12: 探测监听端口 $HEALTH_PORT，执行 health check"
               if curl -sf --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/api/health"; then
-                echo "✅ Backend service is healthy (attempt $i/8, port $HEALTH_PORT)"
+                echo ""
+                echo "✅ Backend service is healthy (attempt $i/12, port $HEALTH_PORT)"
                 exit 0
               fi
-              echo "  Waiting for backend... attempt $i/8"
+              echo "  attempt $i/12: health check 失败，端口 $HEALTH_PORT 监听但 /api/health 异常，等 3s 重试"
               sleep 3
             done
-            echo "❌ Backend did not become healthy after 24s"
+            echo "❌ Backend did not become healthy after 36s"
+            echo "   最近 50 条 journal："
+            sudo journalctl -u "$SERVICE_NAME" -n 50 --no-pager
+            echo "   当前监听端口："
+            ss -ltn 2>/dev/null | awk 'NR<=20 {print $4}'
             exit 1
