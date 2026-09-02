@@ -799,7 +799,10 @@ export default function StockTakeOperate() {
               const diff = actual !== null ? actual - Number(it.system_quantity) : 0;
               const actualValue = actual !== null ? actual * Number(it.unit_price) : 0;
               const isUnconfirmed = actual === null;
-              const displayQty = actual !== null ? String(actual) : String(it.system_quantity);
+              // 受控 input 的 value：空值（用户删除完数字）时保持空字符串，
+              // 绝不能显示系统数量，否则 React 会在用户刚删除完就强制回填为系统数，
+              // 导致「删除完就跳回10」的糟糕输入体验。
+              const inputValue = actual === null ? '' : String(actual);
 
               return (
                 <div key={it.id} className="bg-white rounded-lg shadow-sm p-3.5">
@@ -834,7 +837,7 @@ export default function StockTakeOperate() {
                           type="number"
                           step="any"
                           inputMode="decimal"
-                          value={displayQty}
+                          value={inputValue}
                           onChange={(e) => {
                             const v = e.target.value;
                             updateItem(it.id, { actual_quantity: v === '' ? null : Number(v) });
