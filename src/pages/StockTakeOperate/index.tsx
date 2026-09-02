@@ -296,7 +296,7 @@ export default function StockTakeOperate() {
   // ---- 派生数据 ----
   const editable = meta
     ? meta.role === 'operator'
-      ? ['draft', 'returned'].includes(meta.status)
+      ? ['draft', 'returned', 'reviewing'].includes(meta.status)
       : false
     : false;
   const canReview = meta
