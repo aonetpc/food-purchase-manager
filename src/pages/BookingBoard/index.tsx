@@ -356,6 +356,11 @@ function GanttCard({
           borderLeft: `4px solid ${bizColor}`,
         }}
       >
+        {item.extra.isPlaceholder && (
+          <span className="absolute top-0 right-0 bg-amber-500 text-white text-[9px] font-medium px-1.5 py-0.5 rounded-bl leading-none">
+            占位
+          </span>
+        )}
         <div
           className="flex items-center justify-between px-2.5 py-0.5"
           style={{ borderBottom: `1px solid ${hexAlpha(bizColor, 0.25)}`, background: hexAlpha(bizColor, 0.08) }}
@@ -394,6 +399,11 @@ function GanttCard({
         borderLeft: `4px solid ${bizColor}`,
       }}
     >
+      {item.extra.isPlaceholder && (
+        <span className="absolute top-0 right-0 bg-amber-500 text-white text-[9px] font-medium px-1.5 py-0.5 rounded-bl leading-none z-10">
+          占位
+        </span>
+      )}
       <div className="px-2.5 py-1">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono text-gray-600">
