@@ -1264,6 +1264,24 @@ function DetailModal({
                               if (tbl > 0) return `${tbl}桌`;
                               if (paxPp > 0) return `${paxPp}人`;
                               return `${it.pax}${biz.unit}`;
+                            })() : it.itemType === 'lodging' ? (() => {
+                              // 住宿数量列（仅红框位置，详情 Drawer 未展开行）：
+                              // 显示口径与下方展开区的「间数」一致，避免按人模式把人夜当成间数。
+                              const ex = it.extra as any;
+                              const pm: 'per_room' | 'per_person' = ex.pricingMode || 'per_room';
+                              const beds = Number(ex.bedsPerRoomSnapshot)
+                                || getBedsPerRoom(ex.lodgingType || 'standard', bizCfg as any) || 2;
+                              // 1) 间数：优先 ex.rooms → 按间模式 it.pax → 按人模式 ceil(pax/beds)（至少 1 间）
+                              let rooms = Number(ex.rooms);
+                              if (!(rooms > 0)) {
+                                if (pm === 'per_room') {
+                                  rooms = Number(it.pax) || 1;
+                                } else {
+                                  const paxBase = Number(ex.pax) > 0 ? Number(ex.pax) : (Number(it.pax) || 1);
+                                  rooms = Math.max(1, Math.ceil(paxBase / beds));
+                                }
+                              }
+                              return `${rooms}间`;
                             })() : (
                               <>
                                 {it.pax}
