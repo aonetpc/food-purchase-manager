@@ -70,6 +70,7 @@ const STATUS_CONFIG: Record<StockTakeStatus, { label: string; badge: string; dot
   submitted: { label: '已提交', badge: 'bg-blue-100 text-blue-700',     dot: 'bg-blue-500' },
   reviewing: { label: '复核中', badge: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500' },
   completed: { label: '已完成', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+  cancelled: { label: '已取消', badge: 'bg-gray-200 text-gray-500',      dot: 'bg-gray-400' },
 };
 
 // ================================================
@@ -296,7 +297,7 @@ export default function StockTakeOperate() {
   // ---- 派生数据 ----
   const editable = meta
     ? meta.role === 'operator'
-      ? ['draft', 'returned', 'reviewing'].includes(meta.status)
+      ? meta.status !== 'completed' && meta.status !== 'cancelled'
       : false
     : false;
   const canReview = meta
