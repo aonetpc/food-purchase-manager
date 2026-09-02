@@ -626,7 +626,11 @@ router.delete('/:id', requireAuth, async (req, res) => {
  * POST /stock-takes/:id/submit
  * body: { signature_data? }
  */
-router.post('/:id/submit', requireAuth, async (req, res) => {
+router.post('/:id/submit', requireAuth, async (req, res, next) => {
+  // 🔁 路由顺序兜底：H5 POST /stock-takes/h5/submit 与 PC /stock-takes/:id/submit
+  //    同为两段路径，前者(:id='h5')会先被后者匹配到 requireAuth → 401 未登录。
+  //    命中 id==='h5' 时跳过当前 PC 路由（next('route')），交给后面的 POST /h5/submit
+  if (req.params.id === 'h5') return next('route');
   const conn = await pool.getConnection();
   try {
     const { id } = req.params;
@@ -818,7 +822,9 @@ router.get('/:id/review-init', requireAuth, async (req, res) => {
  * POST /stock-takes/:id/review
  * body: { action: 'pass'|'return', samples: [{item_detail_id, verify_quantity}], return_reason, signature_data? }
  */
-router.post('/:id/review', requireAuth, async (req, res) => {
+router.post('/:id/review', requireAuth, async (req, res, next) => {
+  // 🔁 路由顺序兜底：与 POST /h5/review 冲突时跳过 PC 路由
+  if (req.params.id === 'h5') return next('route');
   const conn = await pool.getConnection();
   try {
     const { id } = req.params;
