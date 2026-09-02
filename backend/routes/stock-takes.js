@@ -435,7 +435,7 @@ router.put('/h5/save', requireStockTakeToken, async (req, res) => {
     const take = req.stockTake;
     const { items } = req.body;
 
-    if (!['draft', 'returned'].includes(take.status)) {
+    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可编辑` });
     }
@@ -494,7 +494,7 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
     const take = req.stockTake;
     const { signature_data } = req.body;
 
-    if (!['draft', 'returned'].includes(take.status)) {
+    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可提交` });
     }
@@ -1158,7 +1158,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: '盘点单不存在' });
     }
     const take = takeRows[0];
-    if (!['draft', 'returned'].includes(take.status)) {
+    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可编辑` });
     }
@@ -1264,7 +1264,7 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: '盘点单不存在' });
     }
     const take = takeRows[0];
-    if (!['draft', 'returned'].includes(take.status)) {
+    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可提交` });
     }
