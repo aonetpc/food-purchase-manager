@@ -68,7 +68,10 @@ async function canOperateWarehouse(user, warehouseId) {
   return wh[0].manager_userid === wecomUserid || wh[0].confirmer_userid === wecomUserid;
 }
 
-/** 判断用户是否可以复核（仅finance/admin） */
+/** 判断用户是否可以复核（仅 finance 角色。
+ *  admin 角色仅拥有「盘点发起/删除/催办」等管理权限，不再默认兼任盘点复核人——
+ *  避免财务用户未绑企微时，admin 角色的仓库管理员（如aonetpc）被误当成复核人，
+ *  出现「自己盘点自己复核」的业务漏洞。管理员若确实需要做复核，请显式分配 finance 角色。） */
 async function canReview(user) {
   try {
     const [rows] = await pool.query(`
@@ -78,7 +81,7 @@ async function canReview(user) {
         SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
       ) t
       JOIN roles r ON r.id = t.role_id
-      WHERE r.code IN ('admin', 'finance')
+      WHERE r.code = 'finance'
       LIMIT 1
     `, [user.id, user.id]);
     return rows.length > 0;
@@ -111,21 +114,32 @@ function randomSample(arr, n) {
   return shuffled.slice(0, Math.min(n, arr.length));
 }
 
-/** 获取所有已绑定企微的财务/管理员用户 */
-async function getFinanceUsers() {
+/** 获取所有已绑定企微的财务用户（仅限 finance 角色）。
+ *
+ * @param {string[]} [excludeWecomUserids] 可选：要排除的企微 userid 列表。
+ *   调用方一般传入当前盘点仓库的 manager_userid 与 confirmer_userid，
+ *   避免「一人多岗（财务+仓管员）」时出现「自己盘点 → 自己复核」的流程漏洞。
+ */
+async function getFinanceUsers(excludeWecomUserids = []) {
   try {
-    const [rows] = await pool.query(`
+    const validExcludes = (Array.isArray(excludeWecomUserids) ? excludeWecomUserids : [])
+      .filter((x) => typeof x === 'string' && x.length > 0);
+    const placeholders = validExcludes.map(() => '?').join(',');
+    const sql = `
       SELECT u.id, u.name, u.wecom_userid
       FROM users u
-      WHERE u.wecom_userid IS NOT NULL AND u.wecom_userid != '' AND EXISTS (
-        SELECT 1 FROM (
-          SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = u.id
-          UNION
-          SELECT us.role_id FROM users us WHERE us.id = u.id AND us.role_id IS NOT NULL
-        ) t JOIN roles r ON r.id = t.role_id
-        WHERE r.code IN ('admin', 'finance')
-      )
-    `);
+      WHERE u.wecom_userid IS NOT NULL AND u.wecom_userid != ''
+        ${placeholders ? `AND u.wecom_userid NOT IN (${placeholders})` : ''}
+        AND EXISTS (
+          SELECT 1 FROM (
+            SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = u.id
+            UNION
+            SELECT us.role_id FROM users us WHERE us.id = u.id AND us.role_id IS NOT NULL
+          ) t JOIN roles r ON r.id = t.role_id
+          WHERE r.code = 'finance'
+        )
+    `;
+    const [rows] = await pool.query(sql, validExcludes);
     return rows;
   } catch { return []; }
 }
@@ -528,32 +542,43 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
         }
       }
 
-      // 获取财务用户列表，为每个财务生成独立的 reviewer_token
-      const financeUsers = await getFinanceUsers();
-      for (const finUser of financeUsers) {
+      // 获取财务用户列表（排除本仓库的管理员/确认人，避免「自己盘点自己复核」），
+      // 生成一个全局 reviewer_token（所有财务共用，避免循环 UPDATE 同一张单行被覆盖）。
+      const operatorWecomUseridForNotify = take.manager_userid || take.confirmer_userid;
+      const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
+      let reviewWarn = null;
+      if (financeUsers.length === 0) {
+        reviewWarn = '未找到绑定了企微的财务复核用户，请联系管理员在 users 表中为财务角色绑定 wecom_userid（本次提交已成功，但无人会收到复核通知）';
+        console.warn('[stock-takes h5 submit] no valid finance recipients for take', take.id);
+      } else {
         const reviewerToken = uuidv4();
         const reviewerExpiredAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         await pool.query(`
           UPDATE stock_takes SET reviewer_token = ?, reviewer_token_expired_at = ? WHERE id = ?
         `, [reviewerToken, reviewerExpiredAt, take.id]);
 
-        // 发送通知给财务
-        await sendStockTakeNotification(take, finUser.wecom_userid, 'submitted', '去复核', {
-          role: 'reviewer',
-          token: reviewerToken,
-        });
+        // 发送通知给财务（发送端最后一道 continue 兜底，防 SQL 层过滤未命中的极端情况）
+        for (const finUser of financeUsers) {
+          if (finUser.wecom_userid === take.manager_userid || finUser.wecom_userid === take.confirmer_userid) continue;
+          await sendStockTakeNotification(take, finUser.wecom_userid, 'submitted', '去复核', {
+            role: 'reviewer',
+            token: reviewerToken,
+          });
+        }
       }
 
       // 把盘点人的 init/remind 卡片按钮变灰
-      if (operatorWecomUserid) {
-        await tryUpdateCardButton(take.id, operatorWecomUserid, 'init', '已提交复核');
-        await tryUpdateCardButton(take.id, operatorWecomUserid, 'remind', '已提交复核');
+      if (operatorWecomUseridForNotify) {
+        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'init', '已提交复核');
+        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'remind', '已提交复核');
       }
     } catch (notifyErr) {
       console.warn('[stock-takes h5 submit post-process]', notifyErr.message);
     }
 
-    res.json({ success: true, message: '已提交，等待财务复核' });
+    const body = { success: true, message: '已提交，等待财务复核' };
+    if (reviewWarn) body.warn = reviewWarn;
+    res.json(body);
   } catch (err) {
     await conn.rollback();
     console.error('[stock-takes h5 submit]', err);
@@ -615,6 +640,30 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
     if (!signature_data) {
       conn.release();
       return res.status(400).json({ error: '请先签字后通过' });
+    }
+
+    // 修复3：复核通过前做「真实操作者是财务用户」的二次校验。
+    // r_token 现在是「所有财务共用一个 reviewer_token」（避免循环 UPDATE 覆盖），
+    // 所以仅凭 token 无法区分是谁在复核；取前端可选透传的 reviewer_wecom_userid
+    // （body / query / x-reviewer-wecom-userid header 任一均可），传了就严格校验：
+    //   必须是 finance 角色 + 不是本仓库管理员/确认人，否则 403。
+    // 兼容旧前端：未透传时宽松放行（后续前端迭代接入 JSAPI OAuth 后即可自动生效）。
+    {
+      const reviewerWecomUserid = req.body?.reviewer_wecom_userid
+        || req.query?.reviewer_wecom_userid
+        || req.headers['x-reviewer-wecom-userid']
+        || null;
+      if (reviewerWecomUserid) {
+        const excludeIds = [take.manager_userid, take.confirmer_userid].filter(Boolean);
+        const allowedFinUsers = await getFinanceUsers(excludeIds);
+        const ok = allowedFinUsers.some((u) => u.wecom_userid === reviewerWecomUserid);
+        if (!ok) {
+          conn.release();
+          return res.status(403).json({
+            error: '仅绑定了企微的财务角色用户可执行复核（当前操作者不在有效财务名单中）',
+          });
+        }
+      }
     }
 
     // 通过：校验抽样结果
@@ -747,9 +796,10 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
       if (operatorWecomUserid) {
         await sendStockTakeNotification(take, operatorWecomUserid, 'completed', '查看结果');
       }
-      // 通知所有财务
-      const financeUsers = await getFinanceUsers();
+      // 通知所有财务（排除本仓库仓管员），最后一道 continue 兜底
+      const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
       for (const finUser of financeUsers) {
+        if (finUser.wecom_userid === take.manager_userid || finUser.wecom_userid === take.confirmer_userid) continue;
         await sendStockTakeNotification(take, finUser.wecom_userid, 'completed', '查看盘点结果');
         await tryUpdateCardButton(take.id, finUser.wecom_userid, 'submitted', '✅ 已完成');
       }
@@ -1252,24 +1302,30 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
         await syncUserSignature(req.user.id, 'system', signature_data);
       }
 
-      // 获取财务用户列表，为每个财务生成独立的 reviewer_token
-      const financeUsers = await getFinanceUsers();
-      for (const finUser of financeUsers) {
+      // 获取财务用户列表（排除本仓库的管理员/确认人），1个全局 reviewer_token
+      const operatorWecomUserid = take.manager_userid || take.confirmer_userid;
+      const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
+      let reviewWarn = null;
+      if (financeUsers.length === 0) {
+        reviewWarn = '未找到绑定了企微的财务复核用户，请联系管理员为财务角色绑定 wecom_userid（本次提交已成功，但无人会收到复核通知）';
+        console.warn('[stock-takes submit] no valid finance recipients for take', id);
+      } else {
         const reviewerToken = uuidv4();
         const reviewerExpiredAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         await pool.query(`
           UPDATE stock_takes SET reviewer_token = ?, reviewer_token_expired_at = ? WHERE id = ?
         `, [reviewerToken, reviewerExpiredAt, id]);
 
-        // 发送通知给财务
-        await sendStockTakeNotification(take, finUser.wecom_userid, 'submitted', '去复核', {
-          role: 'reviewer',
-          token: reviewerToken,
-        });
+        for (const finUser of financeUsers) {
+          if (finUser.wecom_userid === take.manager_userid || finUser.wecom_userid === take.confirmer_userid) continue;
+          await sendStockTakeNotification(take, finUser.wecom_userid, 'submitted', '去复核', {
+            role: 'reviewer',
+            token: reviewerToken,
+          });
+        }
       }
 
       // 把盘点人的 init/remind 卡片按钮变灰
-      const operatorWecomUserid = take.manager_userid || take.confirmer_userid;
       if (operatorWecomUserid) {
         await tryUpdateCardButton(id, operatorWecomUserid, 'init', '已提交复核');
         await tryUpdateCardButton(id, operatorWecomUserid, 'remind', '已提交复核');
@@ -1278,7 +1334,9 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
       console.warn('[stock-takes submit post-process]', notifyErr.message);
     }
 
-    res.json({ success: true, message: '已提交，等待财务复核' });
+    const body = { success: true, message: '已提交，等待财务复核' };
+    if (reviewWarn) body.warn = reviewWarn;
+    res.json(body);
   } catch (err) {
     await conn.rollback();
     console.error('[stock-takes submit]', err);
@@ -1578,9 +1636,10 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
       if (operatorWecomUserid) {
         await sendStockTakeNotification(take, operatorWecomUserid, 'completed', '查看结果');
       }
-      // 通知所有财务
-      const financeUsers = await getFinanceUsers();
+      // 通知所有财务（排除本仓库仓管员），最后一道 continue 兜底
+      const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
       for (const finUser of financeUsers) {
+        if (finUser.wecom_userid === take.manager_userid || finUser.wecom_userid === take.confirmer_userid) continue;
         await sendStockTakeNotification(take, finUser.wecom_userid, 'completed', '查看盘点结果');
         // 变灰 submitted 卡片
         await tryUpdateCardButton(id, finUser.wecom_userid, 'submitted', '✅ 已完成');
