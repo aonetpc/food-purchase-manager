@@ -1036,8 +1036,11 @@ router.get('/pdf/expense-detail', async (req, res) => {
 });
 
 /** ============== 6. 供应商统计（当月已入库订单按供应商聚合） ==============
- * 筛选规则：status IN (received, confirming, confirmed, reimbursing, reimbursed) = 已入库
- *   （与 warehouse-purchases.js L3179 冲回库存的判定一致；这些状态已产生 stock_movements 入库流水）
+ * 筛选规则：
+ *   - 状态 IN (received, confirming, confirmed, reimbursing, reimbursed) = 已入库
+ *     （与 warehouse-purchases.js L3179 冲回库存的判定一致；这些状态已产生 stock_movements 入库流水）
+ *   - 月份按 stock_movements.created_at（入库时间）判定，不是 wp.created_at（申请时间）
+ *     （采购单可能跨月申请+入库，如8月申请9月入库，应统计到9月）
  * 供应商分组优先级：supplier_id（关联 suppliers 表取标准名称） > supplier_name（临时输入） > 无供应商
  * 分类展示：L1·L2 两级组合（如"原材料·绿化工程类"）
  */
@@ -1071,8 +1074,15 @@ router.get('/supplier-statistics', async (req, res) => {
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
+      INNER JOIN (
+        -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
+        SELECT related_id, MIN(created_at) AS inbound_at
+        FROM stock_movements
+        WHERE movement_type = 'inbound' AND related_type = 'purchase'
+        GROUP BY related_id
+      ) sm ON sm.related_id = wp.id
       WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
-        AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
+        AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
       GROUP BY group_key, supplier_name, supplier_id
       ORDER BY amount DESC
     `, [month]);
@@ -1129,8 +1139,15 @@ router.get('/supplier-statistics/detail', async (req, res) => {
       )
       -- L1 = L2 的父级
       LEFT JOIN warehouse_categories wc_l1 ON wc_l2.parent_id = wc_l1.id
+      INNER JOIN (
+        -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
+        SELECT related_id, MIN(created_at) AS inbound_at
+        FROM stock_movements
+        WHERE movement_type = 'inbound' AND related_type = 'purchase'
+        GROUP BY related_id
+      ) sm ON sm.related_id = wp.id
       WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
-        AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
+        AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
         AND (
           -- group_key = 'none' → supplier_id 和 supplier_name 都为空
           (? = 'none' AND (wp.supplier_id IS NULL OR wp.supplier_id = '')
@@ -1182,8 +1199,15 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
+      INNER JOIN (
+        -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
+        SELECT related_id, MIN(created_at) AS inbound_at
+        FROM stock_movements
+        WHERE movement_type = 'inbound' AND related_type = 'purchase'
+        GROUP BY related_id
+      ) sm ON sm.related_id = wp.id
       WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
-        AND DATE_FORMAT(wp.created_at, '%Y-%m') = ?
+        AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
       GROUP BY group_key, supplier_name
       ORDER BY amount DESC
     `, [month]);
