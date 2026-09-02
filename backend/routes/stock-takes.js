@@ -1173,6 +1173,20 @@ async function requireStockTakeToken(req, res, next) {
 }
 
 /**
+ * 组合认证中间件：
+ * - URL 含 token / r_token → 走 H5 token 免登录认证（盘点人/财务）
+ * - 不含 → 走 PC 端 requireAuth 登录认证
+ * 用于盘点报告 PDF 导出等同时服务两端的接口
+ */
+function requireAuthOrStockTakeToken(req, res, next) {
+  const hasH5Token = req.query.token || req.query.r_token || req.headers['x-stock-take-token'];
+  if (hasH5Token) {
+    return requireStockTakeToken(req, res, next);
+  }
+  return requireAuth(req, res, next);
+}
+
+/**
  * H5页面初始化：获取盘点单信息+明细
  * GET /stock-takes/h5/meta?token=xxx (operator) 或 ?r_token=xxx (reviewer)
  */
@@ -1722,7 +1736,7 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
  * 导出盘点报告PDF
  * GET /stock-takes/:id/report-pdf
  */
-router.get('/:id/report-pdf', requireAuth, async (req, res) => {
+router.get('/:id/report-pdf', requireAuthOrStockTakeToken, async (req, res) => {
   try {
     const { id } = req.params;
 
