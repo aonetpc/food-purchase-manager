@@ -24,7 +24,14 @@ const pool = require('../db');
  * 从请求头获取token（或从session/cookie），查询用户信息
  */
 async function requireAuth(req, res, next) {
-  const token = req.headers['authorization'];
+  // 优先读取 Authorization header（标准API调用）
+  // 回退支持 URL query 参数 token（window.open 新窗口打开PDF等场景，浏览器不会自动带 Authorization header）
+  //   ?auth_token=xxx 用于 PC 端登录用户（base64编码的用户token）
+  //   注意：盘点H5免登录的 ?token=xxx / ?r_token=xxx 不在这里处理，走各自模块的 token middleware
+  let token = req.headers['authorization'];
+  if (!token && req.query.auth_token) {
+    token = `Bearer ${req.query.auth_token}`;
+  }
   if (!token) {
     return res.status(401).json({ error: '未登录，请先登录' });
   }

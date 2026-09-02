@@ -541,8 +541,10 @@ export default function StockTakeOperate() {
     if (!meta?.id) return;
     setLoading(true);
     try {
-      const token2 = localStorage.getItem('auth.token');
-      const url = `${BASE_URL}/stock-takes/${meta.id}/report-pdf${token2 ? `?token=${encodeURIComponent(token2)}` : ''}`;
+      // 优先使用 H5 token（盘点页面通过 URL token 免登录进入）
+      // 不再使用不存在的 localStorage key 'auth.token'
+      const exportToken = token;
+      const url = `${BASE_URL}/stock-takes/${meta.id}/report-pdf${exportToken ? `?token=${encodeURIComponent(exportToken)}` : ''}`;
       window.open(url, '_blank');
     } catch (err: any) {
       setToast({ type: 'error', msg: err?.message || '导出失败' });

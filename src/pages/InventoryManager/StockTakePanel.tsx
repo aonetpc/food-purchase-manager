@@ -661,9 +661,14 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
   };
 
   // ---- 导出 PDF ----
+  // window.open 打开新窗口时浏览器不会自动携带 Authorization header，
+  // 所以通过 ?auth_token=xxx URL 参数把登录态传给后端（requireAuth 中间件已支持此回退方式）
   const handleExportPdf = (id: string) => {
     const base = import.meta.env.VITE_API_URL || '/api';
-    window.open(`${base}/stock-takes/${id}/report-pdf`, '_blank');
+    const authStore = useAuthStore.getState();
+    const authToken = authStore.user?.token || '';
+    const url = `${base}/stock-takes/${id}/report-pdf${authToken ? `?auth_token=${encodeURIComponent(authToken)}` : ''}`;
+    window.open(url, '_blank');
   };
 
   // ---- 历史趋势 ----
