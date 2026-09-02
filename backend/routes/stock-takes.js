@@ -435,7 +435,7 @@ router.put('/h5/save', requireStockTakeToken, async (req, res) => {
     const take = req.stockTake;
     const { items } = req.body;
 
-    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
+    if (take.status === 'completed' || take.status === 'cancelled') {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可编辑` });
     }
@@ -494,7 +494,7 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
     const take = req.stockTake;
     const { signature_data } = req.body;
 
-    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
+    if (take.status === 'completed' || take.status === 'cancelled') {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可提交` });
     }
@@ -1158,7 +1158,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: '盘点单不存在' });
     }
     const take = takeRows[0];
-    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
+    if (take.status === 'completed' || take.status === 'cancelled') {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可编辑` });
     }
@@ -1240,6 +1240,64 @@ router.delete('/:id', requireAuth, async (req, res, next) => {
 });
 
 /**
+ * 取消盘点单（管理员/财务，不删除数据，标记为 cancelled）
+ * POST /stock-takes/:id/cancel
+ */
+router.post('/:id/cancel', requireAuth, async (req, res, next) => {
+  if (req.params.id === 'h5') return next('route');
+  try {
+    const { id } = req.params;
+
+    if (!await canReview(req.user)) {
+      return res.status(403).json({ error: '仅管理员/财务可取消盘点单' });
+    }
+
+    const [takeRows] = await pool.query(`
+      SELECT st.*, w.manager_userid, w.confirmer_userid, w.name as warehouse_name
+      FROM stock_takes st
+      JOIN warehouses w ON st.warehouse_id = w.id
+      WHERE st.id = ?
+    `, [id]);
+    if (takeRows.length === 0) return res.status(404).json({ error: '盘点单不存在' });
+    const take = takeRows[0];
+
+    if (take.status === 'completed') {
+      return res.status(400).json({ error: '已完成的盘点单不可取消' });
+    }
+    if (take.status === 'cancelled') {
+      return res.status(400).json({ error: '该盘点单已取消' });
+    }
+
+    await pool.query(`UPDATE stock_takes SET status = 'cancelled', updated_at = NOW() WHERE id = ?`, [id]);
+
+    // 通知仓库管理员盘点已取消
+    try {
+      const operatorWecomUserid = take.manager_userid || take.confirmer_userid;
+      if (operatorWecomUserid) {
+        const { getWecomConfig, sendTemplateCardToUser } = require('./wecom');
+        const config = await getWecomConfig();
+        if (config) {
+          const h5Url = `${process.env.H5_BASE_URL || '/h5'}/stock-take?token=${take.access_token}`;
+          await sendTemplateCardToUser(config, operatorWecomUserid, {
+            card_type: 'text_notice',
+            main_title: { title: `盘点已取消`, desc: `${take.warehouse_name} ${take.period_month}` },
+            sub_title_text: `管理员已取消该盘点单`,
+            card_action: { type: 1, url: h5Url },
+          });
+        }
+      }
+    } catch (notifyErr) {
+      console.warn('[stock-takes cancel notify]', notifyErr.message);
+    }
+
+    res.json({ success: true, message: '盘点单已取消' });
+  } catch (err) {
+    console.error('[stock-takes cancel]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * 提交复核
  * POST /stock-takes/:id/submit
  * body: { signature_data? }
@@ -1264,7 +1322,7 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: '盘点单不存在' });
     }
     const take = takeRows[0];
-    if (!['draft', 'returned', 'reviewing'].includes(take.status)) {
+    if (take.status === 'completed' || take.status === 'cancelled') {
       conn.release();
       return res.status(400).json({ error: `当前状态(${take.status})不可提交` });
     }

@@ -15,7 +15,7 @@ const MANAGER_ROLES = ['admin', 'finance', 'boss'];
 const CAN_REVIEW_ROLES = ['admin', 'finance'];
 
 // ===== 类型定义 =====
-type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed';
+type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed' | 'cancelled';
 type ViewMode = 'list' | 'edit' | 'review' | 'detail';
 
 interface ProgressItem {
@@ -137,6 +137,7 @@ const STATUS_CONFIG: Record<StockTakeStatus, { label: string; badge: string; dot
   submitted: { label: '已提交', badge: 'bg-blue-100 text-blue-700',   dot: 'bg-blue-500',   ring: 'border-blue-200' },
   reviewing: { label: '复核中', badge: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500', ring: 'border-purple-200' },
   completed: { label: '已完成', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', ring: 'border-emerald-200' },
+  cancelled: { label: '已取消', badge: 'bg-gray-200 text-gray-500',      dot: 'bg-gray-400',     ring: 'border-gray-200' },
 };
 
 // ===== 工具函数 =====
@@ -630,13 +631,13 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
     }
   };
 
-  // ---- 取消盘点（仅草稿） ----
+  // ---- 取消盘点（管理员/财务，标记为cancelled，不删除数据） ----
   const handleCancelTake = async (takeId: string, goBackAfter = false) => {
-    if (!window.confirm('确定要取消该盘点单吗？取消后盘点单将被删除，且不可恢复。')) {
+    if (!window.confirm('确定要取消该盘点单吗？取消后将标记为已取消，不可恢复。')) {
       return;
     }
     try {
-      await api.delete(`/stock-takes/${takeId}`);
+      await api.post(`/stock-takes/${takeId}/cancel`);
       setSuccessMsg('盘点单已取消');
       refreshAll();
       if (goBackAfter) backToList();
@@ -945,7 +946,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
                             <Eye size={14} /> 查看
                           </button>
                         )}
-                        {canNotify && p.status === 'draft' && (
+                        {canNotify && p.status !== 'pending' && p.status !== 'completed' && p.status !== 'cancelled' && (
                           <button
                             onClick={() => handleCancelTake(p.stock_take_id!)}
                             className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1"
@@ -1056,7 +1057,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
                             <td className="text-gray-500 text-xs whitespace-nowrap">{formatDateTime(r.created_at)}</td>
                             <td className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-2">
-                                {(r.status === 'draft' || r.status === 'returned') && isManager && (
+                                {r.status !== 'completed' && r.status !== 'cancelled' && isManager && (
                                   <button
                                     onClick={() => handleCancelTake(r.id)}
                                     className="text-red-600 hover:text-red-700 text-sm flex items-center gap-0.5"
@@ -1750,7 +1751,7 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {detail.status === 'draft' && (
+              {detail.status !== 'completed' && detail.status !== 'cancelled' && (
                 <button onClick={onCancel} disabled={saving || submitting}
                   className="btn-secondary flex items-center gap-2 border border-red-300 text-red-600 hover:bg-red-50">
                   <Trash2 size={16} />
