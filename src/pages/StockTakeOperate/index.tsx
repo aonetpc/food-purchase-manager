@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ClipboardCheck, Search, Save, Send, AlertCircle, CheckCircle,
+  ClipboardCheck, Search, Save, Send, AlertCircle, AlertTriangle, CheckCircle, Info,
   ArrowLeft, Package, Loader2, Filter, X, TrendingUp, TrendingDown, Minus,
   FileDown, RotateCcw,
 } from 'lucide-react';
@@ -246,7 +246,7 @@ export default function StockTakeOperate() {
   const [onlyDiff, setOnlyDiff] = useState(false);
 
   // 提示
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'warn' | 'info'; msg: string } | null>(null);
 
   // 3秒后清除提示
   useEffect(() => {
@@ -475,6 +475,10 @@ export default function StockTakeOperate() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || '提交失败');
+      // 修复4：后端 detect 到「财务用户都没绑企微」时返回 warn，黄色提示用户
+      if (typeof data?.warn === 'string' && data.warn.length > 0) {
+        setToast({ type: 'warn', msg: data.warn });
+      }
       setJustSubmitted(true);
     } catch (err: any) {
       setToast({ type: 'error', msg: err?.message || '提交失败' });
@@ -1097,10 +1101,17 @@ export default function StockTakeOperate() {
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg text-sm ${
               toast.type === 'success'
                 ? 'bg-emerald-600 text-white'
-                : 'bg-red-600 text-white'
+                : toast.type === 'warn'
+                  ? 'bg-amber-500 text-white'
+                  : toast.type === 'info'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-red-600 text-white'
             }`}
           >
-            {toast.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+            {toast.type === 'success' ? <CheckCircle size={16} /> :
+             toast.type === 'warn'    ? <AlertTriangle size={16} /> :
+             toast.type === 'info'    ? <Info size={16} /> :
+                                        <AlertCircle size={16} />}
             <span>{toast.msg}</span>
           </div>
         </div>
