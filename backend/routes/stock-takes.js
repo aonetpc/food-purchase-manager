@@ -529,6 +529,7 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
     await conn.commit();
 
     // 提交后：同步签名、获取财务用户、生成reviewer_token、发通知、更新按钮状态
+    let reviewWarn = null;
     try {
       // 同步签名（H5端用 manager_userid，user_source='wecom'）
       if (signature_data && operatorWecomUserid) {
@@ -546,7 +547,6 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
       // 生成一个全局 reviewer_token（所有财务共用，避免循环 UPDATE 同一张单行被覆盖）。
       const operatorWecomUseridForNotify = take.manager_userid || take.confirmer_userid;
       const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
-      let reviewWarn = null;
       if (financeUsers.length === 0) {
         reviewWarn = '未找到绑定了企微的财务复核用户，请联系管理员在 users 表中为财务角色绑定 wecom_userid（本次提交已成功，但无人会收到复核通知）';
         console.warn('[stock-takes h5 submit] no valid finance recipients for take', take.id);
@@ -1354,6 +1354,7 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
     await conn.commit();
 
     // 提交后：同步签名、获取财务用户、生成reviewer_token、发通知、更新按钮状态
+    let reviewWarn = null;
     try {
       // 同步签名
       if (signature_data) {
@@ -1363,7 +1364,6 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
       // 获取财务用户列表（排除本仓库的管理员/确认人），1个全局 reviewer_token
       const operatorWecomUserid = take.manager_userid || take.confirmer_userid;
       const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
-      let reviewWarn = null;
       if (financeUsers.length === 0) {
         reviewWarn = '未找到绑定了企微的财务复核用户，请联系管理员为财务角色绑定 wecom_userid（本次提交已成功，但无人会收到复核通知）';
         console.warn('[stock-takes submit] no valid finance recipients for take', id);
