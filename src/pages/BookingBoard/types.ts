@@ -115,6 +115,17 @@ export interface ItemExtra {
   // 体检
   paxList?: PaxEntry[];
   packageTotal?: number;
+  selectedChkPkgId?: string;          // 选中的销售胶囊 ID（占位模式为空）
+  roleCounts?: { male: number; female_married: number; female_single: number };
+  paxListCount?: number;
+  // 体检占位模式（套餐未确认时按预估价占位）
+  isPlaceholder?: boolean;            // 是否占位模式
+  customPrices?: {                    // 占位模式各角色手输单价
+    male: number;
+    female_married: number;
+    female_single: number;
+  };
+  placeholderNote?: string;           // 占位备注（如"客户待确认套餐"）
 
   // 住宿
   lodgingType?: LodgingType;

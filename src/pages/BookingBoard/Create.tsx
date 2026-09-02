@@ -1574,6 +1574,15 @@ export default function BookingBoardCreate(props: {
   const [roleCounts, setRoleCounts] = useState<{ male: number; female_married: number; female_single: number }>({
     male: 0, female_married: 0, female_single: 0,
   });
+  // 体检占位模式：套餐未确认时按预估价占位（feat/109）
+  // 'package' = 选择套餐胶囊（现有流程）；'placeholder' = 自定义占位（手输单价）
+  const [checkupMode, setCheckupMode] = useState<'package' | 'placeholder'>('package');
+  // 占位模式各角色手输单价
+  const [customPrices, setCustomPrices] = useState<{ male: number; female_married: number; female_single: number }>({
+    male: 0, female_married: 0, female_single: 0,
+  });
+  // 占位备注（如"客户待确认套餐"）
+  const [placeholderNote, setPlaceholderNote] = useState<string>('');
   // 解析后预览弹窗
   const [showImportPreview, setShowImportPreview] = useState(false);
   const [chkImportPreview, setChkImportPreview] = useState<{
@@ -1896,13 +1905,22 @@ export default function BookingBoardCreate(props: {
 
   // 体检改造：按角色人数计算合计金额
   const roleBasedTotal = useMemo(() => {
+    // 占位模式：用 customPrices 手输单价
+    if (checkupMode === 'placeholder') {
+      return (
+        roleCounts.male * (customPrices.male || 0) +
+        roleCounts.female_married * (customPrices.female_married || 0) +
+        roleCounts.female_single * (customPrices.female_single || 0)
+      );
+    }
+    // 选套餐模式：用胶囊折后价
     if (!selectedChkPkg) return 0;
     return (
       roleCounts.male * getCapsulePriceByRole(selectedChkPkg, 'male') +
       roleCounts.female_married * getCapsulePriceByRole(selectedChkPkg, 'female_married') +
       roleCounts.female_single * getCapsulePriceByRole(selectedChkPkg, 'female_single')
     );
-  }, [selectedChkPkg, roleCounts, capsuleMap]);
+  }, [checkupMode, selectedChkPkg, roleCounts, customPrices, capsuleMap]);
 
   // 体检改造：统计已导入名单的角色人数
   const importedRoleCounts = useMemo(() => {
@@ -1956,7 +1974,9 @@ export default function BookingBoardCreate(props: {
     const t = drawer.itemType;
     if (!t) return 0;
     if (t === 'checkup') {
-      // 如果已选套餐，使用角色人数计算合计；否则回退到名单计算
+      // 占位模式：直接用 roleBasedTotal（手输单价 × 人数）
+      if (checkupMode === 'placeholder') return roleBasedTotal;
+      // 选套餐模式：已选套餐且算出金额 > 0 用 roleBasedTotal，否则回退到名单计算
       if (selectedChkPkg && roleBasedTotal > 0) return roleBasedTotal;
       return calcCheckupEffective(chkPax.filter((p) => p.name.trim()));
     }
@@ -2046,10 +2066,27 @@ export default function BookingBoardCreate(props: {
       const paxListBackup = (item.extra.paxList || []).map((p) => ({ ...p }));
       // 第5期：编辑时从 finalItems 快照恢复 customItems，确保定制内容可继续编辑
       setChkPax(restoreCustomItemsFromSnapshot(paxListBackup));
-      // B-2：恢复 selectedChkPkgId（优先 extra 中保存的，其次从首个 pax.package 反推）
-      const savedPkgId = (item.extra as any)?.selectedChkPkgId;
-      const firstPaxPkg = paxListBackup.find((p: any) => p && p.package)?.package as string | undefined;
-      setSelectedChkPkg(savedPkgId || firstPaxPkg || '');
+      // 【feat/109】恢复占位模式状态：若 isPlaceholder 为 true 切到占位模式，并恢复 customPrices 和备注
+      const savedIsPlaceholder = (item.extra as any)?.isPlaceholder === true;
+      if (savedIsPlaceholder) {
+        setCheckupMode('placeholder');
+        const savedCustomPrices = (item.extra as any)?.customPrices;
+        setCustomPrices({
+          male: Number(savedCustomPrices?.male) || 0,
+          female_married: Number(savedCustomPrices?.female_married) || 0,
+          female_single: Number(savedCustomPrices?.female_single) || 0,
+        });
+        setPlaceholderNote((item.extra as any)?.placeholderNote || '');
+        setSelectedChkPkg('');  // 占位模式无胶囊
+      } else {
+        setCheckupMode('package');
+        setCustomPrices({ male: 0, female_married: 0, female_single: 0 });
+        setPlaceholderNote('');
+        // B-2：恢复 selectedChkPkgId（优先 extra 中保存的，其次从首个 pax.package 反推）
+        const savedPkgId = (item.extra as any)?.selectedChkPkgId;
+        const firstPaxPkg = paxListBackup.find((p: any) => p && p.package)?.package as string | undefined;
+        setSelectedChkPkg(savedPkgId || firstPaxPkg || '');
+      }
       // B-3：恢复 roleCounts（优先 extra 中保存的；老数据则从 paxList 反推，保证至少能对齐名单人数）
       const savedCounts = (item.extra as any)?.roleCounts;
       if (savedCounts && (Number(savedCounts.male) + Number(savedCounts.female_married) + Number(savedCounts.female_single)) > 0) {
@@ -2384,51 +2421,90 @@ export default function BookingBoardCreate(props: {
       const paxListRaw = chkPax.filter((p) => p.name.trim());
       // 【A-1】角色设定总人数（0 表示未启用角色人数模式）
       const rolePaxTotal = roleCounts.male + roleCounts.female_married + roleCounts.female_single;
-      // 名单人数至少 1（否则直接返回错误）
-      if (paxListRaw.length === 0 && rolePaxTotal === 0) {
-        setErr('请至少添加一名体检人员，或设置角色人数');
-        return;
-      }
-      // 为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
-      const paxList = paxListRaw.map(p => {
-        const rawItems = resolvePaxItemsEffective(p);
-        // 保存时按 pax 角色过滤项目（方案C）：确保快照只存该角色适用的项目
-        const paxRole = paxToRole(p.gender, p.married);
-        const finalItems = rawItems.filter((it: any) => {
-          const itemRole = it.role ?? it.scope ?? 'common';
-          if (itemRole && itemRole !== 'common') {
-            return itemRole === paxRole;
-          }
-          return scopeVisible({ name: it.item_name_snapshot || '', applicable_roles: undefined }, paxRole);
-        });
-        return {
-          ...p,
-          finalItems,
-          finalAmount: calcSinglePaxEffective(p),
+
+      // ============ 占位模式（feat/109）：套餐未确认时按预估价占位 ============
+      if (checkupMode === 'placeholder') {
+        // 校验：占位模式要求至少 1 个角色人数 > 0 且至少 1 个角色单价 > 0
+        if (rolePaxTotal === 0) {
+          setErr('占位模式请至少设置一名体检人数');
+          return;
+        }
+        const hasPrice = (customPrices.male > 0 && roleCounts.male > 0)
+          || (customPrices.female_married > 0 && roleCounts.female_married > 0)
+          || (customPrices.female_single > 0 && roleCounts.female_single > 0);
+        if (!hasPrice) {
+          setErr('占位模式请至少为一名角色填写单价');
+          return;
+        }
+        const amount = roleBasedTotal;
+        item = {
+          id: keepId,
+          itemType,
+          date: chkDate,
+          startTime: chkTime,
+          pax: rolePaxTotal,
+          extra: {
+            paxList: [],                       // 占位无名单
+            packageTotal: amount,
+            roleCounts: { ...roleCounts },
+            customPrices: { ...customPrices },  // 保存手输单价
+            isPlaceholder: true,                // 标记占位模式
+            placeholderNote: placeholderNote.trim() || undefined,
+            paxListCount: 0,
+            // selectedChkPkgId 留空，编辑时切回选套餐模式可补
+          },
+          amount,
         };
-      });
-      // 【A-2】金额口径：角色总人数>0 且已选套餐时用 roleBasedTotal，否则按名单逐人计算
-      const amount = (selectedChkPkg && rolePaxTotal > 0 && roleBasedTotal > 0)
-        ? roleBasedTotal
-        : calcCheckupEffective(paxListRaw);
-      // 【A-3】pax 人数：优先角色总人数，否则名单人数
-      const displayPax = rolePaxTotal > 0 ? rolePaxTotal : paxList.length;
-      item = {
-        id: keepId,
-        itemType,
-        date: chkDate,
-        startTime: chkTime,
-        pax: displayPax,
-        extra: {
-          paxList,
-          packageTotal: amount,
-          // 【A-4】保存角色设定信息，供编辑时恢复
-          selectedChkPkgId: selectedChkPkg || undefined,
-          roleCounts: rolePaxTotal > 0 ? { ...roleCounts } : undefined,
-          paxListCount: paxList.length,
-        },
-        amount,
-      };
+      } else {
+        // ============ 选套餐模式（现有流程） ============
+        // 名单人数至少 1（否则直接返回错误）
+        if (paxListRaw.length === 0 && rolePaxTotal === 0) {
+          setErr('请至少添加一名体检人员，或设置角色人数');
+          return;
+        }
+        // 为每个 pax 嵌入最终快照，消除后续订单详情对项目库/套餐表的依赖
+        const paxList = paxListRaw.map(p => {
+          const rawItems = resolvePaxItemsEffective(p);
+          // 保存时按 pax 角色过滤项目（方案C）：确保快照只存该角色适用的项目
+          const paxRole = paxToRole(p.gender, p.married);
+          const finalItems = rawItems.filter((it: any) => {
+            const itemRole = it.role ?? it.scope ?? 'common';
+            if (itemRole && itemRole !== 'common') {
+              return itemRole === paxRole;
+            }
+            return scopeVisible({ name: it.item_name_snapshot || '', applicable_roles: undefined }, paxRole);
+          });
+          return {
+            ...p,
+            finalItems,
+            finalAmount: calcSinglePaxEffective(p),
+          };
+        });
+        // 【A-2】金额口径：角色总人数>0 且已选套餐时用 roleBasedTotal，否则按名单逐人计算
+        const amount = (selectedChkPkg && rolePaxTotal > 0 && roleBasedTotal > 0)
+          ? roleBasedTotal
+          : calcCheckupEffective(paxListRaw);
+        // 【A-3】pax 人数：优先角色总人数，否则名单人数
+        const displayPax = rolePaxTotal > 0 ? rolePaxTotal : paxList.length;
+        item = {
+          id: keepId,
+          itemType,
+          date: chkDate,
+          startTime: chkTime,
+          pax: displayPax,
+          extra: {
+            paxList,
+            packageTotal: amount,
+            // 【A-4】保存角色设定信息，供编辑时恢复
+            selectedChkPkgId: selectedChkPkg || undefined,
+            roleCounts: rolePaxTotal > 0 ? { ...roleCounts } : undefined,
+            paxListCount: paxList.length,
+            // 切换到选套餐模式时清掉占位标记（避免残留）
+            isPlaceholder: false,
+          },
+          amount,
+        };
+      }
     } else if (itemType === 'lodging') {
       const sessions = lgSessions.filter(s =>
         s.dateCheckIn && s.dateCheckOut && daysBetween(s.dateCheckIn, s.dateCheckOut) >= 1
@@ -3444,53 +3520,103 @@ export default function BookingBoardCreate(props: {
                     </div>
                   </div>
 
-                  {/* 套餐选择 */}
+                  {/* 模式切换：选择套餐 / 自定义占位（feat/109） */}
                   <div>
-                    <label className={labelCls}>选择体检套餐</label>
-                    {!draftGroup.salesPersonId ? (
-                      <div className="text-[11px] text-red-500 bg-red-50 px-3 py-2 rounded border border-red-200">
-                        ⚠ 请先选择销售员
-                      </div>
-                    ) : salesCapsules.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {salesCapsules.map((cap: any) => {
-                          const isSelected = selectedChkPkg === cap.id;
-                          const prices = cap.prices || {};
-                          const maxPrice = Math.max(
-                            Number(prices.male?.discount_price || 0),
-                            Number(prices.female_married?.discount_price || 0),
-                            Number(prices.female_single?.discount_price || 0)
-                          );
-                          return (
-                            <button
-                              key={cap.id}
-                              type="button"
-                              onClick={() => setSelectedChkPkg(isSelected ? '' : cap.id)}
-                              className={`px-3 py-2 rounded-lg border text-left transition-all ${
-                                isSelected
-                                  ? 'border-green-500 bg-green-50 ring-2 ring-green-200'
-                                  : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
-                              }`}
-                            >
-                              <div className="text-xs font-medium text-gray-800">
-                                {friendlyCapsuleName(cap)}
-                              </div>
-                              <div className="text-[10px] text-gray-500 mt-0.5">
-                                ¥{Number(maxPrice).toLocaleString()} 起
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-[11px] text-gray-400 bg-gray-50 px-3 py-2 rounded">
-                        该销售员暂无套餐
-                      </div>
-                    )}
+                    <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setCheckupMode('package')}
+                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          checkupMode === 'package'
+                            ? 'bg-white text-green-700 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        📋 选择套餐
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCheckupMode('placeholder')}
+                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          checkupMode === 'placeholder'
+                            ? 'bg-white text-amber-700 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        ✍️ 自定义占位
+                      </button>
+                    </div>
                   </div>
 
-                  {/* 按角色设置人数 */}
-                  {selectedChkPkg && (
+                  {/* 套餐选择（仅选套餐模式） */}
+                  {checkupMode === 'package' && (
+                    <div>
+                      <label className={labelCls}>选择体检套餐</label>
+                      {!draftGroup.salesPersonId ? (
+                        <div className="text-[11px] text-red-500 bg-red-50 px-3 py-2 rounded border border-red-200">
+                          ⚠ 请先选择销售员
+                        </div>
+                      ) : salesCapsules.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {salesCapsules.map((cap: any) => {
+                            const isSelected = selectedChkPkg === cap.id;
+                            const prices = cap.prices || {};
+                            const maxPrice = Math.max(
+                              Number(prices.male?.discount_price || 0),
+                              Number(prices.female_married?.discount_price || 0),
+                              Number(prices.female_single?.discount_price || 0)
+                            );
+                            return (
+                              <button
+                                key={cap.id}
+                                type="button"
+                                onClick={() => setSelectedChkPkg(isSelected ? '' : cap.id)}
+                                className={`px-3 py-2 rounded-lg border text-left transition-all ${
+                                  isSelected
+                                    ? 'border-green-500 bg-green-50 ring-2 ring-green-200'
+                                    : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
+                                }`}
+                              >
+                                <div className="text-xs font-medium text-gray-800">
+                                  {friendlyCapsuleName(cap)}
+                                </div>
+                                <div className="text-[10px] text-gray-500 mt-0.5">
+                                  ¥{Number(maxPrice).toLocaleString()} 起
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-gray-400 bg-gray-50 px-3 py-2 rounded">
+                          该销售员暂无套餐
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 占位模式说明 + 备注（feat/109） */}
+                  {checkupMode === 'placeholder' && (
+                    <div className="space-y-2">
+                      <div className="text-[11px] text-amber-700 bg-amber-50 px-3 py-2 rounded border border-amber-200">
+                        ⚠ 套餐未确认占位：手输各角色单价×人数自动算金额，待客户确认套餐后切回「选择套餐」补选胶囊即可。
+                      </div>
+                      <div>
+                        <label className={labelCls}>占位备注（可选）</label>
+                        <input
+                          type="text"
+                          value={placeholderNote}
+                          onChange={(e) => setPlaceholderNote(e.target.value)}
+                          placeholder="如：客户待确认套餐"
+                          maxLength={100}
+                          className={inputCls}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 按角色设置人数（选套餐模式需选了胶囊；占位模式始终显示） */}
+                  {(checkupMode === 'placeholder' || selectedChkPkg) && (
                     <div>
                       <label className={labelCls}>设置体检人数（按角色）</label>
                       <div className="grid grid-cols-3 gap-2">
@@ -3499,7 +3625,10 @@ export default function BookingBoardCreate(props: {
                           { key: 'female_married', label: '已婚女', icon: '👩‍💍', color: 'pink' },
                           { key: 'female_single', label: '未婚女', icon: '👩', color: 'purple' },
                         ] as const).map(({ key, label, icon, color }) => {
-                          const price = getCapsulePriceByRole(selectedChkPkg, key);
+                          // 选套餐模式：从胶囊读价；占位模式：从 customPrices 读手输价
+                          const price = checkupMode === 'placeholder'
+                            ? (customPrices[key] || 0)
+                            : getCapsulePriceByRole(selectedChkPkg, key);
                           const count = roleCounts[key];
                           const imported =
                             key === 'male' ? importedRoleCounts.male
@@ -3519,9 +3648,24 @@ export default function BookingBoardCreate(props: {
                             <div key={key} className={`border rounded-lg p-3 ${bgMap[color]}`}>
                               <div className="flex items-center justify-between mb-1.5">
                                 <span className="text-sm">{icon} {label}</span>
-                                <span className={`text-xs font-medium ${textMap[color]}`}>
-                                  ¥{price.toLocaleString()}
-                                </span>
+                                {checkupMode === 'placeholder' ? (
+                                  // 占位模式：单价可手输
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs text-gray-400">¥</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={price}
+                                      onChange={(e) => setCustomPrices(cp => ({ ...cp, [key]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                      className="w-16 text-right border border-amber-200 rounded px-1 py-0.5 text-xs font-mono bg-white"
+                                      placeholder="单价"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className={`text-xs font-medium ${textMap[color]}`}>
+                                    ¥{price.toLocaleString()}
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center justify-center gap-2">
                                 <button
@@ -5249,7 +5393,16 @@ export default function BookingBoardCreate(props: {
             </div>
             {/* 已选套餐提示 */}
             <div className={`mb-3 p-3 border rounded-lg ${selectedChkPkg ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-              {selectedChkPkg ? (
+              {checkupMode === 'placeholder' ? (
+                <>
+                  <div className="text-xs text-amber-700 font-medium">
+                    ⚠ 当前为占位模式，无需导入名单
+                  </div>
+                  <div className="text-[11px] text-amber-600 mt-0.5">
+                    占位订单先不下发名单，待客户确认套餐后切回「选择套餐」模式再导入
+                  </div>
+                </>
+              ) : selectedChkPkg ? (
                 <>
                   <div className="text-xs text-gray-600 mb-1">
                     已选套餐（名单将自动使用此套餐）：
