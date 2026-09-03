@@ -412,18 +412,25 @@ router.get('/material-consumption/detail', async (req, res) => {
       return res.status(400).json({ error: '缺少参数' });
     }
 
-    // 1. stock_movements 明细（原样，用于 Tab 1「仓库消耗」）
+    // 1. stock_movements 明细（用于 Tab 1「仓库消耗」）
+    //    adjust盘点：盘亏total_amount<0，取反后正→增加消耗；盘盈反之
     const [stockRows] = await pool.query(`
-      SELECT sm.id, wi.name as item_name, sm.quantity, sm.unit,
+      SELECT sm.id, wi.name as item_name,
+             CASE WHEN sm.movement_type='adjust' THEN ABS(sm.quantity) ELSE sm.quantity END as quantity,
+             sm.unit,
              IFNULL(sm.unit_price, 0) as unit_price,
-             IFNULL(sm.total_amount, 0) as total_amount,
+             CASE
+               WHEN sm.movement_type = 'adjust' THEN -IFNULL(sm.total_amount, 0)
+               ELSE IFNULL(sm.total_amount, 0)
+             END as total_amount,
              sm.movement_type, sm.operator_name, sm.reason,
              DATE_FORMAT(sm.created_at, '%Y-%m-%d %H:%i') as created_at
       FROM stock_movements sm
       JOIN warehouse_items wi ON sm.item_id = wi.id
       LEFT JOIN warehouses w ON sm.warehouse_id = w.id
       WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
-             OR sm.movement_type = 'expense')
+             OR sm.movement_type = 'expense'
+             OR sm.movement_type = 'adjust')
         AND wi.category_id = ?
         AND w.department_id = ?
         AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?

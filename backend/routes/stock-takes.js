@@ -775,6 +775,12 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
         JSON.stringify(costSummary), take.id]);
 
     // 2. 写入盘点调整流水 + 更新库存
+    //    created_at 归属到 period_month 月末最后一秒（权责发生制：8月盘点差异计入8月成本）
+    const [pmY, pmM] = take.period_month.split('-').map(Number);
+    const periodMonthEnd = new Date(pmY, pmM, 0, 23, 59, 59);  // pmM=当月(1-12)，日=0取"下月0号"即本月末日
+    const periodMonthEndStr =
+      `${periodMonthEnd.getFullYear()}-${String(periodMonthEnd.getMonth()+1).padStart(2,'0')}-${String(periodMonthEnd.getDate()).padStart(2,'0')} 23:59:59`;
+
     const [allDiffItems] = await pool.query(`
       SELECT sti.*, w.department_id, d.name as department_name
       FROM stock_take_items sti
@@ -793,12 +799,13 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
       await conn.query(`
         INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type,
           quantity, unit, unit_price, total_amount, reason, related_type, related_id,
-          operator_id, operator_name, department_id, department_name)
-        VALUES (?, ?, ?, ?, 'adjust', ?, ?, ?, ?, ?, 'take', ?, ?, ?, ?, ?)
+          operator_id, operator_name, department_id, department_name, created_at)
+        VALUES (?, ?, ?, ?, 'adjust', ?, ?, ?, ?, ?, 'take', ?, ?, ?, ?, ?, ?)
       `, [movementId, take.warehouse_id, item.item_id, item.item_name,
           diff, item.unit, item.unit_price, totalAmount, reason,
           take.id, null, 'H5财务复核',
-          item.department_id || null, item.department_name || null]);
+          item.department_id || null, item.department_name || null,
+          periodMonthEndStr]);
 
       await conn.query(`
         UPDATE inventory SET quantity = quantity + ?, updated_at = NOW()
@@ -1696,6 +1703,12 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
         signature_data || null, JSON.stringify(costSummary), id]);
 
     // 2. 写入盘点调整流水 + 更新库存
+    //    created_at 归属到 period_month 月末最后一秒（权责发生制：8月盘点差异计入8月成本）
+    const [pcPmY, pcPmM] = take.period_month.split('-').map(Number);
+    const pcPeriodMonthEnd = new Date(pcPmY, pcPmM, 0, 23, 59, 59);
+    const pcPeriodMonthEndStr =
+      `${pcPeriodMonthEnd.getFullYear()}-${String(pcPeriodMonthEnd.getMonth()+1).padStart(2,'0')}-${String(pcPeriodMonthEnd.getDate()).padStart(2,'0')} 23:59:59`;
+
     const [allDiffItems] = await conn.query(`
       SELECT sti.*, w.department_id, d.name as department_name
       FROM stock_take_items sti
@@ -1715,12 +1728,13 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
       await conn.query(`
         INSERT INTO stock_movements (id, warehouse_id, item_id, item_name, movement_type,
           quantity, unit, unit_price, total_amount, reason, related_type, related_id,
-          operator_id, operator_name, department_id, department_name)
-        VALUES (?, ?, ?, ?, 'adjust', ?, ?, ?, ?, ?, 'take', ?, ?, ?, ?, ?)
+          operator_id, operator_name, department_id, department_name, created_at)
+        VALUES (?, ?, ?, ?, 'adjust', ?, ?, ?, ?, ?, 'take', ?, ?, ?, ?, ?, ?)
       `, [movementId, take.warehouse_id, item.item_id, item.item_name,
           diff, item.unit, item.unit_price, totalAmount, reason,
           take.id, req.user.id, req.user.name || req.user.username,
-          item.department_id || null, item.department_name || null]);
+          item.department_id || null, item.department_name || null,
+          pcPeriodMonthEndStr]);
 
       // 更新库存
       await conn.query(`
