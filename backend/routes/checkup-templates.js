@@ -103,6 +103,8 @@ if (!fs.existsSync(PDF_DIR)) {
 
 // 三个角色枚举
 const ROLES = ['male', 'female_married', 'female_single', 'female_unmarried'];
+// feat/108 P04: DB ENUM 只允许 3 值，写入 booking_package_role_plans 必须用 DB_ROLES
+const DB_ROLES = ['male', 'female_married', 'female_single'];
 // feat/107 Fix#4: female_unmarried 别名归一：防止 DB applicable_roles / 前端传来 female_unmarried
 //   逻辑：female_single 和 female_unmarried 是同一个语义，aggregate/readPackageFull 末尾合并
 const ROLE_NORM = (r) => {
@@ -212,7 +214,7 @@ async function listPackageItems(packageId) {
             CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
             CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0) THEN ci.default_price ELSE pi.item_price END AS item_price,
             CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
-            ci.category, ci.item_type, ${csSelect}, ci.applicable_roles
+            ci.category, ci.sub_category, ci.item_type, ${csSelect}, ci.applicable_roles
      FROM booking_package_items AS pi
      LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
      WHERE pi.package_id = ?
@@ -290,34 +292,23 @@ function aggregateRoleItems(items, applicableRoles = ROLES) {
       items: merged,
     };
   }
-  // feat/107 Fix#4 归一合并：female_single 和 female_unmarried 同语义 → 两套去重叠加后两边都有值
+  // feat/108 P02 末尾修正：female_single 和 female_unmarried 是同义词，
+  //   返回结构里两边指向**同一个 canonical 对象**（同引用），不是各自一份再叠加。
+  //   这样前端不管用哪个 key 都能读到正确值，也不会出现「两个 key 内容不一致」导致的前端合并叠加。
   const fs = result.female_single;
   const fu = result.female_unmarried;
-  if (fs && fu && fs.item_count !== fu.item_count) {
-    const merged = mergeRoleBucket([fs, fu]);
-    result.female_single = merged;
-    result.female_unmarried = merged;
-  } else if (fu && (!fs || fs.item_count === 0)) {
-    result.female_single = fu;
-  } else if (fs && (!fu || fu.item_count === 0)) {
-    result.female_unmarried = fs;
+  // canonical 选内容更多的那份（如果只有一边有项目）
+  let canonical;
+  if (!fs || fs.item_count === 0) canonical = fu;
+  else if (!fu || fu.item_count === 0) canonical = fs;
+  else canonical = fs.item_count >= fu.item_count ? fs : fu;
+  if (canonical) {
+    result.female_single = canonical;
+    result.female_unmarried = canonical;   // 同一个引用
   }
   return result;
 }
-// 辅助：合并多个 role bucket（按 item_id 去重叠加 items，total 求和去重）
-function mergeRoleBucket(buckets) {
-  const m = new Map();
-  for (const b of buckets) {
-    for (const it of (b.items || [])) {
-      const k = String(it.item_id ?? it.id);
-      if (!m.has(k)) m.set(k, it);
-    }
-  }
-  const items = [...m.values()];
-  let total = 0;
-  for (const it of items) total += toNum(it.item_price) * Math.max(1, toNum(it.quantity) || 1);
-  return { total: round2(total), item_count: items.length, items };
-}
+// mergeRoleBucket 仅保留给 PDF/管理端特殊场景调用（分享页用不到）
 
 // 归一化：原价为0但折扣价有值时，用折扣价当原价（老套餐未写original_total的兜底）
 function normalizePlanOrig(plan) {
@@ -343,23 +334,24 @@ async function readPackageFull(packageId) {
     m[r.role] = normalizePlanOrig(r);
     return m;
   }, {});
+  // feat/108 P02：STD_ROLES 3 个规范 key（male, female_married, female_single）→ 读 DB + 聚合
+  //   female_unmarried 永远是 female_single 的同引用别名（不是复制一份新对象）。
+  //   这样彻底避免：两套 key 内容不一致 → 前端循环里 push 两次 → 归并 Map 叠加导致未婚女变成男+女全部项目 104 项
+  const STD_ROLES = ['male', 'female_married', 'female_single'];
   // 缺失的角色补默认（空套餐）
-  for (const r of ROLES) {
+  for (const r of STD_ROLES) {
     if (!pkg.role_plans[r]) {
       pkg.role_plans[r] = { original_total: 0, discount_price: 0, discount_rate: 100, remark: null };
     }
   }
-  // feat/107 Fix#4 别名归一：DB 存的是 female_single 但前端查 female_unmarried → 给 role_plans 两边都写
-  const fu = pkg.role_plans.female_unmarried;
-  const fs = pkg.role_plans.female_single;
-  if (!fu && fs) pkg.role_plans.female_unmarried = fs;
-  if (!fs && fu) pkg.role_plans.female_single = fu;
   // 明细：按 role 拆
   const allItems = await listPackageItems(packageId);
   const agg = aggregateRoleItems(allItems, pkg.applicable_roles);
+  // STD_ROLES 先填桶；然后 female_unmarried 做同引用别名
   pkg.role_items = {};
-  for (const r of ROLES) pkg.role_items[r] = agg[r];
-  pkg.item_count = Math.max(...ROLES.map(r => agg[r].item_count));
+  for (const r of STD_ROLES) pkg.role_items[r] = agg[r];
+  pkg.role_items.female_unmarried = pkg.role_items.female_single;   // 同引用别名
+  pkg.item_count = Math.max(...STD_ROLES.map(r => agg[r].item_count));
 
   // ====== 价格对齐（关键修复）======
   // DB 里存的 role_plans.original_total 可能是历史bug期间的快照（含跨角色项目），
@@ -367,7 +359,7 @@ async function readPackageFull(packageId) {
   // 保证前端读 role_plans 或 role_items.total 都得到一致的原价：
   //   以 role_items[r].total 为 original_total 基准，discount_price 保持不变（销售谈判价），
   //   discount_rate = discount_price / new_original_total × 100 重算。
-  for (const r of ROLES) {
+  for (const r of STD_ROLES) {
     const computedTotal = round2(pkg.role_items[r]?.total || 0);
     if (computedTotal <= 0) continue;
     const plan = pkg.role_plans[r] || {};
@@ -380,17 +372,16 @@ async function readPackageFull(packageId) {
       discount_price: price,
     };
   }
-  // feat/107 Fix#4: role_plans 价格对齐后再同步一次别名（归一时新增的 role_plans 条目也需要被处理）
-  if (!pkg.role_plans.female_unmarried && pkg.role_plans.female_single) pkg.role_plans.female_unmarried = pkg.role_plans.female_single;
-  if (!pkg.role_plans.female_single && pkg.role_plans.female_unmarried) pkg.role_plans.female_single = pkg.role_plans.female_unmarried;
+  // feat/108 P02：role_plans 同步同引用别名
+  pkg.role_plans.female_unmarried = pkg.role_plans.female_single;
 
   // 原始明细（前端编辑用，按 role 分组）
-  const byRole = { common: [], male: [], female_married: [], female_single: [], female_unmarried: [] };
+  const byRole = { common: [], male: [], female_married: [], female_single: [] };
   for (const it of allItems) {
     const key = it.role && byRole[it.role] ? it.role : 'common';
     byRole[key].push(it);
   }
-  // female_unmarried 别名也同步一份
+  // female_unmarried 别名也同步一份（同引用）
   byRole.female_unmarried = byRole.female_single;
   pkg.items_by_role = byRole;
   return pkg;
@@ -490,7 +481,7 @@ router.get('/', async (req, res) => {
     // 场景：克隆生成的套餐用户中途退出没点「生成方案」时，DB 还没被 items-batch 重写过就会停留在 0
     const fallbackPids = [];
     for (const [pid, plans] of plansMap.entries()) {
-      for (const r of ROLES) {
+      for (const r of DB_ROLES) {
         const pl = plans[r];
         if (!pl || Number(pl.discount_price) === 0) { fallbackPids.push(pid); break; }
       }
@@ -517,10 +508,10 @@ router.get('/', async (req, res) => {
         const totals = { male: 0, female_married: 0, female_single: 0 };
         for (const it of arr) {
           const amt = (toNum(it.item_price) + toNum(it.insurance_price_snapshot)) * Math.max(1, toNum(it.quantity) || 1);
-          if (it.role === 'common') { for (const r of ROLES) totals[r] += amt; }
+          if (it.role === 'common') { for (const r of DB_ROLES) totals[r] += amt; }
           else if (totals[it.role] !== undefined) totals[it.role] += amt;
         }
-        for (const r of ROLES) {
+        for (const r of DB_ROLES) {
           if (!plans[r] || Number(plans[r].discount_price) === 0) {
             const t = round2(totals[r]);
             plans[r] = { original_total: t, discount_price: t, discount_rate: 100 };
@@ -533,7 +524,7 @@ router.get('/', async (req, res) => {
 
     const list = rows.map(p => {
       const plans = plansMap.get(p.id) || {};
-      for (const r of ROLES) {
+      for (const r of DB_ROLES) {
         if (!plans[r]) plans[r] = { original_total: 0, discount_price: 0, discount_rate: 100 };
       }
       return {
@@ -623,7 +614,7 @@ router.post('/', async (req, res) => {
     );
 
     // 初始化三条 role_plans
-    for (const r of ROLES) {
+    for (const r of DB_ROLES) {
       await pool.query(
         `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
          VALUES (?, ?, ?, 0, 0, 100)
@@ -952,12 +943,12 @@ router.post('/:id/clone', async (req, res) => {
     for (const it of srcItems) {
       const amt = toNum(it.item_price) * Math.max(1, toNum(it.quantity) || 1);
       if (it.role === 'common') {
-        for (const r of ROLES) roleTotals[r] += amt;
+        for (const r of DB_ROLES) roleTotals[r] += amt;
       } else if (roleTotals[it.role] !== undefined) {
         roleTotals[it.role] += amt;
       }
     }
-    for (const r of ROLES) {
+    for (const r of DB_ROLES) {
       const total = round2(roleTotals[r]);
       await conn.query(
         `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
@@ -1078,7 +1069,7 @@ router.put('/:id/items-batch', async (req, res) => {
     );
     const existingMap = new Map();
     existingPlans.forEach(p => existingMap.set(p.role, p));
-    for (const role of ROLES) {
+    for (const role of DB_ROLES) {
       const originalTotal = round2(agg[role].total);
       const roleProvided = !!(rolePlansInput && rolePlansInput[role]);
       const input = roleProvided ? rolePlansInput[role] : {};
@@ -1326,12 +1317,14 @@ router.get('/share-public/:token', async (req, res) => {
     if (pkg.status !== 1) return res.status(410).json({ ok: false, error: '套餐已停用' });
 
     const full = await readPackageFull(pkg.id);
-    // 客户经理信息
+    // 客户经理信息 feat/108 P03：
+    //   优先级 owner_sales_id（显式挂了负责人）→ pkg.created_by（模板创建人，「谁创建的就显示谁」）
+    const salesOwnerId = pkg.owner_sales_id || pkg.created_by;
     let createdBy = null;
-    if (pkg.owner_sales_id) {
+    if (salesOwnerId) {
       const [uRows] = await pool.query(
         'SELECT id, name, username, phone FROM users WHERE id = ? LIMIT 1',
-        [pkg.owner_sales_id]
+        [salesOwnerId]
       );
       if (uRows.length > 0) {
         const u = uRows[0];
@@ -1343,20 +1336,20 @@ router.get('/share-public/:token', async (req, res) => {
     }
     const cfg = await getBrandConfigMap();
     const company = buildCompanyFromCfg(cfg);
-    // 客户经理名片
+    // 客户经理名片 feat/108 P03：同 salesOwnerId 查一张
     let sales_profile = null;
-    if (pkg.owner_sales_id) {
+    if (salesOwnerId) {
       const [spRows] = await pool.query(
         `SELECT sp.*, u.name, u.phone
          FROM checkup_sales_profiles sp
          RIGHT JOIN users u ON u.id = sp.user_id
          WHERE u.id = ? LIMIT 1`,
-        [pkg.owner_sales_id]
+        [salesOwnerId]
       );
       if (spRows.length > 0) {
         const s = spRows[0];
         sales_profile = {
-          user_id: s.user_id || pkg.owner_sales_id,
+          user_id: s.user_id || salesOwnerId,
           name: s.name || createdBy?.name || '',
           phone: s.phone || createdBy?.phone || null,
           avatar_url: s.avatar_url || null,
@@ -1798,12 +1791,14 @@ sharePublicRouter.get('/:token', async (req, res) => {
     if (pkg.status !== 1) return res.status(410).json({ ok: false, error: '套餐已停用' });
 
     const full = await readPackageFull(pkg.id);
-    // 客户经理信息
+    // 客户经理信息 feat/108 P03：
+    //   优先级 owner_sales_id（显式挂了负责人）→ pkg.created_by（模板创建人，「谁创建的就显示谁」）
+    const salesOwnerId = pkg.owner_sales_id || pkg.created_by;
     let createdBy = null;
-    if (pkg.owner_sales_id) {
+    if (salesOwnerId) {
       const [uRows] = await pool.query(
         'SELECT id, name, username, phone FROM users WHERE id = ? LIMIT 1',
-        [pkg.owner_sales_id]
+        [salesOwnerId]
       );
       if (uRows.length > 0) {
         const u = uRows[0];
@@ -1815,20 +1810,20 @@ sharePublicRouter.get('/:token', async (req, res) => {
     }
     const cfg = await getBrandConfigMap();
     const company = buildCompanyFromCfg(cfg);
-    // 客户经理名片
+    // 客户经理名片 feat/108 P03：同 salesOwnerId 查一张
     let sales_profile = null;
-    if (pkg.owner_sales_id) {
+    if (salesOwnerId) {
       const [spRows] = await pool.query(
         `SELECT sp.*, u.name, u.phone
          FROM checkup_sales_profiles sp
          RIGHT JOIN users u ON u.id = sp.user_id
          WHERE u.id = ? LIMIT 1`,
-        [pkg.owner_sales_id]
+        [salesOwnerId]
       );
       if (spRows.length > 0) {
         const s = spRows[0];
         sales_profile = {
-          user_id: s.user_id || pkg.owner_sales_id,
+          user_id: s.user_id || salesOwnerId,
           name: s.name || createdBy?.name || '',
           phone: s.phone || createdBy?.phone || null,
           avatar_url: s.avatar_url || null,
