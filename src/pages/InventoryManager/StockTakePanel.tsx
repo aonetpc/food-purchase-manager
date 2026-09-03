@@ -1576,11 +1576,6 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
                   </div>
                 </div>
               ) : (
-                {/* [fix/111] 去掉重新生成链接的空状态提示，改为常规说明
-                <div className="text-gray-400 text-xs">
-                  点击左侧「重新生成访问链接」后展示
-                </div>
-                */}
                 <div className="text-gray-400 text-xs">
                   发起盘点时二维码会同步到企微通知，也可在本页面查看
                 </div>
