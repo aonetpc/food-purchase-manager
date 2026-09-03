@@ -781,6 +781,27 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
     const periodMonthEndStr =
       `${periodMonthEnd.getFullYear()}-${String(periodMonthEnd.getMonth()+1).padStart(2,'0')}-${String(periodMonthEnd.getDate()).padStart(2,'0')} 23:59:59`;
 
+    // 查真实盘点操作人：优先仓库manager_userid绑定的users，次选confirmer_userid绑定的，兜底take原字段
+    // stock_takes.operator_id/operator_name在H5路径下是NULL/占位中文(如"行政办公室管理员")不可信
+    let realOperatorId = take.operator_id || null;
+    let realOperatorName = take.operator_name || '盘点人';
+    try {
+      const [[usrMgr], [usrCfm]] = await Promise.all([
+        pool.query(`SELECT id, name FROM users WHERE wecom_userid = ? LIMIT 1`, [take.manager_userid]),
+        take.confirmer_userid ? pool.query(`SELECT id, name FROM users WHERE wecom_userid = ? LIMIT 1`, [take.confirmer_userid]) : Promise.resolve([[]]),
+      ]);
+      const chosen = usrMgr || usrCfm;
+      if (chosen) {
+        realOperatorId = chosen.id || null;
+        realOperatorName = chosen.name || realOperatorName;
+        console.log(`[stock-takes h5 complete adjust] resolve operator: ${take.take_no} manager=${take.manager_userid} confirmer=${take.confirmer_userid} => id=${realOperatorId} name=${realOperatorName}`);
+      } else {
+        console.log(`[stock-takes h5 complete adjust] WARN fallback operator: ${take.take_no} manager=${take.manager_userid} confirmer=${take.confirmer_userid} no user binding, fallback name=${realOperatorName}`);
+      }
+    } catch (e) {
+      console.error(`[stock-takes h5 complete adjust] resolve operator query failed: ${e.message}, fallback`);
+    }
+
     const [allDiffItems] = await pool.query(`
       SELECT sti.*, w.department_id, d.name as department_name
       FROM stock_take_items sti
@@ -804,8 +825,8 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
       `, [movementId, take.warehouse_id, item.item_id, item.item_name,
           diff, item.unit, item.unit_price, totalAmount, reason,
           take.id,
-          take.operator_id || null,
-          take.operator_name || '盘点人',
+          realOperatorId,
+          realOperatorName,
           item.department_id || null, item.department_name || null,
           periodMonthEndStr]);
 
@@ -1711,6 +1732,27 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
     const pcPeriodMonthEndStr =
       `${pcPeriodMonthEnd.getFullYear()}-${String(pcPeriodMonthEnd.getMonth()+1).padStart(2,'0')}-${String(pcPeriodMonthEnd.getDate()).padStart(2,'0')} 23:59:59`;
 
+    // 盘点adjust流水的操作人语义应为「仓库实际盘点人」(manager/confirmer 绑定的用户)，
+    // 与扫码入库/消耗一致，而非财务复核人。与H5路径共用解析逻辑。
+    let pcRealOpId = take.operator_id || null;
+    let pcRealOpName = take.operator_name || (req.user ? (req.user.name || req.user.username) : '盘点人');
+    try {
+      const [[pcUsrMgr], [pcUsrCfm]] = await Promise.all([
+        pool.query(`SELECT id, name FROM users WHERE wecom_userid = ? LIMIT 1`, [take.manager_userid]),
+        take.confirmer_userid ? pool.query(`SELECT id, name FROM users WHERE wecom_userid = ? LIMIT 1`, [take.confirmer_userid]) : Promise.resolve([[]]),
+      ]);
+      const chosen = pcUsrMgr || pcUsrCfm;
+      if (chosen) {
+        pcRealOpId = chosen.id || pcRealOpId;
+        pcRealOpName = chosen.name || pcRealOpName;
+        console.log(`[stock-takes pc complete adjust] resolve operator: ${take.take_no} => id=${pcRealOpId} name=${pcRealOpName}`);
+      } else {
+        console.log(`[stock-takes pc complete adjust] WARN no user binding for ${take.take_no}, fallback name=${pcRealOpName}`);
+      }
+    } catch (e) {
+      console.error(`[stock-takes pc complete adjust] resolve operator failed: ${e.message}, fallback`);
+    }
+
     const [allDiffItems] = await conn.query(`
       SELECT sti.*, w.department_id, d.name as department_name
       FROM stock_take_items sti
@@ -1734,7 +1776,9 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
         VALUES (?, ?, ?, ?, 'adjust', ?, ?, ?, ?, ?, 'take', ?, ?, ?, ?, ?, ?)
       `, [movementId, take.warehouse_id, item.item_id, item.item_name,
           diff, item.unit, item.unit_price, totalAmount, reason,
-          take.id, req.user.id, req.user.name || req.user.username,
+          take.id,
+          pcRealOpId,
+          pcRealOpName,
           item.department_id || null, item.department_name || null,
           pcPeriodMonthEndStr]);
 
