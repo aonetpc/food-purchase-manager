@@ -214,7 +214,7 @@ async function listPackageItems(packageId) {
             CASE WHEN (pi.item_name_snapshot IS NULL OR pi.item_name_snapshot = '') THEN ci.name ELSE pi.item_name_snapshot END AS item_name_snapshot,
             CASE WHEN (pi.item_price IS NULL OR pi.item_price = 0) THEN ci.default_price ELSE pi.item_price END AS item_price,
             CASE WHEN (pi.insurance_price_snapshot IS NULL OR pi.insurance_price_snapshot = 0) THEN ci.insurance_price ELSE pi.insurance_price_snapshot END AS insurance_price_snapshot,
-            ci.category, ci.sub_category, ci.item_type, ${csSelect}, ci.applicable_roles
+            ci.category, ci.item_type, ${csSelect}, ci.applicable_roles
      FROM booking_package_items AS pi
      LEFT JOIN booking_checkup_items AS ci ON ci.id = pi.item_id
      WHERE pi.package_id = ?
