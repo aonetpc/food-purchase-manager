@@ -803,7 +803,9 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
         VALUES (?, ?, ?, ?, 'adjust', ?, ?, ?, ?, ?, 'take', ?, ?, ?, ?, ?, ?)
       `, [movementId, take.warehouse_id, item.item_id, item.item_name,
           diff, item.unit, item.unit_price, totalAmount, reason,
-          take.id, null, 'H5财务复核',
+          take.id,
+          take.operator_id || null,
+          take.operator_name || '盘点人',
           item.department_id || null, item.department_name || null,
           periodMonthEndStr]);
 
