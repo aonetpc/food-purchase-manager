@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   ClipboardCheck, Search, Save, Send, AlertCircle, AlertTriangle, CheckCircle, Info,
   ArrowLeft, Package, Loader2, Filter, X, TrendingUp, TrendingDown, Minus,
-  FileDown, RotateCcw,
+  FileDown, RotateCcw, Edit3,
 } from 'lucide-react';
 
 // ================================================
@@ -239,6 +239,8 @@ export default function StockTakeOperate() {
   const [reviewSamples, setReviewSamples] = useState<ReviewSample[]>([]);
   const [returnReason, setReturnReason] = useState('');
   const [showReturnModal, setShowReturnModal] = useState(false);
+  // 只读模式：提交后/打开submitted状态时默认只读，需点"重新编辑"才解锁
+  const [viewMode, setViewMode] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
   // 筛选
@@ -275,6 +277,8 @@ export default function StockTakeOperate() {
       setMeta(data);
       setEditItems(data.items || []);
       setModifiedIds(new Set());
+      // 提交后/打开submitted状态时默认只读
+      setViewMode(data.role === 'operator' && (data.status === 'submitted' || data.status === 'reviewing'));
       // 保存签名
       if (data.role === 'operator' && data.operator_signature) {
         setSavedSignature(data.operator_signature);
@@ -297,7 +301,7 @@ export default function StockTakeOperate() {
   // ---- 派生数据 ----
   const editable = meta
     ? meta.role === 'operator'
-      ? meta.status !== 'completed' && meta.status !== 'cancelled'
+      ? meta.status !== 'completed' && meta.status !== 'cancelled' && !viewMode
       : false
     : false;
   const canReview = meta
@@ -481,6 +485,7 @@ export default function StockTakeOperate() {
         setToast({ type: 'warn', msg: data.warn });
       }
       setJustSubmitted(true);
+      setViewMode(true);
     } catch (err: any) {
       setToast({ type: 'error', msg: err?.message || '提交失败' });
     } finally {
@@ -610,7 +615,7 @@ export default function StockTakeOperate() {
             财务复核通过后将完成盘点，如被退回可在此重新编辑提交。
           </p>
           <button
-            onClick={fetchMeta}
+            onClick={() => { setJustSubmitted(false); fetchMeta(); }}
             className="w-full bg-primary-600 hover:bg-primary-700 text-white text-base font-medium py-3 rounded-xl flex items-center justify-center gap-2"
           >
             <ArrowLeft size={18} /> 查看盘点单
@@ -1060,6 +1065,13 @@ export default function StockTakeOperate() {
                   {reviewing ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} 复核通过
                 </button>
               </>
+            )}
+            {/* 只读模式：重新编辑按钮 */}
+            {viewMode && meta?.role === 'operator' && meta?.status !== 'completed' && meta?.status !== 'cancelled' && (
+              <button onClick={() => setViewMode(false)}
+                className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl text-base font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200">
+                <Edit3 size={18} /> 重新编辑
+              </button>
             )}
             {/* 已完成：导出PDF */}
             {meta?.status === 'completed' && (

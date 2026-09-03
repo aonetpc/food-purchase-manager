@@ -241,7 +241,12 @@ async function requireStockTakeToken(req, res, next) {
     }
 
     const [rows] = await pool.query(`
-      SELECT st.*, w.name as warehouse_name, w.manager_userid, w.confirmer_userid
+      SELECT st.*, w.name as warehouse_name, w.manager_userid, w.confirmer_userid,
+        (SELECT response_code FROM stock_take_notifications
+         WHERE stock_take_id = st.id
+           AND recipient_wecom_userid = COALESCE(w.manager_userid, w.confirmer_userid)
+           AND type = 'init' AND response_code IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1) as init_response_code
       FROM stock_takes st
       JOIN warehouses w ON st.warehouse_id = w.id
       WHERE st.access_token = ? OR st.reviewer_token = ?
@@ -578,12 +583,24 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
         }
       }
 
-      // 把盘点人的 init/remind 卡片按钮变灰
+      // 把盘点人的 init/remind 卡片按钮变灰（对齐 booking 模式：直接用 response_code 调用）
       if (operatorWecomUseridForNotify) {
         const now = new Date();
         const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'init', `已盘点 (${hhmm})`);
-        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'remind', `已盘点 (${hhmm})`);
+        const { getWecomConfig, updateTemplateCardButton } = require('./wecom');
+        const config = await getWecomConfig();
+        if (config && take.init_response_code) {
+          try {
+            await updateTemplateCardButton(config, operatorWecomUseridForNotify, take.init_response_code, `已盘点 (${hhmm})`);
+            console.log(`[stock-takes h5 submit] 卡片灰化成功: user=${operatorWecomUseridForNotify}`);
+          } catch (e) {
+            console.error(`[stock-takes h5 submit] 卡片灰化失败: user=${operatorWecomUseridForNotify}, error=${e.message}`);
+          }
+        } else {
+          // 回退到旧的查库方式
+          await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'init', `已盘点 (${hhmm})`);
+          await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'remind', `已盘点 (${hhmm})`);
+        }
       }
     } catch (notifyErr) {
       console.warn('[stock-takes h5 submit post-process]', notifyErr.message);
@@ -1325,7 +1342,12 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
     const { id } = req.params;
     const { signature_data } = req.body;
     const [takeRows] = await conn.query(`
-      SELECT st.*, w.name as warehouse_name, w.manager_userid, w.confirmer_userid
+      SELECT st.*, w.name as warehouse_name, w.manager_userid, w.confirmer_userid,
+        (SELECT response_code FROM stock_take_notifications
+         WHERE stock_take_id = st.id
+           AND recipient_wecom_userid = COALESCE(w.manager_userid, w.confirmer_userid)
+           AND type = 'init' AND response_code IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1) as init_response_code
       FROM stock_takes st
       JOIN warehouses w ON st.warehouse_id = w.id
       WHERE st.id = ?
@@ -1396,12 +1418,24 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
         }
       }
 
-      // 把盘点人的 init/remind 卡片按钮变灰
+      // 把盘点人的 init/remind 卡片按钮变灰（对齐 booking 模式：直接用 response_code 调用）
       if (operatorWecomUserid) {
         const now = new Date();
         const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-        await tryUpdateCardButton(id, operatorWecomUserid, 'init', `已盘点 (${hhmm})`);
-        await tryUpdateCardButton(id, operatorWecomUserid, 'remind', `已盘点 (${hhmm})`);
+        const { getWecomConfig, updateTemplateCardButton } = require('./wecom');
+        const config = await getWecomConfig();
+        if (config && take.init_response_code) {
+          try {
+            await updateTemplateCardButton(config, operatorWecomUserid, take.init_response_code, `已盘点 (${hhmm})`);
+            console.log(`[stock-takes pc submit] 卡片灰化成功: user=${operatorWecomUserid}`);
+          } catch (e) {
+            console.error(`[stock-takes pc submit] 卡片灰化失败: user=${operatorWecomUserid}, error=${e.message}`);
+          }
+        } else {
+          // 回退到旧的查库方式
+          await tryUpdateCardButton(id, operatorWecomUserid, 'init', `已盘点 (${hhmm})`);
+          await tryUpdateCardButton(id, operatorWecomUserid, 'remind', `已盘点 (${hhmm})`);
+        }
       }
     } catch (notifyErr) {
       console.warn('[stock-takes submit post-process]', notifyErr.message);
