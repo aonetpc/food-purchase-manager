@@ -73,7 +73,7 @@ type SupplierStatsData = {
 
 type SupplierDetailItem = { cat_name: string; amount: number };
 
-type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed';
+type StockTakeStatus = 'pending' | 'draft' | 'submitted' | 'reviewing' | 'returned' | 'completed' | 'cancelled';
 
 interface StockTakeProgressItem {
   warehouse_id: string;
@@ -768,6 +768,7 @@ const STOCK_TAKE_STATUS_CONFIG: Record<StockTakeStatus, { icon: string; color: s
   submitted: { icon: '⏳', color: 'text-amber-600' },
   reviewing: { icon: '⏳', color: 'text-amber-600' },
   returned: { icon: '⏳', color: 'text-amber-600' },
+  cancelled: { icon: '⊘', color: 'text-gray-400' },
   pending: { icon: '❌', color: 'text-red-500' },
 };
 
