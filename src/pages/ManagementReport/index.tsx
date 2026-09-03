@@ -51,7 +51,7 @@ type ExpenseRow = {
   unit?: string;
   unit_price: number;
   total_amount: number;
-  movement_type: 'inbound' | 'expense';
+  movement_type: 'inbound' | 'expense' | 'adjust';
   operator_name?: string;
   reason?: string;
   created_at?: string;
@@ -1114,11 +1114,20 @@ function ExpenseDetailCard({
                     <td className="text-right">{formatCurrency(r.unit_price)}</td>
                     <td className="text-right font-semibold text-gray-800">{formatCurrency(r.total_amount)}</td>
                     <td>
-                      <span className={`inline-block px-2 py-0.5 text-xs rounded-full ${r.movement_type === 'expense'
-                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                        : 'bg-green-50 text-green-700 border border-green-200'}`}>
-                        {r.movement_type === 'expense' ? '即买即用' : '扫码入库'}
-                      </span>
+                      {(() => {
+                        const isAdjust = r.movement_type === 'adjust';
+                        const isLoss = isAdjust && (r.reason || '').includes('盘亏');
+                        const isGain = isAdjust && (r.reason || '').includes('盘盈');
+                        const label = isLoss ? '盘点盘亏' : isGain ? '盘点盘盈' : r.movement_type === 'expense' ? '即买即用' : '扫码入库';
+                        const cls = isLoss
+                          ? 'bg-red-50 text-red-700 border border-red-200'
+                          : isGain
+                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                          : r.movement_type === 'expense'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : 'bg-green-50 text-green-700 border border-green-200';
+                        return <span className={`inline-block px-2 py-0.5 text-xs rounded-full ${cls}`}>{label}</span>;
+                      })()}
                     </td>
                     <td>{r.operator_name || '-'}</td>
                     <td className="text-gray-500">{r.created_at || '-'}</td>
@@ -1140,10 +1149,21 @@ function ExpenseDetailCard({
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <div className={`text-xs rounded-full px-2 py-0.5 ${r.movement_type === 'expense'
-                      ? 'bg-amber-50 text-amber-700'
-                      : 'bg-green-50 text-green-700'}`}>
-                      {r.movement_type === 'expense' ? '即买即用' : '扫码入库'}
+                    <div className={`text-xs rounded-full px-2 py-0.5 ${(() => {
+                      const isAdjust = r.movement_type === 'adjust';
+                      const isLoss = isAdjust && (r.reason || '').includes('盘亏');
+                      const isGain = isAdjust && (r.reason || '').includes('盘盈');
+                      return isLoss ? 'bg-red-50 text-red-700'
+                        : isGain ? 'bg-purple-50 text-purple-700'
+                        : r.movement_type === 'expense' ? 'bg-amber-50 text-amber-700'
+                        : 'bg-green-50 text-green-700';
+                    })()}`}>
+                      {(() => {
+                        const isAdjust = r.movement_type === 'adjust';
+                        const isLoss = isAdjust && (r.reason || '').includes('盘亏');
+                        const isGain = isAdjust && (r.reason || '').includes('盘盈');
+                        return isLoss ? '盘点盘亏' : isGain ? '盘点盘盈' : r.movement_type === 'expense' ? '即买即用' : '扫码入库';
+                      })()}
                     </div>
                     <div className="font-bold text-lg text-primary-700 mt-1">{formatCurrency(r.total_amount)}</div>
                   </div>
