@@ -276,7 +276,12 @@ async function fetchMaterialConsumptionRows({ month, catRows, deptNameToId, incl
     SELECT wc.id as category_id, wc.name as category,
            wc.parent_id as category_parent_id, wc_p.name as category_parent,
            w.department_id as dept_id, d.name as dept_name,
-           SUM(IFNULL(sm.total_amount, 0)) as amount
+           SUM(
+             CASE
+               WHEN sm.movement_type = 'adjust' THEN -IFNULL(sm.total_amount, 0)  -- adjust盘点：盘亏diff<0 total_amount<0，取反为正→增加消耗；盘盈反之减少
+               ELSE IFNULL(sm.total_amount, 0)
+             END
+           ) as amount
     FROM stock_movements sm
     JOIN warehouse_items wi ON sm.item_id = wi.id
     JOIN warehouse_categories wc ON wi.category_id = wc.id
@@ -284,7 +289,8 @@ async function fetchMaterialConsumptionRows({ month, catRows, deptNameToId, incl
     LEFT JOIN warehouses w ON sm.warehouse_id = w.id
     LEFT JOIN departments d ON w.department_id = d.id
     WHERE ((sm.movement_type = 'inbound' AND sm.related_type = 'scan')
-           OR sm.movement_type = 'expense')
+           OR sm.movement_type = 'expense'
+           OR sm.movement_type = 'adjust')   -- 盘点调整：盘亏加消耗，盘盈抵消（符号在SUM里取反）
       AND DATE_FORMAT(sm.created_at, '%Y-%m') = ?
       AND wc_p.name = '原材料'
     GROUP BY wc.id, wc.name, wc.parent_id, wc_p.name, w.department_id, d.name
