@@ -761,7 +761,7 @@ router.get('/expense-detail', async (req, res) => {
     }
 
     const where = [
-      `((sm.movement_type = 'inbound' AND sm.related_type = 'scan') OR sm.movement_type = 'expense')`,
+      `((sm.movement_type = 'inbound' AND sm.related_type = 'scan') OR sm.movement_type = 'expense' OR sm.movement_type = 'adjust')`,
       `DATE_FORMAT(sm.created_at, '%Y-%m') = ?`,
     ];
     const params = [month];
@@ -785,10 +785,15 @@ router.get('/expense-detail', async (req, res) => {
 
     const whereSql = where.join(' AND ');
 
-    // 汇总
+    // 汇总（盘点adjust：盘亏total_amount<0，取反后正→增加消耗；盘盈反之）
     const [summaryRow] = await pool.query(`
       SELECT COUNT(*) as total_count,
-             SUM(IFNULL(sm.total_amount, 0)) as total_amount
+             SUM(
+               CASE
+                 WHEN sm.movement_type = 'adjust' THEN -IFNULL(sm.total_amount, 0)
+                 ELSE IFNULL(sm.total_amount, 0)
+               END
+             ) as total_amount
       FROM stock_movements sm
       JOIN warehouse_items wi ON sm.item_id = wi.id
       LEFT JOIN warehouses w ON sm.warehouse_id = w.id
@@ -812,7 +817,10 @@ router.get('/expense-detail', async (req, res) => {
              w.department_id, d.name as department_name,
              ABS(sm.quantity) as quantity, sm.unit,
              IFNULL(sm.unit_price, 0) as unit_price,
-             IFNULL(sm.total_amount, 0) as total_amount,
+             CASE
+               WHEN sm.movement_type = 'adjust' THEN -IFNULL(sm.total_amount, 0)
+               ELSE IFNULL(sm.total_amount, 0)
+             END as total_amount,
              sm.movement_type, sm.operator_name, sm.reason,
              DATE_FORMAT(sm.created_at, '%Y-%m-%d %H:%i') as created_at
       FROM stock_movements sm
@@ -860,7 +868,7 @@ router.get('/pdf/expense-detail', async (req, res) => {
     }
 
     const where = [
-      `((sm.movement_type = 'inbound' AND sm.related_type = 'scan') OR sm.movement_type = 'expense')`,
+      `((sm.movement_type = 'inbound' AND sm.related_type = 'scan') OR sm.movement_type = 'expense' OR sm.movement_type = 'adjust')`,
       `DATE_FORMAT(sm.created_at, '%Y-%m') = ?`,
     ];
     const params = [month];
@@ -890,7 +898,10 @@ router.get('/pdf/expense-detail', async (req, res) => {
              d.name as department_name,
              ABS(sm.quantity) as quantity, sm.unit,
              IFNULL(sm.unit_price, 0) as unit_price,
-             IFNULL(sm.total_amount, 0) as total_amount,
+             CASE
+               WHEN sm.movement_type = 'adjust' THEN -IFNULL(sm.total_amount, 0)
+               ELSE IFNULL(sm.total_amount, 0)
+             END as total_amount,
              sm.movement_type, sm.operator_name,
              DATE_FORMAT(sm.created_at, '%Y-%m-%d %H:%i') as created_at
       FROM stock_movements sm
