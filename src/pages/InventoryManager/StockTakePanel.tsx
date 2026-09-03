@@ -968,6 +968,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
                             催办
                           </button>
                         )}
+                        {/* [fix/111] 重新生成链接全程无必要，注释保留代码
                         {isManager && p.status !== 'pending' && p.stock_take_id && (
                           <button
                             onClick={() => handleRefreshToken(p.stock_take_id!)}
@@ -978,6 +979,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
                             重新生成链接
                           </button>
                         )}
+                        */}
                         {p.status === 'completed' && p.stock_take_id && (
                           <button
                             onClick={() => handleExportPdf(p.stock_take_id!)}
@@ -1073,6 +1075,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
                                     <FileDown size={14} /> 导出PDF
                                   </button>
                                 )}
+                                {/* [fix/111] 列表行"链接"按钮(重新生成)全程无必要，注释保留代码
                                 {((r.status === 'submitted' || r.status === 'reviewing') && canReview)
                                   || ((r.status === 'draft' || r.status === 'returned' || r.status === 'completed') && isManager) ? (
                                   <button
@@ -1082,6 +1085,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
                                     <QrCode size={14} /> 链接
                                   </button>
                                 ) : null}
+                                */}
                                 <button
                                   onClick={() => openDetail(r.id)}
                                   className="text-primary-600 hover:text-primary-700 text-sm flex items-center gap-0.5"
@@ -1531,14 +1535,19 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
               </h3>
               <ul className="text-xs text-blue-600 space-y-1 list-disc list-inside">
                 <li>盘点录入和财务复核建议在手机端操作，方便手写签名</li>
+                {/* [fix/111] 去掉重新生成链接文案
                 <li>可扫描右侧二维码在手机打开，或点击「重新生成链接」发送到企微</li>
+                */}
+                <li>可扫描右侧二维码在手机打开</li>
                 <li>草稿状态下PC端可直接编辑实盘数量，但签名仍需在手机端</li>
               </ul>
               <div className="mt-3 flex gap-2 flex-wrap">
+                {/* [fix/111] 重新生成访问链接按钮全程无必要，注释保留代码
                 <button onClick={() => onRefreshToken(detail.id)} disabled={refreshingUrl}
                   className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1">
                   <QrCode size={14} /> 重新生成访问链接
                 </button>
+                */}
                 {detail.status === 'completed' && (
                   <button onClick={() => onExportPdf(detail.id)}
                     className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1">
@@ -1567,8 +1576,13 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
                   </div>
                 </div>
               ) : (
+                {/* [fix/111] 去掉重新生成链接的空状态提示，改为常规说明
                 <div className="text-gray-400 text-xs">
                   点击左侧「重新生成访问链接」后展示
+                </div>
+                */}
+                <div className="text-gray-400 text-xs">
+                  发起盘点时二维码会同步到企微通知，也可在本页面查看
                 </div>
               )}
             </div>
