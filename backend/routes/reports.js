@@ -1074,12 +1074,18 @@ router.get('/supplier-statistics', async (req, res) => {
           '无供应商采购'
         ) as supplier_name,
         COALESCE(NULLIF(wp.supplier_id, ''), '') as supplier_id,
+        -- 金额口径与明细接口完全一致：有明细行用行项目金额，无明细行回退头部金额
         SUM(CASE
-          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-          ELSE IFNULL(wp.total_amount, 0)
+          WHEN wpi.id IS NOT NULL THEN
+            CASE WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
+                 ELSE IFNULL(wpi.requested_amount, 0) END
+          ELSE
+            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+                 ELSE IFNULL(wp.total_amount, 0) END
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
+      LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
       INNER JOIN (
         -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
         SELECT related_id, MIN(created_at) AS inbound_at
@@ -1130,12 +1136,17 @@ router.get('/supplier-statistics/detail', async (req, res) => {
           wc.name,
           '未分类'
         ) as cat_name,
+        -- 金额口径与主表接口完全一致：有明细行用行项目金额，无明细行回退头部金额（归"未分类"）
         SUM(CASE
-          WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
-          ELSE IFNULL(wpi.requested_amount, 0)
+          WHEN wpi.id IS NOT NULL THEN
+            CASE WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
+                 ELSE IFNULL(wpi.requested_amount, 0) END
+          ELSE
+            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+                 ELSE IFNULL(wp.total_amount, 0) END
         END) as amount
       FROM warehouse_purchases wp
-      JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
+      LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
       LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
       LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
       -- 找 L2：wc 本身是 level 2 或 wc 的父级是 level 2
@@ -1199,12 +1210,18 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
           s.name,
           '无供应商采购'
         ) as supplier_name,
+        -- 金额口径与主表/明细接口完全一致
         SUM(CASE
-          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-          ELSE IFNULL(wp.total_amount, 0)
+          WHEN wpi.id IS NOT NULL THEN
+            CASE WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
+                 ELSE IFNULL(wpi.requested_amount, 0) END
+          ELSE
+            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+                 ELSE IFNULL(wp.total_amount, 0) END
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
+      LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
       INNER JOIN (
         -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
         SELECT related_id, MIN(created_at) AS inbound_at
