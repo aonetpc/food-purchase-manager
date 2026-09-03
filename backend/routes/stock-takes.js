@@ -164,7 +164,7 @@ async function sendStockTakeNotification(take, recipientWecomUserid, type, butto
   const baseUrl = config.app_domain;
   let h5Url;
   if (h5UrlExtra?.role === 'reviewer') {
-    h5Url = `${baseUrl}/stock-take-operate?r_token=${h5UrlExtra.token}`;
+    h5Url = `${baseUrl}/stock-take-operate?r_token=${h5UrlExtra.token}&wecom_userid=${recipientWecomUserid}`;
   } else {
     h5Url = `${baseUrl}/stock-take-operate?token=${h5UrlExtra?.token || take.access_token}`;
   }
@@ -257,6 +257,17 @@ async function requireStockTakeToken(req, res, next) {
     if (take.reviewer_token === token) {
       role = 'reviewer';
       expiredAtField = 'reviewer_token_expired_at';
+      // 安全校验：如果 URL 带了 wecom_userid，验证该用户是否在财务复核人列表中
+      // 防止 r_token 被非财务人员（如仓管员兼admin）持有后以 reviewer 身份操作
+      const wid = req.query.wecom_userid;
+      if (wid) {
+        const financeUsers = await getFinanceUsers([take.manager_userid, take.confirmer_userid]);
+        if (!financeUsers.some(u => u.wecom_userid === wid)) {
+          role = 'operator'; // 非财务用户，降级为操作者
+          expiredAtField = 'access_expired_at';
+        }
+      }
+      // 若无 wecom_userid（旧卡片），保持原逻辑（7天后自然过期）
     }
 
     // 检查token是否过期
@@ -569,8 +580,10 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
 
       // 把盘点人的 init/remind 卡片按钮变灰
       if (operatorWecomUseridForNotify) {
-        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'init', '已提交复核');
-        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'remind', '已提交复核');
+        const now = new Date();
+        const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'init', `已盘点 (${hhmm})`);
+        await tryUpdateCardButton(take.id, operatorWecomUseridForNotify, 'remind', `已盘点 (${hhmm})`);
       }
     } catch (notifyErr) {
       console.warn('[stock-takes h5 submit post-process]', notifyErr.message);
@@ -1385,8 +1398,10 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
 
       // 把盘点人的 init/remind 卡片按钮变灰
       if (operatorWecomUserid) {
-        await tryUpdateCardButton(id, operatorWecomUserid, 'init', '已提交复核');
-        await tryUpdateCardButton(id, operatorWecomUserid, 'remind', '已提交复核');
+        const now = new Date();
+        const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        await tryUpdateCardButton(id, operatorWecomUserid, 'init', `已盘点 (${hhmm})`);
+        await tryUpdateCardButton(id, operatorWecomUserid, 'remind', `已盘点 (${hhmm})`);
       }
     } catch (notifyErr) {
       console.warn('[stock-takes submit post-process]', notifyErr.message);
