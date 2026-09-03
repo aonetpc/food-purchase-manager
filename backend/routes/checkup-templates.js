@@ -103,6 +103,8 @@ if (!fs.existsSync(PDF_DIR)) {
 
 // 三个角色枚举
 const ROLES = ['male', 'female_married', 'female_single', 'female_unmarried'];
+// feat/108 P04: DB ENUM 只允许 3 值，写入 booking_package_role_plans 必须用 DB_ROLES
+const DB_ROLES = ['male', 'female_married', 'female_single'];
 // feat/107 Fix#4: female_unmarried 别名归一：防止 DB applicable_roles / 前端传来 female_unmarried
 //   逻辑：female_single 和 female_unmarried 是同一个语义，aggregate/readPackageFull 末尾合并
 const ROLE_NORM = (r) => {
@@ -479,7 +481,7 @@ router.get('/', async (req, res) => {
     // 场景：克隆生成的套餐用户中途退出没点「生成方案」时，DB 还没被 items-batch 重写过就会停留在 0
     const fallbackPids = [];
     for (const [pid, plans] of plansMap.entries()) {
-      for (const r of ROLES) {
+      for (const r of DB_ROLES) {
         const pl = plans[r];
         if (!pl || Number(pl.discount_price) === 0) { fallbackPids.push(pid); break; }
       }
@@ -506,10 +508,10 @@ router.get('/', async (req, res) => {
         const totals = { male: 0, female_married: 0, female_single: 0 };
         for (const it of arr) {
           const amt = (toNum(it.item_price) + toNum(it.insurance_price_snapshot)) * Math.max(1, toNum(it.quantity) || 1);
-          if (it.role === 'common') { for (const r of ROLES) totals[r] += amt; }
+          if (it.role === 'common') { for (const r of DB_ROLES) totals[r] += amt; }
           else if (totals[it.role] !== undefined) totals[it.role] += amt;
         }
-        for (const r of ROLES) {
+        for (const r of DB_ROLES) {
           if (!plans[r] || Number(plans[r].discount_price) === 0) {
             const t = round2(totals[r]);
             plans[r] = { original_total: t, discount_price: t, discount_rate: 100 };
@@ -522,7 +524,7 @@ router.get('/', async (req, res) => {
 
     const list = rows.map(p => {
       const plans = plansMap.get(p.id) || {};
-      for (const r of ROLES) {
+      for (const r of DB_ROLES) {
         if (!plans[r]) plans[r] = { original_total: 0, discount_price: 0, discount_rate: 100 };
       }
       return {
@@ -612,7 +614,7 @@ router.post('/', async (req, res) => {
     );
 
     // 初始化三条 role_plans
-    for (const r of ROLES) {
+    for (const r of DB_ROLES) {
       await pool.query(
         `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
          VALUES (?, ?, ?, 0, 0, 100)
@@ -941,12 +943,12 @@ router.post('/:id/clone', async (req, res) => {
     for (const it of srcItems) {
       const amt = toNum(it.item_price) * Math.max(1, toNum(it.quantity) || 1);
       if (it.role === 'common') {
-        for (const r of ROLES) roleTotals[r] += amt;
+        for (const r of DB_ROLES) roleTotals[r] += amt;
       } else if (roleTotals[it.role] !== undefined) {
         roleTotals[it.role] += amt;
       }
     }
-    for (const r of ROLES) {
+    for (const r of DB_ROLES) {
       const total = round2(roleTotals[r]);
       await conn.query(
         `INSERT INTO booking_package_role_plans (id, package_id, role, original_total, discount_price, discount_rate)
@@ -1067,7 +1069,7 @@ router.put('/:id/items-batch', async (req, res) => {
     );
     const existingMap = new Map();
     existingPlans.forEach(p => existingMap.set(p.role, p));
-    for (const role of ROLES) {
+    for (const role of DB_ROLES) {
       const originalTotal = round2(agg[role].total);
       const roleProvided = !!(rolePlansInput && rolePlansInput[role]);
       const input = roleProvided ? rolePlansInput[role] : {};
