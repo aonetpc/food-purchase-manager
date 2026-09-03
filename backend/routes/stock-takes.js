@@ -213,7 +213,7 @@ async function tryUpdateCardButton(stockTakeId, recipientWecomUserid, type, repl
     const [rows] = await pool.query(`
       SELECT response_code FROM stock_take_notifications
       WHERE stock_take_id = ? AND recipient_wecom_userid = ? AND type = ? AND response_code IS NOT NULL
-      ORDER BY created_at DESC LIMIT 1
+      ORDER BY sent_at DESC LIMIT 1
     `, [stockTakeId, recipientWecomUserid, type]);
     if (rows.length === 0) return;
     const rc = rows[0].response_code;
@@ -246,7 +246,7 @@ async function requireStockTakeToken(req, res, next) {
          WHERE stock_take_id = st.id
            AND recipient_wecom_userid = COALESCE(w.manager_userid, w.confirmer_userid)
            AND type = 'init' AND response_code IS NOT NULL
-         ORDER BY created_at DESC LIMIT 1) as init_response_code
+         ORDER BY sent_at DESC LIMIT 1) as init_response_code
       FROM stock_takes st
       JOIN warehouses w ON st.warehouse_id = w.id
       WHERE st.access_token = ? OR st.reviewer_token = ?
@@ -1347,7 +1347,7 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
          WHERE stock_take_id = st.id
            AND recipient_wecom_userid = COALESCE(w.manager_userid, w.confirmer_userid)
            AND type = 'init' AND response_code IS NOT NULL
-         ORDER BY created_at DESC LIMIT 1) as init_response_code
+         ORDER BY sent_at DESC LIMIT 1) as init_response_code
       FROM stock_takes st
       JOIN warehouses w ON st.warehouse_id = w.id
       WHERE st.id = ?
