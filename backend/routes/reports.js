@@ -1092,18 +1092,13 @@ router.get('/supplier-statistics', async (req, res) => {
           '无供应商采购'
         ) as supplier_name,
         COALESCE(NULLIF(wp.supplier_id, ''), '') as supplier_id,
-        -- 金额口径与明细接口完全一致：有明细行用行项目金额，无明细行回退头部金额
+        -- 主表使用采购单头部金额（业务人员最终确认的结算总额，含运费/抹零/折扣/税费整单调差；未到货物资已在此处被人工排除）
         SUM(CASE
-          WHEN wpi.id IS NOT NULL THEN
-            CASE WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
-                 ELSE IFNULL(wpi.requested_amount, 0) END
-          ELSE
-            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-                 ELSE IFNULL(wp.total_amount, 0) END
+          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+          ELSE IFNULL(wp.total_amount, 0)
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
-      LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
       INNER JOIN (
         -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
         SELECT related_id, MIN(created_at) AS inbound_at
@@ -1154,10 +1149,12 @@ router.get('/supplier-statistics/detail', async (req, res) => {
           wc.name,
           '未分类'
         ) as cat_name,
-        -- 金额口径与主表接口完全一致：有明细行用行项目金额，无明细行回退头部金额（归"未分类"）
+        -- 明细行项目金额：未到货(not_arrived=1)的行整体剔除(0)；否则 received_amount 优先，无则 requested_amount 回退
+        -- 无明细行的采购单回退头部金额归到"未分类"
         SUM(CASE
           WHEN wpi.id IS NOT NULL THEN
-            CASE WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
+            CASE WHEN IFNULL(wpi.not_arrived, 0) = 1 THEN 0
+                 WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
                  ELSE IFNULL(wpi.requested_amount, 0) END
           ELSE
             CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
@@ -1228,18 +1225,13 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
           s.name,
           '无供应商采购'
         ) as supplier_name,
-        -- 金额口径与主表/明细接口完全一致
+        -- PDF 主表口径与前端主表一致：头部 actual_amount→total_amount（未到货/整单调差已由业务人工处理）
         SUM(CASE
-          WHEN wpi.id IS NOT NULL THEN
-            CASE WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
-                 ELSE IFNULL(wpi.requested_amount, 0) END
-          ELSE
-            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-                 ELSE IFNULL(wp.total_amount, 0) END
+          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+          ELSE IFNULL(wp.total_amount, 0)
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
-      LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
       INNER JOIN (
         -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
         SELECT related_id, MIN(created_at) AS inbound_at
