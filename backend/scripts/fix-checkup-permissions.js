@@ -100,17 +100,35 @@ async function fixCheckupPermissions() {
     console.log('');
 
     // ================================================
-    // 2. 修正 menu:checkup-templates 的 module_id='booking-board'
+    // 2. 新增/修正 menu:checkup-templates（体检配单）权限
+    //    注意：103 迁移可能没跑，permissions 表里可能根本没有这条记录，
+    //    只 UPDATE 不 INSERT 会导致体检配单菜单缺失。
     // ================================================
-    console.log('📝 步骤2：修正 menu:checkup-templates 的 module_id');
+    console.log('📝 步骤2：新增/修正 menu:checkup-templates（体检配单）权限');
     console.log('─'.repeat(70));
 
+    try {
+      await conn.query(`
+        INSERT IGNORE INTO permissions (id, module_id, code, name, type, parent_id, path, icon, sort_order, status)
+        SELECT UUID(), 'booking-board', 'menu:checkup-templates', '体检配单', 'menu', NULL, '/checkup-templates', 'ClipboardCheck', 3, 1
+      `);
+      console.log('  ✅ INSERT IGNORE menu:checkup-templates 完成');
+    } catch (err) {
+      console.log(`  ⚠️ INSERT 失败（可能已存在）: errno=${err.errno} ${err.message}`);
+    }
+
+    // 已存在则补正（module_id/name/path/icon/status 全字段对齐）
     const [update2Result] = await conn.query(`
       UPDATE permissions
-      SET module_id = 'booking-board', status = 1
+      SET module_id = 'booking-board',
+          name = '体检配单',
+          path = '/checkup-templates',
+          icon = 'ClipboardCheck',
+          status = 1,
+          type = 'menu'
       WHERE code = 'menu:checkup-templates'
     `);
-    console.log(`  ✅ UPDATE 完成，影响行数: ${update2Result.affectedRows}`);
+    console.log(`  ✅ UPDATE 补正完成，影响行数: ${update2Result.affectedRows}`);
     console.log('');
 
     // ================================================
@@ -127,17 +145,33 @@ async function fixCheckupPermissions() {
     console.log('');
 
     // ================================================
-    // 4. 确保 menu:booking-board 的 module_id='booking-board'
+    // 4. 确保 menu:booking-board 存在且 module_id='booking-board'
+    //    （与步骤1/2统一模式：INSERT IGNORE + UPDATE 补正，防止记录不存在）
     // ================================================
-    console.log('📝 步骤4：确保 menu:booking-board 的 module_id 正确');
+    console.log('📝 步骤4：确保 menu:booking-board 存在且 module_id 正确');
     console.log('─'.repeat(70));
+
+    try {
+      await conn.query(`
+        INSERT IGNORE INTO permissions (id, module_id, code, name, type, parent_id, path, icon, sort_order, status)
+        SELECT UUID(), 'booking-board', 'menu:booking-board', '预订调度', 'menu', NULL, '/booking-board', 'Calendar', 1, 1
+      `);
+      console.log('  ✅ INSERT IGNORE menu:booking-board 完成');
+    } catch (err) {
+      console.log(`  ⚠️ INSERT 失败（可能已存在）: errno=${err.errno} ${err.message}`);
+    }
 
     const [update4Result] = await conn.query(`
       UPDATE permissions
-      SET module_id = 'booking-board', status = 1
+      SET module_id = 'booking-board',
+          name = '预订调度',
+          path = '/booking-board',
+          icon = 'Calendar',
+          status = 1,
+          type = 'menu'
       WHERE code = 'menu:booking-board'
     `);
-    console.log(`  ✅ UPDATE 完成，影响行数: ${update4Result.affectedRows}`);
+    console.log(`  ✅ UPDATE 补正完成，影响行数: ${update4Result.affectedRows}`);
     console.log('');
 
     // ================================================
