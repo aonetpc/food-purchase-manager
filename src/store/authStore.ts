@@ -269,47 +269,10 @@ export const useAuthStore = create<AuthStore>()(
           if (idxToRemove >= 0) mergedMenus.splice(idxToRemove, 1);
         }
 
-        // 兼容兜底：确保 menu:booking-board 至少在管理员能看到时被注入
-        const userRoles = user?.roles?.map((r: any) => typeof r === 'string' ? r : r.code) || [];
-        const isAdmin = userRoles.includes('admin') || userRoles.includes('ADMIN') ||
-                        userRoles.includes('超级管理员') || (user as any)?.isAdmin;
-        const hasAdminLevelMenu = mergedMenus.some(m =>
-          ['/permission', '/departments', '/wecom', '/wecom-test', '/ingredient-manager'].includes(m.path)
-        );
-        const isManagerUser = isAdmin || hasAdminLevelMenu;
-
-        // 预订调度：仅管理员或有管理级权限的用户可见
-        if (!mergedMenus.some(m => m.path === '/booking-board') && isManagerUser) {
-          mergedMenus.push({
-            code: 'menu:booking-board',
-            name: '预订调度',
-            path: '/booking-board',
-            icon: 'Calendar',
-          });
-        }
-        // 体检配单兜底：admin/boss/sales/manager 级用户可见（migration 103 可能未跑或 DB 权限缺失）
-        if (!mergedMenus.some(m => m.path === '/checkup-templates') &&
-            (isManagerUser || userRoles.includes('admin') || userRoles.includes('sales') || userRoles.includes('boss'))) {
-          mergedMenus.push({
-            code: 'menu:checkup-templates',
-            name: '体检配单',
-            path: '/checkup-templates',
-            icon: 'ClipboardCheck',
-          });
-        }
-        // 体检中心：独立管理页面（体检项目库 + 体检套餐管理）。
-        //  - admin/boss/manager 级用户：完整可写
-        //  - booker（预订员）：可见菜单，页面内为只读模式（操作按钮禁用）
-        //  - 其他角色：无菜单
-        if (!mergedMenus.some(m => m.path === '/checkup-center') &&
-            (isManagerUser || userRoles.includes('booker'))) {
-          mergedMenus.push({
-            code: 'menu:checkup-center',
-            name: '体检中心',
-            path: '/checkup-center',
-            icon: 'ClipboardList',
-          });
-        }
+        // 体检相关菜单（booking-board/checkup-templates/checkup-center）
+        // 已通过迁移 107 注册到 permissions 表 + role_permissions 分配，
+        // 后端 /auth/me 会正常返回，不再需要前端兜底注入。
+        // 参考 Hard Constraints #17：新增菜单必须注册 permissions 表，不能靠 authStore 兜底。
 
         const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/checkup-center', '/checkup-templates', '/wecom', '/wecom-test'];
         return mergedMenus.sort((a, b) => {
