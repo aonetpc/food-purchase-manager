@@ -1213,60 +1213,63 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
       return res.status(400).json({ error: '参数 month 格式错误' });
     }
 
+    // —— 与固定资产/原材料消耗 PDF 路由完全一致的模式 ——
+    // 1. 构造"部门"列（供应商统计只有一列"采购金额"）
+    const deptRows = [{ id: 'amount', name: '采购金额' }];
+    const deptIdsSorted = deptRows.map(d => d.id);
+    const deptNameMap = {};
+    for (const d of deptRows) deptNameMap[d.id] = d.name;
+    const allCategories = []; // 供应商统计没有预定义分类树，由 buildMatrix 从行数据自动构建
+
+    // 2. SQL：用子查询先算好 group_key/supplier_name，外层 GROUP BY 子查询的真实列（不依赖 SELECT 别名，消除 ONLY_FULL_GROUP_BY 报错）
     const [rows] = await pool.query(`
       SELECT
-        CASE
-          WHEN wp.supplier_id IS NOT NULL AND wp.supplier_id <> '' THEN wp.supplier_id
-          WHEN wp.supplier_name IS NOT NULL AND wp.supplier_name <> '' THEN CONCAT('temp:', wp.supplier_name)
-          ELSE 'none'
-        END as group_key,
-        COALESCE(
-          NULLIF(wp.supplier_name, ''),
-          s.name,
-          '无供应商采购'
-        ) as supplier_name,
-        -- PDF 主表口径与前端主表一致：头部 actual_amount→total_amount（未到货/整单调差已由业务人工处理）
-        SUM(CASE
-          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-          ELSE IFNULL(wp.total_amount, 0)
-        END) as amount
-      FROM warehouse_purchases wp
-      LEFT JOIN suppliers s ON wp.supplier_id = s.id
-      INNER JOIN (
-        -- 取每张采购单首次入库的时间（按入库流水创建时间判定月份）
-        SELECT related_id, MIN(created_at) AS inbound_at
-        FROM stock_movements
-        WHERE movement_type = 'inbound' AND related_type = 'purchase'
-        GROUP BY related_id
-      ) sm ON sm.related_id = wp.id
-      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
-        AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
-      GROUP BY group_key, supplier_name
+        t.group_key as category_id,
+        t.supplier_name as category,
+        'supplier_stats' as category_parent_id,
+        '供应商统计' as category_parent,
+        'amount' as dept_id,
+        '采购金额' as dept_name,
+        SUM(t.amount) as amount
+      FROM (
+        SELECT
+          CASE
+            WHEN wp.supplier_id IS NOT NULL AND wp.supplier_id <> '' THEN wp.supplier_id
+            WHEN wp.supplier_name IS NOT NULL AND wp.supplier_name <> '' THEN CONCAT('temp:', wp.supplier_name)
+            ELSE 'none'
+          END as group_key,
+          COALESCE(
+            NULLIF(wp.supplier_name, ''),
+            s.name,
+            '无供应商采购'
+          ) as supplier_name,
+          -- PDF 主表口径与前端主表一致：头部 actual_amount→total_amount
+          CASE
+            WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+            ELSE IFNULL(wp.total_amount, 0)
+          END as amount
+        FROM warehouse_purchases wp
+        LEFT JOIN suppliers s ON wp.supplier_id = s.id
+        INNER JOIN (
+          SELECT related_id, MIN(created_at) AS inbound_at
+          FROM stock_movements
+          WHERE movement_type = 'inbound' AND related_type = 'purchase'
+          GROUP BY related_id
+        ) sm ON sm.related_id = wp.id
+        WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
+          AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
+      ) t
+      GROUP BY t.group_key, t.supplier_name
       ORDER BY amount DESC
     `, [month]);
 
-    const grandTotal = toNum(rows.reduce((s, r) => s + toNum(r.amount), 0));
-
-    const matrix = {
-      departments: ['采购金额'],
-      departmentIds: ['amount'],
-      rows: rows.map((r, idx) => ({
-        l1Id: '',
-        l1Name: '',
-        l2Id: r.group_key || `s_${idx}`,
-        l2Name: r.supplier_name,
-        category: r.supplier_name,
-        values: [toNum(r.amount)],
-        total: toNum(r.amount),
-      })),
-      totals: [grandTotal],
-      grandTotal,
-    };
+    // 3. 复用 buildMatrix（与固定资产/原材料消耗 PDF 路由一字不差）
+    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
 
     const [y, m] = month.split('-');
     const buf = await generateReportPDF({
       title: '供应商采购统计表',
-      subtitle: `${y}年${parseInt(m)}月    供应商数：${rows.length}    合计：¥${grandTotal.toFixed(2)}`,
+      subtitle: `${y}年${parseInt(m)}月    供应商数：${rows.length}    合计：¥${toNum(matrix.grandTotal).toFixed(2)}`,
       matrix,
     });
     res.setHeader('Content-Type', 'application/pdf');
