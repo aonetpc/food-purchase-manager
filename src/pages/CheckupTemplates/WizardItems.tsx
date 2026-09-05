@@ -583,57 +583,60 @@ function renderItemName(name: string, selected: boolean, isExcluded: boolean) {
   return <span className={cls}>{text}</span>;
 }
 
-// feat/121: 外层改 div + role=button（内部要嵌套独立 ⓘ 图标按钮，不能再是单一 button）
+// feat/121: 外层用 flex div 包裹（卡片 + 外挂 ⓘ 按钮 作为一个整体占一个网格单元）
 return (
-  <div onClick={onToggle} role="button" tabIndex={0}
-    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
-    className={`w-full min-h-[64px] text-left rounded-2xl border px-2 py-1.5 transition-all active:scale-[0.98] cursor-pointer ${cardClass}`}>
-    <div className="flex items-start gap-1 h-full">
-      {/* 左侧分类 emoji */}
-      <span className="text-sm leading-none shrink-0 mt-0.5">{catEmoji}</span>
-      {/* 中间项目名 */}
-      <div className="flex-1 min-w-0 flex flex-col justify-start">
-        <div className={`text-[11px] leading-[1.15] break-all ${isExcluded ? 'line-through' : ''}`}>
-          {renderItemName(item.name, selected, isExcluded)}
+  <div className="flex items-stretch gap-1">
+    <div onClick={onToggle} role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+      className={`flex-1 min-w-0 min-h-[64px] text-left rounded-2xl border px-2 py-1.5 transition-all active:scale-[0.98] cursor-pointer ${cardClass}`}>
+      <div className="flex items-start gap-1 h-full">
+        {/* 左侧分类 emoji */}
+        <span className="text-sm leading-none shrink-0 mt-0.5">{catEmoji}</span>
+        {/* 中间项目名 */}
+        <div className="flex-1 min-w-0 flex flex-col justify-start">
+          <div className={`text-[11px] leading-[1.15] break-all ${isExcluded ? 'line-through' : ''}`}>
+            {renderItemName(item.name, selected, isExcluded)}
+          </div>
+          <div className="mt-1 flex items-center gap-0.5 flex-wrap">
+            {/* feat/121: 组合标签加子项数量，一眼知道组合规模 */}
+            {isCombo && (
+              <span className={`text-[9px] px-1 py-0 rounded ${
+                isExcluded ? 'bg-gray-300 text-gray-500' :
+                selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
+              }`}>{subItems.length > 0 ? `组合·${subItems.length}项` : '组合'}</span>
+            )}
+            {label && (
+              <span className={`text-[9px] px-1 py-0 rounded ${
+                isExcluded ? 'bg-gray-300 text-gray-500' :
+                selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
+              }`}>{label}</span>
+            )}
+            {isPublic && !isExcluded && (
+              <span className="text-[9px] px-1 py-0 rounded bg-amber-300 text-amber-900 font-semibold">公共</span>
+            )}
+            {isExcluded && (
+              <span className="text-[9px] px-1 py-0 rounded bg-red-100 text-red-600 font-semibold">已排除</span>
+            )}
+          </div>
         </div>
-        <div className="mt-1 flex items-center gap-0.5 flex-wrap">
-          {/* feat/121: 组合标签加子项数量，一眼知道组合规模 */}
-          {isCombo && (
-            <span className={`text-[9px] px-1 py-0 rounded ${
-              isExcluded ? 'bg-gray-300 text-gray-500' :
-              selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
-            }`}>{subItems.length > 0 ? `组合·${subItems.length}项` : '组合'}</span>
-          )}
-          {label && (
-            <span className={`text-[9px] px-1 py-0 rounded ${
-              isExcluded ? 'bg-gray-300 text-gray-500' :
-              selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
-            }`}>{label}</span>
-          )}
-          {isPublic && !isExcluded && (
-            <span className="text-[9px] px-1 py-0 rounded bg-amber-300 text-amber-900 font-semibold">公共</span>
-          )}
-          {isExcluded && (
-            <span className="text-[9px] px-1 py-0 rounded bg-red-100 text-red-600 font-semibold">已排除</span>
-          )}
-        </div>
+        {/* 右侧状态图标区 */}
+        {isExcluded && <span className="text-red-400 text-sm shrink-0">✕</span>}
+        {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
+        {isPublic && !selected && !isExcluded && <span className="text-amber-500 text-sm shrink-0">📌</span>}
       </div>
-      {/* 右侧状态图标区 */}
-      {isExcluded && <span className="text-red-400 text-sm shrink-0">✕</span>}
-      {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
-      {isPublic && !selected && !isExcluded && <span className="text-amber-500 text-sm shrink-0">📌</span>}
-      {/* feat/121: 组合项目右上角 ⓘ 图标，点击弹出 Modal 查看子项详情，stopPropagation 防止触发卡片选中 */}
-      {isCombo && subItems.length > 0 && (
-        <button
-          type="button"
-          aria-label="查看组合项目详情"
-          onClick={(e) => { e.stopPropagation(); setShowSubModal(true); }}
-          className="shrink-0 -mr-0.5 ml-0.5 p-1 rounded-full text-blue-500 hover:bg-blue-50 active:bg-blue-100 transition-colors"
-        >
-          <span className="text-sm leading-none font-bold">ⓘ</span>
-        </button>
-      )}
     </div>
+    {/* feat/121: 组合项目卡片外右侧 ⓘ 按钮，点击弹出 Modal 查看子项详情。
+        外挂设计：不占卡片内部空间，位置固定好找，不和 ✓/📌 抢位 */}
+    {isCombo && subItems.length > 0 && (
+      <button
+        type="button"
+        aria-label="查看组合项目详情"
+        onClick={(e) => { e.stopPropagation(); setShowSubModal(true); }}
+        className="shrink-0 w-6 flex items-center justify-center text-blue-500 hover:bg-blue-50 active:bg-blue-100 rounded-lg transition-colors"
+      >
+        <span className="text-base leading-none font-bold">ⓘ</span>
+      </button>
+    )}
     {/* feat/121: 组合项目子项 Modal —— createPortal 到 body，防止被父容器 overflow 裁切 */}
     {showSubModal && createPortal(
       <div
@@ -686,5 +689,5 @@ return (
       document.body
     )}
   </div>
-);
+  );
 }
