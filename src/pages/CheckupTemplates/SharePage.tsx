@@ -328,11 +328,10 @@ export default function SharePage() {
     phone: salesmanRaw.phone,
   } : null;
   const expireAt = parseDD(pkg?.expire_at);
-  // Fix#3: 后端品牌色放在 company.primary_color；前端也保留 pkg.primary_color 兼容旧场景
-  const rawPrimary = (pkg?.company as any)?.primary_color || (pkg as any)?.primary_color;
-  const primaryColor = (rawPrimary && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(rawPrimary))
-    ? rawPrimary
-    : DEFAULT_PRIMARY;
+  // feat/123: 统一按钮颜色为青绿 #1dbf9a（与 demo 模式一致），不再读 company.primary_color
+  // 原逻辑：优先读 company.primary_color（企业品牌色），导致正式页面深绿、demo 青绿不一致
+  // 现逻辑：强制使用 DEFAULT_PRIMARY 青绿，保证 demo 和正式页面视觉统一
+  const primaryColor = DEFAULT_PRIMARY;
 
   // ===== 聚合（统一 female_single → female_unmarried 归一）=====
   // Fix#2: 后端实际返回结构：
@@ -484,9 +483,17 @@ export default function SharePage() {
   );
   const headerBg = `linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 100%)`;
   const cardShadow = '0 2px 12px -6px rgba(15,23,42,0.08)';
+  // feat/123: 阴影颜色跟随 primaryColor，避免硬编码导致品牌色变更时不协调
+  const primaryRgba = (alpha: number) => {
+    const h = primaryColor.replace('#', '');
+    const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16);
+    const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16);
+    const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  };
   const ctaStyle: React.CSSProperties = {
     backgroundColor: primaryColor,
-    boxShadow: `0 3px 10px -4px rgba(29,191,154,0.38)`,
+    boxShadow: `0 3px 10px -4px ${primaryRgba(0.38)}`,
   };
   const pageBg = `linear-gradient(180deg, #fbfcfa 0%, #f4f7f4 100%)`;
 
