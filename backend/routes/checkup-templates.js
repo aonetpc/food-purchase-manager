@@ -172,16 +172,19 @@ async function isAdminOrManager(user) {
 
   // 3. permissionCodes 权限码降级（有任一管理级权限即视为管理员）
   if (user.permissionCodes && user.permissionCodes.size > 0) {
+    // 注意：action:booking:config（管理业务常量）是预订员的正常操作权限，
+    // 不能作为管理员判断依据，否则预订员会被误判为管理员 → is_public=1、owner_sales_id=null
     const adminPermCodes = [
       'menu:permission', 'menu:users', 'menu:roles',
-      'menu:departments', 'menu:wecom', 'action:booking:config',
+      'menu:departments', 'menu:wecom',
     ];
     if (adminPermCodes.some(code => user.permissionCodes.has(code))) return true;
   }
   // 兼容：旧场景 permissions.codes 是字符串数组
   const permArr = (user.permissions && user.permissions.codes) ? user.permissions.codes : null;
   if (Array.isArray(permArr) && permArr.length > 0) {
-    const adminPermCodes = ['menu:permission','menu:users','menu:roles','menu:departments','menu:wecom','action:booking:config'];
+    // 同 L177：不含 action:booking:config，避免预订员被误判为管理员
+    const adminPermCodes = ['menu:permission','menu:users','menu:roles','menu:departments','menu:wecom'];
     if (adminPermCodes.some(code => permArr.includes(code))) return true;
   }
 
@@ -903,7 +906,10 @@ router.post('/:id/clone', async (req, res) => {
     const newName = String(name || `${srcPkg.name}副本`).trim();
     const adminMode = await isAdminOrManager(req.user);
     const newId = uuidv4();
-    const code = (srcPkg.code ? srcPkg.code : 'PK') + '_' + Date.now().toString().slice(-6);
+    // code 固定 12 字符：PK + 8位毫秒时间戳末段 + 2位随机数
+    // 不再叠加 srcPkg.code，避免衍生 N 代后 code 超长（Data too long for column 'code'）
+    // 追溯性通过 base_template_id 字段实现，不需要在 code 里叠加
+    const code = 'PK' + Date.now().toString().slice(-8) + Math.floor(Math.random() * 99);
 
     await conn.query(
       `INSERT INTO booking_packages
