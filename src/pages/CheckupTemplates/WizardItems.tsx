@@ -555,6 +555,9 @@ const isCombo = item.item_type === 'combo';
 const label = getApplicableLabel(item);
 const isPublic = shadowSelected && scope !== 'common';
 const catEmoji = categoryEmoji(item.category);
+// feat/120: 组合项目子项展开状态（独立按钮区，与卡片选中操作分离）
+const [expanded, setExpanded] = useState(false);
+const subItems = isCombo && Array.isArray(item.sub_items) ? item.sub_items : [];
 
 // 选中态：渐变绿+白字+轻阴影
 // 公共已含且未排除：琥珀+橙描边
@@ -579,9 +582,11 @@ function renderItemName(name: string, selected: boolean, isExcluded: boolean) {
   return <span className={cls}>{text}</span>;
 }
 
+// feat/120: 外层改 div + role=button（内部要嵌套独立"查看详情"按钮，不能再是单一 button）
 return (
-  <button onClick={onToggle}
-    className={`w-full min-h-[64px] text-left rounded-2xl border px-2 py-1.5 transition-all active:scale-[0.98] ${cardClass}`}>
+  <div onClick={onToggle} role="button" tabIndex={0}
+    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+    className={`w-full min-h-[64px] text-left rounded-2xl border px-2 py-1.5 transition-all active:scale-[0.98] cursor-pointer ${cardClass}`}>
     <div className="flex items-start gap-1 h-full">
       {/* 左侧分类 emoji */}
       <span className="text-sm leading-none shrink-0 mt-0.5">{catEmoji}</span>
@@ -591,11 +596,12 @@ return (
           {renderItemName(item.name, selected, isExcluded)}
         </div>
         <div className="mt-1 flex items-center gap-0.5 flex-wrap">
+          {/* feat/120: 组合标签加子项数量，一眼知道组合规模 */}
           {isCombo && (
             <span className={`text-[9px] px-1 py-0 rounded ${
               isExcluded ? 'bg-gray-300 text-gray-500' :
               selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
-            }`}>组合</span>
+            }`}>{subItems.length > 0 ? `组合·${subItems.length}项` : '组合'}</span>
           )}
           {label && (
             <span className={`text-[9px] px-1 py-0 rounded ${
@@ -616,6 +622,37 @@ return (
       {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
       {isPublic && !selected && !isExcluded && <span className="text-amber-500 text-sm shrink-0">📌</span>}
     </div>
-  </button>
+    {/* feat/120: 组合项目独立"查看N项详情"按钮区 —— stopPropagation 防止触发卡片选中 */}
+    {isCombo && subItems.length > 0 && (
+      <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
+          className={`w-full h-7 rounded-lg border border-dashed text-[10px] font-medium flex items-center justify-center gap-1 transition-colors ${
+            selected
+            ? 'border-white/40 bg-white/20 text-white hover:bg-white/30'
+            : isExcluded
+            ? 'border-gray-300 bg-gray-50 text-gray-400'
+            : 'border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          <span>{expanded ? '收起' : `查看${subItems.length}项详情`}</span>
+          <span className="text-[9px]">{expanded ? '▴' : '▾'}</span>
+        </button>
+        {expanded && (
+          <div className={`mt-1 rounded-lg p-1.5 max-h-[120px] overflow-y-auto text-[10px] leading-[1.4] ${
+            selected ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-700'
+          }`}>
+            {subItems.map((si, idx) => (
+              <div key={si.id || idx} className="flex items-start gap-1 py-0.5">
+                <span className="shrink-0 opacity-70">{idx + 1}.</span>
+                <span className="break-all">{si.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+  </div>
 );
 }
