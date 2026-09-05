@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
 checkupApi, ROLES, ROLE_LABEL, ROLE_EMOJI, CATEGORIES,
@@ -555,8 +556,8 @@ const isCombo = item.item_type === 'combo';
 const label = getApplicableLabel(item);
 const isPublic = shadowSelected && scope !== 'common';
 const catEmoji = categoryEmoji(item.category);
-// feat/120: 组合项目子项展开状态（独立按钮区，与卡片选中操作分离）
-const [expanded, setExpanded] = useState(false);
+// feat/121: 组合项目子项 Modal 显示状态（ⓘ 图标点击弹窗，与卡片选中操作完全分离）
+const [showSubModal, setShowSubModal] = useState(false);
 const subItems = isCombo && Array.isArray(item.sub_items) ? item.sub_items : [];
 
 // 选中态：渐变绿+白字+轻阴影
@@ -582,77 +583,111 @@ function renderItemName(name: string, selected: boolean, isExcluded: boolean) {
   return <span className={cls}>{text}</span>;
 }
 
-// feat/120: 外层改 div + role=button（内部要嵌套独立"查看详情"按钮，不能再是单一 button）
+// feat/121: 外层用 flex div 包裹（卡片 + 外挂 ⓘ 按钮 作为一个整体占一个网格单元）
 return (
-  <div onClick={onToggle} role="button" tabIndex={0}
-    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
-    className={`w-full min-h-[64px] text-left rounded-2xl border px-2 py-1.5 transition-all active:scale-[0.98] cursor-pointer ${cardClass}`}>
-    <div className="flex items-start gap-1 h-full">
-      {/* 左侧分类 emoji */}
-      <span className="text-sm leading-none shrink-0 mt-0.5">{catEmoji}</span>
-      {/* 中间项目名 */}
-      <div className="flex-1 min-w-0 flex flex-col justify-start">
-        <div className={`text-[11px] leading-[1.15] break-all ${isExcluded ? 'line-through' : ''}`}>
-          {renderItemName(item.name, selected, isExcluded)}
+  <div className="flex items-stretch gap-1">
+    <div onClick={onToggle} role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+      className={`flex-1 min-w-0 min-h-[64px] text-left rounded-2xl border px-2 py-1.5 transition-all active:scale-[0.98] cursor-pointer ${cardClass}`}>
+      <div className="flex items-start gap-1 h-full">
+        {/* 左侧分类 emoji */}
+        <span className="text-sm leading-none shrink-0 mt-0.5">{catEmoji}</span>
+        {/* 中间项目名 */}
+        <div className="flex-1 min-w-0 flex flex-col justify-start">
+          <div className={`text-[11px] leading-[1.15] break-all ${isExcluded ? 'line-through' : ''}`}>
+            {renderItemName(item.name, selected, isExcluded)}
+          </div>
+          <div className="mt-1 flex items-center gap-0.5 flex-wrap">
+            {/* feat/121: 组合标签加子项数量，一眼知道组合规模 */}
+            {isCombo && (
+              <span className={`text-[9px] px-1 py-0 rounded ${
+                isExcluded ? 'bg-gray-300 text-gray-500' :
+                selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
+              }`}>{subItems.length > 0 ? `组合·${subItems.length}项` : '组合'}</span>
+            )}
+            {label && (
+              <span className={`text-[9px] px-1 py-0 rounded ${
+                isExcluded ? 'bg-gray-300 text-gray-500' :
+                selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
+              }`}>{label}</span>
+            )}
+            {isPublic && !isExcluded && (
+              <span className="text-[9px] px-1 py-0 rounded bg-amber-300 text-amber-900 font-semibold">公共</span>
+            )}
+            {isExcluded && (
+              <span className="text-[9px] px-1 py-0 rounded bg-red-100 text-red-600 font-semibold">已排除</span>
+            )}
+          </div>
         </div>
-        <div className="mt-1 flex items-center gap-0.5 flex-wrap">
-          {/* feat/120: 组合标签加子项数量，一眼知道组合规模 */}
-          {isCombo && (
-            <span className={`text-[9px] px-1 py-0 rounded ${
-              isExcluded ? 'bg-gray-300 text-gray-500' :
-              selected ? 'bg-white/30 text-white' : 'bg-amber-100 text-amber-800'
-            }`}>{subItems.length > 0 ? `组合·${subItems.length}项` : '组合'}</span>
-          )}
-          {label && (
-            <span className={`text-[9px] px-1 py-0 rounded ${
-              isExcluded ? 'bg-gray-300 text-gray-500' :
-              selected ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'
-            }`}>{label}</span>
-          )}
-          {isPublic && !isExcluded && (
-            <span className="text-[9px] px-1 py-0 rounded bg-amber-300 text-amber-900 font-semibold">公共</span>
-          )}
-          {isExcluded && (
-            <span className="text-[9px] px-1 py-0 rounded bg-red-100 text-red-600 font-semibold">已排除</span>
-          )}
-        </div>
+        {/* 右侧状态图标区 */}
+        {isExcluded && <span className="text-red-400 text-sm shrink-0">✕</span>}
+        {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
+        {isPublic && !selected && !isExcluded && <span className="text-amber-500 text-sm shrink-0">📌</span>}
       </div>
-      {/* 右侧状态图标 */}
-      {isExcluded && <span className="text-red-400 text-sm shrink-0">✕</span>}
-      {selected && <span className="text-emerald-50 text-sm shrink-0">✓</span>}
-      {isPublic && !selected && !isExcluded && <span className="text-amber-500 text-sm shrink-0">📌</span>}
     </div>
-    {/* feat/120: 组合项目独立"查看N项详情"按钮区 —— stopPropagation 防止触发卡片选中 */}
+    {/* feat/121: 组合项目卡片外右侧 ⓘ 按钮，点击弹出 Modal 查看子项详情。
+        外挂设计：不占卡片内部空间，位置固定好找，不和 ✓/📌 抢位 */}
     {isCombo && subItems.length > 0 && (
-      <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
-          className={`w-full h-7 rounded-lg border border-dashed text-[10px] font-medium flex items-center justify-center gap-1 transition-colors ${
-            selected
-            ? 'border-white/40 bg-white/20 text-white hover:bg-white/30'
-            : isExcluded
-            ? 'border-gray-300 bg-gray-50 text-gray-400'
-            : 'border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100'
-          }`}
+      <button
+        type="button"
+        aria-label="查看组合项目详情"
+        onClick={(e) => { e.stopPropagation(); setShowSubModal(true); }}
+        className="shrink-0 w-6 flex items-center justify-center text-blue-500 hover:bg-blue-50 active:bg-blue-100 rounded-lg transition-colors"
+      >
+        <span className="text-base leading-none font-bold">ⓘ</span>
+      </button>
+    )}
+    {/* feat/121: 组合项目子项 Modal —— createPortal 到 body，防止被父容器 overflow 裁切 */}
+    {showSubModal && createPortal(
+      <div
+        className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50"
+        onClick={() => setShowSubModal(false)}
+      >
+        <div
+          className="bg-white rounded-2xl shadow-2xl max-w-[90vw] w-[320px] max-h-[70vh] flex flex-col overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
         >
-          <span>{expanded ? '收起' : `查看${subItems.length}项详情`}</span>
-          <span className="text-[9px]">{expanded ? '▴' : '▾'}</span>
-        </button>
-        {expanded && (
-          <div className={`mt-1 rounded-lg p-1.5 max-h-[120px] overflow-y-auto text-[10px] leading-[1.4] ${
-            selected ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-700'
-          }`}>
+          {/* Modal 头部：项目名 + 关闭按钮 */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold text-gray-800 truncate">{item.name}</div>
+              <div className="text-[10px] text-gray-500 mt-0.5">共 {subItems.length} 项</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSubModal(false)}
+              className="shrink-0 ml-2 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              aria-label="关闭"
+            >
+              <span className="text-base leading-none">✕</span>
+            </button>
+          </div>
+          {/* Modal 内容：竖排编号子项列表，可滚动 */}
+          <div className="flex-1 overflow-y-auto px-4 py-2">
             {subItems.map((si, idx) => (
-              <div key={si.id || idx} className="flex items-start gap-1 py-0.5">
-                <span className="shrink-0 opacity-70">{idx + 1}.</span>
-                <span className="break-all">{si.name}</span>
+              <div key={si.id || idx} className="flex items-start gap-2 py-1.5 border-b border-gray-50 last:border-b-0">
+                <span className="shrink-0 w-5 text-[11px] text-gray-400 font-medium text-right">{idx + 1}.</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] text-gray-700 break-all leading-[1.4]">{si.name}</div>
+                  {si.code && <div className="text-[10px] text-gray-400 mt-0.5">{si.code}</div>}
+                </div>
               </div>
             ))}
           </div>
-        )}
-      </div>
+          {/* Modal 底部：知道了按钮 */}
+          <div className="px-4 py-3 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => setShowSubModal(false)}
+              className="w-full h-9 rounded-lg bg-emerald-500 text-white text-[13px] font-medium hover:bg-emerald-600 active:bg-emerald-700 transition-colors"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
     )}
   </div>
-);
+  );
 }
