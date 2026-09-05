@@ -214,9 +214,16 @@ const filteredItems = useMemo(() => {
   const matchCat = (it: CheckupItem) =>
     category === '全部' || displayCategory(it.category) === category;
 
+  // feat/122: 排序函数 - 组合项目排前面，组内保持后端原始顺序（现代浏览器 sort 稳定）
+  const sortComboFirst = (a: CheckupItem, b: CheckupItem) => {
+    if (a.item_type === 'combo' && b.item_type !== 'combo') return -1;
+    if (a.item_type !== 'combo' && b.item_type === 'combo') return 1;
+    return 0;
+  };
+
   // 公共tab：全部项目
   if (scope === 'common') {
-    return items.filter(it => matchKw(it) && matchCat(it));
+    return items.filter(it => matchKw(it) && matchCat(it)).sort(sortComboFirst);
   }
 
   // 角色 tab：先强制 scopeVisible（对当前角色不可见的项目一律不显示），再判断是否展示
@@ -230,7 +237,7 @@ const filteredItems = useMemo(() => {
     if (selected[scope]?.[it.id]) return true;
     if (isRoleSpecific(it, scope)) return true;
     return false;
-  });
+  }).sort(sortComboFirst);
 }, [items, category, keyword, scope, selected]);
 
 // 每个 scope 下是否选中某 item（对于 role scope，还要算 common 里选过的"阴影"显示）
