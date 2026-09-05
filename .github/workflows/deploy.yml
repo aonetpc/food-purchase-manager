@@ -159,6 +159,8 @@ jobs:
             fi
 
             cd /opt/food-purchase/backend
+            # 回填 010-107 到 schema_migrations（旧迁移已通过其他方式执行，避免 migrate.js 重跑）
+            node scripts/backfill-schema-migrations.js 2>&1 || echo "⚠️ backfill-schema-migrations failed, continuing..."
             node migrations/migrate.js up 2>&1 || echo "⚠️ migrate.js up had errors, continuing..."
 
             # 历史数据修复脚本（幂等，失败不中断部署）
