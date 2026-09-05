@@ -1205,7 +1205,7 @@ router.get('/supplier-statistics/detail', async (req, res) => {
   }
 });
 
-/** 供应商统计 PDF 导出（适配 generateReportPDF 的 matrix 结构：单列「采购金额」） */
+/** 供应商统计 PDF 导出（自定义 PDFDocument，模拟前端页面展开结构：供应商主行 + 子分类行 + 合计） */
 router.get('/pdf/supplier-statistics', async (req, res) => {
   try {
     const { month } = req.query;
@@ -1213,23 +1213,11 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
       return res.status(400).json({ error: '参数 month 格式错误' });
     }
 
-    // —— 与固定资产/原材料消耗 PDF 路由完全一致的模式 ——
-    // 1. 构造"部门"列（供应商统计只有一列"采购金额"）
-    const deptRows = [{ id: 'amount', name: '采购金额' }];
-    const deptIdsSorted = deptRows.map(d => d.id);
-    const deptNameMap = {};
-    for (const d of deptRows) deptNameMap[d.id] = d.name;
-    const allCategories = []; // 供应商统计没有预定义分类树，由 buildMatrix 从行数据自动构建
-
-    // 2. SQL：用子查询先算好 group_key/supplier_name，外层 GROUP BY 子查询的真实列（不依赖 SELECT 别名，消除 ONLY_FULL_GROUP_BY 报错）
-    const [rows] = await pool.query(`
+    // 1. 主表：所有供应商 + 金额（头部 actual_amount→total_amount，与前端主表一致）
+    const [supplierRows] = await pool.query(`
       SELECT
-        t.group_key as category_id,
-        t.supplier_name as category,
-        'supplier_stats' as category_parent_id,
-        '供应商统计' as category_parent,
-        'amount' as dept_id,
-        '采购金额' as dept_name,
+        t.group_key,
+        t.supplier_name,
         SUM(t.amount) as amount
       FROM (
         SELECT
@@ -1238,16 +1226,9 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
             WHEN wp.supplier_name IS NOT NULL AND wp.supplier_name <> '' THEN CONCAT('temp:', wp.supplier_name)
             ELSE 'none'
           END as group_key,
-          COALESCE(
-            NULLIF(wp.supplier_name, ''),
-            s.name,
-            '无供应商采购'
-          ) as supplier_name,
-          -- PDF 主表口径与前端主表一致：头部 actual_amount→total_amount
-          CASE
-            WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-            ELSE IFNULL(wp.total_amount, 0)
-          END as amount
+          COALESCE(NULLIF(wp.supplier_name, ''), s.name, '无供应商采购') as supplier_name,
+          CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+               ELSE IFNULL(wp.total_amount, 0) END as amount
         FROM warehouse_purchases wp
         LEFT JOIN suppliers s ON wp.supplier_id = s.id
         INNER JOIN (
@@ -1263,15 +1244,182 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
       ORDER BY amount DESC
     `, [month]);
 
-    // 3. 复用 buildMatrix（与固定资产/原材料消耗 PDF 路由一字不差）
-    const matrix = buildMatrix(rows, deptIdsSorted, deptNameMap, allCategories);
+    // 2. 明细：所有供应商的 L1·L2 分类金额（一次性批量查，不按需加载）
+    const [detailRows] = await pool.query(`
+      SELECT
+        t.group_key,
+        t.cat_name,
+        SUM(t.amount) as amount
+      FROM (
+        SELECT
+          CASE
+            WHEN wp.supplier_id IS NOT NULL AND wp.supplier_id <> '' THEN wp.supplier_id
+            WHEN wp.supplier_name IS NOT NULL AND wp.supplier_name <> '' THEN CONCAT('temp:', wp.supplier_name)
+            ELSE 'none'
+          END as group_key,
+          COALESCE(
+            IF(wc_l1.name IS NOT NULL AND wc_l2.name IS NOT NULL, CONCAT(wc_l1.name, '·', wc_l2.name), NULL),
+            wc_l1.name, wc_l2.name, wc.name, '未分类'
+          ) as cat_name,
+          -- 明细金额：not_arrived=1 剔除；否则 received→requested 回退；无明细行回退头部金额归"未分类"
+          CASE WHEN wpi.id IS NOT NULL THEN
+            CASE WHEN IFNULL(wpi.not_arrived, 0) = 1 THEN 0
+                 WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
+                 ELSE IFNULL(wpi.requested_amount, 0) END
+          ELSE
+            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
+                 ELSE IFNULL(wp.total_amount, 0) END
+          END as amount
+        FROM warehouse_purchases wp
+        LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
+        LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
+        LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
+        LEFT JOIN warehouse_categories wc_l2 ON (
+          (wc.level = 3 AND wc.parent_id = wc_l2.id) OR
+          (wc.level = 2 AND wc.id = wc_l2.id)
+        )
+        LEFT JOIN warehouse_categories wc_l1 ON wc_l2.parent_id = wc_l1.id
+        INNER JOIN (
+          SELECT related_id, MIN(created_at) AS inbound_at
+          FROM stock_movements
+          WHERE movement_type = 'inbound' AND related_type = 'purchase'
+          GROUP BY related_id
+        ) sm ON sm.related_id = wp.id
+        WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
+          AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
+      ) t
+      GROUP BY t.group_key, t.cat_name
+      ORDER BY t.group_key, amount DESC
+    `, [month]);
 
-    const [y, m] = month.split('-');
-    const buf = await generateReportPDF({
-      title: '供应商采购统计表',
-      subtitle: `${y}年${parseInt(m)}月    供应商数：${rows.length}    合计：¥${toNum(matrix.grandTotal).toFixed(2)}`,
-      matrix,
+    // 3. 按 group_key 分组明细
+    const detailMap = {};
+    for (const r of detailRows) {
+      if (!detailMap[r.group_key]) detailMap[r.group_key] = [];
+      detailMap[r.group_key].push({ cat_name: r.cat_name, amount: toNum(r.amount) });
+    }
+
+    // 4. 自定义 PDF 生成（参考部门费用明细 PDF 路由模式，模拟前端页面展开结构）
+    const doc = new PDFDocument({ size: 'A4', margin: 30 });
+    const chineseFont = findChineseFont();
+    const chineseBoldFont = findChineseBoldFont();
+    const hasChineseFont = !!chineseFont;
+    if (hasChineseFont) {
+      doc.registerFont('Chinese-Regular', chineseFont);
+      doc.registerFont('Chinese-Bold', chineseBoldFont || chineseFont);
+    }
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+
+    const pageW = doc.page.width - 60;
+    const marginLeft = 30;
+    const [yr, mr] = month.split('-');
+    const grandTotal = supplierRows.reduce((s, r) => s + toNum(r.amount), 0);
+
+    // 标题
+    doc.fontSize(18).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+       .text('供应商采购统计表', marginLeft, 30, { width: pageW, align: 'center' });
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica')
+       .text(`${yr}年${parseInt(mr)}月    供应商数：${supplierRows.length}    合计：¥${toNum(grandTotal).toFixed(2)}`,
+             marginLeft, 55, { width: pageW, align: 'center' });
+
+    // 列宽：供应商 70%，采购金额 30%
+    const colW = [pageW * 0.70, pageW * 0.30];
+    const headers = ['供应商', '采购金额'];
+    const rowH = 16;
+    let yPos = 85;
+
+    function checkPage(newY) {
+      const pageBottom = doc.page.height - 50;
+      if (newY > pageBottom) {
+        doc.addPage({ size: 'A4', margin: 30 });
+        return 50;
+      }
+      return newY;
+    }
+
+    function drawCell(x, cellY, text, w, opts = {}) {
+      const font = opts.bold ? 'Chinese-Bold' : 'Chinese-Regular';
+      const hFont = opts.bold ? 'Helvetica-Bold' : 'Helvetica';
+      doc.font(hasChineseFont ? font : hFont).fontSize(opts.header ? 9 : (opts.small ? 8 : 8.5));
+      const lineH = doc.currentLineHeight();
+      const tY = cellY + (rowH - lineH) / 2;
+      doc.save();
+      doc.rect(x, cellY, w, rowH).stroke('#d1d5db');
+      doc.restore();
+      doc.text(String(text), x + 3, tY, { width: w - 6, align: opts.align || 'left', ellipsis: true });
+    }
+
+    // 表头
+    {
+      let x = marginLeft;
+      doc.save();
+      doc.rect(marginLeft, yPos, pageW, rowH).fill('#f3f4f6').stroke('#d1d5db');
+      doc.restore();
+      for (let i = 0; i < headers.length; i++) {
+        drawCell(x, yPos, headers[i], colW[i], { header: true, bold: true, align: i === 0 ? 'left' : 'right' });
+        x += colW[i];
+      }
+      yPos += rowH;
+    }
+
+    // 数据行：供应商主行 + 展开子行 + 子合计
+    for (const s of supplierRows) {
+      // 供应商主行（粗体 + 浅色背景）
+      yPos = checkPage(yPos);
+      doc.save();
+      doc.rect(marginLeft, yPos, pageW, rowH).fill('#eef2ff').stroke('#d1d5db');
+      doc.restore();
+      drawCell(marginLeft, yPos, `▼ ${s.supplier_name}`, colW[0], { bold: true, align: 'left' });
+      drawCell(marginLeft + colW[0], yPos, `¥${toNum(s.amount).toFixed(2)}`, colW[1], { bold: true, align: 'right' });
+      yPos += rowH;
+
+      // 子分类行
+      const details = detailMap[s.group_key] || [];
+      for (const d of details) {
+        yPos = checkPage(yPos);
+        drawCell(marginLeft, yPos, `  └─ ${d.cat_name}`, colW[0], { small: true, align: 'left' });
+        const amtText = d.amount === 0 ? '—' : `¥${d.amount.toFixed(2)}`;
+        drawCell(marginLeft + colW[0], yPos, amtText, colW[1], { small: true, align: 'right' });
+        yPos += rowH;
+      }
+
+      // 子合计行（等于供应商主行金额）
+      yPos = checkPage(yPos);
+      doc.save();
+      doc.rect(marginLeft, yPos, pageW, rowH).fill('#f9fafb').stroke('#d1d5db');
+      doc.restore();
+      drawCell(marginLeft, yPos, '  合计', colW[0], { bold: true, align: 'left' });
+      drawCell(marginLeft + colW[0], yPos, `¥${toNum(s.amount).toFixed(2)}`, colW[1], { bold: true, align: 'right' });
+      yPos += rowH;
+    }
+
+    // 总合计行
+    yPos = checkPage(yPos);
+    {
+      let x = marginLeft;
+      doc.save();
+      doc.rect(marginLeft, yPos, pageW, rowH).fill('#e5e7eb').stroke('#d1d5db');
+      doc.restore();
+      drawCell(x, yPos, '合计', colW[0], { bold: true, align: 'left' });
+      x += colW[0];
+      drawCell(x, yPos, `¥${toNum(grandTotal).toFixed(2)}`, colW[1], { bold: true, align: 'right' });
+      yPos += rowH;
+    }
+
+    // 生成时间
+    yPos += 10;
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').text(
+      `生成时间：${new Date().toLocaleString('zh-CN')}`,
+      marginLeft, yPos, { width: pageW, align: 'right' }
+    );
+
+    doc.end();
+    const buf = await new Promise((resolve, reject) => {
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
     });
+
     res.setHeader('Content-Type', 'application/pdf');
     const safeName = encodeURIComponent(`供应商统计_${month}.pdf`);
     res.setHeader('Content-Disposition', `attachment; filename="report.pdf"; filename*=UTF-8''${safeName}`);
