@@ -968,7 +968,7 @@ export default function StockTakeOperate() {
       )}
 
       {/* 签名区 - 提交复核前签名 / 展示已保存签名 */}
-      {(editable || canReview || meta?.status === 'completed') && (
+      {(editable || canReview || viewMode || meta?.status === 'completed') && (
         <div className="px-3 mt-4 mb-4">
           <div className="bg-white rounded-lg shadow-sm p-4">
             {(editable && meta?.role === 'operator') && (
@@ -989,6 +989,17 @@ export default function StockTakeOperate() {
                   <SignatureCanvas onSignatureChange={setSignatureData} />
                 )}
               </>
+            )}
+            {/* operator 已提交(submitted/reviewing)：只读展示已保存签名，无操作按钮 */}
+            {viewMode && meta?.role === 'operator' && (
+              <div className="border border-gray-200 rounded-lg p-3 text-center">
+                <p className="text-xs text-gray-500 mb-2">盘点人签名（已提交，等待财务复核）</p>
+                {savedSignature ? (
+                  <img src={savedSignature} alt="盘点人签名" className="max-h-28 w-auto mx-auto" />
+                ) : (
+                  <p className="text-gray-300 text-xs py-4">未签名</p>
+                )}
+              </div>
             )}
             {canReview && (
               <>
