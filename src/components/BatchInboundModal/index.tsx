@@ -50,6 +50,7 @@ interface DraftRow {
   rowIndex: number;
   name: string;
   unit: string;
+  pastedUnit?: string; // 粘贴时解析出的原始单位（用于提示是否发生了单位统一）
   quantity: string;
   unitPrice: string;
   reason: string;
@@ -131,9 +132,12 @@ function parseLine(line: string, idx: number, allItems: WhItem[]): DraftRow {
   let status: RowStatus = 'matched';
   if (!matchedItem) status = 'item_missing';
 
-  // 匹配到物资时补全单位/参考价
+  // 记录粘贴时的原始单位（用于后续提示是否发生了单位统一）
+  const pastedUnit = unit;
+
+  // 匹配到物资时：单位强制以物品主数据为准，粘贴单位仅作参考
   if (matchedItem) {
-    if (!unit && matchedItem.unit) unit = matchedItem.unit;
+    if (matchedItem.unit) unit = matchedItem.unit;
     if ((!unitPrice || unitPrice === '0') && matchedItem.reference_price != null) {
       unitPrice = String(matchedItem.reference_price);
     }
@@ -145,6 +149,7 @@ function parseLine(line: string, idx: number, allItems: WhItem[]): DraftRow {
     rowIndex: idx,
     name,
     unit,
+    pastedUnit,
     quantity,
     unitPrice,
     reason,
@@ -319,7 +324,8 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
     setDraftRows((prev) =>
       prev.map((r) => {
         if (r.id !== rowId) return r;
-        const newUnit = r.unit || item.unit || '';
+        // 方案A：映射已有物品后，单位强制以物品主数据为准，避免库存单位混乱
+        const newUnit = item.unit || r.unit || '';
         const newPrice =
           r.unitPrice && r.unitPrice !== '0'
             ? r.unitPrice
@@ -373,7 +379,8 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
       setDraftRows((prev) =>
         prev.map((r) => {
           if (r.id !== resolveRow?.id) return r;
-          const newUnit = r.unit || created.unit || '';
+          // 新增物资后，单位以用户在表单确认的为准（默认是粘贴单位，用户可改）
+          const newUnit = created.unit || r.unit || '';
           const newPrice =
             r.unitPrice && r.unitPrice !== '0'
               ? r.unitPrice
@@ -407,7 +414,8 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
     setDraftRows((prev) =>
       prev.map((r) => {
         if (r.id !== row.id) return r;
-        const newUnit = r.unit || item.unit || '';
+        // 方案A：映射已有物品后，单位强制以物品主数据为准，避免库存单位混乱
+        const newUnit = item.unit || r.unit || '';
         const newPrice =
           r.unitPrice && r.unitPrice !== '0'
             ? r.unitPrice
@@ -729,6 +737,11 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                           placeholder="如 个"
                           className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-primary-400"
                         />
+                        {row.pastedUnit && row.pastedUnit !== row.unit && (
+                          <p className="text-[10px] text-amber-600 mt-0.5 leading-tight">
+                            已统一为物品标准单位「{row.unit}」（粘贴：{row.pastedUnit}）
+                          </p>
+                        )}
                       </div>
 
                       {/* 数量 */}
