@@ -148,6 +148,8 @@ export const checkupApi = {
     api.post<any>(`/booking/checkup-templates/${id}/share`, body || {}),
   remove: (id: string) =>
     api.delete<any>(`/booking/checkup-templates/${id}`),
+  coverSales: (id: string, sales_ids: string[]) =>
+    api.put<any>(`/booking/checkup-templates/${id}/cover-sales`, { sales_ids }),
   pdfUrl: (id: string, role?: string, shareToken?: string) => {
     // 如果传入 shareToken（分享场景免登录下载），则走 share 专属免登录 PDF 端点
     if (shareToken) {
