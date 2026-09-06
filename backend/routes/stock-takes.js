@@ -533,14 +533,37 @@ router.post('/h5/submit', requireStockTakeToken, async (req, res) => {
 
     await conn.beginTransaction();
 
-    // 记录执行人信息（从仓库管理员信息取），写入 operator_signature
-    const operatorName = take.warehouse_name ? `${take.warehouse_name}管理员` : '仓库管理员';
+    // 记录执行人信息：优先用仓库 manager_userid 绑定的系统用户真实姓名，
+    // 次选 confirmer_userid 绑定的，兜底用 `${warehouse_name}管理员` 占位
     const operatorWecomUserid = take.manager_userid || take.confirmer_userid;
+    let operatorName = take.warehouse_name ? `${take.warehouse_name}管理员` : '仓库管理员';
+    let operatorId = null;
+    try {
+      const lookupUser = async (wecomUserid) => {
+        if (!wecomUserid) return null;
+        const [rows] = await pool.query('SELECT id, name FROM users WHERE wecom_userid = ? LIMIT 1', [wecomUserid]);
+        return rows.length > 0 ? rows[0] : null;
+      };
+      const mgrUser = await lookupUser(take.manager_userid);
+      if (mgrUser) {
+        operatorName = mgrUser.name;
+        operatorId = mgrUser.id;
+      } else {
+        const cfmUser = await lookupUser(take.confirmer_userid);
+        if (cfmUser) {
+          operatorName = cfmUser.name;
+          operatorId = cfmUser.id;
+        }
+      }
+      console.log(`[stock-takes h5 submit] resolve operator: take=${take.take_no} manager=${take.manager_userid} confirmer=${take.confirmer_userid} => id=${operatorId} name=${operatorName}`);
+    } catch (e) {
+      console.error(`[stock-takes h5 submit] resolve operator name failed, fallback: ${e.message}`);
+    }
     await conn.query(`
       UPDATE stock_takes SET status = 'submitted', review_sample = NULL,
-             operator_wecom_userid = ?, operator_name = ?, operator_signature = ?, updated_at = NOW()
+             operator_wecom_userid = ?, operator_id = ?, operator_name = ?, operator_signature = ?, updated_at = NOW()
       WHERE id = ?
-    `, [operatorWecomUserid, operatorName, signature_data, take.id]);
+    `, [operatorWecomUserid, operatorId, operatorName, signature_data, take.id]);
 
     await conn.commit();
 
