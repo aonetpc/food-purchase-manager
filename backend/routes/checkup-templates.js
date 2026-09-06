@@ -423,19 +423,16 @@ router.get('/', async (req, res) => {
     const clauses = [];
     const args = [];
 
-    // 可见性 + scope 过滤（管理员 / 销售均按 Tab 切）
+    // 可见性 + scope 过滤（feat/124: 合并"分配给我"到"我的套餐"，去掉 shared Tab）
     if (!(await isAdminOrManager(user))) {
-      // 销售：三Tab严格区分，避免"我的套餐"混入公共模板
+      // 销售：我的套餐 = 自己创建的 + 别人分享给我的；公共模板独立
       if (scope === 'mine') {
-        clauses.push(`owner_sales_id = ?`);
-        args.push(user.id);
+        clauses.push(`(owner_sales_id = ? OR JSON_CONTAINS(cover_sales_ids, ?))`);
+        args.push(user.id, JSON.stringify(user.id));
       } else if (scope === 'public') {
         clauses.push(`is_public = 1`);
-      } else if (scope === 'shared') {
-        clauses.push(`JSON_CONTAINS(cover_sales_ids, ?)`);
-        args.push(JSON.stringify(user.id));
       } else {
-        // 兜底：scope 缺省时，返回"我能看到的全部"（同旧逻辑）
+        // 兜底：scope 缺省时，返回"我能看到的全部"
         clauses.push(`(
           is_public = 1
           OR owner_sales_id = ?
@@ -444,15 +441,12 @@ router.get('/', async (req, res) => {
         args.push(user.id, JSON.stringify(user.id));
       }
     } else {
-      // 管理员：三Tab独立筛选；shared 通过 cover_sales_ids 过滤；缺省返回全部
+      // 管理员：我的套餐 = 自己创建的/无主的 + 分享给我的；公共模板独立
       if (scope === 'mine') {
-        clauses.push(`(owner_sales_id IS NULL OR owner_sales_id = ?)`);
-        args.push(user.id);
+        clauses.push(`(owner_sales_id IS NULL OR owner_sales_id = ? OR JSON_CONTAINS(cover_sales_ids, ?))`);
+        args.push(user.id, JSON.stringify(user.id));
       } else if (scope === 'public') {
         clauses.push(`is_public = 1`);
-      } else if (scope === 'shared') {
-        clauses.push(`JSON_CONTAINS(cover_sales_ids, ?)`);
-        args.push(JSON.stringify(user.id));
       }
     }
 
@@ -462,8 +456,9 @@ router.get('/', async (req, res) => {
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    // feat/124: LEFT JOIN users 获取 owner_sales_name，用于前端显示"来自 xxx 分享"
     const [rows] = await pool.query(
-      `SELECT p.* FROM booking_packages p ${where} ORDER BY p.sort_order ASC, p.created_at DESC`,
+      `SELECT p.*, u.name AS owner_sales_name FROM booking_packages p LEFT JOIN users u ON u.id = p.owner_sales_id ${where} ORDER BY p.sort_order ASC, p.created_at DESC`,
       args
     );
 
@@ -1152,26 +1147,33 @@ router.put('/:id/items-batch', async (req, res) => {
 
 /**
  * PUT /api/booking/checkup-templates/:id/cover-sales
- *   Body: { sales_ids: string[] }  // 管理员分配给哪些销售可见
- *   要求：当前用户是管理员
+ *   Body: { sales_ids: string[] }  // 分享给哪些销售员可见
+ *   要求：管理员 或 套餐创建者（owner）
  */
 router.put('/:id/cover-sales', async (req, res) => {
   try {
-    if (!(await isAdminOrManager(req.user))) return res.status(403).json({ ok: false, error: '仅管理员可分配套餐' });
     const [rows] = await pool.query('SELECT * FROM booking_packages WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ ok: false, error: '套餐不存在' });
+    const pkg = rows[0];
+    // feat/124: 套餐创建者可以分享自己的套餐给其他销售员
+    const isOwner = pkg.owner_sales_id && pkg.owner_sales_id === req.user.id;
+    if (!(await isAdminOrManager(req.user)) && !isOwner) {
+      return res.status(403).json({ ok: false, error: '仅管理员或套餐创建者可分享套餐' });
+    }
     const { sales_ids = [] } = req.body || {};
     if (!Array.isArray(sales_ids)) return res.status(400).json({ ok: false, error: 'sales_ids 必须是数组' });
+    // 自动过滤掉 owner 自己（自己创建的套餐本来就在"我的套餐"里，不需要加入 cover_sales_ids）
+    const filteredIds = sales_ids.map(String).filter(id => id !== String(req.user.id));
     await pool.query(
       `UPDATE booking_packages SET cover_sales_ids = ?, is_public = ?, updated_at = NOW() WHERE id = ?`,
       [
-        JSON.stringify(sales_ids.map(String)),
-        rows[0].is_public === 1 ? 1 : 0,  // 不自动改 is_public，管理员可以既有公共又有分配
+        JSON.stringify(filteredIds),
+        pkg.is_public === 1 ? 1 : 0,  // 不自动改 is_public
         req.params.id,
       ]
     );
-    const pkg = await readPackageFull(req.params.id);
-    res.json({ ok: true, data: pkg });
+    const updatedPkg = await readPackageFull(req.params.id);
+    res.json({ ok: true, data: updatedPkg });
   } catch (e) {
     console.error('[checkup-templates cover-sales] error:', e);
     res.status(500).json({ ok: false, error: e.message });
