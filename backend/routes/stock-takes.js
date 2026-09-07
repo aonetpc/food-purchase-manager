@@ -462,8 +462,9 @@ router.put('/h5/save', requireStockTakeToken, async (req, res) => {
       for (const it of items) {
         const actualQty = it.actual_quantity !== null && it.actual_quantity !== undefined && it.actual_quantity !== ''
           ? Number(it.actual_quantity) : null;
-        const diff = actualQty !== null ? actualQty - Number(it.system_quantity) : 0;
-        const actualValue = actualQty !== null ? actualQty * Number(it.unit_price) : 0;
+        // 清洗浮点误差（如 41.8 - 24.7 = 17.099999999999998），保留 4 位小数后写入 DB
+        const diff = actualQty !== null ? parseFloat((actualQty - Number(it.system_quantity)).toFixed(4)) : 0;
+        const actualValue = actualQty !== null ? parseFloat((actualQty * Number(it.unit_price)).toFixed(4)) : 0;
         await conn.query(`
           UPDATE stock_take_items
           SET actual_quantity = ?, difference = ?, actual_value = ?, remark = ?
@@ -1258,8 +1259,9 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       for (const it of items) {
         const actualQty = it.actual_quantity !== null && it.actual_quantity !== undefined && it.actual_quantity !== ''
           ? Number(it.actual_quantity) : null;
-        const diff = actualQty !== null ? actualQty - Number(it.system_quantity) : 0;
-        const actualValue = actualQty !== null ? actualQty * Number(it.unit_price) : 0;
+        // 清洗浮点误差，保留 4 位小数后写入 DB
+        const diff = actualQty !== null ? parseFloat((actualQty - Number(it.system_quantity)).toFixed(4)) : 0;
+        const actualValue = actualQty !== null ? parseFloat((actualQty * Number(it.unit_price)).toFixed(4)) : 0;
         await conn.query(`
           UPDATE stock_take_items
           SET actual_quantity = ?, difference = ?, actual_value = ?, remark = ?
