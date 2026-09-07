@@ -349,7 +349,7 @@ export default function StockTakeOperate() {
       }
       if (onlyDiff) {
         const actual = it.actual_quantity;
-        const diff = actual !== null ? actual - Number(it.system_quantity) : 0;
+        const diff = actual !== null ? parseFloat((actual - Number(it.system_quantity)).toFixed(4)) : 0;
         if (diff === 0) return false;
       }
       return true;
@@ -365,7 +365,7 @@ export default function StockTakeOperate() {
       sysValue += Number(it.system_value) || 0;
       if (it.actual_quantity !== null) {
         filled += 1;
-        const diff = Number(it.actual_quantity) - Number(it.system_quantity);
+        const diff = parseFloat((Number(it.actual_quantity) - Number(it.system_quantity)).toFixed(4));
         const av = Number(it.actual_quantity) * Number(it.unit_price);
         actualValue += av;
         if (diff !== 0) diffCount += 1;
@@ -378,9 +378,9 @@ export default function StockTakeOperate() {
       filled,
       unfilled: editItems.length - filled,
       diffCount,
-      sysValue,
-      actualValue,
-      diffValue: actualValue - sysValue,
+      sysValue: parseFloat(sysValue.toFixed(4)),
+      actualValue: parseFloat(actualValue.toFixed(4)),
+      diffValue: parseFloat((actualValue - sysValue).toFixed(4)),
     };
   }, [editItems]);
 
@@ -392,8 +392,8 @@ export default function StockTakeOperate() {
         const next = { ...it, ...patch };
         if (patch.actual_quantity !== undefined) {
           const aq = next.actual_quantity;
-          next.difference = aq !== null ? aq - Number(next.system_quantity) : 0;
-          next.actual_value = aq !== null ? aq * Number(next.unit_price) : 0;
+          next.difference = aq !== null ? parseFloat((aq - Number(next.system_quantity)).toFixed(4)) : 0;
+          next.actual_value = aq !== null ? parseFloat((aq * Number(next.unit_price)).toFixed(4)) : 0;
         }
         return next;
       })
@@ -806,8 +806,8 @@ export default function StockTakeOperate() {
           ) : (
             filteredItems.map((it) => {
               const actual = it.actual_quantity;
-              const diff = actual !== null ? actual - Number(it.system_quantity) : 0;
-              const actualValue = actual !== null ? actual * Number(it.unit_price) : 0;
+              const diff = actual !== null ? parseFloat((actual - Number(it.system_quantity)).toFixed(4)) : 0;
+              const actualValue = actual !== null ? parseFloat((actual * Number(it.unit_price)).toFixed(4)) : 0;
               const isUnconfirmed = actual === null;
               // 受控 input 的 value：空值（用户删除完数字）时保持空字符串，
               // 绝不能显示系统数量，否则 React 会在用户刚删除完就强制回填为系统数，

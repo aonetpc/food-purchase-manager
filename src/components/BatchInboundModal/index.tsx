@@ -412,8 +412,9 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
       matchedCount: valid.length,
       needResolve,
       errorCount,
-      totalQty,
-      totalAmount,
+      // 清洗浮点累加误差（如 1 + 1.82 = 2.820000000000001）
+      totalQty: parseFloat(totalQty.toFixed(4)),
+      totalAmount: parseFloat(totalAmount.toFixed(4)),
       totalKinds: valid.length,
     };
   }, [draftRows]);

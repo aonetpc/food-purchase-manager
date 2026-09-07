@@ -9,7 +9,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { formatCurrency } from '@/utils/format';
+import { formatCurrency, cleanFloat } from '@/utils/format';
 
 const MANAGER_ROLES = ['admin', 'finance', 'boss'];
 const CAN_REVIEW_ROLES = ['admin', 'finance'];
@@ -502,7 +502,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
       }
       if (onlyDiff) {
         const actual = it.actual_quantity;
-        const diff = actual !== null ? actual - Number(it.system_quantity) : 0;
+        const diff = actual !== null ? cleanFloat(actual - Number(it.system_quantity)) : 0;
         if (diff === 0) return false;
       }
       return true;
@@ -518,7 +518,7 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
       sysValue += Number(it.system_value) || 0;
       if (it.actual_quantity !== null) {
         filled += 1;
-        const diff = Number(it.actual_quantity) - Number(it.system_quantity);
+        const diff = cleanFloat(Number(it.actual_quantity) - Number(it.system_quantity));
         const av = Number(it.actual_quantity) * Number(it.unit_price);
         actualValue += av;
         if (diff !== 0) diffCount += 1;
@@ -531,9 +531,9 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
       filled,
       unfilled: editItems.length - filled,
       diffCount,
-      sysValue,
-      actualValue,
-      diffValue: actualValue - sysValue,
+      sysValue: cleanFloat(sysValue),
+      actualValue: cleanFloat(actualValue),
+      diffValue: cleanFloat(actualValue - sysValue),
     };
   }, [editItems]);
 
@@ -546,11 +546,11 @@ export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
       prev.map((it) => {
         if (it.id !== id) return it;
         const next = { ...it, ...patch };
-        // 重算 difference / actual_value
+        // 重算 difference / actual_value（清洗浮点误差）
         if (patch.actual_quantity !== undefined) {
           const aq = next.actual_quantity;
-          next.difference = aq !== null ? aq - Number(next.system_quantity) : 0;
-          next.actual_value = aq !== null ? aq * Number(next.unit_price) : 0;
+          next.difference = aq !== null ? cleanFloat(aq - Number(next.system_quantity)) : 0;
+          next.actual_value = aq !== null ? cleanFloat(aq * Number(next.unit_price)) : 0;
         }
         return next;
       })
@@ -1666,8 +1666,8 @@ function EditOrDetailView(props: EditOrDetailViewProps) {
             <tbody>
               {(isEditView ? filteredItems : detail.items).map((it) => {
                 const actual = it.actual_quantity;
-                const diff = actual !== null ? actual - Number(it.system_quantity) : 0;
-                const actualValue = actual !== null ? actual * Number(it.unit_price) : 0;
+                const diff = actual !== null ? cleanFloat(actual - Number(it.system_quantity)) : 0;
+                const actualValue = actual !== null ? cleanFloat(actual * Number(it.unit_price)) : 0;
                 const displayQty = actual !== null ? String(actual) : String(it.system_quantity);
                 const isUnconfirmed = actual === null;
                 return (
