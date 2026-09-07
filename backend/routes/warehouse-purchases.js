@@ -2537,21 +2537,41 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
          id, operatorId, operatorName, deptId || null, deptName]
       );
 
-      // upsert inventory
+      // upsert inventory，并按加权平均法更新物资参考单价
       const [existingInv] = await connection.query(
-        'SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?',
+        'SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ?',
         [ri.warehouse_id, ri.item_id]
       );
       if (existingInv.length > 0) {
+        const oldQty = Number(existingInv[0].quantity) || 0;
         await connection.query(
           'UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?',
           [rQty, rUnit, ri.warehouse_id, ri.item_id]
         );
+
+        if (rPrice !== null && !isNaN(rPrice)) {
+          const [refRows] = await connection.query('SELECT reference_price FROM warehouse_items WHERE id = ? LIMIT 1', [ri.item_id]);
+          const oldPrice = Number(refRows[0]?.reference_price) || 0;
+          const newTotalQty = oldQty + rQty;
+          let weightedPrice;
+          if (oldQty <= 0 || oldPrice <= 0) {
+            weightedPrice = rPrice;
+          } else if (newTotalQty > 0) {
+            weightedPrice = parseFloat(((oldQty * oldPrice) + (rQty * rPrice)) / newTotalQty).toFixed(4);
+            weightedPrice = parseFloat(weightedPrice);
+          } else {
+            weightedPrice = rPrice;
+          }
+          await connection.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [weightedPrice, ri.item_id]);
+        }
       } else {
         await connection.query(
           'INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)',
           [uuidv4(), ri.warehouse_id, ri.item_id, rQty, rUnit]
         );
+        if (rPrice !== null && !isNaN(rPrice)) {
+          await connection.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [rPrice, ri.item_id]);
+        }
       }
 
       // 即采即用：仅部门仓自动出库归零（费用化）；总仓保留库存供其他部门领用
