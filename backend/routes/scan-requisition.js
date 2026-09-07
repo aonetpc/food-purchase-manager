@@ -170,21 +170,41 @@ async function executeInbound(connection, { warehouseId, warehouseName, items, o
       ]
     );
 
-    // 增加库存
+    // 增加库存，并按加权平均法更新物资参考单价
     const [existing] = await connection.query(
-      'SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?',
+      'SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ?',
       [warehouseId, item.item_id]
     );
     if (existing.length > 0) {
+      const oldQty = Number(existing[0].quantity) || 0;
       await connection.query(
         'UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?',
         [qty, item.unit, warehouseId, item.item_id]
       );
+
+      if (unitPrice !== null && !isNaN(unitPrice)) {
+        const [refRows] = await connection.query('SELECT reference_price FROM warehouse_items WHERE id = ? LIMIT 1', [item.item_id]);
+        const oldPrice = Number(refRows[0]?.reference_price) || 0;
+        const newTotalQty = oldQty + qty;
+        let weightedPrice;
+        if (oldQty <= 0 || oldPrice <= 0) {
+          weightedPrice = unitPrice;
+        } else if (newTotalQty > 0) {
+          weightedPrice = parseFloat(((oldQty * oldPrice) + (qty * unitPrice)) / newTotalQty).toFixed(4);
+          weightedPrice = parseFloat(weightedPrice);
+        } else {
+          weightedPrice = unitPrice;
+        }
+        await connection.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [weightedPrice, item.item_id]);
+      }
     } else {
       await connection.query(
         'INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)',
         [uuidv4(), warehouseId, item.item_id, qty, item.unit]
       );
+      if (unitPrice !== null && !isNaN(unitPrice)) {
+        await connection.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [unitPrice, item.item_id]);
+      }
     }
   }
 }
