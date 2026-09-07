@@ -242,11 +242,17 @@ async function requireStockTakeToken(req, res, next) {
 
     const [rows] = await pool.query(`
       SELECT st.*, w.name as warehouse_name, w.manager_userid, w.confirmer_userid,
-        (SELECT response_code FROM stock_take_notifications
-         WHERE stock_take_id = st.id
-           AND recipient_wecom_userid = COALESCE(w.manager_userid, w.confirmer_userid)
-           AND type = 'init' AND response_code IS NOT NULL
-         ORDER BY sent_at DESC LIMIT 1) as init_response_code
+        (SELECT stn.response_code FROM stock_take_notifications stn
+         WHERE stn.stock_take_id = st.id
+           AND stn.recipient_wecom_userid = COALESCE(
+             (SELECT u.wecom_userid FROM warehouse_users wu
+              JOIN users u ON u.id = wu.user_id
+              WHERE wu.warehouse_id = w.id AND wu.role = 'manager'
+              ORDER BY wu.created_at ASC LIMIT 1),
+             w.confirmer_userid
+           )
+           AND stn.type = 'init' AND stn.response_code IS NOT NULL
+         ORDER BY stn.sent_at DESC LIMIT 1) as init_response_code
       FROM stock_takes st
       JOIN warehouses w ON st.warehouse_id = w.id
       WHERE st.access_token = ? OR st.reviewer_token = ?
@@ -1181,8 +1187,18 @@ router.post('/', requireAuth, async (req, res) => {
 
     await conn.commit();
 
-    // 自动发送企微通知给仓库管理员/确认人（使用 sendStockTakeNotification）
-    const recipientId = wh[0].manager_userid || wh[0].confirmer_userid;
+    // 自动发送企微通知给仓库管理员/确认人
+    // 数据源：优先从 warehouse_users 关联表查 role='manager' 的真实管理员 wecom_userid
+    // 原因：warehouses.manager_userid 是旧的单字段，UI 修改管理员后不会同步到此字段，
+    //       导致盘点通知发给旧字段里的 wecom_userid（参考 fix/130）
+    const [managerRows] = await pool.query(
+      `SELECT u.wecom_userid FROM warehouse_users wu
+       JOIN users u ON u.id = wu.user_id
+       WHERE wu.warehouse_id = ? AND wu.role = 'manager'
+       ORDER BY wu.created_at ASC LIMIT 1`,
+      [warehouse_id]
+    );
+    const recipientId = managerRows[0]?.wecom_userid || wh[0].confirmer_userid;
     let notifyResult = { sent: false, recipient: recipientId, reason: '' };
     if (recipientId) {
       // 先构造一个 take 对象用于通知
