@@ -49,6 +49,7 @@ export default function ReimbursementManager() {
   const [detailData, setDetailData] = useState<PurchaseConfirmation | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [batchRefreshing, setBatchRefreshing] = useState(false);
+  const [showBatchRefreshModal, setShowBatchRefreshModal] = useState(false);
 
   useEffect(() => {
     fetchConfirmations();
@@ -113,7 +114,6 @@ export default function ReimbursementManager() {
 
   // 批量刷新当月所有审批中的报销单状态
   const handleBatchRefreshStatus = async () => {
-    if (!window.confirm(`确定批量刷新 ${selectedMonth} 所有审批中的报销单状态吗？`)) return;
     setBatchRefreshing(true);
     setError('');
     try {
@@ -137,6 +137,7 @@ export default function ReimbursementManager() {
         console.warn('批量刷新失败列表：', resp.failed);
       }
       // 成功无失败时不显示提示（列表已自动更新，用户可见状态变化）
+      setShowBatchRefreshModal(false);
     } catch (err: any) {
       setError(err.message || '批量刷新失败');
     } finally {
@@ -284,7 +285,7 @@ export default function ReimbursementManager() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleBatchRefreshStatus}
+            onClick={() => setShowBatchRefreshModal(true)}
             disabled={batchRefreshing || loading}
             className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
             title="批量刷新当月所有审批中的报销单状态"
@@ -751,6 +752,67 @@ export default function ReimbursementManager() {
                   删除
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量刷新审批状态确认弹窗 */}
+      {showBatchRefreshModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => !batchRefreshing && setShowBatchRefreshModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 弹窗头部 */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
+                <RefreshCw size={20} className="text-blue-500" />
+              </div>
+              <h3 className="text-base font-medium text-gray-800">刷新全部审批状态</h3>
+            </div>
+
+            {/* 弹窗内容 */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-gray-600">
+                将批量刷新 {selectedMonth} 所有审批中的报销单状态，是否继续？
+              </p>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1.5 text-xs text-gray-600">
+                <p>• 仅刷新状态为"待审批/审批中"且有审批单号的报销单</p>
+                <p>• 串行调用避免企微 API 限流，预计每条耗时约 1 秒</p>
+                <p>• 单条失败不会中断整体流程，结果会在顶部提示</p>
+              </div>
+            </div>
+
+            {/* 弹窗按钮 */}
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button
+                onClick={() => setShowBatchRefreshModal(false)}
+                disabled={batchRefreshing}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleBatchRefreshStatus}
+                disabled={batchRefreshing}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                {batchRefreshing ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    刷新中...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} />
+                    确认刷新
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

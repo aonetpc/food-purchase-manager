@@ -247,6 +247,10 @@ export default function WarehousePurchaseList() {
   const [sendConfirmTarget, setSendConfirmTarget] = useState<WarehousePurchase | null>(null);
   const [sendConfirmLoading, setSendConfirmLoading] = useState(false);
 
+  // 批量刷新审批状态弹窗
+  const [showBatchRefreshModal, setShowBatchRefreshModal] = useState(false);
+  const [batchRefreshing, setBatchRefreshing] = useState(false);
+
   // ===== 加载列表 =====
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -652,6 +656,36 @@ export default function WarehousePurchaseList() {
     }
   };
 
+  // ===== 批量刷新当前 Tab 下所有采购单的审批状态 =====
+  const handleBatchRefreshStatus = async () => {
+    setBatchRefreshing(true);
+    setError('');
+    try {
+      const resp = await api.post<{
+        results: WarehousePurchase[];
+        failed: { id: string; purchase_no: string; error: string }[];
+        summary: { total: number; success: number; failed: number; skipped: number };
+      }>('/warehouse-purchases/batch-refresh-status', { status: statusFilter || undefined });
+      // 刷新成功后重新拉取列表，确保状态和所有字段正确更新
+      await fetchList();
+      const { total, success, failed, skipped } = resp.summary;
+      if (total === 0) {
+        setError('当前筛选状态下没有需要刷新的采购单');
+      } else if (failed > 0) {
+        setError(`批量刷新完成：成功 ${success}/${total}，失败 ${failed} 条，跳过 ${skipped} 条（详情见浏览器控制台）`);
+        console.warn('批量刷新失败列表：', resp.failed);
+      } else if (skipped > 0) {
+        setError(`批量刷新完成：成功 ${success}/${total}，跳过 ${skipped} 条（无需刷新的终态单据）`);
+      }
+      // 全部成功且无跳过：不弹提示，列表已自动更新
+      setShowBatchRefreshModal(false);
+    } catch (err: any) {
+      setError(err.message || '批量刷新失败');
+    } finally {
+      setBatchRefreshing(false);
+    }
+  };
+
   // 是否有 PDF 可下载（确认单PDF或申请单PDF）
   const hasPdf = (p: WarehousePurchase) => !!(p.pdf_url || p.apply_pdf_url);
   // 是否有申请单 PDF
@@ -671,13 +705,24 @@ export default function WarehousePurchaseList() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">仓库采购</h1>
           <p className="text-gray-500 mt-1">管理仓库采购单的创建、审批、收货与报销</p>
         </div>
-        <button
-          onClick={() => navigate('/warehouse-purchase/create')}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={18} />
-          <span>新建采购</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowBatchRefreshModal(true)}
+            disabled={batchRefreshing || loading}
+            className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="批量刷新当前Tab下所有采购单的审批状态"
+          >
+            <RefreshCw size={16} className={batchRefreshing ? 'animate-spin' : ''} />
+            <span>{batchRefreshing ? '刷新中...' : '刷新全部状态'}</span>
+          </button>
+          <button
+            onClick={() => navigate('/warehouse-purchase/create')}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus size={18} />
+            <span>新建采购</span>
+          </button>
+        </div>
       </div>
 
       {/* 错误提示 */}
@@ -1796,6 +1841,67 @@ export default function WarehousePurchaseList() {
                   <>
                     <Send size={16} />
                     确认发送
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量刷新审批状态确认弹窗 */}
+      {showBatchRefreshModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => !batchRefreshing && setShowBatchRefreshModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 弹窗头部 */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
+                <RefreshCw size={20} className="text-blue-500" />
+              </div>
+              <h3 className="text-base font-medium text-gray-800">刷新全部审批状态</h3>
+            </div>
+
+            {/* 弹窗内容 */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-gray-600">
+                将批量刷新当前筛选（{statusFilter || '全部'}）下所有采购单的企微审批状态，是否继续？
+              </p>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1.5 text-xs text-gray-600">
+                <p>• 刷新范围：采购审批、预付款审批、报销审批、月结付款审批</p>
+                <p>• 串行调用避免企微 API 限流，预计每条耗时约 1 秒</p>
+                <p>• 单条失败不会中断整体流程，结果会在顶部提示</p>
+              </div>
+            </div>
+
+            {/* 弹窗按钮 */}
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button
+                onClick={() => setShowBatchRefreshModal(false)}
+                disabled={batchRefreshing}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleBatchRefreshStatus}
+                disabled={batchRefreshing}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                {batchRefreshing ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    刷新中...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} />
+                    确认刷新
                   </>
                 )}
               </button>
