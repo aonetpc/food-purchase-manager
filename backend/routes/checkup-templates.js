@@ -1043,11 +1043,24 @@ router.put('/:id/items-batch', async (req, res) => {
             it.quantity, it.remark, it.sort_order,
           ];
         });
+        // 去重：同一 (item_id, role) 只保留第一条，避免违反 uk_pkg_role_item(package_id,role,item_id) 唯一键
+        // 根因：前端可能把同一项目同时放在「公共区」和某「角色专属区」，autoCorrectItemRole 纠正 common 后
+        // 会与角色区条目撞 (role, item_id)；此处保留首条（数量/排序以首次出现为准），丢弃后续重复。
+        const seenPkgRoleItem = new Set();
+        const dedupBatch = batch.filter(row => {
+          const key = `${row[2]}__${row[3]}`; // item_id + correctedRole
+          if (seenPkgRoleItem.has(key)) {
+            console.warn(`[checkup-templates] items-batch dedup: drop duplicate (item=${row[2]}, role=${row[3]})`);
+            return false;
+          }
+          seenPkgRoleItem.add(key);
+          return true;
+        });
         await conn.query(
           `INSERT INTO booking_package_items
             (id, package_id, item_id, role, item_name_snapshot, item_price, insurance_price_snapshot, quantity, remark, sort_order)
            VALUES ?`,
-          [batch]
+          [dedupBatch]
         );
       }
     }

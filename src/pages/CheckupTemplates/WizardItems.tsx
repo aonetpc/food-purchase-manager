@@ -289,16 +289,27 @@ const toggleItem = (item: CheckupItem) => {
     const cur = { ...prev[scope] };
     if (cur[item.id]) {
       delete cur[item.id];
-    } else {
-      cur[item.id] = {
-        item_id: item.id,
-        name_snapshot: item.name,
-        price_snapshot: Number(item.default_price) || 0,
-        insurance_snapshot: Number(item.insurance_price) || 0,
-        quantity: 1,
-      };
+      return { ...prev, [scope]: cur };
     }
-    return { ...prev, [scope]: cur };
+    cur[item.id] = {
+      item_id: item.id,
+      name_snapshot: item.name,
+      price_snapshot: Number(item.default_price) || 0,
+      insurance_snapshot: Number(item.insurance_price) || 0,
+      quantity: 1,
+    };
+    const next: any = { ...prev, [scope]: cur };
+    // 加入公共区时，同步从所有角色专属区移除同项目：避免同一项目同时存在于 common 与某角色，
+    // 经后端 autoCorrectItemRole 纠正后撞 uk_pkg_role_item(package_id,role,item_id) 唯一键
+    if (scope === 'common') {
+      ROLES.forEach(r => {
+        if (next[r]?.[item.id]) {
+          next[r] = { ...next[r] };
+          delete next[r][item.id];
+        }
+      });
+    }
+    return next;
   });
 };
 
