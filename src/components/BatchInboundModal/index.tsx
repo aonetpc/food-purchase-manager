@@ -199,13 +199,11 @@ function parseLine(line: string, idx: number, allItems: WhItem[]): DraftRow {
     reason = cols[4] || '';
   }
 
-  // 本地模糊匹配：去空格+忽略大小写后，精确相等 / 物品名包含粘贴名 / 粘贴名包含物品名
+  // 本地匹配：仅精确相等才自动使用，包含关系不再自动匹配（避免误匹配同类名物资）
+  // 不精确匹配的，留给后端相似度查询返回候选，由用户人工确认选择
   const normalize = (s: string) => s.trim().replace(/\s+/g, '').toLowerCase();
   const normName = normalize(name);
-  const matchedItem = allItems.find((it) => {
-    const itNorm = normalize(it.name);
-    return itNorm === normName || itNorm.includes(normName) || normName.includes(itNorm);
-  });
+  const matchedItem = allItems.find((it) => normalize(it.name) === normName);
   let status: RowStatus = 'matched';
   if (!matchedItem) status = 'item_missing';
 
