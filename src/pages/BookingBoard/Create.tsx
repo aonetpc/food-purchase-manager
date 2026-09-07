@@ -6,7 +6,6 @@ import {
   Upload,
   Download,
   Save,
-  Send,
   Pencil,
   FileSpreadsheet,
   Eraser,
@@ -2071,10 +2070,11 @@ export default function BookingBoardCreate(props: {
       if (savedIsPlaceholder) {
         setCheckupMode('placeholder');
         const savedCustomPrices = (item.extra as any)?.customPrices;
+        // 兼容 fromBackend 递归 snakeToCamel：female_married → femaleMarried
         setCustomPrices({
           male: Number(savedCustomPrices?.male) || 0,
-          female_married: Number(savedCustomPrices?.female_married) || 0,
-          female_single: Number(savedCustomPrices?.female_single) || 0,
+          female_married: Number(savedCustomPrices?.female_married ?? savedCustomPrices?.femaleMarried) || 0,
+          female_single: Number(savedCustomPrices?.female_single ?? savedCustomPrices?.femaleSingle) || 0,
         });
         setPlaceholderNote((item.extra as any)?.placeholderNote || '');
         setSelectedChkPkg('');  // 占位模式无胶囊
@@ -2088,12 +2088,16 @@ export default function BookingBoardCreate(props: {
         setSelectedChkPkg(savedPkgId || firstPaxPkg || '');
       }
       // B-3：恢复 roleCounts（优先 extra 中保存的；老数据则从 paxList 反推，保证至少能对齐名单人数）
+      // 兼容 fromBackend 递归 snakeToCamel：female_married → femaleMarried
       const savedCounts = (item.extra as any)?.roleCounts;
-      if (savedCounts && (Number(savedCounts.male) + Number(savedCounts.female_married) + Number(savedCounts.female_single)) > 0) {
+      const scMale = Number(savedCounts?.male) || 0;
+      const scMarried = Number(savedCounts?.female_married ?? savedCounts?.femaleMarried) || 0;
+      const scSingle = Number(savedCounts?.female_single ?? savedCounts?.femaleSingle) || 0;
+      if (savedCounts && (scMale + scMarried + scSingle) > 0) {
         setRoleCounts({
-          male: Number(savedCounts.male) || 0,
-          female_married: Number(savedCounts.female_married) || 0,
-          female_single: Number(savedCounts.female_single) || 0,
+          male: scMale,
+          female_married: scMarried,
+          female_single: scSingle,
         });
       } else {
         let male = 0, marriedF = 0, singleF = 0;
@@ -3105,19 +3109,6 @@ export default function BookingBoardCreate(props: {
     }
   }
 
-  async function handleSaveDraft() {
-    const order = buildOrder();
-    setSaving(true);
-    try {
-      await onSaved(order);
-      onClose();
-    } catch {
-      // 错误已由上层处理
-    } finally {
-      setSaving(false);
-    }
-  }
-
   // ================================================
   // 渲染
   // ================================================
@@ -3434,15 +3425,12 @@ export default function BookingBoardCreate(props: {
               ¥{totalAmount.toLocaleString()}
             </div>
           </div>
-          <button onClick={handleSaveDraft} disabled={saving} className={btnGhost + (saving ? ' opacity-50 cursor-not-allowed' : '')}>
-            <Save size={14} /> {saving ? '保存中...' : '保存草稿'}
-          </button>
           <button
             onClick={handleSubmit}
             disabled={saving}
             className="inline-flex items-center gap-1.5 px-5 py-2 text-sm rounded-lg bg-green-500 hover:bg-green-600 text-white font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Send size={14} /> {saving ? '提交中...' : '提交订单'}
+            <Save size={14} /> {saving ? '保存中...' : '保存'}
           </button>
         </div>
       </div>
