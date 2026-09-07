@@ -127,12 +127,32 @@ router.post('/inbound', requireWarehouseManager, async (req, res) => {
       [id, warehouse_id, item_id, resolvedItemName, quantity, unit, unit_price, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
     );
 
-    // 更新库存（不存在则插入）
-    const [existing] = await conn.query('SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?', [warehouse_id, item_id]);
+    // 更新库存（不存在则插入），并按加权平均法更新物资参考单价
+    const [existing] = await conn.query('SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ?', [warehouse_id, item_id]);
     if (existing.length > 0) {
+      const oldQty = Number(existing[0].quantity) || 0;
       await conn.query('UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?', [quantity, unit, warehouse_id, item_id]);
+
+      if (unit_price !== null && !isNaN(unit_price)) {
+        const [refRows] = await conn.query('SELECT reference_price FROM warehouse_items WHERE id = ? LIMIT 1', [item_id]);
+        const oldPrice = Number(refRows[0]?.reference_price) || 0;
+        const newTotalQty = oldQty + quantity;
+        let weightedPrice;
+        if (oldQty <= 0 || oldPrice <= 0) {
+          weightedPrice = unit_price;
+        } else if (newTotalQty > 0) {
+          weightedPrice = parseFloat(((oldQty * oldPrice) + (quantity * unit_price)) / newTotalQty).toFixed(4);
+          weightedPrice = parseFloat(weightedPrice);
+        } else {
+          weightedPrice = unit_price;
+        }
+        await conn.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [weightedPrice, item_id]);
+      }
     } else {
       await conn.query('INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)', [uuidv4(), warehouse_id, item_id, quantity, unit]);
+      if (unit_price !== null && !isNaN(unit_price)) {
+        await conn.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [unit_price, item_id]);
+      }
     }
 
     await conn.commit();
@@ -197,12 +217,34 @@ router.post('/batch-inbound', requireWarehouseManager, async (req, res) => {
           [id, warehouse_id, item_id, item_name || null, qty, unit, price, total_amount, reason || null, operator_id || null, operator_name || null, department_id || null, department_name || null]
         );
 
-        // 更新库存（不存在则插入）
-        const [existing] = await conn.query('SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ?', [warehouse_id, item_id]);
+        // 更新库存（不存在则插入），并按加权平均法更新物资参考单价
+        const [existing] = await conn.query('SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ?', [warehouse_id, item_id]);
         if (existing.length > 0) {
+          const oldQty = Number(existing[0].quantity) || 0;
           await conn.query('UPDATE inventory SET quantity = quantity + ?, unit = ? WHERE warehouse_id = ? AND item_id = ?', [qty, unit, warehouse_id, item_id]);
+
+          // 加权平均单价：(旧库存数量 × 旧单价 + 本次入库数量 × 本次单价) / 新库存总数量
+          if (price !== null && !isNaN(price)) {
+            const [refRows] = await conn.query('SELECT reference_price FROM warehouse_items WHERE id = ? LIMIT 1', [item_id]);
+            const oldPrice = Number(refRows[0]?.reference_price) || 0;
+            const newTotalQty = oldQty + qty;
+            let weightedPrice;
+            if (oldQty <= 0 || oldPrice <= 0) {
+              weightedPrice = price;
+            } else if (newTotalQty > 0) {
+              weightedPrice = parseFloat(((oldQty * oldPrice) + (qty * price)) / newTotalQty).toFixed(4);
+              weightedPrice = parseFloat(weightedPrice);
+            } else {
+              weightedPrice = price;
+            }
+            await conn.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [weightedPrice, item_id]);
+          }
         } else {
           await conn.query('INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)', [uuidv4(), warehouse_id, item_id, qty, unit]);
+          // 首次入库：若提供了单价，则同步到物资参考单价
+          if (price !== null && !isNaN(price)) {
+            await conn.query('UPDATE warehouse_items SET reference_price = ? WHERE id = ?', [price, item_id]);
+          }
         }
 
         successList.push({ line: lineNo, item_id, item_name: item_name || '', quantity: qty, unit });
