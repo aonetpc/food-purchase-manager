@@ -63,13 +63,53 @@ interface DraftRow {
 
 const genId = () => Math.random().toString(36).substring(2, 11);
 
+// ====== 相似度计算工具 ======
+// 归一化：去首尾空格、压缩内部空白、转小写
+const normalizeStr = (s: string) => (s || '').trim().replace(/\s+/g, '').toLowerCase();
+
+// Levenshtein 编辑距离（动态规划，O(m*n)）
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[] = Array(n + 1)
+    .fill(0)
+    .map((_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+// 相似度分数：0-100，100 表示完全相同
+function similarityScore(query: string, target: string): number {
+  const a = normalizeStr(query);
+  const b = normalizeStr(target);
+  if (!a && !b) return 100;
+  if (!a || !b) return 0;
+  if (a === b) return 100;
+  const dist = levenshtein(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return Math.max(0, Math.round((1 - dist / maxLen) * 100));
+}
+
 // ====== 可搜索物资下拉组件 ======
 function SearchableItemSelect({
   items,
+  queryName,
   placeholder,
   onPick,
 }: {
   items: WhItem[];
+  queryName: string;
   placeholder: string;
   onPick: (item: WhItem) => void;
 }) {
@@ -85,13 +125,15 @@ function SearchableItemSelect({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const filtered = useMemo(() => {
+  // 计算+排序+过滤：无关键词时按相似度降序，有关键词时先过滤再按相似度降序
+  const ranked = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
-    if (!kw) return items.slice(0, 50);
-    return items
-      .filter((it) => it.name.toLowerCase().includes(kw))
+    const base = kw ? items.filter((it) => it.name.toLowerCase().includes(kw)) : items;
+    return base
+      .map((it) => ({ item: it, score: similarityScore(queryName, it.name) }))
+      .sort((a, b) => b.score - a.score)
       .slice(0, 50);
-  }, [items, keyword]);
+  }, [items, keyword, queryName]);
 
   return (
     <div className="relative" ref={ref}>
@@ -108,10 +150,10 @@ function SearchableItemSelect({
       />
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto bg-white border border-gray-200 rounded shadow-lg">
-          {filtered.length === 0 ? (
+          {ranked.length === 0 ? (
             <div className="px-2 py-2 text-xs text-gray-400">无匹配物资</div>
           ) : (
-            filtered.map((c) => (
+            ranked.map(({ item: c, score }) => (
               <button
                 key={c.id}
                 type="button"
@@ -120,11 +162,20 @@ function SearchableItemSelect({
                   setOpen(false);
                   setKeyword('');
                 }}
-                className="w-full text-left px-2 py-1.5 text-xs hover:bg-amber-50 border-b border-gray-50 last:border-0"
+                className="w-full text-left px-2 py-1.5 text-xs hover:bg-amber-50 border-b border-gray-50 last:border-0 flex items-center justify-between gap-2"
               >
-                <span className="text-gray-800">{c.name}</span>
-                <span className="text-gray-400"> ({c.unit || '-'})</span>
-                {c.category_name && <span className="text-gray-400"> · {c.category_name}</span>}
+                <span className="flex-1 min-w-0 truncate">
+                  <span className="text-gray-800">{c.name}</span>
+                  <span className="text-gray-400"> ({c.unit || '-'})</span>
+                  {c.category_name && <span className="text-gray-400"> · {c.category_name}</span>}
+                </span>
+                <span
+                  className={`flex-shrink-0 font-medium ${
+                    score >= 80 ? 'text-green-600' : score >= 50 ? 'text-amber-600' : 'text-gray-400'
+                  }`}
+                >
+                  {score}%
+                </span>
               </button>
             ))
           )}
@@ -199,13 +250,11 @@ function parseLine(line: string, idx: number, allItems: WhItem[]): DraftRow {
     reason = cols[4] || '';
   }
 
-  // 本地模糊匹配：去空格+忽略大小写后，精确相等 / 物品名包含粘贴名 / 粘贴名包含物品名
+  // 本地匹配：仅精确相等才自动使用，包含关系不再自动匹配（避免误匹配同类名物资）
+  // 不精确匹配的，留给后端相似度查询返回候选，由用户人工确认选择
   const normalize = (s: string) => s.trim().replace(/\s+/g, '').toLowerCase();
   const normName = normalize(name);
-  const matchedItem = allItems.find((it) => {
-    const itNorm = normalize(it.name);
-    return itNorm === normName || itNorm.includes(normName) || normName.includes(itNorm);
-  });
+  const matchedItem = allItems.find((it) => normalize(it.name) === normName);
   let status: RowStatus = 'matched';
   if (!matchedItem) status = 'item_missing';
 
@@ -762,6 +811,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                             />
                             <SearchableItemSelect
                               items={row.similarCandidates || []}
+                              queryName={row.name}
                               placeholder="选择相似物资（可搜索）..."
                               onPick={(item) => handlePickSimilar(row, item)}
                             />
@@ -776,6 +826,7 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                             />
                             <SearchableItemSelect
                               items={allItems}
+                              queryName={row.name}
                               placeholder="映射已有物资（可搜索）..."
                               onPick={(item) => handleManualPick(row.id, item.id)}
                             />
