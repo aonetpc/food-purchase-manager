@@ -463,7 +463,7 @@ router.get('/items/search', async (req, res) => {
        FROM warehouse_items wi
        LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
        WHERE wi.status = 1 AND wi.name != ? AND (wi.name LIKE ? OR ? LIKE CONCAT('%', wi.name, '%'))
-       ORDER BY wi.created_at DESC LIMIT 10`,
+       ORDER BY wi.created_at DESC LIMIT 20`,
       [keyword, `%${keyword}%`, keyword]
     );
     res.json({ exact: exact[0] || null, candidates });

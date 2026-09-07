@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
   CheckCircle,
@@ -32,6 +32,7 @@ interface WhItem {
   unit?: string;
   reference_price?: number;
   category_id?: string;
+  category_name?: string;
 }
 
 interface Props {
@@ -61,6 +62,77 @@ interface DraftRow {
 }
 
 const genId = () => Math.random().toString(36).substring(2, 11);
+
+// ====== 可搜索物资下拉组件 ======
+function SearchableItemSelect({
+  items,
+  placeholder,
+  onPick,
+}: {
+  items: WhItem[];
+  placeholder: string;
+  onPick: (item: WhItem) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return items.slice(0, 50);
+    return items
+      .filter((it) => it.name.toLowerCase().includes(kw))
+      .slice(0, 50);
+  }, [items, keyword]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <input
+        type="text"
+        value={keyword}
+        onChange={(e) => {
+          setKeyword(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        className="w-full text-xs border border-amber-300 rounded px-2 py-1 focus:outline-none focus:border-amber-400"
+      />
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto bg-white border border-gray-200 rounded shadow-lg">
+          {filtered.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-gray-400">无匹配物资</div>
+          ) : (
+            filtered.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  onPick(c);
+                  setOpen(false);
+                  setKeyword('');
+                }}
+                className="w-full text-left px-2 py-1.5 text-xs hover:bg-amber-50 border-b border-gray-50 last:border-0"
+              >
+                <span className="text-gray-800">{c.name}</span>
+                <span className="text-gray-400"> ({c.unit || '-'})</span>
+                {c.category_name && <span className="text-gray-400"> · {c.category_name}</span>}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // 清洗数字字符串：移除千分位逗号、全角逗号、空白、货币符号等
 function cleanNumberStr(val: string): string {
@@ -127,8 +199,13 @@ function parseLine(line: string, idx: number, allItems: WhItem[]): DraftRow {
     reason = cols[4] || '';
   }
 
-  // 本地精确匹配
-  const matchedItem = allItems.find((it) => it.name === name);
+  // 本地模糊匹配：去空格+忽略大小写后，精确相等 / 物品名包含粘贴名 / 粘贴名包含物品名
+  const normalize = (s: string) => s.trim().replace(/\s+/g, '').toLowerCase();
+  const normName = normalize(name);
+  const matchedItem = allItems.find((it) => {
+    const itNorm = normalize(it.name);
+    return itNorm === normName || itNorm.includes(normName) || normName.includes(itNorm);
+  });
   let status: RowStatus = 'matched';
   if (!matchedItem) status = 'item_missing';
 
@@ -683,21 +760,11 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                               onChange={(e) => updateRow(row.id, { name: e.target.value })}
                               className="w-full text-xs border border-amber-300 rounded px-2 py-1 focus:outline-none focus:border-amber-400"
                             />
-                            <select
-                              className="w-full text-xs border border-amber-300 rounded px-1.5 py-1 bg-white"
-                              onChange={(e) => {
-                                const item = row.similarCandidates?.find((c) => c.id === e.target.value);
-                                if (item) handlePickSimilar(row, item);
-                              }}
-                              value=""
-                            >
-                              <option value="">选择相似物资...</option>
-                              {row.similarCandidates?.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.name} ({c.unit || '-'})
-                                </option>
-                              ))}
-                            </select>
+                            <SearchableItemSelect
+                              items={row.similarCandidates || []}
+                              placeholder="选择相似物资（可搜索）..."
+                              onPick={(item) => handlePickSimilar(row, item)}
+                            />
                           </div>
                         ) : row.status === 'item_missing' ? (
                           <div className="space-y-1">
@@ -707,20 +774,11 @@ export default function BatchInboundModal({ open, onClose, onSuccess, warehouses
                               onChange={(e) => updateRow(row.id, { name: e.target.value })}
                               className="w-full text-xs border border-amber-300 rounded px-2 py-1 focus:outline-none focus:border-amber-400"
                             />
-                            <select
-                              className="w-full text-xs border border-amber-300 rounded px-1.5 py-1 bg-white"
-                              onChange={(e) => {
-                                if (e.target.value) handleManualPick(row.id, e.target.value);
-                              }}
-                              value=""
-                            >
-                              <option value="">映射已有物资...</option>
-                              {allItems.slice(0, 100).map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.name} ({c.unit || '-'})
-                                </option>
-                              ))}
-                            </select>
+                            <SearchableItemSelect
+                              items={allItems}
+                              placeholder="映射已有物资（可搜索）..."
+                              onPick={(item) => handleManualPick(row.id, item.id)}
+                            />
                           </div>
                         ) : (
                           <div className="text-xs text-red-600 py-1">{row.error || '错误'}</div>
