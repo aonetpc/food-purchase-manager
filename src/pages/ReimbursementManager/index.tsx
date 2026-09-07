@@ -48,6 +48,7 @@ export default function ReimbursementManager() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<PurchaseConfirmation | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [batchRefreshing, setBatchRefreshing] = useState(false);
 
   useEffect(() => {
     fetchConfirmations();
@@ -107,6 +108,39 @@ export default function ReimbursementManager() {
       }
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  // 批量刷新当月所有审批中的报销单状态
+  const handleBatchRefreshStatus = async () => {
+    if (!window.confirm(`确定批量刷新 ${selectedMonth} 所有审批中的报销单状态吗？`)) return;
+    setBatchRefreshing(true);
+    setError('');
+    try {
+      const resp = await api.post<{
+        results: PurchaseConfirmation[];
+        failed: { id: string; purchase_date: string; error: string }[];
+        summary: { total: number; success: number; failed: number };
+      }>(`/purchase-confirmations/batch-refresh-status`, { month: selectedMonth });
+      // 用刷新结果替换 confirmations 中对应项
+      const updatedMap = new Map(resp.results.map((r: PurchaseConfirmation) => [r.id, r]));
+      setConfirmations(prev => prev.map(c => updatedMap.get(c.id) || c));
+      // 同步详情弹窗
+      if (detailId && updatedMap.has(detailId)) {
+        setDetailData(updatedMap.get(detailId) || null);
+      }
+      const { total, success, failed } = resp.summary;
+      if (total === 0) {
+        setError(`${selectedMonth} 暂无审批中的报销单需要刷新`);
+      } else if (failed > 0) {
+        setError(`批量刷新完成：成功 ${success}/${total}，失败 ${failed} 条（详情见浏览器控制台）`);
+        console.warn('批量刷新失败列表：', resp.failed);
+      }
+      // 成功无失败时不显示提示（列表已自动更新，用户可见状态变化）
+    } catch (err: any) {
+      setError(err.message || '批量刷新失败');
+    } finally {
+      setBatchRefreshing(false);
     }
   };
 
@@ -248,15 +282,26 @@ export default function ReimbursementManager() {
           <h1 className="text-2xl font-serif font-bold text-gray-800">报销管理</h1>
           <p className="text-gray-500 mt-1">查看采购报销审批情况</p>
         </div>
-        <select
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          className="border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-        >
-          {months.map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleBatchRefreshStatus}
+            disabled={batchRefreshing || loading}
+            className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="批量刷新当月所有审批中的报销单状态"
+          >
+            <RefreshCw size={14} className={batchRefreshing ? 'animate-spin' : ''} />
+            {batchRefreshing ? '刷新中...' : '刷新全部状态'}
+          </button>
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+          >
+            {months.map(m => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {error && (

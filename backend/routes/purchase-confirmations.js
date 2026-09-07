@@ -591,7 +591,124 @@ router.post('/:id/confirm', async (req, res) => {
   }
 });
 
-// 主动刷新审批状态
+// ============================================================
+// 报销审批状态刷新 - 共用 helper（单条/批量接口共用，避免逻辑重复）
+// 返回: { ok: true, data } | { ok: false, error }
+// ============================================================
+async function refreshApprovalStatusCore(row, config) {
+  if (!row.reimbursement_sp_no) {
+    return { ok: false, error: '该确认单尚未发起报销审批' };
+  }
+  if (!config || !config.corp_id || !config.app_secret) {
+    return { ok: false, error: '请先完成企业微信应用配置' };
+  }
+
+  let detail = null;
+  let spStatus = null;
+  try {
+    detail = await getApprovalDetail(config, row.reimbursement_sp_no);
+    const info = detail.info || {};
+    spStatus = info.sp_status;
+  } catch (detailErr) {
+    console.error('查询审批详情失败:', detailErr);
+    const errMsg = detailErr.message || '';
+    if (errMsg.includes('no approval auth')) {
+      return { ok: false, error: '查询审批状态失败：企业微信应用未开启"审批"权限。请在企业微信管理后台 -> 应用管理 -> 自建应用 -> 权限管理中开启"审批"权限。' };
+    }
+    return { ok: false, error: `查询审批状态失败：${detailErr.message}` };
+  }
+
+  let newReimburseStatus = row.reimbursement_status;
+  let newStatus = row.status;
+  if (spStatus === 2) {
+    newReimburseStatus = 'approved';
+    newStatus = 'reimbursed';
+  } else if (spStatus === 1) {
+    newReimburseStatus = 'processing';
+  } else if (spStatus === 3) {
+    newReimburseStatus = 'rejected';
+  }
+
+  await pool.query(
+    'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ?, approval_detail = ? WHERE id = ?',
+    [newReimburseStatus, newStatus, JSON.stringify(detail), row.id]
+  );
+
+  const [updatedRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [row.id]);
+  const updated = updatedRows[0];
+  return {
+    ok: true,
+    data: {
+      ...updated,
+      total_amount: toNum(updated.total_amount),
+      departments: typeof updated.departments === 'string' ? JSON.parse(updated.departments) : updated.departments,
+      purchase_items: typeof updated.purchase_items === 'string' ? JSON.parse(updated.purchase_items) : updated.purchase_items,
+    }
+  };
+}
+
+// 批量刷新审批状态（按月份过滤，仅 pending/processing 状态，串行调用避免企微限流 45009）
+router.post('/batch-refresh-status', async (req, res) => {
+  try {
+    const { month } = req.body || {};
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '参数 month 必填，格式 YYYY-MM' });
+    }
+
+    // 查询该月所有有审批单号且状态为 pending/processing 的报销单（减少无效调用）
+    const [rows] = await pool.query(
+      `SELECT * FROM purchase_confirmations
+       WHERE DATE_FORMAT(purchase_date, '%Y-%m') = ?
+         AND reimbursement_sp_no IS NOT NULL
+         AND reimbursement_sp_no != ''
+         AND reimbursement_status IN ('pending', 'processing')
+       ORDER BY purchase_date DESC`,
+      [month]
+    );
+
+    if (rows.length === 0) {
+      return res.json({
+        results: [],
+        failed: [],
+        summary: { total: 0, success: 0, failed: 0 }
+      });
+    }
+
+    // 企微配置只查一次，复用给每条
+    const config = await getWecomConfig();
+    if (!config || !config.corp_id || !config.app_secret) {
+      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    }
+
+    const results = [];
+    const failed = [];
+
+    // 串行调用避免企微 API 限流
+    for (const row of rows) {
+      try {
+        const result = await refreshApprovalStatusCore(row, config);
+        if (result.ok) {
+          results.push(result.data);
+        } else {
+          failed.push({ id: row.id, purchase_date: row.purchase_date, error: result.error });
+        }
+      } catch (err) {
+        failed.push({ id: row.id, purchase_date: row.purchase_date, error: err.message });
+      }
+    }
+
+    res.json({
+      results,
+      failed,
+      summary: { total: rows.length, success: results.length, failed: failed.length }
+    });
+  } catch (err) {
+    console.error('batch-refresh-status error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 主动刷新审批状态（单条）
 router.post('/:id/refresh-status', async (req, res) => {
   try {
     const { id } = req.params;
@@ -599,72 +716,15 @@ router.post('/:id/refresh-status', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: '确认单不存在' });
     }
-    const row = rows[0];
-
-    if (!row.reimbursement_sp_no) {
-      return res.status(400).json({ error: '该确认单尚未发起报销审批' });
-    }
-
     const config = await getWecomConfig();
-    if (!config || !config.corp_id || !config.app_secret) {
-      return res.status(400).json({ error: '请先完成企业微信应用配置' });
+    const result = await refreshApprovalStatusCore(rows[0], config);
+    if (!result.ok) {
+      // 兼容原状态码：未发起审批/未配置企微用 400；企微调用失败用 500
+      const isClientError = result.error === '该确认单尚未发起报销审批'
+        || result.error === '请先完成企业微信应用配置';
+      return res.status(isClientError ? 400 : 500).json({ error: result.error });
     }
-
-    let detail = null;
-    let spStatus = null;
-    let spRecord = [];
-    try {
-      detail = await getApprovalDetail(config, row.reimbursement_sp_no);
-      const info = detail.info || {};
-      spStatus = info.sp_status;
-      spRecord = info.sp_record || [];
-    } catch (detailErr) {
-      console.error('查询审批详情失败:', detailErr);
-      const errMsg = detailErr.message || '';
-      if (errMsg.includes('no approval auth')) {
-        return res.status(500).json({ error: '查询审批状态失败：企业微信应用未开启"审批"权限。请在企业微信管理后台 -> 应用管理 -> 自建应用 -> 权限管理中开启"审批"权限。' });
-      }
-      return res.status(500).json({ error: `查询审批状态失败：${detailErr.message}` });
-    }
-
-    let newReimburseStatus = row.reimbursement_status;
-    let newStatus = row.status;
-
-    if (spStatus === 2) {
-      newReimburseStatus = 'approved';
-      newStatus = 'reimbursed';
-    } else if (spStatus === 1) {
-      newReimburseStatus = 'processing';
-    } else if (spStatus === 3) {
-      newReimburseStatus = 'rejected';
-    }
-
-    let latestApprover = null;
-    let latestApproveTime = null;
-    if (spRecord.length > 0) {
-      const lastRecord = spRecord[spRecord.length - 1];
-      if (lastRecord.approver && lastRecord.approver.length > 0) {
-        latestApprover = lastRecord.approver[0].name || lastRecord.approver[0].userid;
-      }
-      if (lastRecord.speech) {
-        latestApproveTime = lastRecord.speech;
-      }
-    }
-
-    await pool.query(
-      'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ?, approval_detail = ? WHERE id = ?',
-      [newReimburseStatus, newStatus, JSON.stringify(detail), id]
-    );
-
-    const [updatedRows] = await pool.query('SELECT * FROM purchase_confirmations WHERE id = ?', [id]);
-    const updated = updatedRows[0];
-
-    res.json({
-      ...updated,
-      total_amount: toNum(updated.total_amount),
-      departments: typeof updated.departments === 'string' ? JSON.parse(updated.departments) : updated.departments,
-      purchase_items: typeof updated.purchase_items === 'string' ? JSON.parse(updated.purchase_items) : updated.purchase_items,
-    });
+    res.json(result.data);
   } catch (err) {
     console.error(err);
     res.status(400).json({ error: err.message });
