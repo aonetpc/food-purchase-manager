@@ -2441,14 +2441,24 @@ async function refreshWarehousePurchaseCore(row, config) {
 }
 
 // POST /batch-refresh-status — 批量刷新仓库采购审批状态
+// 入参: { ids?: string[], status?: string }
+//   - 传 ids 时只刷新指定 ID 的单据（前端当前页可见的记录）
+//   - 未传 ids 时按 status 过滤（兼容旧调用，会刷新全部分页记录）
 router.post('/batch-refresh-status', requireAuth, async (req, res) => {
   try {
-    const { status } = req.body || {};
+    const { ids, status } = req.body || {};
 
-    // 复用列表查询的过滤条件（status + 用户角色）
+    // 复用列表查询的过滤条件
     const conditions = [];
     const params = [];
-    if (status) { conditions.push('status = ?'); params.push(status); }
+    if (Array.isArray(ids) && ids.length > 0) {
+      // 优先用 ids 精确刷新当前页记录
+      conditions.push('id IN (?)');
+      params.push(ids);
+    } else if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
     const userRole = req.user?.role;
     if (userRole !== 'admin') {
       conditions.push('created_by = ?');
@@ -2456,7 +2466,7 @@ router.post('/batch-refresh-status', requireAuth, async (req, res) => {
     }
     const whereSql = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
-    // 一次查全部（当前 Tab 下的所有单据，不分页）
+    // 只查需要刷新的记录（按 id IN 或 status 过滤）
     const [rows] = await pool.query(
       `SELECT * FROM warehouse_purchases${whereSql} ORDER BY created_at DESC`,
       params
