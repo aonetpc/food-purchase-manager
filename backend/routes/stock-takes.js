@@ -282,7 +282,19 @@ async function requireStockTakeToken(req, res, next) {
     }
 
     // 检查token是否过期
-    if (take[expiredAtField] && new Date(take[expiredAtField]) < new Date()) {
+    // 兜底处理：草稿状态放宽（盘点人可能多天录入），NULL/Invalid Date 放行
+    const expiredAtVal = take[expiredAtField];
+    const parsedExp = expiredAtVal ? new Date(expiredAtVal) : null;
+    const isInvalidDate = parsedExp && parsedExp.toString() === 'Invalid Date';
+    const isExpired = !isInvalidDate && parsedExp && take.status !== 'draft' && parsedExp < new Date();
+    console.log('[stock-take token auth] check expiry:', {
+      take_id: take.id, take_no: take.take_no, status: take.status, role,
+      expiredAtField, expiredAtVal,
+      parsedDate: parsedExp ? parsedExp.toString() : null,
+      now: new Date().toString(),
+      isExpired,
+    });
+    if (isExpired) {
       if (role === 'reviewer') {
         return res.status(401).json({ error: '复核访问链接已过期，请联系管理员重新发起复核' });
       } else {
