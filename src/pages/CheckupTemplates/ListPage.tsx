@@ -164,10 +164,10 @@ export default function ListPage() {
         </div>
       </header>
 
-      <main className="px-3 pt-3 space-y-3">
-        {loading ? <div className="text-center text-gray-400 text-xs py-12">加载中...</div> : null}
+      <main className="px-3 pt-3 grid sm:grid-cols-2 gap-3">
+        {loading ? <div className="text-center text-gray-400 text-xs py-12 col-span-full">加载中...</div> : null}
         {!loading && list.length === 0 ? (
-          <div className="text-center py-16">
+          <div className="text-center py-16 col-span-full">
             <div className="text-4xl mb-3">📦</div>
             <div className="text-sm text-gray-500">暂无套餐，点击底部按钮新建吧</div>
           </div>
@@ -185,8 +185,8 @@ export default function ListPage() {
         )}
       </main>
 
-      {/* 悬浮底部：新建套餐按钮 */}
-      <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
+      {/* 底部：新建套餐按钮（sticky 跟随容器宽度） */}
+      <div className="sticky bottom-0 z-20 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
         <button onClick={() => navigate('/h/checkup-templates/new')}
           className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#1f6b3e] to-green-800 text-white text-base font-semibold shadow-lg shadow-emerald-700/30 flex items-center justify-center gap-2">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>

@@ -501,7 +501,7 @@ return (
       {!loading && filteredItems.length === 0 && (
         <div className="text-center py-12 text-gray-400 text-xs">没有匹配的项目</div>
       )}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {filteredItems.map(it => {
           const isExcluded = scope !== 'common' && isSelectedInScope(it.id, 'common') && excluded[scope as Role]?.has(it.id);
           return (
@@ -517,8 +517,8 @@ return (
       </div>
     </main>
 
-    {/* 底部汇总 + 生成方案 */}
-    <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t border-gray-100 px-3 pt-3 pb-5">
+    {/* 底部汇总 + 生成方案（sticky 跟随容器宽度） */}
+    <div className="sticky bottom-0 z-20 bg-white/95 backdrop-blur border-t border-gray-100 px-3 pt-3 pb-5">
       <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
         {applicable.map(r => {
           const sm = summaryForRole(r);
