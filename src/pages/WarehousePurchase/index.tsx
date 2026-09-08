@@ -656,16 +656,21 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  // ===== 批量刷新当前 Tab 下所有采购单的审批状态 =====
+  // ===== 批量刷新当前页面可见的采购单审批状态 =====
   const handleBatchRefreshStatus = async () => {
     setBatchRefreshing(true);
     setError('');
     try {
+      // 只刷新当前页面可见的记录，避免刷新全部分页记录
+      const currentPageIds = purchases.map(p => p.id);
       const resp = await api.post<{
         results: WarehousePurchase[];
         failed: { id: string; purchase_no: string; error: string }[];
         summary: { total: number; success: number; failed: number; skipped: number };
-      }>('/warehouse-purchases/batch-refresh-status', { status: statusFilter || undefined });
+      }>('/warehouse-purchases/batch-refresh-status', {
+        ids: currentPageIds,
+        status: statusFilter || undefined,
+      });
       // 刷新成功后重新拉取列表，确保状态和所有字段正确更新
       await fetchList();
       const { total, success, failed, skipped } = resp.summary;
@@ -1870,9 +1875,10 @@ export default function WarehousePurchaseList() {
             {/* 弹窗内容 */}
             <div className="px-5 py-4 space-y-3">
               <p className="text-sm text-gray-600">
-                将批量刷新当前筛选（{statusFilter || '全部'}）下所有采购单的企微审批状态，是否继续？
+                将批量刷新当前页面的 <span className="font-medium text-gray-800">{purchases.length}</span> 条采购单的企微审批状态，是否继续？
               </p>
               <div className="bg-gray-50 rounded-lg p-3 space-y-1.5 text-xs text-gray-600">
+                <p>• 只刷新当前页面可见的记录，不刷新其他分页</p>
                 <p>• 刷新范围：采购审批、预付款审批、报销审批、月结付款审批</p>
                 <p>• 串行调用避免企微 API 限流，预计每条耗时约 1 秒</p>
                 <p>• 单条失败不会中断整体流程，结果会在顶部提示</p>
