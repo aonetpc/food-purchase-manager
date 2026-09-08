@@ -648,7 +648,7 @@ export default function StockTakeOperate() {
   // 渲染：正常状态
   // ================================================
   return (
-    <div className="min-h-screen bg-gray-50 pb-28">
+    <div className="min-h-screen bg-gray-50 pb-28 max-w-4xl mx-auto">
       {/* 顶部信息区 */}
       <div className="bg-white px-4 pt-5 pb-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
@@ -799,9 +799,9 @@ export default function StockTakeOperate() {
 
       {/* 明细卡片列表 */}
       {!canReview && (
-        <div className="px-3 space-y-3">
+        <div className="px-2 sm:px-3 grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
           {filteredItems.length === 0 ? (
-            <div className="bg-white rounded-lg p-8 text-center text-gray-400">
+            <div className="bg-white rounded-lg p-8 text-center text-gray-400 sm:col-span-2">
               <Package size={36} className="mx-auto mb-2 text-gray-300" />
               <p className="text-sm">无符合条件的物资</p>
             </div>
@@ -817,23 +817,23 @@ export default function StockTakeOperate() {
               const inputValue = actual === null ? '' : String(actual);
 
               return (
-                <div key={it.id} className="bg-white rounded-lg shadow-sm p-3.5">
-                  <div className="flex items-start justify-between gap-2 mb-2">
+                <div key={it.id} className="bg-white rounded-lg shadow-sm p-2 sm:p-3">
+                  <div className="flex items-start justify-between gap-2 mb-1.5 sm:mb-2">
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-semibold text-gray-800 truncate">{it.item_name}</h3>
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500 mt-0.5">
+                      <h3 className="text-sm sm:text-base font-semibold text-gray-800 truncate">{it.item_name}</h3>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-xs text-gray-500 mt-0.5">
                         {it.spec && <span>规格: {it.spec}</span>}
                         {it.unit && <span>单位: {it.unit}</span>}
                       </div>
                     </div>
                     {it.category_name && (
-                      <span className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                      <span className="shrink-0 text-[11px] sm:text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
                         {it.category_name}
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between text-sm py-1.5 border-b border-gray-100">
+                  <div className="flex items-center justify-between text-xs sm:text-sm py-1 sm:py-1.5 border-b border-gray-100">
                     <span className="text-gray-500">系统数量</span>
                     <span className="text-gray-700 font-medium">
                       {formatNumber(it.system_quantity)} {it.unit || ''}
@@ -841,8 +841,8 @@ export default function StockTakeOperate() {
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-between gap-3 py-2">
-                    <label className="text-sm text-gray-500 shrink-0">实盘数量</label>
+                  <div className="flex items-center justify-between gap-3 py-1.5 sm:py-2">
+                    <label className="text-xs sm:text-sm text-gray-500 shrink-0">实盘数量</label>
                     <div className="flex items-center gap-2 flex-1 justify-end">
                       {editable ? (
                         <input
@@ -854,35 +854,42 @@ export default function StockTakeOperate() {
                             const v = e.target.value;
                             updateItem(it.id, { actual_quantity: v === '' ? null : Number(v) });
                           }}
-                          className={`w-28 text-right text-base px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 ${
+                          className={`w-24 sm:w-28 text-right text-sm sm:text-base px-2.5 sm:px-3 py-1.5 sm:py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 ${
                             isUnconfirmed ? 'bg-amber-50 border-amber-300' : 'border-gray-200 bg-white'
                           }`}
                           placeholder={String(it.system_quantity)}
                         />
                       ) : (
-                        <span className={`text-base font-medium ${isUnconfirmed ? 'text-gray-400 italic' : 'text-gray-800'}`}>
+                        <span className={`text-sm sm:text-base font-medium ${isUnconfirmed ? 'text-gray-400 italic' : 'text-gray-800'}`}>
                           {actual !== null ? formatNumber(actual) : '未录入'}
                         </span>
                       )}
-                      {it.unit && <span className="text-sm text-gray-500 shrink-0">{it.unit}</span>}
+                      {it.unit && <span className="text-xs sm:text-sm text-gray-500 shrink-0">{it.unit}</span>}
                     </div>
                   </div>
                   {editable && isUnconfirmed && (
-                    <p className="text-xs text-amber-600 -mt-1 mb-1 text-right">待确认</p>
+                    <p className="text-[11px] sm:text-xs text-amber-600 -mt-0.5 mb-0.5 text-right">待确认</p>
                   )}
 
-                  <div className="flex items-center justify-between text-sm py-1.5 border-t border-gray-100">
+                  <div className="flex items-center justify-between text-xs sm:text-sm py-1 sm:py-1.5 border-t border-gray-100">
                     <span className="text-gray-500 flex items-center gap-1">
                       差异
                       {diff > 0 ? (
-                        <TrendingUp size={13} className="text-emerald-500" />
+                        <TrendingUp size={11} className="text-emerald-500 sm:hidden" />
                       ) : diff < 0 ? (
-                        <TrendingDown size={13} className="text-red-500" />
+                        <TrendingDown size={11} className="text-red-500 sm:hidden" />
                       ) : (
-                        <Minus size={13} className="text-gray-300" />
+                        <Minus size={11} className="text-gray-300 sm:hidden" />
+                      )}
+                      {diff > 0 ? (
+                        <TrendingUp size={13} className="text-emerald-500 hidden sm:inline" />
+                      ) : diff < 0 ? (
+                        <TrendingDown size={13} className="text-red-500 hidden sm:inline" />
+                      ) : (
+                        <Minus size={13} className="text-gray-300 hidden sm:inline" />
                       )}
                     </span>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <span className={`font-semibold ${diffColor(diff)}`}>
                         {diff > 0 ? `+${formatNumber(diff)} (盘盈)` : diff < 0 ? `${formatNumber(diff)} (盘亏)` : '0 (一致)'}
                       </span>
@@ -892,17 +899,17 @@ export default function StockTakeOperate() {
                     </div>
                   </div>
 
-                  <div className="mt-2 pt-2 border-t border-gray-100">
+                  <div className="mt-1.5 sm:mt-2 pt-1.5 sm:pt-2 border-t border-gray-100">
                     {editable ? (
                       <input
                         type="text"
                         value={it.remark || ''}
                         onChange={(e) => updateItem(it.id, { remark: e.target.value })}
-                        className="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
+                        className="w-full text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 sm:py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
                         placeholder="备注（可选）"
                       />
                     ) : (
-                      it.remark && <p className="text-xs text-gray-500">备注：{it.remark}</p>
+                      it.remark && <p className="text-[11px] sm:text-xs text-gray-500">备注：{it.remark}</p>
                     )}
                   </div>
                 </div>
@@ -914,9 +921,9 @@ export default function StockTakeOperate() {
 
       {/* 复核抽样列表 */}
       {canReview && (
-        <div className="px-3 space-y-3">
+        <div className="px-2 sm:px-3 grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
           {reviewSamples.length === 0 ? (
-            <div className="bg-white rounded-lg p-8 text-center text-gray-400">
+            <div className="bg-white rounded-lg p-8 text-center text-gray-400 sm:col-span-2">
               <ClipboardCheck size={36} className="mx-auto mb-2 text-gray-300" />
               <p className="text-sm">抽样数据加载中...</p>
             </div>
@@ -925,24 +932,24 @@ export default function StockTakeOperate() {
               const vq = s.verify_quantity;
               const matched = vq !== null && vq !== '' && Number(vq) === Number(s.actual_quantity);
               return (
-                <div key={s.item_detail_id} className="bg-white rounded-lg shadow-sm p-3.5">
-                  <div className="flex items-start justify-between gap-2 mb-2">
+                <div key={s.item_detail_id} className="bg-white rounded-lg shadow-sm p-2 sm:p-3">
+                  <div className="flex items-start justify-between gap-2 mb-1.5 sm:mb-2">
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-semibold text-gray-800 truncate">{s.item_name}</h3>
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500 mt-0.5">
+                      <h3 className="text-sm sm:text-base font-semibold text-gray-800 truncate">{s.item_name}</h3>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-xs text-gray-500 mt-0.5">
                         {s.spec && <span>规格: {s.spec}</span>}
                         {s.unit && <span>单位: {s.unit}</span>}
                       </div>
                     </div>
-                    {s.matched === true && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">✅ 一致</span>}
-                    {s.matched === false && <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-600">❌ 不一致</span>}
+                    {s.matched === true && <span className="text-[11px] sm:text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">✅ 一致</span>}
+                    {s.matched === false && <span className="text-[11px] sm:text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-600">❌ 不一致</span>}
                   </div>
-                  <div className="text-sm py-1.5 border-b border-gray-100 flex items-center justify-between">
+                  <div className="text-xs sm:text-sm py-1 sm:py-1.5 border-b border-gray-100 flex items-center justify-between">
                     <span className="text-gray-500">盘点数量</span>
                     <span className="text-gray-700 font-medium">{formatNumber(Number(s.actual_quantity))} {s.unit || ''}</span>
                   </div>
-                  <div className="flex items-center justify-between gap-3 py-2">
-                    <label className="text-sm text-gray-500 shrink-0">核验数量</label>
+                  <div className="flex items-center justify-between gap-3 py-1.5 sm:py-2">
+                    <label className="text-xs sm:text-sm text-gray-500 shrink-0">核验数量</label>
                     <div className="flex items-center gap-2 flex-1 justify-end">
                       <input
                         type="number"
@@ -953,14 +960,14 @@ export default function StockTakeOperate() {
                           const v = e.target.value;
                           updateSample(s.item_detail_id, v === '' ? null : Number(v));
                         }}
-                        className="w-28 text-right text-base px-3 py-2 border border-gray-200 rounded-lg bg-amber-50 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
+                        className="w-24 sm:w-28 text-right text-sm sm:text-base px-2.5 sm:px-3 py-1.5 sm:py-2 border border-gray-200 rounded-lg bg-amber-50 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
                         placeholder="请输入"
                       />
-                      {s.unit && <span className="text-sm text-gray-500 shrink-0">{s.unit}</span>}
+                      {s.unit && <span className="text-xs sm:text-sm text-gray-500 shrink-0">{s.unit}</span>}
                     </div>
                   </div>
                   {matched && s.verify_quantity !== null && (
-                    <p className="text-xs text-emerald-600 mt-1 text-right bg-emerald-50 inline-block px-2 py-0.5 rounded float-right">核验一致 ✓</p>
+                    <p className="text-[11px] sm:text-xs text-emerald-600 mt-0.5 text-right bg-emerald-50 inline-block px-2 py-0.5 rounded float-right">核验一致 ✓</p>
                   )}
                 </div>
               );
@@ -1162,8 +1169,8 @@ function StatCell({
 }) {
   return (
     <div>
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className={`font-semibold ${small ? 'text-sm' : 'text-base'} ${valueClass}`}>{value}</p>
+      <p className="text-[11px] sm:text-xs text-gray-400">{label}</p>
+      <p className={`font-semibold ${small ? 'text-xs sm:text-sm' : 'text-sm sm:text-base'} ${valueClass}`}>{value}</p>
     </div>
   );
 }
