@@ -263,7 +263,7 @@ export default function WizardPricing() {
       </main>
 
       {/* 底部按钮 */}
-      <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
+      <div className="sticky bottom-0 z-20 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
         <div className="flex gap-2">
           <button onClick={() => navigate(`/h/checkup-templates/${id}/items`)}
             className="flex-1 h-12 rounded-2xl border border-gray-300 bg-white text-gray-600 font-semibold flex items-center justify-center gap-1">

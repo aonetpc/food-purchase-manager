@@ -289,7 +289,7 @@ return (
       </div>
     </main>
 
-    <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
+    <div className="sticky bottom-0 z-20 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
       <div className="grid grid-cols-3 gap-2">
         <button onClick={() => navigate(`/h/checkup-templates/${id}/pricing`)}
           className="h-12 rounded-2xl border border-gray-200 bg-white text-gray-700 font-medium text-sm">← 调整定价</button>

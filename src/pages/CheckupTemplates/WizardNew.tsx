@@ -223,8 +223,8 @@ return (
       )}
     </main>
 
-    {/* 底部开始按钮 */}
-    <div className="fixed bottom-0 left-0 right-0 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
+    {/* 底部开始按钮（sticky 跟随容器宽度） */}
+    <div className="sticky bottom-0 z-20 p-3 pb-5 bg-gradient-to-t from-gray-50 to-transparent">
       <button onClick={submit} disabled={submitting}
         className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#1f6b3e] to-green-800 text-white text-base font-semibold shadow-lg shadow-emerald-700/30 disabled:opacity-60 flex items-center justify-center gap-2">
         {submitting ? '提交中...' : editMode ? '保存并继续 →' : '开始配置项目 →'}
