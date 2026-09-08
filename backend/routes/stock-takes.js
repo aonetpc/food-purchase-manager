@@ -671,6 +671,25 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
       return res.status(400).json({ error: `当前状态(${take.status})不可复核` });
     }
 
+    // 解析复核人企微 userid，并查询 users.name 用于 reviewed_by_name
+    // H5 路径不走 OAuth，req.user 不存在，靠 URL/body 透传 wecom_userid
+    const reviewerWecomUserid = req.body?.reviewer_wecom_userid
+      || req.query?.reviewer_wecom_userid
+      || req.headers['x-reviewer-wecom-userid']
+      || null;
+    let reviewerName = 'H5财务复核';
+    if (reviewerWecomUserid) {
+      try {
+        const [reviewerRows] = await pool.query(
+          'SELECT name FROM users WHERE wecom_userid = ? LIMIT 1',
+          [reviewerWecomUserid]
+        );
+        if (reviewerRows[0]?.name) reviewerName = reviewerRows[0].name;
+      } catch (e) {
+        console.warn('[stock-takes h5 review] resolve reviewer name failed:', e.message);
+      }
+    }
+
     // 退回（不签名）
     if (action === 'return') {
       await conn.beginTransaction();
@@ -680,7 +699,7 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
                                reviewed_by = NULL, reviewed_by_name = ?, reviewed_at = NOW(),
                                review_sample = NULL, updated_at = NOW()
         WHERE id = ?
-      `, [return_reason || '未填写', 'H5财务复核', take.id]);
+      `, [return_reason || '未填写', reviewerName, take.id]);
       await conn.commit();
 
       // 退回后：通知仓库管理员、变灰财务的 submitted 卡片
@@ -737,7 +756,7 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
     const updatedSamples = [];
     for (const s of samples) {
       const [itemRows] = await pool.query(
-        'SELECT actual_quantity FROM stock_take_items WHERE id = ? AND stock_take_id = ?',
+        'SELECT item_name, spec, unit, actual_quantity FROM stock_take_items WHERE id = ? AND stock_take_id = ?',
         [s.item_detail_id, take.id]
       );
       if (itemRows.length === 0) continue;
@@ -746,8 +765,15 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
         ? Number(s.verify_quantity) : null;
       const matched = verifyQty !== null && verifyQty === actualQty;
       if (!matched) allMatched = false;
+      // 补全物资信息，避免 review_sample 被覆盖为只有 item_detail_id/verify_quantity 的对象
+      // （否则 PDF 导出时 s.item_name/spec/unit 全为 undefined）
       updatedSamples.push({
-        ...s,
+        item_detail_id: s.item_detail_id,
+        item_name: itemRows[0].item_name,
+        spec: itemRows[0].spec,
+        unit: itemRows[0].unit,
+        actual_quantity: actualQty,
+        verify_quantity: verifyQty,
         matched,
       });
     }
@@ -795,14 +821,14 @@ router.post('/h5/review', requireStockTakeToken, async (req, res) => {
     }
 
     await conn.query(`
-      UPDATE stock_takes SET status = 'completed', review_result = 'match',
-                             review_sample = ?,
-                             reviewed_by = NULL, reviewed_by_name = ?, reviewed_at = NOW(),
-                             reviewer_signature = ?,
-                             cost_summary = ?, updated_at = NOW()
-      WHERE id = ?
-    `, [JSON.stringify(updatedSamples), 'H5财务复核', signature_data,
-        JSON.stringify(costSummary), take.id]);
+        UPDATE stock_takes SET status = 'completed', review_result = 'match',
+                               review_sample = ?,
+                               reviewed_by = NULL, reviewed_by_name = ?, reviewed_at = NOW(),
+                               reviewer_signature = ?,
+                               cost_summary = ?, updated_at = NOW()
+        WHERE id = ?
+      `, [JSON.stringify(updatedSamples), reviewerName, signature_data,
+          JSON.stringify(costSummary), take.id]);
 
     // 2. 写入盘点调整流水 + 更新库存
     //    created_at 归属到 period_month 月末最后一秒（权责发生制：8月盘点差异计入8月成本）
@@ -1698,7 +1724,7 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
     const updatedSamples = [];
     for (const s of samples) {
       const [itemRows] = await conn.query(
-        'SELECT actual_quantity FROM stock_take_items WHERE id = ? AND stock_take_id = ?',
+        'SELECT item_name, spec, unit, actual_quantity FROM stock_take_items WHERE id = ? AND stock_take_id = ?',
         [s.item_detail_id, id]
       );
       if (itemRows.length === 0) continue;
@@ -1707,8 +1733,14 @@ router.post('/:id/review', requireAuth, async (req, res, next) => {
         ? Number(s.verify_quantity) : null;
       const matched = verifyQty !== null && verifyQty === actualQty;
       if (!matched) allMatched = false;
+      // 补全物资信息，避免 review_sample 被覆盖后 PDF 导出字段为 undefined
       updatedSamples.push({
-        ...s,
+        item_detail_id: s.item_detail_id,
+        item_name: itemRows[0].item_name,
+        spec: itemRows[0].spec,
+        unit: itemRows[0].unit,
+        actual_quantity: actualQty,
+        verify_quantity: verifyQty,
         matched,
       });
     }
