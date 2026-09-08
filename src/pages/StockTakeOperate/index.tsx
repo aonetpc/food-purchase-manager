@@ -220,6 +220,7 @@ function parseReturnReason(remark: string | null | undefined): string | null {
 export default function StockTakeOperate() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') || searchParams.get('r_token') || '';
+  const wecomUserId = searchParams.get('wecom_userid') || '';
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -528,6 +529,7 @@ export default function StockTakeOperate() {
           samples: reviewSamples.map(s => ({ item_detail_id: s.item_detail_id, verify_quantity: s.verify_quantity })),
           return_reason: action === 'return' ? returnReason.trim() : undefined,
           signature_data: action === 'pass' ? (signatureData || savedSignature) : undefined,
+          reviewer_wecom_userid: wecomUserId || undefined,
         }),
       });
       const data = await res.json();
