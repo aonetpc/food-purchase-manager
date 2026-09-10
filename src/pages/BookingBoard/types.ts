@@ -125,7 +125,7 @@ export interface ItemExtra {
     female_married: number;
     female_single: number;
   };
-  placeholderNote?: string;           // 占位备注（如"客户待确认套餐"）
+  placeholderNote?: string;           // 占位备注（如"客户待确认套餐"）— 兼容旧数据，新数据用 remark
 
   // 住宿
   lodgingType?: LodgingType;
@@ -138,6 +138,9 @@ export interface ItemExtra {
   pax?: number;                               // ✅ 人数（两种模式都存；按人时算钱+早餐，按间时校验上限）
   bedsPerRoomSnapshot?: number;               // 下单时的床位快照（避免配置后续改了影响历史）
   customPrice?: number;                      // 单晚自定义单价（口径跟随 pricingMode）
+
+  // feat/142: 业务通用备注（住宿备注/体检备注，合并占位备注语义）
+  remark?: string;
 
   // 午餐/晚餐/会议/康乐 统一 sessions 字段（联合类型）
   dateStart?: string;
@@ -220,6 +223,7 @@ export interface WellnessSession {
   wellnessType: WellnessType;
   hours: number;
   pax: number;
+  customAmount?: number;  // feat/142: 手工覆盖金额（undefined=用自动计算价）
 }
 
 // 用车 - 单个客户信息（支持客户一、客户二…拼车多客户）

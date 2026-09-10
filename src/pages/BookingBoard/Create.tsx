@@ -1617,6 +1617,7 @@ export default function BookingBoardCreate(props: {
   const [lgOut, setLgOut] = useState(_defaultDateNext);
   const [lgArr, setLgArr] = useState('14:00');
   const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
+  const [lgRemark, setLgRemark] = useState<string>('');  // feat/142: 住宿备注
 
   // 用餐表单（多场次，每场含用餐标准/计价模式/特殊要求）
   const [mlSessions, setMlSessions] = useState<MealSession[]>([]);
@@ -1954,7 +1955,7 @@ export default function BookingBoardCreate(props: {
         const sessions = (it.extra?.sessions as WellnessSession[] | undefined) || [];
         if (sessions.length === 0) return it;
         const newAmount = sessions.reduce(
-          (s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest),
+          (s, x) => s + (x.customAmount ?? calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest)),
           0,
         );
         if (newAmount !== (it.amount || 0)) {
@@ -1994,7 +1995,7 @@ export default function BookingBoardCreate(props: {
     if (t === 'meeting')
       return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
     if (t === 'wellness')
-      return wlSessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest), 0);
+      return wlSessions.reduce((s, x) => s + (x.customAmount ?? calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest)), 0);
     if (t === 'carpickup') {
       if (!carSession.customers?.length) return 0;
       return carSession.customAmount !== undefined && carSession.customAmount !== null
@@ -2024,6 +2025,7 @@ export default function BookingBoardCreate(props: {
       setLgOut(_defaultDateNext);
       setLgArr('14:00');
       setLgSessions([]);
+      setLgRemark('');  // feat/142: 重置住宿备注
     } else if (type === 'lunch' || type === 'dinner') {
       setMlSessions([]);
     } else if (type === 'meeting') {
@@ -2078,12 +2080,14 @@ export default function BookingBoardCreate(props: {
           female_married: Number(savedCustomPrices?.female_married ?? savedCustomPrices?.femaleMarried) || 0,
           female_single: Number(savedCustomPrices?.female_single ?? savedCustomPrices?.femaleSingle) || 0,
         });
-        setPlaceholderNote((item.extra as any)?.placeholderNote || '');
+        // feat/142: 兼容 remark（新）和 placeholderNote（旧）
+        setPlaceholderNote((item.extra as any)?.remark || (item.extra as any)?.placeholderNote || '');
         setSelectedChkPkg('');  // 占位模式无胶囊
       } else {
         setCheckupMode('package');
         setCustomPrices({ male: 0, female_married: 0, female_single: 0 });
-        setPlaceholderNote('');
+        // feat/142: 兼容 remark（新）和 placeholderNote（旧）
+        setPlaceholderNote((item.extra as any)?.remark || (item.extra as any)?.placeholderNote || '');
         // B-2：恢复 selectedChkPkgId（优先 extra 中保存的，其次从首个 pax.package 反推）
         const savedPkgId = (item.extra as any)?.selectedChkPkgId;
         const firstPaxPkg = paxListBackup.find((p: any) => p && p.package)?.package as string | undefined;
@@ -2153,6 +2157,8 @@ export default function BookingBoardCreate(props: {
         pricingMode: pm,
         ...(hasCP ? { customPrice: Number(cpRaw) } : {}),
       }]);
+      // feat/142: 恢复住宿备注
+      setLgRemark((item.extra as any)?.remark || '');
     } else if (item.itemType === 'lunch' || item.itemType === 'dinner') {
       setMlSessions((item.extra.sessions as MealSession[] || []).map((s) => ({
         date: s.date || _defaultDate,
@@ -2455,7 +2461,8 @@ export default function BookingBoardCreate(props: {
             roleCounts: { ...roleCounts },
             customPrices: { ...customPrices },  // 保存手输单价
             isPlaceholder: true,                // 标记占位模式
-            placeholderNote: placeholderNote.trim() || undefined,
+            placeholderNote: placeholderNote.trim() || undefined,  // 兼容旧数据
+            remark: placeholderNote.trim() || undefined,            // feat/142: 统一用 remark
             paxListCount: 0,
             // selectedChkPkgId 留空，编辑时切回选套餐模式可补
           },
@@ -2507,6 +2514,7 @@ export default function BookingBoardCreate(props: {
             paxListCount: paxList.length,
             // 切换到选套餐模式时清掉占位标记（避免残留）
             isPlaceholder: false,
+            remark: placeholderNote.trim() || undefined,  // feat/142: 体检备注（通用）
           },
           amount,
         };
@@ -2549,6 +2557,7 @@ export default function BookingBoardCreate(props: {
             // ✅ 床位快照，后续配置变更不影响历史早餐
             bedsPerRoomSnapshot: bedsSnapshot,
             ...(hasCP ? { customPrice: Number(s.customPrice) } : {}),
+            ...(lgRemark.trim() ? { remark: lgRemark.trim() } : {}),  // feat/142: 住宿备注
           },
           amount: amt,
         };
@@ -2609,7 +2618,7 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一场康乐');
         return;
       }
-      const amount = sessions.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest), 0);
+      const amount = sessions.reduce((s, x) => s + (x.customAmount ?? calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest)), 0);
       item = {
         id: keepId,
         itemType,
@@ -2923,7 +2932,7 @@ export default function BookingBoardCreate(props: {
             startTime: wlSess[0].startTime,
             pax: wlSess.reduce((s, x) => s + x.pax, 0),
             extra: { sessions: wlSess as any },
-            amount: wlSess.reduce((s, x) => s + calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest), 0),
+            amount: wlSess.reduce((s, x) => s + (x.customAmount ?? calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest)), 0),
           });
         }
 
@@ -3588,25 +3597,27 @@ export default function BookingBoardCreate(props: {
                     </div>
                   )}
 
-                  {/* 占位模式说明 + 备注（feat/109） */}
+                  {/* 占位模式说明（feat/109） + 体检备注（feat/142 合并占位备注，两种模式通用） */}
                   {checkupMode === 'placeholder' && (
                     <div className="space-y-2">
                       <div className="text-[11px] text-amber-700 bg-amber-50 px-3 py-2 rounded border border-amber-200">
                         ⚠ 套餐未确认占位：手输各角色单价×人数自动算金额，待客户确认套餐后切回「选择套餐」补选胶囊即可。
                       </div>
-                      <div>
-                        <label className={labelCls}>占位备注（可选）</label>
-                        <input
-                          type="text"
-                          value={placeholderNote}
-                          onChange={(e) => setPlaceholderNote(e.target.value)}
-                          placeholder="如：客户待确认套餐"
-                          maxLength={100}
-                          className={inputCls}
-                        />
-                      </div>
                     </div>
                   )}
+
+                  {/* feat/142: 体检备注（通用，两种模式都显示） */}
+                  <div>
+                    <label className={labelCls}>📝 体检备注 <span className="text-gray-400 font-normal">（可选）</span></label>
+                    <input
+                      type="text"
+                      value={placeholderNote}
+                      onChange={(e) => setPlaceholderNote(e.target.value)}
+                      placeholder="如：客户待确认套餐 / 特殊体检要求…"
+                      maxLength={100}
+                      className={inputCls}
+                    />
+                  </div>
 
                   {/* 按角色设置人数（选套餐模式需选了胶囊；占位模式始终显示） */}
                   {(checkupMode === 'placeholder' || selectedChkPkg) && (
@@ -4418,6 +4429,21 @@ export default function BookingBoardCreate(props: {
                       👆 请点击上方房型胶囊块，添加住宿信息
                     </div>
                   )}
+
+                  {/* feat/142: 住宿备注（随内容滚动） */}
+                  <div className="rounded-lg border border-gray-200 p-3 bg-gray-50/50">
+                    <label className="text-xs text-gray-600 font-medium mb-1.5 flex items-center gap-1">
+                      <span>📝 住宿备注</span>
+                      <span className="text-gray-400 font-normal">（可选）</span>
+                    </label>
+                    <textarea
+                      value={lgRemark}
+                      onChange={(e) => setLgRemark(e.target.value)}
+                      placeholder="如有特殊需求请填写备注…"
+                      rows={2}
+                      className="w-full text-xs px-2.5 py-1.5 rounded border border-gray-200 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-100 outline-none resize-none"
+                    />
+                  </div>
                 </div>
               ) : drawer.itemType === 'lunch' || drawer.itemType === 'dinner' ? (
                 <div className="space-y-3 relative">
@@ -5090,7 +5116,20 @@ export default function BookingBoardCreate(props: {
                                   {w.free ? (
                                     <span className="text-emerald-500">免费</span>
                                   ) : (
-                                    `¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc, isGuest).toLocaleString()}`
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={s.customAmount ?? calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc, isGuest)}
+                                      onChange={(e) =>
+                                        setWlSessions((prev) =>
+                                          prev.map((x, idx0) =>
+                                            idx0 === idx ? { ...x, customAmount: parseFloat(e.target.value) || 0 } : x,
+                                          ),
+                                        )
+                                      }
+                                      className={`${cellInput} w-20 font-mono text-green-600`}
+                                      title={`自动价: ¥${calcWellnessAmount(s.wellnessType, s.hours, finalBizConfigForCalc, isGuest).toLocaleString()}`}
+                                    />
                                   )}
                                 </td>
                                 <td className="px-1.5 py-1">
