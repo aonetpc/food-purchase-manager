@@ -2041,7 +2041,7 @@ function DetailModal({
           )}
 
           {/* feat/140: 删除按钮 — admin 可删任何状态；booker 仅可删 pending/sales_confirming/rejected */}
-          {(isAdmin || (isBookingOperator && ['pending', 'sales_confirming', 'rejected'].includes(order.status))) && (
+          {(isAdmin || (canOperate && ['pending', 'sales_confirming', 'rejected'].includes(order.status))) && (
             <button
               type="button"
               onClick={onDelete}
