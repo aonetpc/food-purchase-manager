@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Plus, Trash2, Save, Settings, ChevronDown, AlertCircle, CheckCircle } from 'lucide-react';
-import { bookingApi, type RoomTypeRow, type MeetingHallRow, type WellnessTypeRow, type MealTypeRow } from '../../lib/api';
+import { bookingApi, type RoomTypeRow, type MeetingHallRow, type WellnessTypeRow, type MealTypeRow, type PaymentMethodRow } from '../../lib/api';
 import { useToast } from '@/components/Toast';
 
 // ================================================
@@ -14,12 +14,13 @@ const btnGhost =
 const btnGold =
   'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white font-medium transition-colors';
 
-type TabKey = 'roomTypes' | 'meetingHalls' | 'wellnessTypes' | 'mealTypes';
+type TabKey = 'roomTypes' | 'meetingHalls' | 'wellnessTypes' | 'mealTypes' | 'paymentMethods';
 const TABS: { key: TabKey; label: string; color: string }[] = [
   { key: 'roomTypes',    label: '房型',     color: '#3b82f6' },
   { key: 'meetingHalls', label: '会议厅',   color: '#8b5cf6' },
   { key: 'wellnessTypes',label: '康乐项目', color: '#f59e0b' },
   { key: 'mealTypes',    label: '用餐标准', color: '#ef4444' },
+  { key: 'paymentMethods', label: '付款方式', color: '#10b981' },
 ];
 
 // 新增默认值
@@ -31,6 +32,8 @@ const DEFAULT_ROOM: Partial<RoomTypeRow> = {
 const DEFAULT_HALL: Partial<MeetingHallRow> = { code: '', name: '', capacity: 20, half_price: 0, full_price: 0, status: 1, sort_order: 100 };
 const DEFAULT_WELL: Partial<WellnessTypeRow> = { code: '', name: '', min_hours: 0, package_hours: 0, price: 0, price_guest: 0, price_external: 0, time_window: '', pricing_mode: 'per_hour', is_free: 0, status: 1, sort_order: 100 };
 const DEFAULT_MEAL: Partial<MealTypeRow> = { code: '', name: '', pricing_mode: 'per_table', unit_price: 0, default_time: '12:00', default_tables: 1, default_per_table: 10, default_pax: 0, status: 1, sort_order: 100 };
+// feat/141: 付款方式默认值（字段最少：code/name/status/sort_order）
+const DEFAULT_PAYMENT: Partial<PaymentMethodRow> = { code: '', name: '', status: 1, sort_order: 100 };
 
 // ================================================
 // 编码自动生成（按类型前缀 + 3位序号）
@@ -40,6 +43,7 @@ const CODE_PREFIX: Record<TabKey, string> = {
   meetingHalls: 'MH',
   wellnessTypes: 'WL',
   mealTypes: 'MTL',
+  paymentMethods: 'PM',
 };
 function generateCode(tab: TabKey, existing: { code?: string }[]): string {
   const prefix = CODE_PREFIX[tab];
@@ -54,7 +58,7 @@ function generateCode(tab: TabKey, existing: { code?: string }[]): string {
 // ================================================
 // 会话内缓存（sessionStorage）
 // ================================================
-const CACHE_KEY = 'biz_config_cache_v1';
+const CACHE_KEY = 'biz_config_cache_v2';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
 
 type CacheData = {
@@ -62,6 +66,7 @@ type CacheData = {
   meetingHalls?: MeetingHallRow[];
   wellnessTypes?: WellnessTypeRow[];
   mealTypes?: MealTypeRow[];
+  paymentMethods?: PaymentMethodRow[];
   cachedAt: number;
 };
 
@@ -91,12 +96,14 @@ const TAB_LOADERS: Record<TabKey, TabKey[]> = {
   meetingHalls: ['meetingHalls'],
   wellnessTypes:['wellnessTypes'],
   mealTypes:    ['mealTypes'],
+  paymentMethods: ['paymentMethods'],
 };
 const TAB_NAME_MAP: Record<TabKey, string> = {
   roomTypes: '房型',
   meetingHalls: '会议厅',
   wellnessTypes: '康乐项目',
   mealTypes: '用餐标准',
+  paymentMethods: '付款方式',
 };
 
 export default function BizConfigModal({
@@ -110,14 +117,15 @@ export default function BizConfigModal({
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState<Record<TabKey, boolean>>({
-    roomTypes: false, meetingHalls: false, wellnessTypes: false, mealTypes: false,
+    roomTypes: false, meetingHalls: false, wellnessTypes: false, mealTypes: false, paymentMethods: false,
   });
 
-  // 4 类数据
+  // 5 类数据
   const [roomTypes, setRoomTypes] = useState<RoomTypeRow[]>([]);
   const [meetingHalls, setMeetingHalls] = useState<MeetingHallRow[]>([]);
   const [wellnessTypes, setWellnessTypes] = useState<WellnessTypeRow[]>([]);
   const [mealTypes, setMealTypes] = useState<MealTypeRow[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
 
   // 编辑/新增表单
   const [editing, setEditing] = useState<
@@ -147,6 +155,7 @@ export default function BizConfigModal({
       case 'meetingHalls': setMeetingHalls(data as MeetingHallRow[]); writeCache({ meetingHalls: data as MeetingHallRow[] }); break;
       case 'wellnessTypes':setWellnessTypes(data as WellnessTypeRow[]); writeCache({ wellnessTypes: data as WellnessTypeRow[] }); break;
       case 'mealTypes':    setMealTypes(data as MealTypeRow[]); writeCache({ mealTypes: data as MealTypeRow[] }); break;
+      case 'paymentMethods': setPaymentMethods(data as PaymentMethodRow[]); writeCache({ paymentMethods: data as PaymentMethodRow[] }); break;
     }
   }
 
@@ -179,6 +188,7 @@ export default function BizConfigModal({
           case 'meetingHalls': data = await bookingApi.listMeetingHalls(); break;
           case 'wellnessTypes':data = await bookingApi.listWellnessTypes(); break;
           case 'mealTypes':    data = await bookingApi.listMealTypes(); break;
+          case 'paymentMethods': data = await bookingApi.listPaymentMethods(); break;
         }
         return { k, data };
       });
@@ -220,6 +230,7 @@ export default function BizConfigModal({
       if (cache?.meetingHalls) setMeetingHalls(cache.meetingHalls);
       if (cache?.wellnessTypes) setWellnessTypes(cache.wellnessTypes);
       if (cache?.mealTypes) setMealTypes(cache.mealTypes);
+      if (cache?.paymentMethods) setPaymentMethods(cache.paymentMethods);
       setEditing(null);
       // 再触发当前 tab 对应 group 的加载（有缓存则直接 return，否则网络拉取）
       loadTabGroup(TAB_LOADERS[tab], false);
@@ -241,7 +252,8 @@ export default function BizConfigModal({
     const list = tabKey === 'roomTypes' ? roomTypes
       : tabKey === 'meetingHalls' ? meetingHalls
       : tabKey === 'wellnessTypes' ? wellnessTypes
-      : mealTypes;
+      : tabKey === 'mealTypes' ? mealTypes
+      : paymentMethods;
     return !list.some(r => r.code === code && String(r.id) !== String(excludeId));
   }
 
@@ -339,7 +351,7 @@ export default function BizConfigModal({
 
         {/* 内容区 */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {(tab === 'roomTypes' || tab === 'meetingHalls' || tab === 'wellnessTypes' || tab === 'mealTypes') && loading[tab] && (
+          {(tab === 'roomTypes' || tab === 'meetingHalls' || tab === 'wellnessTypes' || tab === 'mealTypes' || tab === 'paymentMethods') && loading[tab] && (
             <div className="text-center py-10 text-gray-500 text-sm bg-white rounded-lg border border-dashed border-gray-200">
               <span className="inline-block w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
               加载中...
@@ -457,6 +469,35 @@ export default function BizConfigModal({
                 () => bookingApi.deleteMealType(r.id),
                 `确定禁用用餐标准「${r.name}」吗？`,
                 ['mealTypes'],
+              )}
+              saving={saving}
+            />
+          )}
+
+          {tab === 'paymentMethods' && !loading.paymentMethods && (
+            <PaymentMethodsTable
+              rows={paymentMethods}
+              editing={editing?.mode ? editing : null}
+              bumpEditing={bumpEditing}
+              onNew={() => setEditing({ mode: 'create', data: { ...DEFAULT_PAYMENT, code: generateCode('paymentMethods', paymentMethods) } })}
+              onEdit={(r) => setEditing({ mode: 'update', data: { ...r } })}
+              onCancel={() => setEditing(null)}
+              onSave={(d) => {
+                const data = d as Partial<PaymentMethodRow>;
+                if (data.code && !checkCodeUnique('paymentMethods', data.code, data.id)) {
+                  toast.error(`编码「${data.code}」已存在，请使用其他编码`);
+                  return;
+                }
+                if ((editing as any)?.mode === 'update' && data.id) {
+                  handleSave(() => bookingApi.updatePaymentMethod(data.id!, data), () => {}, ['paymentMethods']);
+                } else {
+                  handleSave(() => bookingApi.createPaymentMethod(data), () => {}, ['paymentMethods']);
+                }
+              }}
+              onDel={(r) => handleDelete(
+                () => bookingApi.deletePaymentMethod(r.id),
+                `确定禁用付款方式「${r.name}」吗？`,
+                ['paymentMethods'],
               )}
               saving={saving}
             />
@@ -1015,6 +1056,82 @@ function MealTypesTable(props: TableProps<MealTypeRow>) {
                   <td className="px-3 py-2 text-center font-mono">{editRow ? <Upd type="number" value={editing!.data.default_tables} onChange={(v) => setField('default_tables', v)} /> : r.default_tables}</td>
                   <td className="px-3 py-2 text-center font-mono">{editRow ? <Upd type="number" value={editing!.data.default_per_table} onChange={(v) => setField('default_per_table', v)} /> : r.default_per_table}</td>
                   <td className="px-3 py-2 text-center font-mono">{editRow ? <Upd type="number" value={editing!.data.default_pax} onChange={(v) => setField('default_pax', v)} /> : r.default_pax}</td>
+                  <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
+                  <td className="px-3 py-2 text-center">
+                    {editRow ? <Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} />
+                             : r.status === 1 ? <span className="text-green-600">● 启用</span> : <span className="text-gray-400">● 禁用</span>}
+                  </td>
+                  <td className="px-3 py-2 text-center space-x-1">
+                    {editRow ? (
+                      <>
+                        <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing!.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
+                        <RowBtn onClick={onCancel}>取消</RowBtn>
+                      </>
+                    ) : (
+                      <>
+                        <RowBtn onClick={() => onEdit(r)}>编辑</RowBtn>
+                        <RowBtn cls="!text-red-500 hover:!bg-red-50 !border-red-200" onClick={() => onDel(r)}><Trash2 size={10}/> 禁用</RowBtn>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// feat/141: 付款方式表格（字段最少：code/name/sort_order/status）
+function PaymentMethodsTable(props: TableProps<PaymentMethodRow>) {
+  const { rows, editing, onNew, onEdit, onCancel, onSave, onDel, saving, bumpEditing } = props;
+  const isCreating = editing?.mode === 'create';
+  const isEditingThis = (r: PaymentMethodRow) => editing?.mode === 'update' && editing.data.id === r.id;
+  const setField = (k: string, v: any) => {
+    if (editing) {
+      editing.data[k] = v;
+      bumpEditing();
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-gray-600">共 {rows.length} 条配置，其中 <span className="text-red-600 font-medium">{rows.filter(r => r.status === 1).length}</span> 条启用</div>
+        {!editing && <button onClick={onNew} className={btnGold}><Plus size={12}/> 新增付款方式</button>}
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <table className="w-full text-xs">
+          <thead className="bg-gray-50 text-gray-500">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium w-24">编码</th>
+              <th className="px-3 py-2 text-left font-medium">名称</th>
+              <th className="px-3 py-2 text-center font-medium w-16">排序</th>
+              <th className="px-3 py-2 text-center font-medium w-16">状态</th>
+              <th className="px-3 py-2 text-center font-medium w-36">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isCreating && (
+              <tr className="bg-amber-50/50 border-b border-gray-100">
+                <td className="px-2 py-1.5"><Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /></td>
+                <td className="px-2 py-1.5"><Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /></td>
+                <td className="px-2 py-1.5"><Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /></td>
+                <td className="px-2 py-1.5 text-center"><Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} /></td>
+                <td className="px-2 py-1.5 text-center space-x-1">
+                  <RowBtn cls="!bg-green-500 !text-white !border-green-500 hover:!bg-green-600" onClick={() => onSave(editing!.data)}>{saving ? '保存中' : <><Save size={10}/> 保存</>}</RowBtn>
+                  <RowBtn onClick={onCancel}>取消</RowBtn>
+                </td>
+              </tr>
+            )}
+            {rows.map(r => {
+              const editRow = isEditingThis(r);
+              return (
+                <tr key={r.id} className="border-t border-gray-100 hover:bg-gray-50/50">
+                  <td className="px-3 py-2 font-mono">{editRow ? <Upd value={editing!.data.code} onChange={(v) => setField('code', v)} /> : <span className="font-semibold">{r.code}</span>}</td>
+                  <td className="px-3 py-2">{editRow ? <Upd value={editing!.data.name} onChange={(v) => setField('name', v)} /> : r.name}</td>
                   <td className="px-3 py-2 text-center">{editRow ? <Upd type="number" value={editing!.data.sort_order} onChange={(v) => setField('sort_order', v)} /> : r.sort_order}</td>
                   <td className="px-3 py-2 text-center">
                     {editRow ? <Checkbox value={editing!.data.status} onChange={(v) => setField('status', v)} />
