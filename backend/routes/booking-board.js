@@ -652,6 +652,14 @@ router.get('/config', requireAuth, async (_req, res) => {
     const [meetingHalls] = await pool.query('SELECT * FROM booking_meeting_halls WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [wellnessTypes] = await pool.query('SELECT * FROM booking_wellness_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [mealTypes] = await pool.query('SELECT * FROM booking_meal_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    // feat/141: 付款方式配置（前端下单下拉项 + 业务配置弹窗管理）
+    let paymentMethods = [];
+    try {
+      [paymentMethods] = await pool.query('SELECT * FROM booking_payment_methods WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    } catch (e) {
+      // 迁移未执行时降级为空数组（前端会兜底显示）
+      paymentMethods = [];
+    }
     // 体检项目主表（全部，含禁用，供前端管理面板使用）
     const [checkupItems] = await pool.query('SELECT * FROM booking_checkup_items ORDER BY category ASC, sort_order ASC, id ASC');
 
@@ -703,7 +711,7 @@ router.get('/config', requireAuth, async (_req, res) => {
 
     res.json({
       ok: true,
-      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, checkupItems, salesUsers, bookingApprover },
+      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, paymentMethods, checkupItems, salesUsers, bookingApprover },
     });
   } catch (e) {
     console.error('[booking config] error:', e);
@@ -1432,6 +1440,16 @@ makeBizConfigCrud({
   table: 'booking_meal_types',
   requiredFields: ['code', 'name', 'pricing_mode', 'unit_price'],
   editableFields: ['default_time', 'default_tables', 'default_per_table', 'default_pax', 'description', 'status', 'sort_order'],
+  sortDefault: 1,
+  autoIncrementId: true,
+});
+
+// feat/141: 付款方式配置（与房型/会议厅等业务配置一致，复用 makeBizConfigCrud）
+makeBizConfigCrud({
+  basePath: '/config/payment-methods',
+  table: 'booking_payment_methods',
+  requiredFields: ['code', 'name'],
+  editableFields: ['status', 'sort_order'],
   sortDefault: 1,
   autoIncrementId: true,
 });

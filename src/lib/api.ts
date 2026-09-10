@@ -316,12 +316,22 @@ export interface MealTypeRow {
   sort_order: number;
 }
 
+// feat/141: 付款方式配置行（与 booking_payment_methods 表对齐，snake_case）
+export interface PaymentMethodRow {
+  id: string;
+  code: string;
+  name: string;
+  status: number;
+  sort_order: number;
+}
+
 export interface BookingConfig {
   packages: PackageRow[];
   roomTypes: RoomTypeRow[];
   meetingHalls: MeetingHallRow[];
   wellnessTypes: WellnessTypeRow[];
   mealTypes?: MealTypeRow[];
+  paymentMethods?: PaymentMethodRow[];
   checkupItems?: CheckupItemRow[];
   salesUsers?: BookingSalesUser[];
 }
@@ -503,6 +513,7 @@ export const bookingApi = {
       meetingHalls: (d.meetingHalls || d.meeting_halls || []) as MeetingHallRow[],
       wellnessTypes:(d.wellnessTypes|| d.wellness_types|| []) as WellnessTypeRow[],
       mealTypes:    (d.mealTypes    || d.meal_types    || []) as MealTypeRow[],
+      paymentMethods: (d.paymentMethods || d.payment_methods || []) as PaymentMethodRow[],
       // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
       checkupItems: (d.checkupItems || d.checkup_items || []) as CheckupItemRow[],
       salesUsers:   (d.salesUsers   || d.sales_users   || []).map(fromBackend),
@@ -664,5 +675,22 @@ export const bookingApi = {
   },
   async deleteMealType(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/meal-types/${id}`);
+  },
+
+  // feat/141: 付款方式 CRUD（不走 fromBackend，保持 snake_case，与 mealTypes 一致）
+  async listPaymentMethods(): Promise<PaymentMethodRow[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/config/payment-methods');
+    return (res.data || []) as PaymentMethodRow[];
+  },
+  async createPaymentMethod(payload: Partial<PaymentMethodRow>): Promise<PaymentMethodRow> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/config/payment-methods', payload);
+    return res.data as PaymentMethodRow;
+  },
+  async updatePaymentMethod(id: string, payload: Partial<PaymentMethodRow>): Promise<PaymentMethodRow> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/config/payment-methods/${id}`, payload);
+    return res.data as PaymentMethodRow;
+  },
+  async deletePaymentMethod(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/config/payment-methods/${id}`);
   },
 };

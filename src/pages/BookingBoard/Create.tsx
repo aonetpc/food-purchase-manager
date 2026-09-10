@@ -39,7 +39,7 @@ import {
   LODGING_TYPES,
   MEETING_HALLS,
   WELLNESS_TYPES,
-  PAYMENT_OPTIONS,
+  PAYMENT_OPTIONS_FALLBACK,
   LODGING_NAME_MAP,
   HALL_NAME_MAP,
   WELLNESS_NAME_MAP,
@@ -1543,7 +1543,7 @@ export default function BookingBoardCreate(props: {
       salesPerson: '',
       salesPersonId: undefined,
       salesWecomUserid: undefined,
-      payment: PAYMENT_OPTIONS[0],
+      payment: PAYMENT_OPTIONS_FALLBACK[0],
       remark: '',
       items: [],
       status: 'pending',
@@ -1650,7 +1650,7 @@ export default function BookingBoardCreate(props: {
   const [salesPickerOpen, setSalesPickerOpen] = useState(false);
   // 4 类业务动态配置（含启用的套餐/房型/会议厅/康乐 + 体检项目库）
   const [bizConfig, setBizConfig] = useState<BookingConfig>({
-    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], mealTypes: [], checkupItems: [], salesUsers: [],
+    packages: [], roomTypes: [], meetingHalls: [], wellnessTypes: [], mealTypes: [], paymentMethods: [], checkupItems: [], salesUsers: [],
   });
   // 体检项目库（供「追加项目」选择器使用）
   const [checkupItemsLib, setCheckupItemsLib] = useState<CheckupItemRow[]>([]);
@@ -1671,6 +1671,8 @@ export default function BookingBoardCreate(props: {
           wellnessTypes: Array.isArray(cfg.wellnessTypes) ? cfg.wellnessTypes : [],
           // 修复：补上 mealTypes（之前完全遗漏，导致 bizConfig.mealTypes 永远是空数组 → 午餐晚餐只显示 4 个 fallback）
           mealTypes: Array.isArray(cfg.mealTypes) ? cfg.mealTypes.filter((m: any) => Number(m.status) === 1) : [],
+          // feat/141: 付款方式从 config 读取（业务配置弹窗可维护）
+          paymentMethods: Array.isArray(cfg.paymentMethods) ? cfg.paymentMethods.filter((m: any) => Number(m.status) === 1) : [],
           checkupItems: Array.isArray(cfg.checkupItems) ? cfg.checkupItems : [],
           salesUsers: cfg.salesUsers || [],
         });
@@ -3060,7 +3062,7 @@ export default function BookingBoardCreate(props: {
       contactPhone: '',
       salesPerson: '',
       salesPersonId: undefined,
-      payment: PAYMENT_OPTIONS[0],
+      payment: PAYMENT_OPTIONS_FALLBACK[0],
       remark: '',
       items: [],
       status: 'pending',
@@ -3311,7 +3313,10 @@ export default function BookingBoardCreate(props: {
                 onChange={(e) => setDraftGroup((g) => ({ ...g, payment: e.target.value }))}
                 className={inputCls}
               >
-                {PAYMENT_OPTIONS.map((p) => (
+                {(bizConfig.paymentMethods && bizConfig.paymentMethods.length > 0
+                  ? bizConfig.paymentMethods.map((p) => p.name)
+                  : PAYMENT_OPTIONS_FALLBACK
+                ).map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>

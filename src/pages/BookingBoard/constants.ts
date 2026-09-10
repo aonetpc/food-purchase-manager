@@ -114,8 +114,9 @@ export const WELLNESS_TYPES: Record<WellnessType, { name: string; minHours: numb
   tabletennis: { name: '乒乓房',   minHours: 0, price: 0,   free: true },
 };
 
-// 付款方式
-export const PAYMENT_OPTIONS = [
+// feat/141: 付款方式兜底常量（仅用于 config 未加载时的初始化默认值）
+// 实际下拉选项从 bizConfig.paymentMethods 读取（业务配置弹窗可维护）
+export const PAYMENT_OPTIONS_FALLBACK = [
   '销售担保挂账',
   '客户现付',
   '公司结算',
