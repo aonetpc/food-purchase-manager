@@ -2681,6 +2681,40 @@ function buildBizSummary(items) {
 }
 
 /**
+ * 从订单 items 聚合预订日期范围（feat/140 群消息新增字段）
+ * 返回格式：单日 "9月11日"，范围 "9月11日-9月13日"，无日期 "未指定"
+ */
+function buildDateRange(items) {
+  if (!items || !items.length) return '未指定';
+  const dates = items
+    .map(it => it.date)
+    .filter(Boolean)
+    .sort();
+  if (dates.length === 0) return '未指定';
+  const fmt = (d) => {
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return String(d);
+    return `${dt.getMonth() + 1}月${dt.getDate()}日`;
+  };
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  return first === last ? fmt(first) : `${fmt(first)}-${fmt(last)}`;
+}
+
+/**
+ * 判断订单是否为占位单（任意 item 的 extra.isPlaceholder 为 true）
+ */
+function isPlaceholderOrder(items) {
+  if (!items || !items.length) return false;
+  return items.some(it => {
+    const ex = it.extra;
+    if (!ex) return false;
+    if (typeof ex === 'string') { try { return JSON.parse(ex).isPlaceholder === true; } catch { return false; } }
+    return ex.isPlaceholder === true;
+  });
+}
+
+/**
  * 发送预订审批通知（统一入口）
  * @param {string} type - 通知类型：submit/salesConfirm/approve/reject
  * @param {object} order - 订单完整数据（含 items）
@@ -2699,6 +2733,8 @@ async function sendBookingNotification(type, order, extra = {}) {
   const salesPerson = order.sales_person || '';
   const remark = order.remark || '';
   const remarkLine = remark ? `> 备注：${remark}\n` : '';
+  const dateRange = buildDateRange(order.items);          // feat/140: 群消息新增预订日期
+  const isPlaceholder = isPlaceholderOrder(order.items);  // feat/140: 占位单标题区分
   const frontEndBase = config.app_domain || '';
 
   // 查找销售员企微userid：优先订单快照 → 兜底查users表
@@ -2848,13 +2884,46 @@ async function sendBookingNotification(type, order, extra = {}) {
   };
 
   switch (type) {
-    case 'submit': {
-      // ① 预订群通知
+    case 'create': {
+      // feat/140: 新建订单（预测单）发群消息通知各部门占位
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
-        const md = `📋 **已有新订单**\n` +
+        const title = isPlaceholder ? '📋 **已有新订单（占位）**' : '📋 **已有新订单**';
+        const md = `${title}\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
           remarkLine +
+          `> 预订日期：${dateRange}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 状态：预测单（待提交确认）`;
+        await sendGroupMsg(md, '新建订单群通知');
+      }
+      break;
+    }
+    case 'delete': {
+      // feat/140: 删除订单发群消息通知各部门
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const md = `🗑️ **订单已取消**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          remarkLine +
+          `> 预订日期：${dateRange}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 状态：已取消`;
+        await sendGroupMsg(md, '取消订单群通知');
+      }
+      break;
+    }
+    case 'submit': {
+      // ① 预订群通知
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const title = isPlaceholder ? '📋 **已有新订单（占位）**' : '📋 **已有新订单**';
+        const md = `${title}\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          remarkLine +
+          `> 预订日期：${dateRange}\n` +
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
           `> 状态：待销售员确认`;
@@ -2887,6 +2956,7 @@ async function sendBookingNotification(type, order, extra = {}) {
               `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
               [
                 { keyname: '客户', value: customerName },
+                { keyname: '预订日期', value: dateRange },
                 { keyname: '业务', value: bizSummary },
                 { keyname: '销售员', value: salesPerson || '未指定' },
                 ...(remark ? [{ keyname: '备注', value: remark }] : []),
