@@ -1702,6 +1702,8 @@ router.post('/orders', requireAuth, requireBookingWrite, async (req, res) => {
     logOperation(req, '预订订单', '创建', `订单号=${orderNo}`, orderId);
 
     const order = await readOrderFull(orderId);
+    // feat/140: 新建订单后发群消息通知各部门占位（非阻塞，失败不影响订单创建）
+    sendBookingNotification('create', order).catch(e => console.error('[booking create notify] error:', e));
     res.json({ ok: true, data: order });
   } catch (e) {
     await conn.rollback();
@@ -2302,10 +2304,15 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
 
     const isAdmin = req.user && req.user.role === 'admin';
 
-    // 非管理员仅允许删除 pending 草稿
-    if (!isAdmin && o.status !== 'pending') {
-      return res.status(400).json({ ok: false, error: `仅草稿状态（pending）可删除，当前状态 ${o.status} 不允许删除；如需删除请联系管理员` });
+    // feat/140: 预订员可删除 pending/sales_confirming/rejected 三种"未最终确认"状态
+    // confirmed/completed 仅 admin 可删（防误删已生效订单）
+    const bookerDeletableStatuses = ['pending', 'sales_confirming', 'rejected'];
+    if (!isAdmin && !bookerDeletableStatuses.includes(o.status)) {
+      return res.status(400).json({ ok: false, error: `当前状态 ${o.status} 不允许预订员删除（仅预测单/待确认/已驳回可删），如需删除请联系管理员` });
     }
+
+    // feat/140: 删除前读取完整订单快照（含 items），用于删除后发群消息通知
+    const orderSnapshot = await readOrderFull(req.params.id);
 
     await conn.beginTransaction();
     await conn.query('DELETE FROM booking_items WHERE order_id = ?', [req.params.id]);
@@ -2313,11 +2320,17 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
       // 管理员：删除该订单的所有业务 items，允许删除任何状态
       await conn.query('DELETE FROM booking_orders WHERE id = ? AND is_template = 0', [req.params.id]);
     } else {
-      // 非管理员：仅删除 pending 状态订单
-      await conn.query('DELETE FROM booking_orders WHERE id = ? AND status = ? AND is_template = 0', [req.params.id, 'pending']);
+      // 预订员：仅删除白名单状态订单
+      await conn.query('DELETE FROM booking_orders WHERE id = ? AND status IN (?, ?, ?) AND is_template = 0', [req.params.id, ...bookerDeletableStatuses]);
     }
     await conn.commit();
-    logOperation(req, '预订订单', isAdmin ? '管理员删除订单' : '删除草稿', `订单号=${o.order_no}`, req.params.id);
+    logOperation(req, '预订订单', isAdmin ? '管理员删除订单' : '删除订单', `订单号=${o.order_no}`, req.params.id);
+
+    // feat/140: 删除订单后发群消息通知各部门（非阻塞，失败不影响删除结果）
+    if (orderSnapshot) {
+      sendBookingNotification('delete', orderSnapshot).catch(e => console.error('[booking delete notify] error:', e));
+    }
+
     res.json({ ok: true });
   } catch (e) {
     try { await conn.rollback(); } catch (_) {}
