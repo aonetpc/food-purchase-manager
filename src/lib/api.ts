@@ -353,6 +353,18 @@ export const bookingApi = {
     };
   },
 
+  // feat/143: 查询指定月份各业务总人数（体检/早餐/中餐/晚餐）
+  async getMonthlyPax(month: string): Promise<{ checkup: number; breakfast: number; lunch: number; dinner: number }> {
+    const res = await api.get<{ ok: boolean; data: any; month: string }>('/booking/orders/monthly-pax', { params: { month } });
+    const d = res.data || {};
+    return {
+      checkup: Number(d.checkup) || 0,
+      breakfast: Number(d.breakfast) || 0,
+      lunch: Number(d.lunch) || 0,
+      dinner: Number(d.dinner) || 0,
+    };
+  },
+
   // 查询单个订单详情
   async getOrder(id: string): Promise<BookingApiOrder> {
     const res = await api.get<{ ok: boolean; data: any }>(`/booking/orders/${id}`);

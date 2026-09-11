@@ -443,12 +443,16 @@ function BizRow({
   weekDates,
   todayKey,
   onCardClick,
+  monthlyPax,
+  monthLabel,
 }: {
   biz: (typeof BUSINESS)[number];
   cards: BoardCard[];
   weekDates: Date[];
   todayKey: string;
   onCardClick: (g: BookingOrder) => void;
+  monthlyPax?: number;  // feat/143: 月度总人数（仅体检/早餐/中餐/晚餐）
+  monthLabel?: string;  // feat/143: 月份显示标签如"9月"
 }) {
   const height = rowMinHeight(cards);
   const laneBg = hexAlpha(biz.color, 0.08);
@@ -463,6 +467,9 @@ function BizRow({
         <div className="min-w-0">
           <div className="text-sm font-semibold text-gray-800 truncate">{biz.label}</div>
           <div className="text-[11px] text-gray-500">{cards.length} 项</div>
+          {monthlyPax !== undefined && monthLabel && (
+            <div className="text-[11px] text-gray-600 font-medium mt-0.5">{monthLabel}: {monthlyPax}人</div>
+          )}
         </div>
       </div>
       {/* 右侧日历区 */}
@@ -2375,6 +2382,26 @@ export default function BookingBoard() {
   }, [weekStart, loadOrders]);
 
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+
+  // feat/143: 计算当前周里"天数最多的那个月"（跨月时取主月）
+  const dominantMonth = useMemo(() => {
+    const monthCounts: Record<string, number> = {};
+    weekDates.forEach(d => {
+      const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthCounts[m] = (monthCounts[m] || 0) + 1;
+    });
+    return Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0][0];
+  }, [weekDates]);
+
+  // feat/143: 月度人数统计（体检/早餐/中餐/晚餐）
+  const [monthlyPax, setMonthlyPax] = useState({ checkup: 0, breakfast: 0, lunch: 0, dinner: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    bookingApi.getMonthlyPax(dominantMonth).then(d => {
+      if (!cancelled) setMonthlyPax(d);
+    }).catch(e => console.warn('[BookingBoard] 加载月度人数失败:', e));
+    return () => { cancelled = true; };
+  }, [dominantMonth]);
   const todayKey = todayStr();
 
   // 画板数据：每个业务一行
@@ -3012,6 +3039,8 @@ export default function BookingBoard() {
                   weekDates={weekDates}
                   todayKey={todayKey}
                   onCardClick={handleCardClick}
+                  monthlyPax={['checkup','breakfast','lunch','dinner'].includes(biz.type) ? monthlyPax[biz.type as 'checkup' | 'breakfast' | 'lunch' | 'dinner'] : undefined}
+                  monthLabel={`${Number(dominantMonth.split('-')[1])}月`}
                 />
               ))}
             </div>
@@ -3069,7 +3098,14 @@ export default function BookingBoard() {
                   >
                     <span className="text-base">{biz.icon}</span>
                     <span className="text-sm font-semibold text-gray-800">{biz.label}</span>
-                    <span className="text-[11px] text-gray-500 ml-auto">{cards.length} 项</span>
+                    <span className="text-[11px] text-gray-500 ml-auto">
+                      {cards.length} 项
+                      {['checkup','breakfast','lunch','dinner'].includes(biz.type) && (
+                        <span className="ml-2 text-gray-600 font-medium">
+                          {Number(dominantMonth.split('-')[1])}月: {monthlyPax[biz.type as 'checkup' | 'breakfast' | 'lunch' | 'dinner']}人
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className="divide-y divide-gray-200">
                     {cards.map(card => {
