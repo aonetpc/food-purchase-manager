@@ -1564,6 +1564,41 @@ router.get('/orders/search', requireAuth, async (req, res) => {
 });
 
 // ============================================================
+// GET /api/booking/orders/monthly-pax
+// feat/143: 查询指定月份各业务总人数（体检/早餐/中餐/晚餐）
+// 参数：month=YYYY-MM（默认当前月）
+// 用途：看板左侧 BizRow 显示月度人数，方便备料
+// ============================================================
+router.get('/orders/monthly-pax', requireAuth, async (req, res) => {
+  try {
+    let { month } = req.query;
+    if (!month) {
+      const now = new Date();
+      month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const start = `${month}-01`;
+    const [y, m] = month.split('-').map(Number);
+    const end = new Date(y, m, 0).toISOString().slice(0, 10);
+
+    const [rows] = await pool.query(
+      `SELECT item_type, COALESCE(SUM(pax), 0) AS total_pax
+       FROM booking_items
+       WHERE date BETWEEN ? AND ?
+         AND item_type IN ('checkup','breakfast','lunch','dinner')
+         AND pax > 0
+       GROUP BY item_type`,
+      [start, end]
+    );
+    const result = { checkup: 0, breakfast: 0, lunch: 0, dinner: 0 };
+    for (const r of rows) result[r.item_type] = Number(r.total_pax) || 0;
+    res.json({ ok: true, data: result, month });
+  } catch (e) {
+    console.error('[booking-board] monthly-pax error:', e);
+    res.json({ ok: true, data: { checkup: 0, breakfast: 0, lunch: 0, dinner: 0 }, month: req.query.month || '' });
+  }
+});
+
+// ============================================================
 // GET /api/booking/orders
 // 按周查询订单列表（画板用）
 // 参数：weekStart=YYYY-MM-DD（默认本周一）
