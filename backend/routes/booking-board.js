@@ -1568,6 +1568,13 @@ router.get('/orders/search', requireAuth, async (req, res) => {
 // feat/143: 查询指定月份各业务总人数（体检/早餐/中餐/晚餐）
 // 参数：month=YYYY-MM（默认当前月）
 // 用途：看板左侧 BizRow 显示月度人数，方便备料
+//
+// 人数计算规则（feat/143 修正）：
+//  - 体检：直接 SUM(pax)
+//  - 早餐：不在 booking_items 表（是派生项），复用 deriveBreakfastItems()
+//          每天取 Math.max(checkupPax, lodgingPax) 后按月累加
+//  - 午餐/晚餐：解析 extra.sessions，按桌模式 = tables × perTable，
+//          按人模式 = Σ sessions[].pax
 // ============================================================
 router.get('/orders/monthly-pax', requireAuth, async (req, res) => {
   try {
@@ -1580,18 +1587,66 @@ router.get('/orders/monthly-pax', requireAuth, async (req, res) => {
     const [y, m] = month.split('-').map(Number);
     const end = new Date(y, m, 0).toISOString().slice(0, 10);
 
-    const [rows] = await pool.query(
-      `SELECT item_type, COALESCE(SUM(pax), 0) AS total_pax
+    // ① 体检：直接 SUM(pax)
+    const [checkupRows] = await pool.query(
+      `SELECT COALESCE(SUM(pax), 0) AS total_pax
        FROM booking_items
        WHERE date BETWEEN ? AND ?
-         AND item_type IN ('checkup','breakfast','lunch','dinner')
-         AND pax > 0
-       GROUP BY item_type`,
+         AND item_type = 'checkup'
+         AND pax > 0`,
       [start, end]
     );
-    const result = { checkup: 0, breakfast: 0, lunch: 0, dinner: 0 };
-    for (const r of rows) result[r.item_type] = Number(r.total_pax) || 0;
-    res.json({ ok: true, data: result, month });
+    const checkupTotal = Number(checkupRows[0]?.total_pax) || 0;
+
+    // ② 早餐：查该月所有 checkup + lodging items，复用 deriveBreakfastItems 派生
+    const [bfSourceRows] = await pool.query(
+      `SELECT item_type, date, pax, extra
+       FROM booking_items
+       WHERE date BETWEEN ? AND ?
+         AND item_type IN ('checkup','lodging')`,
+      [start, end]
+    );
+    const bfSourceItems = bfSourceRows.map(normalizeItem);
+    const derivedBreakfasts = deriveBreakfastItems(bfSourceItems);
+    const breakfastTotal = derivedBreakfasts.reduce((s, b) => s + (Number(b.pax) || 0), 0);
+
+    // ③ 午餐/晚餐：解析 extra.sessions 计算人数
+    const [mealRows] = await pool.query(
+      `SELECT item_type, pax, extra
+       FROM booking_items
+       WHERE date BETWEEN ? AND ?
+         AND item_type IN ('lunch','dinner')`,
+      [start, end]
+    );
+    let lunchTotal = 0;
+    let dinnerTotal = 0;
+    for (const row of mealRows) {
+      const extra = parseMaybeJson(row.extra) || {};
+      const sessions = Array.isArray(extra.sessions) ? extra.sessions : [];
+      let mealPax = 0;
+      if (sessions.length > 0) {
+        for (const s of sessions) {
+          const pricingMode = s.pricingMode || 'per_table';
+          if (pricingMode === 'per_person') {
+            mealPax += Number(s.pax) || 0;
+          } else {
+            // 按桌模式：tables × perTable
+            mealPax += (Number(s.tables) || 0) * (Number(s.perTable) || 0);
+          }
+        }
+      } else {
+        // 旧数据兜底：直接用 pax 字段
+        mealPax = Number(row.pax) || 0;
+      }
+      if (row.item_type === 'lunch') lunchTotal += mealPax;
+      else if (row.item_type === 'dinner') dinnerTotal += mealPax;
+    }
+
+    res.json({
+      ok: true,
+      data: { checkup: checkupTotal, breakfast: breakfastTotal, lunch: lunchTotal, dinner: dinnerTotal },
+      month,
+    });
   } catch (e) {
     console.error('[booking-board] monthly-pax error:', e);
     res.json({ ok: true, data: { checkup: 0, breakfast: 0, lunch: 0, dinner: 0 }, month: req.query.month || '' });
