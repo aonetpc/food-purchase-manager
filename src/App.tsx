@@ -69,6 +69,7 @@ const CheckupDesktopFrame = lazy(() => import('@/pages/CheckupTemplates/DesktopF
 const CheckupSharePage = lazy(() => import('@/pages/CheckupTemplates/SharePage'));
 const CheckupTemplatesPage = lazy(() => import('@/pages/CheckupTemplates/DesktopRedirect'));
 const CheckupCenter = lazy(() => import('@/pages/CheckupCenter'));
+const ExpensePaymentMonitor = lazy(() => import('@/pages/ExpensePaymentMonitor'));
 
 const pageLoad = <PageLoading />;
 
@@ -285,6 +286,12 @@ export default function App() {
             <Route path="checkup-center" element={
               <ProtectedRoute requiredPermission="menu:checkup-center">
                 <CheckupCenter />
+              </ProtectedRoute>
+            } />
+            {/* ============== 财务管理模块 ============== */}
+            <Route path="finance/expense-monitor" element={
+              <ProtectedRoute requiredPermission="menu:expense-payment-monitor">
+                <ExpensePaymentMonitor />
               </ProtectedRoute>
             } />
           </Route>
