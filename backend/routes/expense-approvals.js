@@ -150,6 +150,65 @@ function sleep(ms) {
 }
 
 /**
+ * 从审批单 contents 解析金额
+ * 策略（按优先级）：
+ *   1. control_type === 'Money' 且 value 含 new_money / money
+ *   2. value 含 new_money（Money 控件的标准字段）
+ *   3. value 含 money
+ *   4. control_title 含"金额"且 value 是纯数字
+ * 都不匹配返回 0
+ *
+ * @param {Array} contents - apply_data.contents 数组
+ * @returns {number} 金额（DECIMAL(12,2) 精度）
+ */
+function parseAmountFromContents(contents) {
+  if (!Array.isArray(contents)) return 0;
+
+  for (const ctrl of contents) {
+    const val = ctrl.value || {};
+    const controlType = ctrl.control || ctrl.property?.control || '';
+    const title = ctrl.property?.title?.find?.(t => t.lang === 'zh_CN')?.text
+      || ctrl.title
+      || '';
+
+    // 1. Money 控件 + new_money / money
+    if (controlType === 'Money') {
+      const m = val.new_money ?? val.money;
+      const n = parseFloat(String(m ?? 0));
+      if (!isNaN(n)) return Math.round(n * 100) / 100;
+    }
+  }
+
+  // 2. 任意控件 value 含 new_money
+  for (const ctrl of contents) {
+    const val = ctrl.value || {};
+    if (val.new_money !== undefined) {
+      const n = parseFloat(String(val.new_money));
+      if (!isNaN(n)) return Math.round(n * 100) / 100;
+    }
+    if (val.money !== undefined) {
+      const n = parseFloat(String(val.money));
+      if (!isNaN(n)) return Math.round(n * 100) / 100;
+    }
+  }
+
+  // 3. control_title 含"金额"且 value 是纯数字
+  for (const ctrl of contents) {
+    const val = ctrl.value || {};
+    const title = ctrl.property?.title?.find?.(t => t.lang === 'zh_CN')?.text
+      || ctrl.title
+      || '';
+    if (title && title.includes('金额')) {
+      const raw = val.new_money ?? val.money ?? val.value ?? val.text ?? val;
+      const n = parseFloat(String(raw).replace(/[^\d.]/g, ''));
+      if (!isNaN(n)) return Math.round(n * 100) / 100;
+    }
+  }
+
+  return 0;
+}
+
+/**
  * 解析审批单详情并写入 4 张表（幂等：INSERT ... ON DUPLICATE KEY UPDATE）
  *
  * 解析逻辑：
@@ -170,12 +229,16 @@ async function syncOneApproval(config, spNo) {
   const applyerUserid = info.applyer?.userid || '';
   const applyerName = await getUserNameByWecomUserid(applyerUserid);
 
+  // 先解析金额（从表单 contents），写入主表 amount 派生列
+  const contents = info.apply_data?.contents || [];
+  const amount = parseAmountFromContents(contents);
+
   // ---- 1. 主表 ----
   await pool.query(
     `INSERT INTO wecom_expense_approvals
        (sp_no, template_id, sp_name, apply_time, applyer_userid, applyer_name,
-        sp_status, sp_status_name, raw_detail, last_synced_at)
-     VALUES (?, ?, ?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?, NOW())
+        sp_status, sp_status_name, amount, raw_detail, last_synced_at)
+     VALUES (?, ?, ?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE
        template_id = VALUES(template_id),
        sp_name = VALUES(sp_name),
@@ -184,6 +247,7 @@ async function syncOneApproval(config, spNo) {
        applyer_name = VALUES(applyer_name),
        sp_status = VALUES(sp_status),
        sp_status_name = VALUES(sp_status_name),
+       amount = VALUES(amount),
        raw_detail = VALUES(raw_detail),
        last_synced_at = NOW()`,
     [
@@ -195,6 +259,7 @@ async function syncOneApproval(config, spNo) {
       applyerName,
       spStatus,
       spStatusName,
+      amount,
       JSON.stringify(info),
     ]
   );
@@ -389,14 +454,11 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
     const [rows] = await pool.query(
       `SELECT
          e.sp_no, e.sp_name, e.apply_time, e.applyer_userid, e.applyer_name,
-         e.sp_status, e.sp_status_name, e.last_synced_at,
+         e.sp_status, e.sp_status_name, e.last_synced_at, e.amount,
          IFNULL(p.payment_status,'unpaid') AS payment_status,
          p.paid_time, p.paid_by_name, p.payment_remark,
          cn.node_name AS current_node_name,
-         cn.approver_name AS current_approver_name,
-         (SELECT control_value FROM wecom_expense_approval_forms f
-          WHERE f.sp_no = e.sp_no AND f.control_type = 'Money'
-          ORDER BY f.id LIMIT 1) AS amount_value
+         cn.approver_name AS current_approver_name
        FROM wecom_expense_approvals e
        LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
        LEFT JOIN wecom_expense_approval_nodes cn ON e.sp_no = cn.sp_no AND cn.is_current = 1
@@ -415,21 +477,12 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
     );
     const total = countRows[0].total;
 
-    // 合计（已通过金额、已支付金额、未支付金额）
+    // 合计（已通过金额、已支付金额、未支付金额）—— 直接用主表 amount 派生列
     const [summaryRows] = await pool.query(
       `SELECT
-         COALESCE(SUM(CASE WHEN e.sp_status = 2 THEN
-           CAST((SELECT control_value->'$.new_money' FROM wecom_expense_approval_forms f
-                 WHERE f.sp_no = e.sp_no AND f.control_type = 'Money' LIMIT 1) AS DECIMAL(12,2)
-           ) ELSE 0 END), 0) AS approved_amount,
-         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'paid' THEN
-           CAST((SELECT control_value->'$.new_money' FROM wecom_expense_approval_forms f
-                 WHERE f.sp_no = e.sp_no AND f.control_type = 'Money' LIMIT 1) AS DECIMAL(12,2)
-           ) ELSE 0 END), 0) AS paid_amount,
-         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'unpaid' THEN
-           CAST((SELECT control_value->'$.new_money' FROM wecom_expense_approval_forms f
-                 WHERE f.sp_no = e.sp_no AND f.control_type = 'Money' LIMIT 1) AS DECIMAL(12,2)
-           ) ELSE 0 END), 0) AS unpaid_amount
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 THEN e.amount ELSE 0 END), 0) AS approved_amount,
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'paid' THEN e.amount ELSE 0 END), 0) AS paid_amount,
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'unpaid' THEN e.amount ELSE 0 END), 0) AS unpaid_amount
        FROM wecom_expense_approvals e
        LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
        ${whereSql}`,
@@ -687,5 +740,6 @@ module.exports = router;
 module.exports.syncRange = syncRange;
 module.exports.syncOneApproval = syncOneApproval;
 module.exports.getApprovalInfo = getApprovalInfo;
+module.exports.parseAmountFromContents = parseAmountFromContents;
 module.exports.SP_STATUS_MAP = SP_STATUS_MAP;
 module.exports.TERMINAL_STATUSES = TERMINAL_STATUSES;
