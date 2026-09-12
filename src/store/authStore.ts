@@ -274,7 +274,7 @@ export const useAuthStore = create<AuthStore>()(
         // 后端 /auth/me 会正常返回，不再需要前端兜底注入。
         // 参考 Hard Constraints #17：新增菜单必须注册 permissions 表，不能靠 authStore 兜底。
 
-        const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/checkup-center', '/checkup-templates', '/wecom', '/wecom-test'];
+        const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/management-report', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/finance/expense-monitor', '/checkup-center', '/checkup-templates', '/wecom', '/wecom-test'];
         return mergedMenus.sort((a, b) => {
           const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;
           const bIdx = order.indexOf(b.path) >= 0 ? order.indexOf(b.path) : 100;
