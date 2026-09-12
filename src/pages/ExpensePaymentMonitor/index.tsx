@@ -14,7 +14,7 @@
  *   7. 详情抽屉：完整审批节点 timeline + 表单值
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { expenseApi, type ExpenseApprovalListItem, type ExpenseApprovalDetail } from '@/lib/api';
 
@@ -28,21 +28,6 @@ function formatAmount(val: string | number | null | undefined): string {
   const n = typeof val === 'string' ? parseFloat(val) : val;
   if (isNaN(n)) return '-';
   return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/** 从 amount_value JSON 字符串解析金额 */
-function parseAmount(raw: string | null | undefined): number {
-  if (!raw) return 0;
-  try {
-    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    const money = obj?.new_money ?? obj?.value ?? obj;
-    const n = parseFloat(String(money));
-    return isNaN(n) ? 0 : n;
-  } catch {
-    // 纯数字字符串
-    const n = parseFloat(String(raw));
-    return isNaN(n) ? 0 : n;
-  }
 }
 
 /** 格式化时间 */
@@ -123,11 +108,7 @@ export default function ExpensePaymentMonitor() {
         status: statusFilter ? Number(statusFilter) : undefined,
         paymentStatus: paymentFilter || undefined,
       });
-      // amount_value 是 JSON 字符串，需要解析后重新包装便于渲染
-      setList(res.list.map(item => ({
-        ...item,
-        // 后端返回的 amount_value 是 JSON 对象（mysql2 自动解析 JSON 列），直接用
-      })) as any);
+      setList(res.list);
       setTotal(res.total);
       setSummary(res.summary);
     } catch (err: any) {
@@ -139,6 +120,30 @@ export default function ExpensePaymentMonitor() {
   }, [page, pageSize, statusFilter, paymentFilter]);
 
   useEffect(() => { loadList(); }, [loadList]);
+
+  // ---- 按月分组（最近月份在前）----
+  const groupedByMonth = useMemo(() => {
+    const groups: Record<string, ExpenseApprovalListItem[]> = {};
+    for (const item of list) {
+      if (!item.apply_time) {
+        (groups['未分组'] ||= []).push(item);
+        continue;
+      }
+      const d = new Date(item.apply_time);
+      if (isNaN(d.getTime())) {
+        (groups['未分组'] ||= []).push(item);
+        continue;
+      }
+      const key = `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月`;
+      (groups[key] ||= []).push(item);
+    }
+    // 按月份降序（最近在前），"未分组"排最后
+    return Object.entries(groups).sort(([a], [b]) => {
+      if (a === '未分组') return 1;
+      if (b === '未分组') return -1;
+      return b.localeCompare(a);
+    });
+  }, [list]);
 
   // ---- 同步 ----
   const handleSync = async () => {
@@ -301,63 +306,82 @@ export default function ExpensePaymentMonitor() {
                 <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">
                   暂无数据。请先在 WecomManager 配置"费用支付申请模板ID"后运行同步脚本。
                 </td></tr>
-              ) : list.map((item) => (
-                <tr key={item.sp_no} className="hover:bg-gray-50">
-                  <td className="px-3 py-3 font-mono text-xs text-gray-700">{item.sp_no}</td>
-                  <td className="px-3 py-3 text-gray-900">{item.applyer_name || item.applyer_userid || '-'}</td>
-                  <td className="px-3 py-3 text-right text-gray-900">
-                    {item.sp_status === 2 ? `¥${formatAmount(parseAmount(item.amount_value as any))}` : '-'}
-                  </td>
-                  <td className="px-3 py-3">
-                    <StatusBadge status={item.sp_status} label={item.sp_status_name} />
-                  </td>
-                  <td className="px-3 py-3 text-gray-700">
-                    {item.current_node_name ? (
-                      <div>
-                        <div>{item.current_node_name}</div>
-                        {item.current_approver_name && (
-                          <div className="text-xs text-gray-400">待审: {item.current_approver_name}</div>
+              ) : groupedByMonth.map(([month, items]) => (
+                <Fragment key={month}>
+                  {/* 月份标题行 */}
+                  <tr className="bg-gray-50">
+                    <td colSpan={8} className="px-3 py-2 text-sm font-semibold text-gray-700 border-t border-gray-200">
+                      {month}
+                      <span className="ml-2 text-xs font-normal text-gray-400">
+                        共 {items.length} 条
+                        {items.some(i => i.sp_status === 2) && (
+                          <span className="ml-2">
+                            · 已通过 ¥{formatAmount(items.filter(i => i.sp_status === 2).reduce((s, i) => s + (i.amount || 0), 0))}
+                          </span>
                         )}
-                      </div>
-                    ) : '-'}
-                  </td>
-                  <td className="px-3 py-3">
-                    {item.sp_status === 2 ? (
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
-                        item.payment_status === 'paid'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-amber-100 text-amber-700'
-                      }`}>
-                        {item.payment_status === 'paid' ? '✓ 已支付' : '⚠ 未支付'}
                       </span>
-                    ) : '-'}
-                  </td>
-                  <td className="px-3 py-3 text-gray-600">{formatTime(item.apply_time)}</td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={() => handleViewDetail(item.sp_no)}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >详情</button>
-                      {canMarkPaid && item.sp_status === 2 && (
-                        <>
-                          <span className="text-gray-300">|</span>
-                          {item.payment_status === 'unpaid' ? (
-                            <button
-                              onClick={() => { setMarkPaidModal({ spNo: item.sp_no, action: 'paid' }); setPaymentRemark(''); }}
-                              className="text-xs text-green-600 hover:text-green-800"
-                            >标记已付</button>
-                          ) : (
-                            <button
-                              onClick={() => setMarkPaidModal({ spNo: item.sp_no, action: 'unpaid' })}
-                              className="text-xs text-amber-600 hover:text-amber-800"
-                            >撤销已付</button>
+                    </td>
+                  </tr>
+                  {/* 该月记录 */}
+                  {items.map((item) => (
+                    <tr key={item.sp_no} className="hover:bg-gray-50">
+                      <td className="px-3 py-3 font-mono text-xs text-gray-700">{item.sp_no}</td>
+                      <td className="px-3 py-3 text-gray-900">{item.applyer_name || item.applyer_userid || '-'}</td>
+                      <td className="px-3 py-3 text-right text-gray-900">
+                        {item.sp_status === 2 ? `¥${formatAmount(item.amount)}` : '-'}
+                      </td>
+                      <td className="px-3 py-3">
+                        <StatusBadge status={item.sp_status} label={item.sp_status_name} />
+                      </td>
+                      <td className="px-3 py-3 text-gray-700">
+                        {item.current_node_name ? (
+                          <div>
+                            <div>{item.current_node_name}</div>
+                            {item.current_approver_name && (
+                              <div className="text-xs text-gray-400">待审: {item.current_approver_name}</div>
+                            )}
+                          </div>
+                        ) : '-'}
+                      </td>
+                      <td className="px-3 py-3">
+                        {item.sp_status === 2 ? (
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
+                            item.payment_status === 'paid'
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}>
+                            {item.payment_status === 'paid' ? '✓ 已支付' : '⚠ 未支付'}
+                          </span>
+                        ) : '-'}
+                      </td>
+                      <td className="px-3 py-3 text-gray-600">{formatTime(item.apply_time)}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => handleViewDetail(item.sp_no)}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >详情</button>
+                          {canMarkPaid && item.sp_status === 2 && (
+                            <>
+                              <span className="text-gray-300">|</span>
+                              {item.payment_status === 'unpaid' ? (
+                                <button
+                                  onClick={() => { setMarkPaidModal({ spNo: item.sp_no, action: 'paid' }); setPaymentRemark(''); }}
+                                  className="text-xs text-green-600 hover:text-green-800"
+                                >标记已付</button>
+                              ) : (
+                                <button
+                                  onClick={() => setMarkPaidModal({ spNo: item.sp_no, action: 'unpaid' })}
+                                  className="text-xs text-amber-600 hover:text-amber-800"
+                                >撤销已付</button>
+                              )}
+                            </>
                           )}
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>

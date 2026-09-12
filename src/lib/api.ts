@@ -727,7 +727,7 @@ export interface ExpenseApprovalListItem {
   payment_remark: string | null;
   current_node_name: string | null;
   current_approver_name: string | null;
-  amount_value: string | null;
+  amount: number;
 }
 
 export interface ExpenseApprovalListResponse {
