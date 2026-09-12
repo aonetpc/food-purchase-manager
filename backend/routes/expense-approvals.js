@@ -27,11 +27,16 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/rbac');
-const {
-  getWecomConfig,
-  getAccessToken,
-  getApprovalDetail,
-} = require('./wecom');
+
+// 延迟 require('./wecom')，避免与 wecom.js 的 router.use(require('./expense-approvals')) 形成循环依赖
+// 循环依赖会导致 require('./expense-approvals') 返回空对象 {}，router.use 抛 TypeError
+let _wecomHelpers = null;
+function getWecomHelpers() {
+  if (!_wecomHelpers) {
+    _wecomHelpers = require('./wecom');
+  }
+  return _wecomHelpers;
+}
 
 // ============================================================
 // 常量
@@ -87,7 +92,7 @@ const RATE_LIMIT_BACKOFF_MS = 60 * 1000;
  * @returns {Promise<{sp_no_list: string[], next_cursor: string}>}
  */
 async function getApprovalInfo(config, starttime, endtime, templateId, cursor) {
-  const accessToken = await getAccessToken(config);
+  const accessToken = await getWecomHelpers().getAccessToken(config);
   const body = {
     starttime: String(starttime),
     endtime: String(endtime),
@@ -157,7 +162,7 @@ function sleep(ms) {
  * @returns {Promise<Object>} 写入结果 { sp_no, sp_status, current_node_name, current_approver_name }
  */
 async function syncOneApproval(config, spNo) {
-  const detail = await getApprovalDetail(config, spNo);
+  const detail = await getWecomHelpers().getApprovalDetail(config, spNo);
   const info = detail.info || {};
 
   const spStatus = info.sp_status;
@@ -485,7 +490,7 @@ router.get('/:sp_no', requireAuth, requirePermission('menu:expense-payment-monit
  */
 router.post('/sync', requireAuth, requirePermission('menu:expense-payment-monitor'), async (req, res) => {
   try {
-    const config = await getWecomConfig();
+    const config = await getWecomHelpers().getWecomConfig();
     if (!config || !config.corp_id || !config.app_secret) {
       return res.status(400).json({ error: '请先完成企业微信应用配置' });
     }
@@ -577,7 +582,7 @@ router.post('/refresh-status', requireAuth, requirePermission('menu:expense-paym
       });
     }
 
-    const config = await getWecomConfig();
+    const config = await getWecomHelpers().getWecomConfig();
     if (!config || !config.corp_id || !config.app_secret) {
       return res.status(400).json({ error: '请先完成企业微信应用配置' });
     }
