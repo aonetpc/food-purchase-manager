@@ -706,3 +706,98 @@ export const bookingApi = {
     await api.delete<{ ok: boolean }>(`/booking/config/payment-methods/${id}`);
   },
 };
+
+// ============================================================
+// 费用支付监控模块 API
+// 后端挂载在 /api/wecom/expense-approvals 下（通过 wecom.js 挂载，不改 server.js）
+// ============================================================
+
+export interface ExpenseApprovalListItem {
+  sp_no: string;
+  sp_name: string;
+  apply_time: string | null;
+  applyer_userid: string;
+  applyer_name: string | null;
+  sp_status: number;
+  sp_status_name: string;
+  last_synced_at: string | null;
+  payment_status: 'unpaid' | 'paid';
+  paid_time: string | null;
+  paid_by_name: string | null;
+  payment_remark: string | null;
+  current_node_name: string | null;
+  current_approver_name: string | null;
+  amount_value: string | null;
+}
+
+export interface ExpenseApprovalListResponse {
+  list: ExpenseApprovalListItem[];
+  total: number;
+  summary: {
+    approved_amount: number;
+    paid_amount: number;
+    unpaid_amount: number;
+  };
+}
+
+export interface ExpenseApprovalDetail extends ExpenseApprovalListItem {
+  template_id: string;
+  raw_detail: any;
+  nodes: any[];
+  forms: any[];
+  payment: { payment_status: string; paid_time?: string; paid_by_name?: string; payment_remark?: string };
+}
+
+export interface ExpenseSyncResponse {
+  synced: number;
+  failed: number;
+  total: number;
+  skipped?: boolean;
+  message?: string;
+  errors?: string[];
+  last_synced_at: string;
+}
+
+export const expenseApi = {
+  /** 分页列表 */
+  async list(params: {
+    page?: number;
+    pageSize?: number;
+    status?: number;
+    paymentStatus?: string;
+    applyerUserid?: string;
+    startTime?: string;
+    endTime?: string;
+  }): Promise<ExpenseApprovalListResponse> {
+    return api.get<ExpenseApprovalListResponse>('/wecom/expense-approvals', { params });
+  },
+
+  /** 单条详情 */
+  async detail(spNo: string): Promise<ExpenseApprovalDetail> {
+    return api.get<ExpenseApprovalDetail>(`/wecom/expense-approvals/${spNo}`);
+  },
+
+  /** 增量同步（5 分钟节流） */
+  async sync(): Promise<ExpenseSyncResponse> {
+    return api.post<ExpenseSyncResponse>('/wecom/expense-approvals/sync');
+  },
+
+  /** 刷新当前页非终态状态 */
+  async refreshStatus(ids: string[]): Promise<{
+    results: any[];
+    failed: { sp_no: string; error: string }[];
+    summary: { total: number; refreshed: number; skipped: number; failed: number };
+  }> {
+    return api.post('/wecom/expense-approvals/refresh-status', { ids });
+  },
+
+  /** 标记已支付 */
+  async markPaid(spNo: string, paymentRemark?: string): Promise<{ sp_no: string; payment_status: string; paid_time: string }> {
+    return api.post(`/wecom/expense-approvals/${spNo}/mark-paid`, { payment_remark: paymentRemark });
+  },
+
+  /** 撤销已支付标记 */
+  async markUnpaid(spNo: string): Promise<{ sp_no: string; payment_status: string }> {
+    return api.post(`/wecom/expense-approvals/${spNo}/mark-unpaid`);
+  },
+};

@@ -589,7 +589,9 @@ router.put('/config', async (req, res) => {
       warehouse_approval_template_id, warehouse_field_mapping, warehouse_dept_options,
       booking_webhook_url, booking_notify_submit, booking_notify_sales,
       booking_notify_approve, booking_notify_reject,
-      booking_approver_userid, booking_approver_name
+      booking_approver_userid, booking_approver_name,
+      expense_payment_template_id, expense_payment_applyer_userid,
+      expense_payment_options, expense_payment_default
     } = req.body;
 
     await pool.query('INSERT IGNORE INTO wecom_config (id) VALUES (1)');
@@ -627,6 +629,10 @@ router.put('/config', async (req, res) => {
     if (booking_notify_reject !== undefined) { fields.push('booking_notify_reject = ?'); values.push(Number(booking_notify_reject) || 0); }
     if (booking_approver_userid !== undefined) { fields.push('booking_approver_userid = ?'); values.push(booking_approver_userid || null); }
     if (booking_approver_name !== undefined) { fields.push('booking_approver_name = ?'); values.push(booking_approver_name || null); }
+    if (expense_payment_template_id !== undefined) { fields.push('expense_payment_template_id = ?'); values.push(expense_payment_template_id || null); }
+    if (expense_payment_applyer_userid !== undefined) { fields.push('expense_payment_applyer_userid = ?'); values.push(expense_payment_applyer_userid || null); }
+    if (expense_payment_options !== undefined) { fields.push('expense_payment_options = ?'); values.push(expense_payment_options ? JSON.stringify(expense_payment_options) : null); }
+    if (expense_payment_default !== undefined) { fields.push('expense_payment_default = ?'); values.push(expense_payment_default || null); }
 
     if (fields.length > 0) {
       values.push(1);
@@ -3154,6 +3160,12 @@ async function sendBookingNotification(type, order, extra = {}) {
   console.log(`[sendBookingNotification] 完成: type=${type}, orderNo=${orderNo}, result=`, JSON.stringify(result));
   return result;
 }
+
+// ================================================
+// 费用支付监控子路由（挂载在 /api/wecom/expense-approvals 下）
+// 不改 server.js 红线文件，通过 wecom 路由挂载
+// ================================================
+router.use('/expense-approvals', require('./expense-approvals'));
 
 module.exports = router;
 module.exports.getWecomConfig = getWecomConfig;
