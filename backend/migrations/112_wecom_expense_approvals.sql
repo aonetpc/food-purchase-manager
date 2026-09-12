@@ -160,12 +160,13 @@ SET module_id = 'finance', type = 'menu', status = 1
 WHERE code = 'menu:my-expense-summary';
 
 -- 权限2：标记支付状态（仅 finance/admin）
+-- 注意：permissions.type 是 ENUM('menu','button','api')，不支持 'action'，用 'button' 代替
 INSERT IGNORE INTO permissions (id, module_id, code, name, type, parent_id, path, icon, sort_order, status) VALUES
-  (UUID(), 'finance', 'action:mark-expense-paid', '标记支付状态', 'action', NULL, NULL, 'Check', 3, 1);
+  (UUID(), 'finance', 'action:mark-expense-paid', '标记支付状态', 'button', NULL, NULL, 'Check', 3, 1);
 
 -- 补正
 UPDATE permissions
-SET module_id = 'finance', type = 'action', status = 1
+SET module_id = 'finance', type = 'button', status = 1
 WHERE code = 'action:mark-expense-paid';
 
 
