@@ -338,7 +338,7 @@ async function syncOneApproval(config, spNo) {
   // 先清除旧表单值
   await pool.query('DELETE FROM wecom_expense_approval_forms WHERE sp_no = ?', [spNo]);
 
-  const contents = info.apply_data?.contents || [];
+  // 复用上方已声明的 contents（行 233，解析金额时已取出），避免重复声明
   for (const ctrl of contents) {
     if (!ctrl.id) continue;
     await pool.query(
