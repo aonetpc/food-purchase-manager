@@ -590,8 +590,8 @@ router.put('/config', async (req, res) => {
       booking_webhook_url, booking_notify_submit, booking_notify_sales,
       booking_notify_approve, booking_notify_reject,
       booking_approver_userid, booking_approver_name,
-      expense_payment_template_id, expense_payment_applyer_userid,
-      expense_payment_options, expense_payment_default
+      expense_payment_template_id
+      // expense_payment_applyer_userid 保留字段，前端暂不配置（未来用于筛选默认值）
     } = req.body;
 
     await pool.query('INSERT IGNORE INTO wecom_config (id) VALUES (1)');
@@ -630,9 +630,8 @@ router.put('/config', async (req, res) => {
     if (booking_approver_userid !== undefined) { fields.push('booking_approver_userid = ?'); values.push(booking_approver_userid || null); }
     if (booking_approver_name !== undefined) { fields.push('booking_approver_name = ?'); values.push(booking_approver_name || null); }
     if (expense_payment_template_id !== undefined) { fields.push('expense_payment_template_id = ?'); values.push(expense_payment_template_id || null); }
-    if (expense_payment_applyer_userid !== undefined) { fields.push('expense_payment_applyer_userid = ?'); values.push(expense_payment_applyer_userid || null); }
-    if (expense_payment_options !== undefined) { fields.push('expense_payment_options = ?'); values.push(expense_payment_options ? JSON.stringify(expense_payment_options) : null); }
-    if (expense_payment_default !== undefined) { fields.push('expense_payment_default = ?'); values.push(expense_payment_default || null); }
+    // expense_payment_applyer_userid 读写保留（前端暂不传，后端兼容未来扩展）
+    // if (expense_payment_applyer_userid !== undefined) { fields.push('expense_payment_applyer_userid = ?'); values.push(expense_payment_applyer_userid || null); }
 
     if (fields.length > 0) {
       values.push(1);
