@@ -35,9 +35,7 @@ interface WecomConfig {
   booking_approver_name?: string;
   // 费用支付申请配置（独立配置，不复用 approval_template_id）
   expense_payment_template_id?: string;
-  expense_payment_applyer_userid?: string;
-  expense_payment_options?: Array<{ label: string; value: string }>;
-  expense_payment_default?: string;
+  // expense_payment_applyer_userid 保留字段，前端暂不配置（未来用于筛选默认值）
 }
 
 interface TemplateControl {
@@ -88,6 +86,8 @@ export default function WecomManager() {
   const [templateControls, setTemplateControls] = useState<TemplateControl[]>([]);
   // 仓库采购模板控件列表
   const [warehouseTemplateControls, setWarehouseTemplateControls] = useState<TemplateControl[]>([]);
+  // 费用支付申请模板控件列表（拉取后展示，用于确认字段结构）
+  const [expenseTemplateControls, setExpenseTemplateControls] = useState<TemplateControl[]>([]);
 
   // 回调日志
   const [callbackLogs, setCallbackLogs] = useState<any[]>([]);
@@ -256,6 +256,40 @@ export default function WecomManager() {
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
       setError(err.message || '拉取仓库模板失败');
+    }
+  };
+
+  // 拉取费用支付申请审批模板结构（验证模板ID + 展示字段结构）
+  // 用途：确认模板配置正确 + 看到同步会拿到的字段，不影响同步脚本（脚本按 control_type 原样存）
+  const handleFetchExpenseTemplate = async () => {
+    if (!config.expense_payment_template_id) {
+      setError('请先填写费用支付申请审批模板ID');
+      return;
+    }
+    setError('');
+    try {
+      const data = await api.get<any>(`/wecom/approval-template/${config.expense_payment_template_id}`);
+      const controls = data.template_content?.controls || data.controls || [];
+      const controlList: TemplateControl[] = [];
+      for (const ctrl of controls) {
+        const property = ctrl.property || ctrl;
+        const titleArr = property.title || [];
+        const title = titleArr.find((t: any) => t.lang === 'zh_CN')?.text
+          || titleArr.find((t: any) => t.text)?.text
+          || property.control
+          || property.id;
+        controlList.push({
+          control: property.control,
+          id: property.id,
+          label: title,
+          value: ctrl.value || property.value
+        });
+      }
+      setExpenseTemplateControls(controlList);
+      setSuccess(`已拉取费用支付申请模板，共${controlList.length}个字段`);
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (err: any) {
+      setError(err.message || '拉取费用支付申请模板失败');
     }
   };
 
@@ -849,90 +883,58 @@ export default function WecomManager() {
             />
             <p className="text-xs text-gray-500 mt-1">在企微管理后台 → 应用管理 → 审批 → 费用支付申请 → 模板详情里获取模板ID，复制粘贴到这里</p>
           </div>
+          {/*
+            申请人UserID（兜底）暂不配置——监控页面按模板ID拉全量审批历史，不依赖申请人userid。
+            未来若需"默认筛选某用户"可启用此字段。
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">申请人UserID（兜底）</label>
             <input
               type="text"
               value={getFieldValue('expense_payment_applyer_userid')}
               onChange={(e) => setFieldValue('expense_payment_applyer_userid', e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm"
               placeholder="默认申请人企微userid（可留空）"
             />
-            <p className="text-xs text-gray-500 mt-1">该UserID仅在查询审批历史时作为兜底参数，实际查询按模板ID拉全量</p>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">付款方式选项</label>
-            <div className="space-y-2">
-              {(config.expense_payment_options || []).map((opt, idx) => (
-                <div key={idx} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={opt.label}
-                    onChange={(e) => {
-                      const newOpts = [...(config.expense_payment_options || [])];
-                      newOpts[idx] = { ...opt, label: e.target.value };
-                      setConfig(prev => ({ ...prev, expense_payment_options: newOpts }));
-                    }}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                    placeholder="显示名称"
-                  />
-                  <input
-                    type="text"
-                    value={opt.value}
-                    onChange={(e) => {
-                      const newOpts = [...(config.expense_payment_options || [])];
-                      newOpts[idx] = { ...opt, value: e.target.value };
-                      setConfig(prev => ({ ...prev, expense_payment_options: newOpts }));
-                    }}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                    placeholder="选项value"
-                  />
-                  <button
-                    onClick={() => {
-                      const newOpts = (config.expense_payment_options || []).filter((_, i) => i !== idx);
-                      setConfig(prev => ({ ...prev, expense_payment_options: newOpts }));
-                    }}
-                    className="px-3 text-gray-400 hover:text-danger-500"
-                  >✕</button>
-                </div>
-              ))}
-              <button
-                onClick={() => {
-                  const newOpts = [...(config.expense_payment_options || []), { label: '', value: '' }];
-                  setConfig(prev => ({ ...prev, expense_payment_options: newOpts }));
-                }}
-                className="text-sm text-primary-500 hover:text-primary-600"
-              >+ 添加选项</button>
+          */}
+
+          {expenseTemplateControls.length > 0 && (
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Link2 size={16} className="text-green-600" />
+                <label className="text-sm font-medium text-gray-700">模板字段结构（验证用，无需映射）</label>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">下方是企微模板的控件列表，同步脚本会按控件类型自动解析存入本地表</p>
+              <div className="space-y-1">
+                {expenseTemplateControls.map((ctrl, idx) => (
+                  <div key={idx} className="flex items-center gap-3 rounded border border-gray-100 bg-gray-50 px-3 py-2 text-xs">
+                    <span className="inline-block rounded bg-green-100 px-1.5 py-0.5 text-green-700 font-mono">{ctrl.control}</span>
+                    <span className="flex-1 text-gray-700">{ctrl.label}</span>
+                    <span className="text-gray-400 font-mono">{ctrl.id}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">默认付款方式</label>
-            <select
-              value={config.expense_payment_default || ''}
-              onChange={(e) => setConfig(prev => ({ ...prev, expense_payment_default: e.target.value }))}
-              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-            >
-              <option value="">请选择</option>
-              {(config.expense_payment_options || []).map((opt, idx) => (
-                <option key={idx} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+          )}
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-600">
             <p>💡 使用说明：</p>
             <p>1. 在企微管理后台找到"费用支付申请"模板，复制模板ID粘贴到上方</p>
-            <p>2. 付款方式选项从企微模板的"拉取模板结构"功能可自动获取，也可手动添加</p>
+            <p>2. 点"拉取模板结构"验证模板ID是否正确，并查看包含哪些字段</p>
             <p>3. 保存后到费用支付监控页面点"增量同步"或运行首次全量同步脚本</p>
           </div>
 
-          <div className="flex justify-end items-center">
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleFetchExpenseTemplate}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw size={16} />
+              拉取模板结构
+            </button>
             <button
               onClick={() => saveSection('费用支付申请', {
                 expense_payment_template_id: getFieldValue('expense_payment_template_id'),
-                expense_payment_applyer_userid: getFieldValue('expense_payment_applyer_userid'),
-                expense_payment_options: config.expense_payment_options,
-                expense_payment_default: config.expense_payment_default,
               })}
               disabled={sectionStatus['费用支付申请'] === 'saving'}
               className="btn-primary flex items-center gap-2 disabled:opacity-50"
