@@ -70,6 +70,7 @@ const CheckupSharePage = lazy(() => import('@/pages/CheckupTemplates/SharePage')
 const CheckupTemplatesPage = lazy(() => import('@/pages/CheckupTemplates/DesktopRedirect'));
 const CheckupCenter = lazy(() => import('@/pages/CheckupCenter'));
 const ExpensePaymentMonitor = lazy(() => import('@/pages/ExpensePaymentMonitor'));
+const MyExpenseSummary = lazy(() => import('@/pages/MyExpenseSummary'));
 
 const pageLoad = <PageLoading />;
 
@@ -292,6 +293,11 @@ export default function App() {
             <Route path="finance/expense-monitor" element={
               <ProtectedRoute requiredPermission="menu:expense-payment-monitor">
                 <ExpensePaymentMonitor />
+              </ProtectedRoute>
+            } />
+            <Route path="finance/my-expense" element={
+              <ProtectedRoute requiredPermission="menu:my-expense-summary">
+                <MyExpenseSummary />
               </ProtectedRoute>
             } />
           </Route>

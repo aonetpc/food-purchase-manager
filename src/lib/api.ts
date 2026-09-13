@@ -725,6 +725,9 @@ export interface ExpenseApprovalListItem {
   paid_time: string | null;
   paid_by_name: string | null;
   payment_remark: string | null;
+  received_status: 'unreceived' | 'received';
+  received_time: string | null;
+  received_by_name: string | null;
   current_node_name: string | null;
   current_approver_name: string | null;
   amount: number;
@@ -737,6 +740,7 @@ export interface ExpenseApprovalListResponse {
     approved_amount: number;
     paid_amount: number;
     unpaid_amount: number;
+    received_amount?: number;
   };
 }
 
@@ -801,5 +805,31 @@ export const expenseApi = {
   /** 撤销已支付标记 */
   async markUnpaid(spNo: string): Promise<{ sp_no: string; payment_status: string }> {
     return api.post(`/wecom/expense-approvals/${spNo}/mark-unpaid`);
+  },
+
+  /** 批量标记已支付 */
+  async markPaidBatch(spNos: string[], paymentRemark?: string): Promise<{ total: number; success: number; failed: number; paid_time: string }> {
+    return api.post('/wecom/expense-approvals/mark-paid-batch', { sp_nos: spNos, payment_remark: paymentRemark });
+  },
+
+  /** 我的报销列表 */
+  async myList(params: {
+    page?: number;
+    pageSize?: number;
+    status?: number;
+    month?: string;
+    keyword?: string;
+  }): Promise<ExpenseApprovalListResponse> {
+    return api.get<ExpenseApprovalListResponse>('/wecom/expense-approvals/my', { params });
+  },
+
+  /** 标记已收到 */
+  async markReceived(spNo: string): Promise<{ sp_no: string; received_status: string; received_time: string }> {
+    return api.post(`/wecom/expense-approvals/${spNo}/mark-received`);
+  },
+
+  /** 撤销已收到标记 */
+  async markUnreceived(spNo: string): Promise<{ sp_no: string; received_status: string }> {
+    return api.post(`/wecom/expense-approvals/${spNo}/mark-unreceived`);
   },
 };
