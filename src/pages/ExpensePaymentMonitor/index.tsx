@@ -110,6 +110,12 @@ export default function ExpensePaymentMonitor() {
   const [markPaidLoading, setMarkPaidLoading] = useState(false);
   const [paymentRemark, setPaymentRemark] = useState('');
 
+  // 通用通知 Modal（替代 alert）
+  const [noticeModal, setNoticeModal] = useState<{ title: string; message: string; type: 'info' | 'success' | 'error' } | null>(null);
+  const showNotice = (title: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    setNoticeModal({ title, message, type });
+  };
+
   // ---- 加载列表 ----
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -127,7 +133,7 @@ export default function ExpensePaymentMonitor() {
       setSummary(res.summary);
     } catch (err: any) {
       console.error('加载列表失败:', err);
-      alert(`加载失败: ${err.message}`);
+      showNotice('加载失败', err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -163,13 +169,13 @@ export default function ExpensePaymentMonitor() {
     try {
       const res = await expenseApi.sync();
       if (res.skipped) {
-        alert(res.message || '刚同步过，请稍后再试');
+        showNotice('同步提示', res.message || '刚同步过，请稍后再试', 'info');
       } else {
-        alert(`同步完成：新增 ${res.synced} 条，失败 ${res.failed} 条`);
+        showNotice('同步完成', `新增 ${res.synced} 条，失败 ${res.failed} 条`, res.failed > 0 ? 'info' : 'success');
         loadList();
       }
     } catch (err: any) {
-      alert(`同步失败: ${err.message}`);
+      showNotice('同步失败', err.message, 'error');
     } finally {
       setSyncing(false);
     }
@@ -182,10 +188,10 @@ export default function ExpensePaymentMonitor() {
     try {
       const ids = list.map(item => item.sp_no);
       const res = await expenseApi.refreshStatus(ids);
-      alert(`刷新完成：成功 ${res.summary.refreshed} 条，跳过 ${res.summary.skipped} 条，失败 ${res.summary.failed} 条`);
+      showNotice('刷新完成', `成功 ${res.summary.refreshed} 条，跳过 ${res.summary.skipped} 条，失败 ${res.summary.failed} 条`, res.summary.failed > 0 ? 'info' : 'success');
       loadList();
     } catch (err: any) {
-      alert(`刷新失败: ${err.message}`);
+      showNotice('刷新失败', err.message, 'error');
     } finally {
       setRefreshing(false);
     }
@@ -200,7 +206,7 @@ export default function ExpensePaymentMonitor() {
       const data = await expenseApi.detail(spNo);
       setDetailData(data);
     } catch (err: any) {
-      alert(`加载详情失败: ${err.message}`);
+      showNotice('加载详情失败', err.message, 'error');
     } finally {
       setDetailLoading(false);
     }
@@ -221,7 +227,7 @@ export default function ExpensePaymentMonitor() {
       loadList();
       if (detailSpNo === markPaidModal.spNo) handleViewDetail(markPaidModal.spNo);
     } catch (err: any) {
-      alert(`操作失败: ${err.message}`);
+      showNotice('操作失败', err.message, 'error');
     } finally {
       setMarkPaidLoading(false);
     }
@@ -364,7 +370,7 @@ export default function ExpensePaymentMonitor() {
                     <td className="px-3 py-3 font-mono text-xs text-gray-700">{item.sp_no}</td>
                     <td className="px-3 py-3 text-gray-900">{item.applyer_name || item.applyer_userid || '-'}</td>
                     <td className="px-3 py-3 text-right text-gray-900">
-                      {item.sp_status === 2 ? `¥${formatAmount(item.amount)}` : '-'}
+                      {item.amount > 0 ? `¥${formatAmount(item.amount)}` : '-'}
                     </td>
                     <td className="px-3 py-3">
                       <StatusBadge status={item.sp_status} label={item.sp_status_name} />
@@ -450,6 +456,40 @@ export default function ExpensePaymentMonitor() {
           canMarkPaid={canMarkPaid}
           onMarkPaid={(spNo, action) => { setMarkPaidModal({ spNo, action }); setPaymentRemark(''); }}
         />
+      )}
+
+      {/* 通用通知 Modal（替代 alert） */}
+      {noticeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setNoticeModal(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                noticeModal.type === 'success' ? 'bg-green-50' :
+                noticeModal.type === 'error' ? 'bg-red-50' : 'bg-blue-50'
+              }`}>
+                <span className="text-xl">
+                  {noticeModal.type === 'success' ? '✓' : noticeModal.type === 'error' ? '✕' : 'i'}
+                </span>
+              </div>
+              <h3 className="text-base font-medium text-gray-800">{noticeModal.title}</h3>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-600">{noticeModal.message}</p>
+            </div>
+            <div className="flex justify-end p-5 border-t border-gray-100">
+              <button
+                onClick={() => setNoticeModal(null)}
+                className="btn-primary px-4 py-2"
+              >确定</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 标记支付确认 Modal */}
