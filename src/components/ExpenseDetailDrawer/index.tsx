@@ -198,7 +198,7 @@ export function DetailDrawer({
         </div>
 
         {/* 抽屉底部：标记已支付（监控页） */}
-        {canMarkPaid && data && data.sp_status === 2 && (
+        {canMarkPaid && data && (data.sp_status === 1 || data.sp_status === 2) && (
           <div className="border-t border-gray-200 p-4">
             {data.payment?.payment_status === 'unpaid' ? (
               <button
@@ -215,7 +215,7 @@ export function DetailDrawer({
         )}
 
         {/* 抽屉底部：标记已收到（我的报销页） */}
-        {canMarkReceived && data && data.sp_status === 2 && (
+        {canMarkReceived && data && (data.sp_status === 1 || data.sp_status === 2) && (
           <div className="border-t border-gray-200 p-4">
             {receivedStatus === 'unreceived' ? (
               <button

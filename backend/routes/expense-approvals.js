@@ -755,7 +755,15 @@ router.get('/my', requireAuth, requirePermission('menu:my-expense-summary'), asy
     const pageSize = parseInt(req.query.pageSize) || 20;
     const offset = (page - 1) * pageSize;
     const { status, month, keyword } = req.query;
-    const applyerUserid = req.user?.wecom_userid || req.user?.id;
+    const applyerUserid = req.user?.wecom_userid;
+    if (!applyerUserid) {
+      // 用户未绑定企微 userid，无法匹配审批单，返回空列表不报错
+      return res.json({
+        list: [],
+        total: 0,
+        summary: { approved_amount: 0, paid_amount: 0, received_amount: 0 },
+      });
+    }
 
     const conditions = ['e.applyer_userid = ?'];
     const params = [applyerUserid];
