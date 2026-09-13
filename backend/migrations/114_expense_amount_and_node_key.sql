@@ -8,23 +8,28 @@
 --   2. wecom_expense_approval_nodes 唯一键 (sp_no, node_index) 不支持会签/或签
 --      多审批人场景，导致 Duplicate entry 错误。改为 (sp_no, node_index, approver_userid)。
 --
--- 兼容性：MySQL 8.0+ 支持 IF NOT EXISTS 语法（服务器版本 8.0.46 已确认）
--- 幂等性：IF NOT EXISTS 让迁移可重复执行不报错
+-- 兼容性说明：
+--   【重要】MySQL 8.0.46 不支持 ALTER TABLE ... ADD COLUMN IF NOT EXISTS 语法
+--   （这是 MariaDB 语法）。曾在 fix/149 误用，导致 errno=1064 语法错误，迁移失败。
+--   现改回简单 ALTER TABLE，靠 migrate.js 的幂等错误忽略机制实现幂等：
+--     - errno 1060 ER_DUP_FIELD_DATA      → 字段已存在，跳过
+--     - errno 1061 ER_DUP_KEYNAME         → 索引已存在，跳过
+--     - errno 1091 ER_CANT_DROP_FIELD_OR_KEY → 索引不存在，跳过
 -- ================================================
 
--- 1. 主表加 amount 派生列（如果不存在）
+-- 1. 主表加 amount 派生列
 ALTER TABLE wecom_expense_approvals
-  ADD COLUMN IF NOT EXISTS amount DECIMAL(12,2) DEFAULT 0
+  ADD COLUMN amount DECIMAL(12,2) DEFAULT 0
   COMMENT '支付金额（从表单解析的派生字段，原始数据仍在 forms 表）';
 
 -- 2. nodes 表唯一键修复：(sp_no, node_index) → (sp_no, node_index, approver_userid)
---    先删除旧唯一键（如果存在）
+--    先删除旧唯一键
 ALTER TABLE wecom_expense_approval_nodes
-  DROP INDEX IF EXISTS uk_sp_no_node;
+  DROP INDEX uk_sp_no_node;
 
---    加新唯一键（如果不存在）
+--    加新唯一键
 ALTER TABLE wecom_expense_approval_nodes
-  ADD UNIQUE KEY IF NOT EXISTS uk_sp_no_node_approver
+  ADD UNIQUE KEY uk_sp_no_node_approver
   (sp_no, node_index, approver_userid);
 
 
