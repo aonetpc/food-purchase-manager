@@ -521,6 +521,98 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
 });
 
 /**
+ * GET /my — 我的报销列表
+ * 需要 menu:my-expense-summary 权限
+ * 按当前登录用户的 applyer_userid 过滤
+ *
+ * 注意：此路由必须注册在 GET /:sp_no 之前，否则 Express 会把 /my
+ * 当作参数路由匹配（sp_no='my'），查不到记录返回 404 "审批单不存在"
+ */
+router.get('/my', requireAuth, requirePermission('menu:my-expense-summary'), async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 20;
+    const offset = (page - 1) * pageSize;
+    const { status, month, keyword } = req.query;
+    const applyerUserid = req.user?.wecom_userid;
+    if (!applyerUserid) {
+      // 用户未绑定企微 userid，无法匹配审批单，返回空列表不报错
+      return res.json({
+        list: [],
+        total: 0,
+        summary: { approved_amount: 0, paid_amount: 0, received_amount: 0 },
+      });
+    }
+
+    const conditions = ['e.applyer_userid = ?'];
+    const params = [applyerUserid];
+    if (status) { conditions.push('e.sp_status = ?'); params.push(Number(status)); }
+    if (month && /^\d{4}-\d{2}$/.test(String(month))) {
+      const [y, m] = String(month).split('-').map(Number);
+      const monthStart = new Date(y, m - 1, 1, 0, 0, 0);
+      const monthEnd = new Date(y, m, 0, 23, 59, 59);
+      conditions.push('e.apply_time >= ? AND e.apply_time <= ?');
+      params.push(monthStart.toISOString().slice(0, 19).replace('T', ' '));
+      params.push(monthEnd.toISOString().slice(0, 19).replace('T', ' '));
+    }
+    if (keyword) {
+      const kw = String(keyword).trim();
+      if (kw) {
+        conditions.push('(e.sp_no LIKE ? OR CAST(e.amount AS CHAR) LIKE ?)');
+        params.push(`%${kw}%`, `%${kw}%`);
+      }
+    }
+
+    const whereSql = ' WHERE ' + conditions.join(' AND ');
+
+    const [rows] = await pool.query(
+      `SELECT
+         e.sp_no, e.sp_name, e.apply_time, e.applyer_userid, e.applyer_name,
+         e.sp_status, e.sp_status_name, e.amount,
+         IFNULL(p.payment_status,'unpaid') AS payment_status,
+         p.paid_time, p.paid_by_name,
+         IFNULL(p.received_status,'unreceived') AS received_status,
+         p.received_time, p.received_by_name,
+         cn.node_name AS current_node_name,
+         cn.approver_name AS current_approver_name
+       FROM wecom_expense_approvals e
+       LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
+       LEFT JOIN wecom_expense_approval_nodes cn ON e.sp_no = cn.sp_no AND cn.is_current = 1
+       ${whereSql}
+       ORDER BY e.apply_time DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS total FROM wecom_expense_approvals e ${whereSql}`,
+      params
+    );
+    const total = countRows[0].total;
+
+    const [summaryRows] = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 THEN e.amount ELSE 0 END), 0) AS approved_amount,
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'paid' THEN e.amount ELSE 0 END), 0) AS paid_amount,
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.received_status,'unreceived') = 'received' THEN e.amount ELSE 0 END), 0) AS received_amount
+       FROM wecom_expense_approvals e
+       LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
+       ${whereSql}`,
+      params
+    );
+
+    res.json({
+      list: rows,
+      total,
+      summary: summaryRows[0] || { approved_amount: 0, paid_amount: 0, received_amount: 0 },
+    });
+  } catch (err) {
+    console.error('[expense-approvals my] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /:sp_no — 单条详情（含 raw_detail + nodes + forms + payment）
  */
 router.get('/:sp_no', requireAuth, requirePermission('menu:expense-payment-monitor'), async (req, res) => {
@@ -740,95 +832,6 @@ router.post('/mark-paid-batch', requireAuth, requirePermission('action:mark-expe
     });
   } catch (err) {
     console.error('[expense-approvals mark-paid-batch] error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /my — 我的报销列表
- * 需要 menu:my-expense-summary 权限
- * 按当前登录用户的 applyer_userid 过滤
- */
-router.get('/my', requireAuth, requirePermission('menu:my-expense-summary'), async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const pageSize = parseInt(req.query.pageSize) || 20;
-    const offset = (page - 1) * pageSize;
-    const { status, month, keyword } = req.query;
-    const applyerUserid = req.user?.wecom_userid;
-    if (!applyerUserid) {
-      // 用户未绑定企微 userid，无法匹配审批单，返回空列表不报错
-      return res.json({
-        list: [],
-        total: 0,
-        summary: { approved_amount: 0, paid_amount: 0, received_amount: 0 },
-      });
-    }
-
-    const conditions = ['e.applyer_userid = ?'];
-    const params = [applyerUserid];
-    if (status) { conditions.push('e.sp_status = ?'); params.push(Number(status)); }
-    if (month && /^\d{4}-\d{2}$/.test(String(month))) {
-      const [y, m] = String(month).split('-').map(Number);
-      const monthStart = new Date(y, m - 1, 1, 0, 0, 0);
-      const monthEnd = new Date(y, m, 0, 23, 59, 59);
-      conditions.push('e.apply_time >= ? AND e.apply_time <= ?');
-      params.push(monthStart.toISOString().slice(0, 19).replace('T', ' '));
-      params.push(monthEnd.toISOString().slice(0, 19).replace('T', ' '));
-    }
-    if (keyword) {
-      const kw = String(keyword).trim();
-      if (kw) {
-        conditions.push('(e.sp_no LIKE ? OR CAST(e.amount AS CHAR) LIKE ?)');
-        params.push(`%${kw}%`, `%${kw}%`);
-      }
-    }
-
-    const whereSql = ' WHERE ' + conditions.join(' AND ');
-
-    const [rows] = await pool.query(
-      `SELECT
-         e.sp_no, e.sp_name, e.apply_time, e.applyer_userid, e.applyer_name,
-         e.sp_status, e.sp_status_name, e.amount,
-         IFNULL(p.payment_status,'unpaid') AS payment_status,
-         p.paid_time, p.paid_by_name,
-         IFNULL(p.received_status,'unreceived') AS received_status,
-         p.received_time, p.received_by_name,
-         cn.node_name AS current_node_name,
-         cn.approver_name AS current_approver_name
-       FROM wecom_expense_approvals e
-       LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
-       LEFT JOIN wecom_expense_approval_nodes cn ON e.sp_no = cn.sp_no AND cn.is_current = 1
-       ${whereSql}
-       ORDER BY e.apply_time DESC
-       LIMIT ? OFFSET ?`,
-      [...params, pageSize, offset]
-    );
-
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS total FROM wecom_expense_approvals e ${whereSql}`,
-      params
-    );
-    const total = countRows[0].total;
-
-    const [summaryRows] = await pool.query(
-      `SELECT
-         COALESCE(SUM(CASE WHEN e.sp_status = 2 THEN e.amount ELSE 0 END), 0) AS approved_amount,
-         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'paid' THEN e.amount ELSE 0 END), 0) AS paid_amount,
-         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.received_status,'unreceived') = 'received' THEN e.amount ELSE 0 END), 0) AS received_amount
-       FROM wecom_expense_approvals e
-       LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
-       ${whereSql}`,
-      params
-    );
-
-    res.json({
-      list: rows,
-      total,
-      summary: summaryRows[0] || { approved_amount: 0, paid_amount: 0, received_amount: 0 },
-    });
-  } catch (err) {
-    console.error('[expense-approvals my] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
