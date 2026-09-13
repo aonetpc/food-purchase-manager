@@ -240,7 +240,7 @@ export default function MyExpenseSummary() {
                     ) : '-'}
                   </td>
                   <td className="px-3 py-3">
-                    {item.sp_status === 2 ? (
+                    {(item.sp_status === 1 || item.sp_status === 2) ? (
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
                         item.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
                       }`}>
@@ -249,7 +249,7 @@ export default function MyExpenseSummary() {
                     ) : '-'}
                   </td>
                   <td className="px-3 py-3">
-                    {item.sp_status === 2 ? (
+                    {(item.sp_status === 1 || item.sp_status === 2) ? (
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
                         item.received_status === 'received' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'
                       }`}>
@@ -261,7 +261,7 @@ export default function MyExpenseSummary() {
                   <td className="px-3 py-3">
                     <div className="flex items-center justify-center gap-1">
                       <button onClick={() => handleViewDetail(item.sp_no)} className="text-xs text-blue-600 hover:text-blue-800">详情</button>
-                      {item.sp_status === 2 && (
+                      {(item.sp_status === 1 || item.sp_status === 2) && (
                         <>
                           <span className="text-gray-300">|</span>
                           {item.received_status === 'unreceived' ? (

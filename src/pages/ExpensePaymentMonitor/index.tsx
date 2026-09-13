@@ -96,9 +96,9 @@ export default function ExpensePaymentMonitor() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchRemark, setBatchRemark] = useState('');
 
-  // 判断行是否可勾选：已通过 + 未支付
+  // 判断行是否可勾选：审批中或已通过 + 未支付
   const isCheckable = (item: ExpenseApprovalListItem) =>
-    canMarkPaid && item.sp_status === 2 && item.payment_status === 'unpaid';
+    canMarkPaid && (item.sp_status === 1 || item.sp_status === 2) && item.payment_status === 'unpaid';
 
   // 全选/取消全选（当前页可勾选的行）
   const toggleSelectAll = () => {
@@ -431,7 +431,7 @@ export default function ExpensePaymentMonitor() {
                       ) : '-'}
                     </td>
                     <td className="px-3 py-3">
-                      {item.sp_status === 2 ? (
+                      {(item.sp_status === 1 || item.sp_status === 2) ? (
                         <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
                           item.payment_status === 'paid'
                             ? 'bg-green-100 text-green-700'
@@ -448,7 +448,7 @@ export default function ExpensePaymentMonitor() {
                           onClick={() => handleViewDetail(item.sp_no)}
                           className="text-xs text-blue-600 hover:text-blue-800"
                         >详情</button>
-                        {canMarkPaid && item.sp_status === 2 && (
+                        {canMarkPaid && (item.sp_status === 1 || item.sp_status === 2) && (
                           <>
                             <span className="text-gray-300">|</span>
                             {item.payment_status === 'unpaid' ? (
