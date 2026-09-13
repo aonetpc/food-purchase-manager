@@ -438,15 +438,33 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
     const page = parseInt(req.query.page) || 1;
     const pageSize = parseInt(req.query.pageSize) || 20;
     const offset = (page - 1) * pageSize;
-    const { status, paymentStatus, applyerUserid, startTime, endTime } = req.query;
+    const { status, paymentStatus, applyerUserid, startTime, endTime, month, keyword } = req.query;
 
     const conditions = [];
     const params = [];
     if (status) { conditions.push('e.sp_status = ?'); params.push(Number(status)); }
     if (paymentStatus) { conditions.push("IFNULL(p.payment_status,'unpaid') = ?"); params.push(paymentStatus); }
     if (applyerUserid) { conditions.push('e.applyer_userid = ?'); params.push(applyerUserid); }
-    if (startTime) { conditions.push('e.apply_time >= ?'); params.push(startTime); }
-    if (endTime) { conditions.push('e.apply_time <= ?'); params.push(endTime); }
+    // month 参数：格式 YYYY-MM，自动转换为该月时间范围
+    if (month && /^\d{4}-\d{2}$/.test(String(month))) {
+      const [y, m] = String(month).split('-').map(Number);
+      const monthStart = new Date(y, m - 1, 1, 0, 0, 0);
+      const monthEnd = new Date(y, m, 0, 23, 59, 59);
+      conditions.push('e.apply_time >= ? AND e.apply_time <= ?');
+      params.push(monthStart.toISOString().slice(0, 19).replace('T', ' '));
+      params.push(monthEnd.toISOString().slice(0, 19).replace('T', ' '));
+    } else {
+      if (startTime) { conditions.push('e.apply_time >= ?'); params.push(startTime); }
+      if (endTime) { conditions.push('e.apply_time <= ?'); params.push(endTime); }
+    }
+    // keyword 参数：按单号/申请人姓名/金额模糊搜索
+    if (keyword) {
+      const kw = String(keyword).trim();
+      if (kw) {
+        conditions.push('(e.sp_no LIKE ? OR e.applyer_name LIKE ? OR CAST(e.amount AS CHAR) LIKE ?)');
+        params.push(`%${kw}%`, `%${kw}%`, `%${kw}%`);
+      }
+    }
 
     const whereSql = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
