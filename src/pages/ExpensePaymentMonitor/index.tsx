@@ -19,33 +19,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { expenseApi, type ExpenseApprovalListItem, type ExpenseApprovalDetail } from '@/lib/api';
-
-// ============================================================
-// 工具函数
-// ============================================================
-
-/** 格式化金额 */
-function formatAmount(val: string | number | null | undefined): string {
-  if (val === null || val === undefined) return '-';
-  const n = typeof val === 'string' ? parseFloat(val) : val;
-  if (isNaN(n)) return '-';
-  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/** 格式化时间 */
-function formatTime(val: string | null | undefined): string {
-  if (!val) return '-';
-  try {
-    const d = new Date(val);
-    if (isNaN(d.getTime())) return val;
-    return d.toLocaleString('zh-CN', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    });
-  } catch {
-    return val;
-  }
-}
+import { DetailDrawer, StatusBadge, formatAmount, formatTime } from '@/components/ExpenseDetailDrawer';
 
 // ============================================================
 // 状态常量
@@ -114,6 +88,59 @@ export default function ExpensePaymentMonitor() {
   const [noticeModal, setNoticeModal] = useState<{ title: string; message: string; type: 'info' | 'success' | 'error' } | null>(null);
   const showNotice = (title: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNoticeModal({ title, message, type });
+  };
+
+  // 批量标记已支付
+  const [selectedSpNos, setSelectedSpNos] = useState<Set<string>>(new Set());
+  const [batchModal, setBatchModal] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchRemark, setBatchRemark] = useState('');
+
+  // 判断行是否可勾选：已通过 + 未支付
+  const isCheckable = (item: ExpenseApprovalListItem) =>
+    canMarkPaid && item.sp_status === 2 && item.payment_status === 'unpaid';
+
+  // 全选/取消全选（当前页可勾选的行）
+  const toggleSelectAll = () => {
+    const checkable = list.filter(isCheckable);
+    if (checkable.length > 0 && checkable.every(i => selectedSpNos.has(i.sp_no))) {
+      // 取消全选
+      setSelectedSpNos(new Set());
+    } else {
+      setSelectedSpNos(new Set(checkable.map(i => i.sp_no)));
+    }
+  };
+
+  // 单行勾选/取消
+  const toggleRow = (spNo: string) => {
+    setSelectedSpNos(prev => {
+      const next = new Set(prev);
+      if (next.has(spNo)) next.delete(spNo);
+      else next.add(spNo);
+      return next;
+    });
+  };
+
+  // 已选合计金额
+  const selectedTotal = list
+    .filter(i => selectedSpNos.has(i.sp_no))
+    .reduce((sum, i) => sum + (i.amount || 0), 0);
+
+  // 批量标记已支付
+  const handleBatchMarkPaid = async () => {
+    setBatchLoading(true);
+    try {
+      const res = await expenseApi.markPaidBatch(Array.from(selectedSpNos), batchRemark);
+      showNotice('批量标记完成', `成功 ${res.success} 条，失败 ${res.failed} 条`, res.failed > 0 ? 'info' : 'success');
+      setBatchModal(false);
+      setBatchRemark('');
+      setSelectedSpNos(new Set());
+      loadList();
+    } catch (err: any) {
+      showNotice('批量标记失败', err.message, 'error');
+    } finally {
+      setBatchLoading(false);
+    }
   };
 
   // ---- 加载列表 ----
@@ -346,6 +373,14 @@ export default function ExpensePaymentMonitor() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-gray-600">
               <tr>
+                {canMarkPaid && <th className="px-3 py-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={list.filter(isCheckable).length > 0 && list.filter(isCheckable).every(i => selectedSpNos.has(i.sp_no))}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 cursor-pointer"
+                  />
+                </th>}
                 <th className="px-3 py-3 text-left">单号</th>
                 <th className="px-3 py-3 text-left">申请人</th>
                 <th className="px-3 py-3 text-right">金额</th>
@@ -358,15 +393,25 @@ export default function ExpensePaymentMonitor() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">加载中...</td></tr>
+                <tr><td colSpan={9} className="px-3 py-8 text-center text-gray-400">加载中...</td></tr>
               ) : list.length === 0 ? (
-                <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">
+                <tr><td colSpan={9} className="px-3 py-8 text-center text-gray-400">
                   暂无数据。请先在 WecomManager 配置"费用支付申请模板ID"后运行同步脚本。
                 </td></tr>
               ) : (
                 /* 选中月份后列表平铺展示，不再按月分组 */
                 list.map((item) => (
                   <tr key={item.sp_no} className="hover:bg-gray-50">
+                    {canMarkPaid && <td className="px-3 py-3 text-center">
+                      {isCheckable(item) && (
+                        <input
+                          type="checkbox"
+                          checked={selectedSpNos.has(item.sp_no)}
+                          onChange={() => toggleRow(item.sp_no)}
+                          className="h-4 w-4 cursor-pointer"
+                        />
+                      )}
+                    </td>}
                     <td className="px-3 py-3 font-mono text-xs text-gray-700">{item.sp_no}</td>
                     <td className="px-3 py-3 text-gray-900">{item.applyer_name || item.applyer_userid || '-'}</td>
                     <td className="px-3 py-3 text-right text-gray-900">
@@ -427,6 +472,34 @@ export default function ExpensePaymentMonitor() {
             </tbody>
           </table>
         </div>
+
+        {/* 批量操作栏（有选中时显示） */}
+        {selectedSpNos.size > 0 && (
+          <div className="sticky bottom-0 mt-4 flex items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-5 py-3 shadow-lg">
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium text-blue-800">
+                已选 {selectedSpNos.size} 条
+              </span>
+              <span className="text-lg font-bold text-blue-900">
+                合计 ¥{formatAmount(selectedTotal)}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setBatchModal(true)}
+                className="btn-primary flex items-center gap-2 px-4 py-2"
+              >
+                批量标记已支付
+              </button>
+              <button
+                onClick={() => setSelectedSpNos(new Set())}
+                className="btn-secondary px-4 py-2"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 分页 */}
         {totalPages > 1 && (
@@ -492,6 +565,20 @@ export default function ExpensePaymentMonitor() {
         </div>
       )}
 
+      {/* 批量标记已支付 Modal */}
+      {batchModal && (
+        <ConfirmModal
+          title={`确认批量标记 ${selectedSpNos.size} 条为已支付`}
+          message={`合计金额 ¥${formatAmount(selectedTotal)}。确认后将这些审批单标记为"已支付"。`}
+          loading={batchLoading}
+          showRemark={true}
+          remark={batchRemark}
+          onRemarkChange={setBatchRemark}
+          onConfirm={handleBatchMarkPaid}
+          onCancel={() => { setBatchModal(false); setBatchRemark(''); }}
+        />
+      )}
+
       {/* 标记支付确认 Modal */}
       {markPaidModal && (
         <ConfirmModal
@@ -507,155 +594,6 @@ export default function ExpensePaymentMonitor() {
           onCancel={() => { setMarkPaidModal(null); setPaymentRemark(''); }}
         />
       )}
-    </div>
-  );
-}
-
-// ============================================================
-// 子组件：状态徽章
-// ============================================================
-
-function StatusBadge({ status, label }: { status: number; label: string }) {
-  const colorMap: Record<number, string> = {
-    1: 'bg-blue-100 text-blue-700',
-    2: 'bg-green-100 text-green-700',
-    3: 'bg-red-100 text-red-700',
-    4: 'bg-gray-100 text-gray-700',
-  };
-  const color = colorMap[status] || 'bg-gray-100 text-gray-700';
-  return <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${color}`}>{label}</span>;
-}
-
-// ============================================================
-// 子组件：详情抽屉
-// ============================================================
-
-function DetailDrawer({
-  spNo, data, loading, onClose, canMarkPaid, onMarkPaid,
-}: {
-  spNo: string;
-  data: ExpenseApprovalDetail | null;
-  loading: boolean;
-  onClose: () => void;
-  canMarkPaid: boolean;
-  onMarkPaid: (spNo: string, action: 'paid' | 'unpaid') => void;
-}) {
-  const nodes = data?.nodes || [];
-  const forms = data?.forms || [];
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
-      <div
-        className="flex h-full w-full max-w-2xl flex-col bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 抽屉头部 */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">审批单详情</h2>
-            <p className="text-sm text-gray-500 font-mono">{spNo}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">×</button>
-        </div>
-
-        {/* 抽屉内容 */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {loading ? (
-            <div className="flex h-full items-center justify-center text-gray-400">加载中...</div>
-          ) : data ? (
-            <div className="space-y-6">
-              {/* 基本信息 */}
-              <Section title="基本信息">
-                <DetailRow label="审批名称" value={data.sp_name || '-'} />
-                <DetailRow label="申请人" value={data.applyer_name || data.applyer_userid || '-'} />
-                <DetailRow label="申请时间" value={formatTime(data.apply_time)} />
-                <DetailRow label="审批状态" value={data.sp_status_name || '-'} />
-                <DetailRow label="当前节点" value={data.current_node_name || '-'} />
-                <DetailRow label="当前待审人" value={data.current_approver_name || '-'} />
-                <DetailRow label="支付状态" value={data.payment?.payment_status === 'paid' ? '✓ 已支付' : '未支付'} />
-                {data.payment?.paid_time && (
-                  <DetailRow label="支付时间" value={formatTime(data.payment.paid_time)} />
-                )}
-                {data.payment?.paid_by_name && (
-                  <DetailRow label="支付操作人" value={data.payment.paid_by_name} />
-                )}
-                {data.payment?.payment_remark && (
-                  <DetailRow label="支付备注" value={data.payment.payment_remark} />
-                )}
-              </Section>
-
-              {/* 表单值 */}
-              {forms.length > 0 && (
-                <Section title="申请表单">
-                  {forms.map((f: any, i: number) => (
-                    <DetailRow
-                      key={i}
-                      label={f.control_title || f.control_type || `字段${i + 1}`}
-                      value={formatControlValue(f.control_type, f.control_value)}
-                    />
-                  ))}
-                </Section>
-              )}
-
-              {/* 审批节点 timeline */}
-              {nodes.length > 0 && (
-                <Section title="审批流程">
-                  <div className="space-y-3">
-                    {nodes.map((node: any, i: number) => (
-                      <div key={i} className="flex gap-3">
-                        <div className="flex flex-col items-center">
-                          <div className={`h-3 w-3 rounded-full ${
-                            node.is_current ? 'bg-blue-500 ring-4 ring-blue-100' :
-                            node.sp_status === 2 ? 'bg-green-500' :
-                            node.sp_status === 3 ? 'bg-red-500' : 'bg-gray-300'
-                          }`} />
-                          {i < nodes.length - 1 && <div className="h-8 w-px bg-gray-200" />}
-                        </div>
-                        <div className="pb-4">
-                          <p className="text-sm font-medium text-gray-900">
-                            {node.node_name || `节点${node.node_index + 1}`}
-                            {node.is_current === 1 && (
-                              <span className="ml-2 text-xs text-blue-600">（当前）</span>
-                            )}
-                          </p>
-                          {node.approver_name && (
-                            <p className="text-xs text-gray-500">
-                              {node.approver_name}
-                              {node.speech && `: ${node.speech}`}
-                            </p>
-                          )}
-                          {node.approve_time && (
-                            <p className="text-xs text-gray-400">{formatTime(node.approve_time)}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Section>
-              )}
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-gray-400">加载失败</div>
-          )}
-        </div>
-
-        {/* 抽屉底部操作 */}
-        {canMarkPaid && data && data.sp_status === 2 && (
-          <div className="border-t border-gray-200 p-4">
-            {data.payment?.payment_status === 'unpaid' ? (
-              <button
-                onClick={() => onMarkPaid(spNo, 'paid')}
-                className="btn-primary w-full"
-              >标记为已支付</button>
-            ) : (
-              <button
-                onClick={() => onMarkPaid(spNo, 'unpaid')}
-                className="btn-secondary w-full"
-              >撤销已支付标记</button>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -711,51 +649,4 @@ function ConfirmModal({
       </div>
     </div>
   );
-}
-
-// ============================================================
-// 子组件：辅助
-// ============================================================
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h3 className="mb-3 text-sm font-semibold text-gray-900 border-b border-gray-100 pb-2">{title}</h3>
-      <div className="space-y-2">{children}</div>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-4 text-sm">
-      <span className="w-28 flex-shrink-0 text-gray-500">{label}</span>
-      <span className="flex-1 text-gray-900">{value}</span>
-    </div>
-  );
-}
-
-function formatControlValue(controlType: string | undefined, rawValue: any): string {
-  if (!rawValue) return '-';
-  try {
-    const val = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
-    if (controlType === 'Money') {
-      const money = val?.new_money ?? val?.value ?? val;
-      return `¥${formatAmount(money)}`;
-    }
-    if (controlType === 'Selector') {
-      return val?.value || val?.text || JSON.stringify(val);
-    }
-    if (controlType === 'BankAccount') {
-      const parts = [val?.account_name, val?.account_number, val?.bank_name, val?.subbranch].filter(Boolean);
-      return parts.join(' / ') || JSON.stringify(val);
-    }
-    // Text / Textarea / Date 等
-    if (typeof val === 'object') {
-      return val?.text || val?.value || JSON.stringify(val);
-    }
-    return String(val);
-  } catch {
-    return String(rawValue);
-  }
 }

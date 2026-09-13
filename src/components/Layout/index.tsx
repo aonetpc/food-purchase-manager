@@ -74,7 +74,7 @@ const menuGroups = [
   { name: '常用', paths: ['/daily', '/purchase-entry', '/reimbursement'] },
   { name: '仓库', paths: ['/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit'] },
   { name: '统计', paths: ['/monthly', '/management-report', '/yearly', '/ingredients', '/temp-stats'] },
-  { name: '财务', paths: ['/finance/expense-monitor'] },
+  { name: '财务', paths: ['/finance/expense-monitor', '/finance/my-expense'] },
   { name: '人事', paths: ['/temp-audit', '/temp-assessment', '/temp-workers', '/temp-positions'] },
   { name: '系统', paths: ['/permission', '/ingredient-manager', '/departments', '/booking-board', '/checkup-center', '/checkup-templates', '/wecom', '/wecom-test'] },
 ];
@@ -216,7 +216,7 @@ export default function Layout() {
       }
     }
 
-    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/finance/expense-monitor', '/checkup-templates', '/wecom', '/wecom-test'];
+    const order = ['/daily', '/monthly', '/yearly', '/ingredients', '/purchase-entry', '/reimbursement', '/warehouse', '/warehouse-purchase', '/supplier-reconciliation', '/inventory', '/stock-movement', '/scan-audit', '/permission', '/ingredient-manager', '/departments', '/temp-positions', '/temp-workers', '/temp-audit', '/temp-assessment', '/temp-stats', '/booking-board', '/finance/expense-monitor', '/finance/my-expense', '/checkup-templates', '/wecom', '/wecom-test'];
 
     return pcMenus.sort((a, b) => {
       const aIdx = order.indexOf(a.path) >= 0 ? order.indexOf(a.path) : 100;

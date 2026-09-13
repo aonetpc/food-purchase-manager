@@ -475,6 +475,8 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
          e.sp_status, e.sp_status_name, e.last_synced_at, e.amount,
          IFNULL(p.payment_status,'unpaid') AS payment_status,
          p.paid_time, p.paid_by_name, p.payment_remark,
+         IFNULL(p.received_status,'unreceived') AS received_status,
+         p.received_time, p.received_by_name,
          cn.node_name AS current_node_name,
          cn.approver_name AS current_approver_name
        FROM wecom_expense_approvals e
@@ -693,6 +695,137 @@ router.post('/refresh-status', requireAuth, requirePermission('menu:expense-paym
 });
 
 /**
+ * POST /mark-paid-batch — 批量标记已支付
+ * 需要 action:mark-expense-paid 权限
+ * 参照项目约定：批量操作只作用于当前页传入的 sp_no 列表
+ */
+router.post('/mark-paid-batch', requireAuth, requirePermission('action:mark-expense-paid'), async (req, res) => {
+  try {
+    const { sp_nos, payment_remark } = req.body || {};
+    if (!Array.isArray(sp_nos) || sp_nos.length === 0) {
+      return res.status(400).json({ error: '缺少 sp_nos 参数' });
+    }
+
+    const paidByName = req.user?.name || '未知';
+    const paidByUserid = req.user?.id || '';
+    let success = 0;
+    let failed = 0;
+
+    // 批量标记：本地 DB UPDATE，不需要企微 API，可以批量处理
+    for (const sp_no of sp_nos) {
+      try {
+        await pool.query(
+          `INSERT INTO wecom_expense_payments (sp_no, payment_status, paid_time, paid_by_userid, paid_by_name, payment_remark)
+           VALUES (?, 'paid', NOW(), ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             payment_status = 'paid',
+             paid_time = NOW(),
+             paid_by_userid = VALUES(paid_by_userid),
+             paid_by_name = VALUES(paid_by_name),
+             payment_remark = VALUES(payment_remark)`,
+          [sp_no, paidByUserid, paidByName, payment_remark || '']
+        );
+        success++;
+      } catch (e) {
+        console.error(`[mark-paid-batch] sp_no=${sp_no} failed:`, e.message);
+        failed++;
+      }
+    }
+
+    res.json({
+      total: sp_nos.length,
+      success,
+      failed,
+      paid_time: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[expense-approvals mark-paid-batch] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /my — 我的报销列表
+ * 需要 menu:my-expense-summary 权限
+ * 按当前登录用户的 applyer_userid 过滤
+ */
+router.get('/my', requireAuth, requirePermission('menu:my-expense-summary'), async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 20;
+    const offset = (page - 1) * pageSize;
+    const { status, month, keyword } = req.query;
+    const applyerUserid = req.user?.wecom_userid || req.user?.id;
+
+    const conditions = ['e.applyer_userid = ?'];
+    const params = [applyerUserid];
+    if (status) { conditions.push('e.sp_status = ?'); params.push(Number(status)); }
+    if (month && /^\d{4}-\d{2}$/.test(String(month))) {
+      const [y, m] = String(month).split('-').map(Number);
+      const monthStart = new Date(y, m - 1, 1, 0, 0, 0);
+      const monthEnd = new Date(y, m, 0, 23, 59, 59);
+      conditions.push('e.apply_time >= ? AND e.apply_time <= ?');
+      params.push(monthStart.toISOString().slice(0, 19).replace('T', ' '));
+      params.push(monthEnd.toISOString().slice(0, 19).replace('T', ' '));
+    }
+    if (keyword) {
+      const kw = String(keyword).trim();
+      if (kw) {
+        conditions.push('(e.sp_no LIKE ? OR CAST(e.amount AS CHAR) LIKE ?)');
+        params.push(`%${kw}%`, `%${kw}%`);
+      }
+    }
+
+    const whereSql = ' WHERE ' + conditions.join(' AND ');
+
+    const [rows] = await pool.query(
+      `SELECT
+         e.sp_no, e.sp_name, e.apply_time, e.applyer_userid, e.applyer_name,
+         e.sp_status, e.sp_status_name, e.amount,
+         IFNULL(p.payment_status,'unpaid') AS payment_status,
+         p.paid_time, p.paid_by_name,
+         IFNULL(p.received_status,'unreceived') AS received_status,
+         p.received_time, p.received_by_name,
+         cn.node_name AS current_node_name,
+         cn.approver_name AS current_approver_name
+       FROM wecom_expense_approvals e
+       LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
+       LEFT JOIN wecom_expense_approval_nodes cn ON e.sp_no = cn.sp_no AND cn.is_current = 1
+       ${whereSql}
+       ORDER BY e.apply_time DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS total FROM wecom_expense_approvals e ${whereSql}`,
+      params
+    );
+    const total = countRows[0].total;
+
+    const [summaryRows] = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 THEN e.amount ELSE 0 END), 0) AS approved_amount,
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.payment_status,'unpaid') = 'paid' THEN e.amount ELSE 0 END), 0) AS paid_amount,
+         COALESCE(SUM(CASE WHEN e.sp_status = 2 AND IFNULL(p.received_status,'unreceived') = 'received' THEN e.amount ELSE 0 END), 0) AS received_amount
+       FROM wecom_expense_approvals e
+       LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
+       ${whereSql}`,
+      params
+    );
+
+    res.json({
+      list: rows,
+      total,
+      summary: summaryRows[0] || { approved_amount: 0, paid_amount: 0, received_amount: 0 },
+    });
+  } catch (err) {
+    console.error('[expense-approvals my] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /:sp_no/mark-paid — 财务标记已支付
  * 需要 action:mark-expense-paid 权限
  */
@@ -749,6 +882,64 @@ router.post('/:sp_no/mark-unpaid', requireAuth, requirePermission('action:mark-e
     res.json({ sp_no, payment_status: 'unpaid' });
   } catch (err) {
     console.error('[expense-approvals mark-unpaid] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /:sp_no/mark-received — 标记已收到（用户对账）
+ * 需要 menu:my-expense-summary 权限
+ */
+router.post('/:sp_no/mark-received', requireAuth, requirePermission('menu:my-expense-summary'), async (req, res) => {
+  try {
+    const { sp_no } = req.params;
+    const [rows] = await pool.query(
+      'SELECT sp_no FROM wecom_expense_approvals WHERE sp_no = ?',
+      [sp_no]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: '审批单不存在' });
+
+    const receivedByName = req.user?.name || '未知';
+    const receivedByUserid = req.user?.id || '';
+    await pool.query(
+      `INSERT INTO wecom_expense_payments (sp_no, received_status, received_time, received_by_userid, received_by_name)
+       VALUES (?, 'received', NOW(), ?, ?)
+       ON DUPLICATE KEY UPDATE
+         received_status = 'received',
+         received_time = NOW(),
+         received_by_userid = VALUES(received_by_userid),
+         received_by_name = VALUES(received_by_name)`,
+      [sp_no, receivedByUserid, receivedByName]
+    );
+
+    res.json({ sp_no, received_status: 'received', received_time: new Date().toISOString() });
+  } catch (err) {
+    console.error('[expense-approvals mark-received] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /:sp_no/mark-unreceived — 撤销已收到标记
+ * 需要 menu:my-expense-summary 权限
+ */
+router.post('/:sp_no/mark-unreceived', requireAuth, requirePermission('menu:my-expense-summary'), async (req, res) => {
+  try {
+    const { sp_no } = req.params;
+    await pool.query(
+      `INSERT INTO wecom_expense_payments (sp_no, received_status)
+       VALUES (?, 'unreceived')
+       ON DUPLICATE KEY UPDATE
+         received_status = 'unreceived',
+         received_time = NULL,
+         received_by_userid = NULL,
+         received_by_name = NULL`,
+      [sp_no]
+    );
+
+    res.json({ sp_no, received_status: 'unreceived' });
+  } catch (err) {
+    console.error('[expense-approvals mark-unreceived] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
