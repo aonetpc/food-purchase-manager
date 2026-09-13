@@ -768,6 +768,8 @@ export const expenseApi = {
     applyerUserid?: string;
     startTime?: string;
     endTime?: string;
+    month?: string;
+    keyword?: string;
   }): Promise<ExpenseApprovalListResponse> {
     return api.get<ExpenseApprovalListResponse>('/wecom/expense-approvals', { params });
   },

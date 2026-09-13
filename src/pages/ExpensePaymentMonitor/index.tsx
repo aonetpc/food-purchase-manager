@@ -6,15 +6,17 @@
  *
  * 功能：
  *   1. 列表展示（分页）：单号/申请人/金额/状态/当前节点/支付状态
- *   2. 筛选：审批状态/支付状态/时间范围
- *   3. 合计栏：已通过金额/已支付金额/未支付金额
- *   4. 同步按钮：触发增量同步（5 分钟节流）
- *   5. 刷新按钮：刷新当前页非终态审批状态
- *   6. 标记已支付/撤销：需要 action:mark-expense-paid 权限
- *   7. 详情抽屉：完整审批节点 timeline + 表单值
+ *   2. 月份选择器：上月/下月快速切换，列表+统计跟随月份
+ *   3. 搜索：按单号/申请人/金额模糊搜索
+ *   4. 筛选：审批状态/支付状态
+ *   5. 合计栏：已通过金额/已支付金额/未支付金额（跟随月份）
+ *   6. 同步按钮：触发增量同步（5 分钟节流）
+ *   7. 刷新按钮：刷新当前页非终态审批状态
+ *   8. 标记已支付/撤销：需要 action:mark-expense-paid 权限
+ *   9. 详情抽屉：完整审批节点 timeline + 表单值
  */
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { expenseApi, type ExpenseApprovalListItem, type ExpenseApprovalDetail } from '@/lib/api';
 
@@ -81,6 +83,16 @@ export default function ExpensePaymentMonitor() {
   const [statusFilter, setStatusFilter] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('');
 
+  // 月份选择器（格式 YYYY-MM，默认最近月份）
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  // 搜索关键词
+  const [keyword, setKeyword] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+
   // 合计
   const [summary, setSummary] = useState({ approved_amount: 0, paid_amount: 0, unpaid_amount: 0 });
 
@@ -107,6 +119,8 @@ export default function ExpensePaymentMonitor() {
         pageSize,
         status: statusFilter ? Number(statusFilter) : undefined,
         paymentStatus: paymentFilter || undefined,
+        month: selectedMonth,
+        keyword: keyword || undefined,
       });
       setList(res.list);
       setTotal(res.total);
@@ -117,33 +131,31 @@ export default function ExpensePaymentMonitor() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, paymentFilter]);
+  }, [page, pageSize, statusFilter, paymentFilter, selectedMonth, keyword]);
 
   useEffect(() => { loadList(); }, [loadList]);
 
-  // ---- 按月分组（最近月份在前）----
-  const groupedByMonth = useMemo(() => {
-    const groups: Record<string, ExpenseApprovalListItem[]> = {};
-    for (const item of list) {
-      if (!item.apply_time) {
-        (groups['未分组'] ||= []).push(item);
-        continue;
-      }
-      const d = new Date(item.apply_time);
-      if (isNaN(d.getTime())) {
-        (groups['未分组'] ||= []).push(item);
-        continue;
-      }
-      const key = `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月`;
-      (groups[key] ||= []).push(item);
-    }
-    // 按月份降序（最近在前），"未分组"排最后
-    return Object.entries(groups).sort(([a], [b]) => {
-      if (a === '未分组') return 1;
-      if (b === '未分组') return -1;
-      return b.localeCompare(a);
-    });
-  }, [list]);
+  // ---- 月份切换 ----
+  const changeMonth = (delta: number) => {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    setPage(1);
+  };
+
+  // ---- 搜索 ----
+  const handleSearch = () => {
+    setKeyword(searchInput.trim());
+    setPage(1);
+  };
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleSearch();
+  };
+  const handleClearSearch = () => {
+    setSearchInput('');
+    setKeyword('');
+    setPage(1);
+  };
 
   // ---- 同步 ----
   const handleSync = async () => {
@@ -231,6 +243,24 @@ export default function ExpensePaymentMonitor() {
               </p>
             </div>
           </div>
+          {/* 月份选择器：上月 / 月份 / 下月 */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => changeMonth(-1)}
+              className="btn-secondary px-3 py-2 text-lg leading-none"
+              title="上个月"
+            >‹</button>
+            <div className="min-w-[120px] text-center">
+              <span className="text-lg font-semibold text-gray-900">
+                {selectedMonth.replace('-', '年')}月
+              </span>
+            </div>
+            <button
+              onClick={() => changeMonth(1)}
+              className="btn-secondary px-3 py-2 text-lg leading-none"
+              title="下个月"
+            >›</button>
+          </div>
           <div className="flex gap-2">
             <button
               onClick={handleSync}
@@ -281,6 +311,27 @@ export default function ExpensePaymentMonitor() {
           >
             {PAYMENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+          {/* 搜索框：单号/申请人/金额 */}
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="搜索单号 / 申请人 / 金额"
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-56"
+            />
+            <button
+              onClick={handleSearch}
+              className="btn-primary px-3 py-2 text-sm"
+            >搜索</button>
+            {keyword && (
+              <button
+                onClick={handleClearSearch}
+                className="btn-secondary px-3 py-2 text-sm"
+              >清除</button>
+            )}
+          </div>
           <span className="text-sm text-gray-500">共 {total} 条</span>
         </div>
 
@@ -306,83 +357,67 @@ export default function ExpensePaymentMonitor() {
                 <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">
                   暂无数据。请先在 WecomManager 配置"费用支付申请模板ID"后运行同步脚本。
                 </td></tr>
-              ) : groupedByMonth.map(([month, items]) => (
-                <Fragment key={month}>
-                  {/* 月份标题行 */}
-                  <tr className="bg-gray-50">
-                    <td colSpan={8} className="px-3 py-2 text-sm font-semibold text-gray-700 border-t border-gray-200">
-                      {month}
-                      <span className="ml-2 text-xs font-normal text-gray-400">
-                        共 {items.length} 条
-                        {items.some(i => i.sp_status === 2) && (
-                          <span className="ml-2">
-                            · 已通过 ¥{formatAmount(items.filter(i => i.sp_status === 2).reduce((s, i) => s + (i.amount || 0), 0))}
-                          </span>
-                        )}
-                      </span>
+              ) : (
+                /* 选中月份后列表平铺展示，不再按月分组 */
+                list.map((item) => (
+                  <tr key={item.sp_no} className="hover:bg-gray-50">
+                    <td className="px-3 py-3 font-mono text-xs text-gray-700">{item.sp_no}</td>
+                    <td className="px-3 py-3 text-gray-900">{item.applyer_name || item.applyer_userid || '-'}</td>
+                    <td className="px-3 py-3 text-right text-gray-900">
+                      {item.sp_status === 2 ? `¥${formatAmount(item.amount)}` : '-'}
                     </td>
-                  </tr>
-                  {/* 该月记录 */}
-                  {items.map((item) => (
-                    <tr key={item.sp_no} className="hover:bg-gray-50">
-                      <td className="px-3 py-3 font-mono text-xs text-gray-700">{item.sp_no}</td>
-                      <td className="px-3 py-3 text-gray-900">{item.applyer_name || item.applyer_userid || '-'}</td>
-                      <td className="px-3 py-3 text-right text-gray-900">
-                        {item.sp_status === 2 ? `¥${formatAmount(item.amount)}` : '-'}
-                      </td>
-                      <td className="px-3 py-3">
-                        <StatusBadge status={item.sp_status} label={item.sp_status_name} />
-                      </td>
-                      <td className="px-3 py-3 text-gray-700">
-                        {item.current_node_name ? (
-                          <div>
-                            <div>{item.current_node_name}</div>
-                            {item.current_approver_name && (
-                              <div className="text-xs text-gray-400">待审: {item.current_approver_name}</div>
-                            )}
-                          </div>
-                        ) : '-'}
-                      </td>
-                      <td className="px-3 py-3">
-                        {item.sp_status === 2 ? (
-                          <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
-                            item.payment_status === 'paid'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-amber-100 text-amber-700'
-                          }`}>
-                            {item.payment_status === 'paid' ? '✓ 已支付' : '⚠ 未支付'}
-                          </span>
-                        ) : '-'}
-                      </td>
-                      <td className="px-3 py-3 text-gray-600">{formatTime(item.apply_time)}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => handleViewDetail(item.sp_no)}
-                            className="text-xs text-blue-600 hover:text-blue-800"
-                          >详情</button>
-                          {canMarkPaid && item.sp_status === 2 && (
-                            <>
-                              <span className="text-gray-300">|</span>
-                              {item.payment_status === 'unpaid' ? (
-                                <button
-                                  onClick={() => { setMarkPaidModal({ spNo: item.sp_no, action: 'paid' }); setPaymentRemark(''); }}
-                                  className="text-xs text-green-600 hover:text-green-800"
-                                >标记已付</button>
-                              ) : (
-                                <button
-                                  onClick={() => setMarkPaidModal({ spNo: item.sp_no, action: 'unpaid' })}
-                                  className="text-xs text-amber-600 hover:text-amber-800"
-                                >撤销已付</button>
-                              )}
-                            </>
+                    <td className="px-3 py-3">
+                      <StatusBadge status={item.sp_status} label={item.sp_status_name} />
+                    </td>
+                    <td className="px-3 py-3 text-gray-700">
+                      {item.current_node_name ? (
+                        <div>
+                          <div>{item.current_node_name}</div>
+                          {item.current_approver_name && (
+                            <div className="text-xs text-gray-400">待审: {item.current_approver_name}</div>
                           )}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </Fragment>
-              ))}
+                      ) : '-'}
+                    </td>
+                    <td className="px-3 py-3">
+                      {item.sp_status === 2 ? (
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${
+                          item.payment_status === 'paid'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {item.payment_status === 'paid' ? '✓ 已支付' : '⚠ 未支付'}
+                        </span>
+                      ) : '-'}
+                    </td>
+                    <td className="px-3 py-3 text-gray-600">{formatTime(item.apply_time)}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleViewDetail(item.sp_no)}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                        >详情</button>
+                        {canMarkPaid && item.sp_status === 2 && (
+                          <>
+                            <span className="text-gray-300">|</span>
+                            {item.payment_status === 'unpaid' ? (
+                              <button
+                                onClick={() => { setMarkPaidModal({ spNo: item.sp_no, action: 'paid' }); setPaymentRemark(''); }}
+                                className="text-xs text-green-600 hover:text-green-800"
+                              >标记已付</button>
+                            ) : (
+                              <button
+                                onClick={() => setMarkPaidModal({ spNo: item.sp_no, action: 'unpaid' })}
+                                className="text-xs text-amber-600 hover:text-amber-800"
+                              >撤销已付</button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
