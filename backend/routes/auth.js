@@ -115,6 +115,7 @@ async function getUserRoleCodes(userId) {
         SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
       ) t
       JOIN roles r ON r.id = t.role_id
+      ORDER BY r.sort_order ASC
     `, [userId, userId]);
     return rows.map(r => r.code);
   } catch (e) {
