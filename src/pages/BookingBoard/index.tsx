@@ -1427,6 +1427,16 @@ function DetailModal({
                                         </div>
                                       )}
                                     </div>
+
+                                    {/* feat/162: 体检备注（兼容 placeholderNote 旧数据） */}
+                                    {((it.extra as any).remark || (it.extra as any).placeholderNote) && (
+                                      <div className="p-3 bg-sky-50 rounded-lg border border-sky-100">
+                                        <div className="text-[11px] text-sky-600 font-semibold mb-1">📝 体检备注</div>
+                                        <div className="text-[12px] text-gray-700 bg-white rounded p-2 border border-sky-100">
+                                          {(it.extra as any).remark || (it.extra as any).placeholderNote}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
@@ -1483,6 +1493,13 @@ function DetailModal({
                                         </div>
                                         <div><span className="text-gray-400">小计：</span><span className="font-mono font-semibold text-green-700">¥{(it.amount||0).toLocaleString()}</span></div>
                                       </div>
+                                      {/* feat/162: 住宿备注 */}
+                                      {ex.remark && (
+                                        <div className="col-span-2 mt-1 pt-1 border-t border-purple-100">
+                                          <span className="text-gray-400">📝 备注：</span>
+                                          <span className="text-gray-700">{ex.remark}</span>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                   );
