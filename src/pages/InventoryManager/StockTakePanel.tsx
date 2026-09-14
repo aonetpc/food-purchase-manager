@@ -214,9 +214,9 @@ interface StockTakePanelProps {
 }
 
 export default function StockTakePanel({ currentTab }: StockTakePanelProps) {
-  const { user } = useAuthStore();
-  const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
-  const canReview = user ? CAN_REVIEW_ROLES.includes(user.role) : false;
+  const { user, hasRole } = useAuthStore();
+  const isManager = user ? hasRole(['admin', 'finance', 'boss']) : false;
+  const canReview = user ? hasRole(['admin', 'finance']) : false;
   const isAnnual = currentTab === 'annual';
 
   // 视图状态

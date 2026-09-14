@@ -31,8 +31,8 @@ interface InventoryItem {
 }
 
 export default function InventoryManager() {
-  const { user } = useAuthStore();
-  const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
+  const { user, hasRole } = useAuthStore();
+  const isManager = user ? hasRole(['admin', 'finance', 'boss']) : false;
   const [activeTab, setActiveTab] = useState<'inventory' | 'stock-take' | 'annual-take' | 'trend'>('inventory');
   const [summary, setSummary] = useState<WarehouseSummary[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
