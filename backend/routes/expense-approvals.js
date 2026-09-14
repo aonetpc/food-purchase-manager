@@ -469,6 +469,9 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
     const whereSql = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
     // 列表：主表 LEFT JOIN payments + 取当前待审节点（is_current=1）
+    // 注意：会签节点（同一节点多个审批人）会让节点表产生多行 is_current=1，
+    // 直接 JOIN 会产生笛卡尔积导致主表行重复。用子查询聚合为一行，
+    // 审批人用 GROUP_CONCAT 合并为"张三、李四"格式
     const [rows] = await pool.query(
       `SELECT
          e.sp_no, e.sp_name, e.apply_time, e.applyer_userid, e.applyer_name,
@@ -481,7 +484,14 @@ router.get('/', requireAuth, requirePermission('menu:expense-payment-monitor'), 
          cn.approver_name AS current_approver_name
        FROM wecom_expense_approvals e
        LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
-       LEFT JOIN wecom_expense_approval_nodes cn ON e.sp_no = cn.sp_no AND cn.is_current = 1
+       LEFT JOIN (
+         SELECT sp_no,
+                MAX(node_name) AS node_name,
+                GROUP_CONCAT(approver_name SEPARATOR '、') AS approver_name
+         FROM wecom_expense_approval_nodes
+         WHERE is_current = 1
+         GROUP BY sp_no
+       ) cn ON e.sp_no = cn.sp_no
        ${whereSql}
        ORDER BY e.apply_time DESC
        LIMIT ? OFFSET ?`,
@@ -577,7 +587,14 @@ router.get('/my', requireAuth, requirePermission('menu:my-expense-summary'), asy
          cn.approver_name AS current_approver_name
        FROM wecom_expense_approvals e
        LEFT JOIN wecom_expense_payments p ON e.sp_no = p.sp_no
-       LEFT JOIN wecom_expense_approval_nodes cn ON e.sp_no = cn.sp_no AND cn.is_current = 1
+       LEFT JOIN (
+         SELECT sp_no,
+                MAX(node_name) AS node_name,
+                GROUP_CONCAT(approver_name SEPARATOR '、') AS approver_name
+         FROM wecom_expense_approval_nodes
+         WHERE is_current = 1
+         GROUP BY sp_no
+       ) cn ON e.sp_no = cn.sp_no
        ${whereSql}
        ORDER BY e.apply_time DESC
        LIMIT ? OFFSET ?`,
