@@ -523,6 +523,9 @@ router.get('/monthly/supplier/:id/pending', requireAuth, async (req, res) => {
 
 // 批量发起月结付款审批
 router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
+  // 在 try 块外定义，catch 块也能访问（用于错误时返回调试信息）
+  let contents = [];
+  let controlTypeMap = {};
   try {
     const { purchase_ids, attachments: rawAttachments = [], reason: customReason, remark: customRemark } = req.body;
     if (!Array.isArray(purchase_ids) || purchase_ids.length === 0) {
@@ -576,7 +579,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     // 获取模板控件类型
     const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${config.corp_id}&corpsecret=${config.app_secret}`);
     const tokenData = await tokenRes.json();
-    let controlTypeMap = {};
+    controlTypeMap = {};
     if (tokenData.access_token) {
       const tplRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/oa/gettemplatedetail?access_token=${tokenData.access_token}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -619,7 +622,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     }
 
     // 构建审批数据
-    const contents = [];
+    contents = [];
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     const todayTimestamp = Math.floor(new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() / 1000);
