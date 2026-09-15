@@ -569,6 +569,13 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '请先在企微管理页完成审批配置（模板ID和申请人）' });
     }
 
+    // 发起人 = 当前登录用户绑定的企微 userid（与仓库采购报销 submitWarehouseReimbursement 一致）
+    // 不再使用 config.applicant_userid 作为发起人，避免出现"操作人 A 但发起人 B"的错乱
+    const creatorUserid = req.user?.wecom_userid;
+    if (!creatorUserid) {
+      return res.status(400).json({ error: '当前登录用户未绑定企业微信，无法发起月结付款审批' });
+    }
+
     // 解析字段映射
     let fieldMapping = {};
     if (config.approval_field_mapping) {
@@ -693,11 +700,16 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
       contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
     }
     // 备注说明
-    if (fieldMapping.remark) {
+    // 跳过已填充的 id，避免与 reason/payee_name/bank_name/bank_account 等 Text 控件撞 id
+    // （否则企微会报"单据内容不合法，包含重复的控件ID"）
+    const filledIds = new Set(contents.map(c => c.id));
+    if (fieldMapping.remark && !filledIds.has(fieldMapping.remark)) {
       contents.push({ control: getControlType('remark', 'Text'), id: fieldMapping.remark, value: { text: remark } });
-    } else {
-      // 自动发现备注控件
-      const remarkEntry = Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'Text' || ctype === 'Textarea');
+    } else if (!fieldMapping.remark) {
+      // 自动发现备注控件：跳过已填充的 id
+      const remarkEntry = Object.entries(controlTypeMap).find(
+        ([id, ctype]) => !filledIds.has(id) && (ctype === 'Text' || ctype === 'Textarea')
+      );
       if (remarkEntry) {
         contents.push({ control: remarkEntry[1], id: remarkEntry[0], value: { text: remark } });
       }
@@ -760,7 +772,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     console.log('[月结付款] 提交给企微的 contents:', JSON.stringify(contents.map(c => ({ control: c.control, id: c.id })), null, 2));
 
     const applyData = {
-      creator_userid: String(config.applicant_userid),
+      creator_userid: String(creatorUserid),
       template_id: String(config.approval_template_id),
       use_template_approver: 1,
       apply_data: { contents },
