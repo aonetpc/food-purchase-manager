@@ -113,13 +113,13 @@ router.post('/generate', requireAuth, async (req, res) => {
 
     // 查询范围内已确认且未关联网结账单的月结采购单（跨月按入库日期 = confirmed_at）
     let sql = `
-      SELECT id, supplier_id, supplier_name, total_amount, confirmed_at
+      SELECT id, supplier_id, supplier_name, total_amount, actual_amount, confirmed_at
       FROM warehouse_purchases
       WHERE purchase_type = 'monthly'
         AND status = 'confirmed'
         AND monthly_statement_id IS NULL
         AND DATE_FORMAT(confirmed_at, '%Y-%m') = ?
-    `;
+      `;
     const params = [statement_month];
     if (supplier_id) { sql += ' AND supplier_id = ?'; params.push(supplier_id); }
 
@@ -138,7 +138,8 @@ router.post('/generate', requireAuth, async (req, res) => {
         supplierGroup[sid] = { supplier_name: row.supplier_name || '未命名', items: [], total: 0 };
       }
       supplierGroup[sid].items.push(row);
-      supplierGroup[sid].total += toNum(row.total_amount);
+      // 优先使用实际收货金额，没有则用申购金额
+      supplierGroup[sid].total += toNum(row.actual_amount) || toNum(row.total_amount);
     }
 
     if (Object.keys(supplierGroup).length === 0) {
@@ -441,7 +442,7 @@ router.get('/stats/overview', requireAuth, async (req, res) => {
 
     // 待月结采购单数量和金额
     const [pendMonth] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(total_amount),0) amt FROM warehouse_purchases WHERE purchase_type='monthly' AND status='confirmed' AND monthly_statement_id IS NULL`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE total_amount END),0) amt FROM warehouse_purchases WHERE purchase_type='monthly' AND status='confirmed' AND monthly_statement_id IS NULL`
     );
     const pendingMonthly = { count: pendMonth[0].cnt, amount: toNum(pendMonth[0].amt) };
 
@@ -473,7 +474,7 @@ router.get('/monthly/pending-suppliers', requireAuth, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT supplier_id, supplier_name,
              COUNT(*) as purchase_count,
-             IFNULL(SUM(total_amount), 0) as total_amount
+             IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE total_amount END), 0) as total_amount
       FROM warehouse_purchases
       WHERE purchase_type = 'monthly'
         AND status = 'confirmed'
