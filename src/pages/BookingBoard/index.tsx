@@ -1638,6 +1638,15 @@ function DetailModal({
                                         </tr>
                                       </tfoot>
                                     </table>
+                                    {/* feat/164: 会议备注 */}
+                                    {((it.extra as any).remark || (it.extra as any).placeholderNote) && (
+                                      <div className="mt-2 p-2 bg-teal-50 rounded border border-teal-100">
+                                        <div className="text-[11px] text-teal-600 font-semibold mb-1">📝 会议备注</div>
+                                        <div className="text-[12px] text-gray-700 bg-white rounded p-2 border border-teal-100">
+                                          {(it.extra as any).remark || (it.extra as any).placeholderNote}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
