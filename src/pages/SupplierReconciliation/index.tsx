@@ -363,9 +363,12 @@ export default function SupplierReconciliation() {
     try {
       const r = await api.post<any>('/reconciliation/monthly/payment/refresh', { sp_no: spNo });
       if (r?.sp_status === 2) showToast(`审批已通过，已标记付款完成`);
-      else if (r?.sp_status === 3) showToast(`审批已驳回`);
+      else if (r?.sp_status === 3) showToast(`审批已驳回，相关采购单已退回待月结`);
+      else if (r?.sp_status === 4) showToast(`审批已撤销，相关采购单已退回待月结`);
       else showToast(`状态已更新`);
+      // 驳回/撤销后采购单恢复 monthly_pending=1，需同步刷新待月结供应商列表；通过/驳回都需刷新审批中列表
       fetchPaymentPending();
+      fetchPendingSuppliers();
       fetchStats();
     } catch (e: any) { setError(e.message); }
     finally { setRefreshingPaymentSpNo(null); }

@@ -825,6 +825,12 @@ router.post('/monthly/payment/refresh', requireAuth, async (req, res) => {
         'UPDATE warehouse_purchases SET monthly_paid_at = NOW() WHERE monthly_payment_sp_no = ?',
         [sp_no]
       );
+    } else if (spStatus === 3 || spStatus === 4) {
+      // 驳回(3) 或 撤销(4)：恢复采购单到待月结列表，清空审批单号让其从审批中列表消失
+      await pool.query(
+        'UPDATE warehouse_purchases SET monthly_pending = 1, monthly_payment_sp_no = NULL WHERE monthly_payment_sp_no = ?',
+        [sp_no]
+      );
     }
 
     res.json({ success: true, sp_status: spStatus });
