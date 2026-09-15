@@ -687,6 +687,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     }
 
     // 关联审批单（多个采购审批单号）
+    // 企微 RelatedApproval 控件只需要 sp_no，不需要 template_id
     const spNos = purchases.map(p => p.approval_sp_no).filter(Boolean);
     if (spNos.length > 0) {
       let relatedControlId = fieldMapping.related_approval || null;
@@ -695,21 +696,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
         if (relatedEntry) relatedControlId = relatedEntry[0];
       }
       if (relatedControlId) {
-        const relatedItems = [];
-        for (const spNo of spNos) {
-          try {
-            const detail = await getApprovalDetail(config, String(spNo));
-            // 企微 getapprovaldetail 返回的数据在 info 字段下
-            const info = detail?.info || {};
-            relatedItems.push({
-              sp_no: String(info.sp_no || spNo),
-              sp_name: info.sp_name || '仓库采购申请',
-              template_id: info.template_id || '',
-            });
-          } catch {
-            relatedItems.push({ sp_no: String(spNo), sp_name: '仓库采购申请', template_id: '' });
-          }
-        }
+        const relatedItems = spNos.map(spNo => ({ sp_no: String(spNo) }));
         contents.push({
           control: 'RelatedApproval',
           id: relatedControlId,
