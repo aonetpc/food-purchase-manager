@@ -696,7 +696,13 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
         if (relatedEntry) relatedControlId = relatedEntry[0];
       }
       if (relatedControlId) {
-        const relatedItems = spNos.map(spNo => ({ sp_no: String(spNo) }));
+        // 企微 RelatedApproval 控件需要 sp_no + sp_name + template_id 三个字段都存在（值可空）
+        // 与仓库采购报销的 buildWarehouseApplyData 保持一致
+        const relatedItems = spNos.map(spNo => ({
+          sp_no: String(spNo),
+          sp_name: '仓库采购申请',
+          template_id: '',
+        }));
         contents.push({
           control: 'RelatedApproval',
           id: relatedControlId,
