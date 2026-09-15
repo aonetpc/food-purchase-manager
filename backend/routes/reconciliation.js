@@ -655,6 +655,8 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
       contents.push({ control: getControlType('bank_account', 'Text'), id: fieldMapping.bank_account, value: { text: String(config.bank_account) } });
     }
     // 付款方式
+    // 直接使用 config.default_payment_key 作为 Selector 的 key（option-xxx 格式），
+    // 与 warehouse-purchases.js buildWarehouseApplyData 实现保持一致，无需运行时反查模板选项
     let paymentLabel = '转账';
     if (fieldMapping.payment_method && config.default_payment_key) {
       let paymentOptions = {};
@@ -664,14 +666,15 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
           : config.payment_options;
       }
       paymentLabel = String(paymentOptions[config.default_payment_key] || '转账');
-      // 从模板选项里匹配正确的 key（企微 Selector 控件要求 key 是 option-xxx 格式，不是中文文本）
-      const selectorOpts = selectorOptionsMap[fieldMapping.payment_method] || [];
-      const matchedOpt = selectorOpts.find(o => o.text === paymentLabel);
-      const paymentKey = matchedOpt ? matchedOpt.key : paymentLabel;
       contents.push({
         control: getControlType('payment_method', 'Selector'),
         id: fieldMapping.payment_method,
-        value: { selector: { type: 'single', options: [{ key: paymentKey, value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } },
+        value: {
+          selector: {
+            type: 'single',
+            options: [{ key: String(config.default_payment_key), value: [{ text: paymentLabel, lang: 'zh_CN' }] }],
+          },
+        },
       });
     }
     // 明细
