@@ -61,7 +61,10 @@ async function request<T>(path: string, options: RequestInit & { params?: Record
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: '请求失败' }));
-      throw new Error(error.error || `HTTP ${response.status}`);
+      const err = new Error(error.error || `HTTP ${response.status}`);
+      // 附加后端返回的额外调试信息
+      if (error.debug_info) (err as any).debug_info = error.debug_info;
+      throw err;
     }
 
     return response.json();

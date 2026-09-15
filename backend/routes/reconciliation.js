@@ -763,8 +763,17 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
 
     res.json({ success: true, sp_no: spNo, total_amount: totalAmount, purchase_count: purchases.length });
   } catch (err) {
-    console.error('[monthly payment submit]', err);
-    res.status(500).json({ error: err.message });
+    console.error('[月结付款] 企微提交失败:', err.message);
+    console.error('[月结付款] 完整 contents:', JSON.stringify(contents, null, 2));
+    console.error('[月结付款] 模板控件列表:', JSON.stringify(controlTypeMap, null, 2));
+    // 返回调试信息帮助定位问题控件
+    res.status(500).json({
+      error: err.message,
+      debug_info: {
+        contents: contents.map(c => ({ control: c.control, id: c.id })),
+        controlTypeMap,
+      },
+    });
   }
 });
 
