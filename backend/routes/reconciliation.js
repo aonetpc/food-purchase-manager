@@ -660,10 +660,17 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
       });
     }
     // 明细
+    const invalidSpNosByPurchase = {}; // purchase_no -> sp_no（跨企微应用查不到的）
     if (fieldMapping.details) {
       let detailText = `月结供应商：${supplierName}\n采购单数：${purchases.length}张\n合计金额：¥${totalAmount.toFixed(2)}\n\n`;
       for (const p of purchases) {
-        detailText += `${p.purchase_no || p.id.substring(0, 8)}  ¥${toNum(p.total_amount).toFixed(2)}\n`;
+        const line = `${p.purchase_no || p.id.substring(0, 8)}  ¥${toNum(p.total_amount).toFixed(2)}`;
+        // 明细文本里始终追加审批单号（无论是否有效），方便审批人查看
+        if (p.approval_sp_no) {
+          detailText += `${line}  审批单号：${p.approval_sp_no}\n`;
+        } else {
+          detailText += `${line}\n`;
+        }
       }
       contents.push({ control: getControlType('details', 'Textarea'), id: fieldMapping.details, value: { text: detailText } });
     }
@@ -687,7 +694,8 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     }
 
     // 关联审批单（多个采购审批单号）
-    // 企微 RelatedApproval 控件只需要 sp_no，不需要 template_id
+    // 注意：跨企微应用的 sp_no 查不到，企微会报 get approval param error
+    // 所以提交前先验证每个 sp_no 是否能查到，查不到的跳过（审批单号已在明细文本里显示）
     const spNos = purchases.map(p => p.approval_sp_no).filter(Boolean);
     if (spNos.length > 0) {
       let relatedControlId = fieldMapping.related_approval || null;
@@ -696,20 +704,42 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
         if (relatedEntry) relatedControlId = relatedEntry[0];
       }
       if (relatedControlId) {
-        // 企微 RelatedApproval 控件需要 sp_no + sp_name + template_id 三个字段都存在（值可空）
-        // 与仓库采购报销的 buildWarehouseApplyData 保持一致
-        const relatedItems = spNos.map(spNo => ({
-          sp_no: String(spNo),
-          sp_name: '仓库采购申请',
-          template_id: '',
-        }));
-        contents.push({
-          control: 'RelatedApproval',
-          id: relatedControlId,
-          value: { related_approval: relatedItems },
-        });
+        const validItems = [];
+        const invalidSpNos = [];
+        for (const spNo of spNos) {
+          try {
+            const detail = await getApprovalDetail(config, String(spNo));
+            if (detail?.info) {
+              // 当前企微应用能查到，加入关联审批
+              validItems.push({
+                sp_no: String(spNo),
+                sp_name: '仓库采购申请',
+                template_id: '',
+              });
+            } else {
+              invalidSpNos.push(String(spNo));
+            }
+          } catch (spErr) {
+            // 跨企微应用查不到，跳过，避免企微报 get approval param error
+            invalidSpNos.push(String(spNo));
+            console.warn(`[月结付款] 关联审批单 ${spNo} 查询失败: ${spErr.message}，跳过`);
+          }
+        }
+        if (validItems.length > 0) {
+          contents.push({
+            control: 'RelatedApproval',
+            id: relatedControlId,
+            value: { related_approval: validItems },
+          });
+        }
+        if (invalidSpNos.length > 0) {
+          console.warn(`[月结付款] 跨企微应用无法关联的审批单号: ${invalidSpNos.join(', ')}（已在明细文本里显示）`);
+        }
       }
     }
+
+    // 加详细日志，方便排查企微报错的具体控件
+    console.log('[月结付款] 提交给企微的 contents:', JSON.stringify(contents.map(c => ({ control: c.control, id: c.id })), null, 2));
 
     const applyData = {
       creator_userid: String(config.applicant_userid),
