@@ -390,7 +390,17 @@ export default function SupplierReconciliation() {
       fetchPendingSuppliers();
       fetchPaymentPending();
       fetchStats();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      // 显示完整错误信息 + 调试信息帮助定位问题控件
+      let errMsg = e.message || '提交失败';
+      if (e.debug_info) {
+        errMsg += '\n\n调试信息（控件列表）：';
+        for (const c of e.debug_info.contents || []) {
+          errMsg += `\n  ${c.control} (id=${c.id})`;
+        }
+      }
+      setError(errMsg);
+    }
     finally { setSubmittingPayment(false); }
   }
 
