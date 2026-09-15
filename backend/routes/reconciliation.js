@@ -699,10 +699,12 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
         for (const spNo of spNos) {
           try {
             const detail = await getApprovalDetail(config, String(spNo));
+            // 企微 getapprovaldetail 返回的数据在 info 字段下
+            const info = detail?.info || {};
             relatedItems.push({
-              sp_no: String(detail?.sp_no || spNo),
-              sp_name: detail?.sp_name || '仓库采购申请',
-              template_id: detail?.template_id || '',
+              sp_no: String(info.sp_no || spNo),
+              sp_name: info.sp_name || '仓库采购申请',
+              template_id: info.template_id || '',
             });
           } catch {
             relatedItems.push({ sp_no: String(spNo), sp_name: '仓库采购申请', template_id: '' });
