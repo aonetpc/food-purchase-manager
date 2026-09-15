@@ -526,6 +526,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
   // 在 try 块外定义，catch 块也能访问（用于错误时返回调试信息）
   let contents = [];
   let controlTypeMap = {};
+  let selectorOptionsMap = {};
   try {
     const { purchase_ids, attachments: rawAttachments = [], reason: customReason, remark: customRemark } = req.body;
     if (!Array.isArray(purchase_ids) || purchase_ids.length === 0) {
@@ -590,6 +591,13 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
         for (const ctrl of tplData.template_content.controls) {
           if (ctrl.property?.id && ctrl.property?.control) {
             controlTypeMap[ctrl.property.id] = ctrl.property.control;
+            // Selector 控件：存选项 key + text，用于构建 value 时用正确的 key
+            if (ctrl.property.control === 'Selector' && ctrl.property.config?.options) {
+              selectorOptionsMap[ctrl.property.id] = ctrl.property.config.options.map(o => ({
+                key: o.key,
+                text: o.value?.text || o.key,
+              }));
+            }
           }
         }
       }
@@ -656,10 +664,14 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
           : config.payment_options;
       }
       paymentLabel = String(paymentOptions[config.default_payment_key] || '转账');
+      // 从模板选项里匹配正确的 key（企微 Selector 控件要求 key 是 option-xxx 格式，不是中文文本）
+      const selectorOpts = selectorOptionsMap[fieldMapping.payment_method] || [];
+      const matchedOpt = selectorOpts.find(o => o.text === paymentLabel);
+      const paymentKey = matchedOpt ? matchedOpt.key : paymentLabel;
       contents.push({
         control: getControlType('payment_method', 'Selector'),
         id: fieldMapping.payment_method,
-        value: { selector: { type: 'single', options: [{ key: paymentLabel, value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } },
+        value: { selector: { type: 'single', options: [{ key: paymentKey, value: [{ text: paymentLabel, lang: 'zh_CN' }] }] } },
       });
     }
     // 明细
