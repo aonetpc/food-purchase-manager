@@ -1618,6 +1618,7 @@ export default function BookingBoardCreate(props: {
   const [lgArr, setLgArr] = useState('14:00');
   const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
   const [lgRemark, setLgRemark] = useState<string>('');  // feat/142: 住宿备注
+  const [mtRemark, setMtRemark] = useState<string>('');  // feat/164: 会议备注
 
   // 用餐表单（多场次，每场含用餐标准/计价模式/特殊要求）
   const [mlSessions, setMlSessions] = useState<MealSession[]>([]);
@@ -1993,7 +1994,7 @@ export default function BookingBoardCreate(props: {
     if (t === 'lunch' || t === 'dinner')
       return mlSessions.reduce((s, x) => s + calcMealAmount(x.pricingMode, x.unitPrice, x.tables, x.perTable, x.pax), 0);
     if (t === 'meeting')
-      return mtSessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
+      return mtSessions.reduce((s, x) => s + (x.customAmount ?? calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc)), 0);
     if (t === 'wellness')
       return wlSessions.reduce((s, x) => s + (x.customAmount ?? calcWellnessAmount(x.wellnessType, x.hours, finalBizConfigForCalc, isGuest)), 0);
     if (t === 'carpickup') {
@@ -2032,6 +2033,7 @@ export default function BookingBoardCreate(props: {
       setMtSessions([
         { date: _defaultDate, startTime: '09:00', hall: 'siji', slotType: 'full', pax: 20 },
       ]);
+      setMtRemark('');  // feat/164: 重置会议备注
     } else if (type === 'wellness') {
       setWlSessions([
         { date: _defaultDate, startTime: '15:00', wellnessType: 'mahjong', hours: 4, pax: 2 },
@@ -2173,6 +2175,7 @@ export default function BookingBoardCreate(props: {
       })));
     } else if (item.itemType === 'meeting') {
       setMtSessions((item.extra.sessions as MeetingSession[] || []).map((s) => ({ ...s })));
+      setMtRemark((item.extra as any)?.remark || '');  // feat/164: 恢复会议备注
     } else if (item.itemType === 'wellness') {
       setWlSessions((item.extra.sessions as WellnessSession[] || []).map((s) => ({ ...s })));
     } else if (item.itemType === 'carpickup') {
@@ -2601,14 +2604,17 @@ export default function BookingBoardCreate(props: {
         setErr('请至少添加一场会务');
         return;
       }
-      const amount = sessions.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0);
+      const amount = sessions.reduce((s, x) => s + (x.customAmount ?? calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc)), 0);
       item = {
         id: keepId,
         itemType,
         date: sessions[0].date,
         startTime: sessions[0].startTime,
         pax: sessions.reduce((s, x) => s + x.pax, 0),
-        extra: { sessions: sessions as any },
+        extra: {
+          sessions: sessions as any,
+          ...(mtRemark.trim() ? { remark: mtRemark.trim() } : {}),  // feat/164: 会议备注
+        },
         amount,
       };
     } else if (itemType === 'wellness') {
@@ -2904,7 +2910,7 @@ export default function BookingBoardCreate(props: {
             startTime: mtSess[0].startTime,
             pax: mtSess.reduce((s, x) => s + x.pax, 0),
             extra: { sessions: mtSess as any },
-            amount: mtSess.reduce((s, x) => s + calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc), 0),
+            amount: mtSess.reduce((s, x) => s + (x.customAmount ?? calcMeetingAmount(x.hall, x.slotType, finalBizConfigForCalc)), 0),
           });
         }
 
@@ -4914,7 +4920,20 @@ export default function BookingBoardCreate(props: {
                                 />
                               </td>
                               <td className="px-1.5 py-1 font-mono text-green-600">
-                                ¥{calcMeetingAmount(s.hall, s.slotType, finalBizConfigForCalc).toLocaleString()}
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={s.customAmount ?? calcMeetingAmount(s.hall, s.slotType, finalBizConfigForCalc)}
+                                  onChange={(e) =>
+                                    setMtSessions((prev) =>
+                                      prev.map((x, idx0) =>
+                                        idx0 === idx ? { ...x, customAmount: parseFloat(e.target.value) || 0 } : x,
+                                      ),
+                                    )
+                                  }
+                                  className={`${cellInput} w-20 font-mono text-green-600`}
+                                  title={`自动价: ¥${calcMeetingAmount(s.hall, s.slotType, finalBizConfigForCalc).toLocaleString()}`}
+                                />
                               </td>
                               <td className="px-1.5 py-1">
                                 <button
@@ -4936,6 +4955,21 @@ export default function BookingBoardCreate(props: {
                       👆 请点击上方会议厅胶囊块，添加会务场次
                     </div>
                   )}
+
+                  {/* feat/164: 会议备注（随内容滚动） */}
+                  <div className="rounded-lg border border-teal-100 p-3 bg-teal-50/40">
+                    <label className="text-xs text-teal-700 font-medium mb-1.5 flex items-center gap-1">
+                      <span>📝 会议备注</span>
+                      <span className="text-teal-400 font-normal">（可选）</span>
+                    </label>
+                    <textarea
+                      value={mtRemark}
+                      onChange={(e) => setMtRemark(e.target.value)}
+                      placeholder="如有特殊需求请填写备注…"
+                      rows={2}
+                      className="w-full text-xs px-2.5 py-1.5 rounded border border-teal-100 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-100 outline-none resize-none"
+                    />
+                  </div>
                 </div>
               ) : drawer.itemType === 'wellness' ? (
                 <div className="space-y-3">

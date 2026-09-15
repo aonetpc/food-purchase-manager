@@ -215,6 +215,7 @@ export interface MeetingSession {
   hall: MeetingHall;
   slotType: 'half' | 'full';
   pax: number;
+  customAmount?: number;  // feat/164: 手工覆盖金额（undefined=用自动计算价）
 }
 
 export interface WellnessSession {
