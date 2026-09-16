@@ -714,11 +714,14 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
         contents.push({ control: remarkEntry[1], id: remarkEntry[0], value: { text: remark } });
       }
     }
-    // 附件
-    if (fieldMapping.attachment && uploadedAttachments.length > 0) {
+    // 附件（参照 warehouse-purchases.js buildWarehouseApplyData 的自动发现逻辑）
+    // fieldMapping.attachment 未配置时，从 controlTypeMap 自动发现 File 类型控件作为兜底
+    const fileControlId = fieldMapping.attachment
+      || Object.entries(controlTypeMap).find(([, ctype]) => ctype === 'File')?.[0];
+    if (fileControlId && uploadedAttachments.length > 0) {
       contents.push({
         control: getControlType('attachment', 'File'),
-        id: fieldMapping.attachment,
+        id: fileControlId,
         value: { files: uploadedAttachments.map(a => ({ file_id: a.mediaId })) },
       });
     }
