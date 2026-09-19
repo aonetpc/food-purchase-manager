@@ -1619,6 +1619,7 @@ export default function BookingBoardCreate(props: {
   const [lgSessions, setLgSessions] = useState<LodgingSession[]>([]);
   const [lgRemark, setLgRemark] = useState<string>('');  // feat/142: 住宿备注
   const [mtRemark, setMtRemark] = useState<string>('');  // feat/164: 会议备注
+  const [wlRemark, setWlRemark] = useState<string>('');  // feat/177: 康乐备注
 
   // 用餐表单（多场次，每场含用餐标准/计价模式/特殊要求）
   const [mlSessions, setMlSessions] = useState<MealSession[]>([]);
@@ -2038,6 +2039,7 @@ export default function BookingBoardCreate(props: {
       setWlSessions([
         { date: _defaultDate, startTime: '15:00', wellnessType: 'mahjong', hours: 4, pax: 2 },
       ]);
+      setWlRemark('');  // feat/177: 重置康乐备注
     } else if (type === 'carpickup') {
       // 用车：默认 1 个客户，填入截图1的示例
       const firstCustomer: CarCustomer = {
@@ -2178,6 +2180,7 @@ export default function BookingBoardCreate(props: {
       setMtRemark((item.extra as any)?.remark || '');  // feat/164: 恢复会议备注
     } else if (item.itemType === 'wellness') {
       setWlSessions((item.extra.sessions as WellnessSession[] || []).map((s) => ({ ...s })));
+      setWlRemark((item.extra as any)?.remark || '');  // feat/177: 恢复康乐备注
     } else if (item.itemType === 'carpickup') {
       const sess: CarpickupSession = item.extra?.carpickup
         ? (item.extra.carpickup as CarpickupSession)
@@ -2631,7 +2634,10 @@ export default function BookingBoardCreate(props: {
         date: sessions[0].date,
         startTime: sessions[0].startTime,
         pax: sessions.reduce((s, x) => s + x.pax, 0),
-        extra: { sessions: sessions as any },
+        extra: {
+          sessions: sessions as any,
+          ...(wlRemark.trim() ? { remark: wlRemark.trim() } : {}),  // feat/177: 康乐备注
+        },
         amount,
       };
     } else if (itemType === 'carpickup') {
@@ -5187,6 +5193,21 @@ export default function BookingBoardCreate(props: {
                       👆 请点击上方康乐项目胶囊块，添加场次
                     </div>
                   )}
+
+                  {/* feat/177: 康乐备注（随内容滚动） */}
+                  <div className="rounded-lg border border-lime-100 p-3 bg-lime-50/40">
+                    <label className="text-xs text-lime-700 font-medium mb-1.5 flex items-center gap-1">
+                      <span>📝 康乐备注</span>
+                      <span className="text-lime-400 font-normal">（可选）</span>
+                    </label>
+                    <textarea
+                      value={wlRemark}
+                      onChange={(e) => setWlRemark(e.target.value)}
+                      placeholder="如有特殊需求请填写备注…"
+                      rows={2}
+                      className="w-full text-xs px-2.5 py-1.5 rounded border border-lime-100 bg-white focus:border-lime-400 focus:ring-1 focus:ring-lime-100 outline-none resize-none"
+                    />
+                  </div>
                 </div>
               ) : drawer.itemType === 'carpickup' ? (
                 <div className="space-y-3">
