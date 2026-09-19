@@ -48,7 +48,7 @@ async function requireWarehouseManager(req, res, next) {
 // 出入库流水查询
 router.get('/', async (req, res) => {
   try {
-    const { warehouse_id, movement_type, start_date, end_date, page = 1, page_size = 50 } = req.query;
+    const { warehouse_id, movement_type, start_date, end_date, item_name, page = 1, page_size = 50 } = req.query;
     const user = req.user;
     const offset = (Number(page) - 1) * Number(page_size);
 
@@ -64,6 +64,7 @@ router.get('/', async (req, res) => {
 
     if (warehouse_id) { sql += ' AND sm.warehouse_id = ?'; params.push(warehouse_id); }
     if (movement_type) { sql += ' AND sm.movement_type = ?'; params.push(movement_type); }
+    if (item_name) { sql += ' AND sm.item_name LIKE ?'; params.push(`%${item_name}%`); }
     if (start_date) { sql += ' AND sm.created_at >= ?'; params.push(start_date); }
     if (end_date) { sql += ' AND sm.created_at <= ?'; params.push(end_date + ' 23:59:59'); }
     sql += ' ORDER BY sm.created_at DESC LIMIT ? OFFSET ?';
@@ -82,6 +83,7 @@ router.get('/', async (req, res) => {
     countSql += permCount.sql;
     if (warehouse_id) { countSql += ' AND sm.warehouse_id = ?'; countParams.push(warehouse_id); }
     if (movement_type) { countSql += ' AND sm.movement_type = ?'; countParams.push(movement_type); }
+    if (item_name) { countSql += ' AND sm.item_name LIKE ?'; countParams.push(`%${item_name}%`); }
     if (start_date) { countSql += ' AND sm.created_at >= ?'; countParams.push(start_date); }
     if (end_date) { countSql += ' AND sm.created_at <= ?'; countParams.push(end_date + ' 23:59:59'); }
     const [countResult] = await pool.query(countSql, countParams);
