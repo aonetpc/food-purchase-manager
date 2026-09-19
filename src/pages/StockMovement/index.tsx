@@ -110,6 +110,7 @@ export default function StockMovement() {
   // 筛选条件
   const [warehouseId, setWarehouseId] = useState<string>('');
   const [movementType, setMovementType] = useState<string>('');
+  const [itemName, setItemName] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
@@ -144,6 +145,7 @@ export default function StockMovement() {
         params: {
           warehouse_id: warehouseId || undefined,
           movement_type: movementType || undefined,
+          item_name: itemName.trim() || undefined,
           start_date: startDate || undefined,
           end_date: endDate || undefined,
           page: targetPage,
@@ -172,7 +174,7 @@ export default function StockMovement() {
   useEffect(() => {
     fetchMovements(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [warehouseId, movementType, startDate, endDate]);
+  }, [warehouseId, movementType, itemName, startDate, endDate]);
 
   // 打开弹窗时加载所选仓库的物资
   const openModal = async (type: 'inbound' | 'outbound') => {
@@ -376,6 +378,15 @@ export default function StockMovement() {
             <option value="expense">即买即用</option>
             <option value="adjust">盘点调整</option>
           </select>
+
+          {/* 物资名称搜索 */}
+          <input
+            type="text"
+            value={itemName}
+            onChange={(e) => setItemName(e.target.value)}
+            placeholder="物资名称"
+            className="input-field md:w-44"
+          />
 
           {/* 日期范围 */}
           <div className="flex items-center gap-2">
