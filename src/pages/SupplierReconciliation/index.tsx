@@ -122,6 +122,7 @@ export default function SupplierReconciliation() {
   const [paymentRemark, setPaymentRemark] = useState('');
   const [paymentAttachments, setPaymentAttachments] = useState<Array<{ filename: string; mediaId: string }>>([]);
   const [paymentAttaching, setPaymentAttaching] = useState(false);
+  const [paymentUploadProgress, setPaymentUploadProgress] = useState<number | null>(null);
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
   // ====== 月结付款审批中 state ======
@@ -332,14 +333,18 @@ export default function SupplierReconciliation() {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        setPaymentUploadProgress(0);
         const data = await api.upload<{ filename: string; mediaId: string }>(
           '/reconciliation/monthly/payment/upload-attachment',
-          file
+          file,
+          { onProgress: (p) => setPaymentUploadProgress(p) }
         );
         setPaymentAttachments(prev => [...prev, { filename: data.filename, mediaId: data.mediaId }]);
+        setPaymentUploadProgress(null);
       }
     } catch (e: any) {
       setError(e.message || '附件上传失败');
+      setPaymentUploadProgress(null);
     } finally {
       setPaymentAttaching(false);
     }
@@ -1022,6 +1027,14 @@ export default function SupplierReconciliation() {
                   <Upload className="w-4 h-4" /> 选择文件
                   <input type="file" multiple className="hidden" onChange={handleFileUpload} />
                 </label>
+                {paymentUploadProgress !== null && (
+                  <div className="mt-3">
+                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-500 transition-all duration-150" style={{ width: `${paymentUploadProgress}%` }} />
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">上传中 {paymentUploadProgress}%</p>
+                  </div>
+                )}
                 {paymentAttachments.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {paymentAttachments.map((att, idx) => (

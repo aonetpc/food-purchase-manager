@@ -95,33 +95,38 @@ export const api = {
   delete: <T>(path: string, options?: RequestInit) =>
     request<T>(path, { ...options, method: 'DELETE' }),
   // 上传文件（二进制，不走 JSON.stringify，避免 base64 膨胀导致 413）
-  upload: async <T>(path: string, file: File | Blob): Promise<T> => {
-    const url = `${BASE_URL}${path}`;
-    const token = getToken();
-    const filename = file instanceof File ? file.name : `upload_${Date.now()}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'X-Filename': encodeURIComponent(filename),
-        },
-        body: file,
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: '上传失败' }));
-        throw new Error(error.error || `HTTP ${response.status}`);
-      }
-      return response.json();
-    } catch (err: any) {
-      if (err.name === 'AbortError') throw new Error('请求超时，请稍后重试');
-      throw err;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+  // 用 XMLHttpRequest 以支持上传进度回调（fetch 原生不支持上传进度）
+  upload: async <T>(
+    path: string,
+    file: File | Blob,
+    options?: { onProgress?: (percent: number) => void }
+  ): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      const url = `${BASE_URL}${path}`;
+      const token = getToken();
+      const filename = file instanceof File ? file.name : `upload_${Date.now()}`;
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('X-Filename', encodeURIComponent(filename));
+      xhr.timeout = DEFAULT_TIMEOUT;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && options?.onProgress) {
+          options.onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+          else reject(new Error(data.error || `HTTP ${xhr.status}`));
+        } catch { reject(new Error('响应解析失败')); }
+      };
+      xhr.onerror = () => reject(new Error('网络错误'));
+      xhr.ontimeout = () => reject(new Error('请求超时，请稍后重试'));
+      xhr.send(file);
+    });
   },
   getBaseUrl: () => BASE_URL,
   getToken,
