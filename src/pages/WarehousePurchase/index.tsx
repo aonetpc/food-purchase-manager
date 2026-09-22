@@ -239,7 +239,8 @@ export default function WarehousePurchaseList() {
   // 预付款审批弹窗
   const [showPrepayModal, setShowPrepayModal] = useState(false);
   const [prepayTarget, setPrepayTarget] = useState<WarehousePurchase | null>(null);
-  const [prepayAttachments, setPrepayAttachments] = useState<Array<{ filename: string; base64: string; mimeType: string }>>([]);
+  const [prepayAttachments, setPrepayAttachments] = useState<Array<{ filename: string; mediaId: string }>>([]);
+  const [prepayAttaching, setPrepayAttaching] = useState(false);
   const [prepaySubmitting, setPrepaySubmitting] = useState(false);
 
   // 发送确认通知弹窗
@@ -515,20 +516,25 @@ export default function WarehousePurchaseList() {
     setShowPrepayModal(true);
   };
 
-  const handlePrepayFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePrepayFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        setPrepayAttachments((prev) => [
-          ...prev,
-          { filename: file.name, base64, mimeType: file.type || 'application/octet-stream' },
-        ]);
-      };
-      reader.readAsDataURL(file);
-    });
+    if (!files || files.length === 0) return;
+    setPrepayAttaching(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const data = await api.upload<{ filename: string; mediaId: string }>(
+          `/warehouse-purchases/${prepayTarget?.id}/submit-prepay/upload-attachment`,
+          file
+        );
+        setPrepayAttachments(prev => [...prev, { filename: data.filename, mediaId: data.mediaId }]);
+      }
+    } catch (e: any) {
+      console.error('附件上传失败:', e);
+      alert(e.message || '附件上传失败');
+    } finally {
+      setPrepayAttaching(false);
+    }
     e.target.value = '';
   };
 

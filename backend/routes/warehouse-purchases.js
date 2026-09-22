@@ -3456,6 +3456,28 @@ router.delete('/:id', requireAuth, async (req, res) => {
 // 预付款相关接口
 // ================================================
 
+// 上传预付附件（二进制，不走 base64，避免 413）
+router.post('/:id/submit-prepay/upload-attachment', requireAuth, express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
+  try {
+    const filename = req.headers['x-filename'] ? decodeURIComponent(String(req.headers['x-filename'])) : `attachment_${Date.now()}.pdf`;
+    const config = await getWecomConfig();
+    if (!config) return res.status(400).json({ error: '企微配置缺失' });
+
+    const attachDir = path.join(__dirname, '..', 'uploads', 'prepay_attachments');
+    if (!fs.existsSync(attachDir)) fs.mkdirSync(attachDir, { recursive: true });
+
+    const safeFilename = String(filename).replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
+    const savePath = path.join(attachDir, `${Date.now()}_${safeFilename}`);
+    fs.writeFileSync(savePath, req.body);
+
+    const mediaId = await uploadMedia(config, savePath, safeFilename);
+    res.json({ filename: safeFilename, mediaId });
+  } catch (err) {
+    console.error('[预付采购] 附件上传失败:', err);
+    res.status(500).json({ error: '附件上传失败: ' + err.message });
+  }
+});
+
 // 12. POST /:id/submit-prepay — 发起预付款审批
 router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
   try {
@@ -3520,34 +3542,13 @@ router.post('/:id/submit-prepay', requireAuth, async (req, res) => {
       [id]
     );
 
-    // 处理手动上传的附件（base64 → 保存文件 → 上传企微获取 mediaId）
+    // 附件已通过上传接口上传，直接用 mediaId（不走 base64，避免 413）
     const { attachments: rawAttachments = [] } = req.body;
-    const uploadedAttachments = []; // 传给 buildWarehouseApplyData 的 [{filename, mediaId}]
-    const savedAttachments = [];     // 持久化到 DB 的 [{filename, path, mime, size}]
-
-    if (Array.isArray(rawAttachments) && rawAttachments.length > 0) {
-      const attachDir = path.join(__dirname, '..', 'uploads', 'prepay_attachments', id);
-      if (!fs.existsSync(attachDir)) {
-        fs.mkdirSync(attachDir, { recursive: true });
-      }
-      for (let i = 0; i < rawAttachments.length; i++) {
-        const att = rawAttachments[i];
-        if (!att.filename || !att.base64) continue;
-        try {
-          const fileBuffer = Buffer.from(att.base64, 'base64');
-          const safeFilename = String(att.filename).replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
-          const savePath = path.join(attachDir, `${Date.now()}_${i}_${safeFilename}`);
-          fs.writeFileSync(savePath, fileBuffer);
-          const mimeType = att.mimeType || 'application/octet-stream';
-          const mediaId = await uploadMedia(config, savePath, safeFilename);
-          uploadedAttachments.push({ filename: safeFilename, mediaId });
-          savedAttachments.push({ filename: safeFilename, path: savePath, mime: mimeType, size: fileBuffer.length });
-          console.log(`[预付审批] 附件上传成功: ${safeFilename} (${fileBuffer.length} bytes)`);
-        } catch (attErr) {
-          console.error(`[预付审批] 附件上传失败: ${att.filename}`, attErr.message);
-        }
-      }
-    }
+    const uploadedAttachments = Array.isArray(rawAttachments)
+      ? rawAttachments.filter(a => a && a.mediaId).map(a => ({ filename: a.filename, mediaId: a.mediaId }))
+      : [];
+    // 文件已在 upload-attachment 接口落盘，submit-prepay 不再持久化文件路径
+    const savedAttachments = [];
 
     // 付款事由：8月3日仓库采购预付款，预计总金额：¥136.00，预付金额：¥50.00，供应商：麦德龙
     const totalAmount = toNum(row.total_amount);

@@ -120,7 +120,8 @@ export default function SupplierReconciliation() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentReason, setPaymentReason] = useState('');
   const [paymentRemark, setPaymentRemark] = useState('');
-  const [paymentAttachments, setPaymentAttachments] = useState<Array<{ filename: string; base64: string; mimeType: string }>>([]);
+  const [paymentAttachments, setPaymentAttachments] = useState<Array<{ filename: string; mediaId: string }>>([]);
+  const [paymentAttaching, setPaymentAttaching] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
   // ====== 月结付款审批中 state ======
@@ -327,21 +328,21 @@ export default function SupplierReconciliation() {
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const newAttachments: Array<{ filename: string; base64: string; mimeType: string }> = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(',')[1] || '');
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      newAttachments.push({ filename: file.name, base64, mimeType: file.type });
+    setPaymentAttaching(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const data = await api.upload<{ filename: string; mediaId: string }>(
+          '/reconciliation/monthly/payment/upload-attachment',
+          file
+        );
+        setPaymentAttachments(prev => [...prev, { filename: data.filename, mediaId: data.mediaId }]);
+      }
+    } catch (e: any) {
+      setError(e.message || '附件上传失败');
+    } finally {
+      setPaymentAttaching(false);
     }
-    setPaymentAttachments(prev => [...prev, ...newAttachments]);
     e.target.value = '';
   }
 
