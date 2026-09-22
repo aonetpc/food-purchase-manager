@@ -241,6 +241,7 @@ export default function WarehousePurchaseList() {
   const [prepayTarget, setPrepayTarget] = useState<WarehousePurchase | null>(null);
   const [prepayAttachments, setPrepayAttachments] = useState<Array<{ filename: string; mediaId: string }>>([]);
   const [prepayAttaching, setPrepayAttaching] = useState(false);
+  const [prepayUploadProgress, setPrepayUploadProgress] = useState<number | null>(null);
   const [prepaySubmitting, setPrepaySubmitting] = useState(false);
 
   // 发送确认通知弹窗
@@ -523,15 +524,19 @@ export default function WarehousePurchaseList() {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        setPrepayUploadProgress(0);
         const data = await api.upload<{ filename: string; mediaId: string }>(
           `/warehouse-purchases/${prepayTarget?.id}/submit-prepay/upload-attachment`,
-          file
+          file,
+          { onProgress: (p) => setPrepayUploadProgress(p) }
         );
         setPrepayAttachments(prev => [...prev, { filename: data.filename, mediaId: data.mediaId }]);
+        setPrepayUploadProgress(null);
       }
     } catch (e: any) {
       console.error('附件上传失败:', e);
       alert(e.message || '附件上传失败');
+      setPrepayUploadProgress(null);
     } finally {
       setPrepayAttaching(false);
     }
@@ -1723,6 +1728,16 @@ export default function WarehousePurchaseList() {
                     disabled={prepaySubmitting}
                   />
                 </label>
+
+                {/* 上传进度条 */}
+                {prepayUploadProgress !== null && (
+                  <div className="mt-3">
+                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-orange-500 transition-all duration-150" style={{ width: `${prepayUploadProgress}%` }} />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">上传中 {prepayUploadProgress}%</p>
+                  </div>
+                )}
 
                 {/* 已选附件列表 */}
                 {prepayAttachments.length > 0 && (
