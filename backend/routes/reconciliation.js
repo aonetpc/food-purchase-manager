@@ -521,6 +521,28 @@ router.get('/monthly/supplier/:id/pending', requireAuth, async (req, res) => {
   }
 });
 
+// 上传附件（二进制，不走 base64，避免 413）
+router.post('/monthly/payment/upload-attachment', requireAuth, express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
+  try {
+    const filename = req.headers['x-filename'] ? decodeURIComponent(String(req.headers['x-filename'])) : `attachment_${Date.now()}.pdf`;
+    const config = await getWecomConfig();
+    if (!config) return res.status(400).json({ error: '企微配置缺失' });
+
+    const attachDir = path.join(__dirname, '..', 'uploads', 'monthly_payment_attachments');
+    if (!fs.existsSync(attachDir)) fs.mkdirSync(attachDir, { recursive: true });
+
+    const safeFilename = String(filename).replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
+    const savePath = path.join(attachDir, `${Date.now()}_${safeFilename}`);
+    fs.writeFileSync(savePath, req.body);
+
+    const mediaId = await uploadMedia(config, savePath, safeFilename);
+    res.json({ filename: safeFilename, mediaId });
+  } catch (err) {
+    console.error('[月结付款] 附件上传失败:', err);
+    res.status(500).json({ error: '附件上传失败: ' + err.message });
+  }
+});
+
 // 批量发起月结付款审批
 router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
   // 在 try 块外定义，catch 块也能访问（用于错误时返回调试信息）
@@ -615,26 +637,10 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
       return mappedId ? (controlTypeMap[mappedId] || fallback) : fallback;
     }
 
-    // 处理附件上传
-    const uploadedAttachments = [];
-    if (Array.isArray(rawAttachments) && rawAttachments.length > 0) {
-      const attachDir = path.join(__dirname, '..', 'uploads', 'monthly_payment_attachments');
-      if (!fs.existsSync(attachDir)) fs.mkdirSync(attachDir, { recursive: true });
-      for (let i = 0; i < rawAttachments.length; i++) {
-        const att = rawAttachments[i];
-        if (!att.filename || !att.base64) continue;
-        try {
-          const fileBuffer = Buffer.from(att.base64, 'base64');
-          const safeFilename = String(att.filename).replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
-          const savePath = path.join(attachDir, `${Date.now()}_${i}_${safeFilename}`);
-          fs.writeFileSync(savePath, fileBuffer);
-          const mediaId = await uploadMedia(config, savePath, safeFilename);
-          uploadedAttachments.push({ filename: safeFilename, mediaId });
-        } catch (attErr) {
-          console.error('[月结付款] 附件上传失败:', att.filename, attErr.message);
-        }
-      }
-    }
+    // 附件已通过上传接口上传，直接用 mediaId（不走 base64，避免 413）
+    const uploadedAttachments = Array.isArray(rawAttachments)
+      ? rawAttachments.filter(a => a && a.mediaId).map(a => ({ filename: a.filename, mediaId: a.mediaId }))
+      : [];
 
     // 构建审批数据
     contents = [];

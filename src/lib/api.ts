@@ -94,6 +94,35 @@ export const api = {
     }),
   delete: <T>(path: string, options?: RequestInit) =>
     request<T>(path, { ...options, method: 'DELETE' }),
+  // 上传文件（二进制，不走 JSON.stringify，避免 base64 膨胀导致 413）
+  upload: async <T>(path: string, file: File | Blob): Promise<T> => {
+    const url = `${BASE_URL}${path}`;
+    const token = getToken();
+    const filename = file instanceof File ? file.name : `upload_${Date.now()}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'X-Filename': encodeURIComponent(filename),
+        },
+        body: file,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: '上传失败' }));
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+      return response.json();
+    } catch (err: any) {
+      if (err.name === 'AbortError') throw new Error('请求超时，请稍后重试');
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  },
   getBaseUrl: () => BASE_URL,
   getToken,
 };
