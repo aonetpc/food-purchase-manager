@@ -1068,7 +1068,9 @@ async function generatePurchaseApplyPDF(purchaseId) {
     : row.status === 'rejected' ? '已驳回'
     : row.status === 'approved' ? '审批通过'
     : row.status;
-  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${whNames.join('、') || '-'}    申请金额：¥${amountLabel.toFixed(2)}    状态：${statusText}`);
+  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${whNames.join('、') || '-'}    供应商：${row.supplier_name || '-'}`);
+  doc.moveDown(0.3);
+  doc.text(`申请金额：¥${amountLabel.toFixed(2)}    状态：${statusText}`);
   doc.moveDown(0.5);
 
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -1265,7 +1267,9 @@ async function generateWarehousePDF(purchaseId) {
   const amountLabel = toNum(row.actual_amount) > 0 ? toNum(row.actual_amount) : toNum(row.total_amount);
   // 汇总涉及仓库
   const pdfWarehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
-  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${pdfWarehouseNames.join('、') || '-'}    金额：¥${amountLabel.toFixed(2)}    状态：${statusLabel}`);
+  doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${pdfWarehouseNames.join('、') || '-'}    供应商：${row.supplier_name || '-'}`);
+  doc.moveDown(0.3);
+  doc.text(`金额：¥${amountLabel.toFixed(2)}    状态：${statusLabel}`);
   doc.moveDown(0.5);
 
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
