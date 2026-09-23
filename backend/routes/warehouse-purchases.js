@@ -3775,6 +3775,33 @@ router.post('/:id/prepay-voucher', requireAuth, async (req, res) => {
   }
 });
 
+// 14b. POST /:id/auto-writeoff — 手动触发预付款自动核销（幂等，可重复调用）
+// 兜底入口：用于历史已回填凭证但 writeoff_status 仍为 NULL 的卡住订单
+router.post('/:id/auto-writeoff', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (rows.length === 0) return res.status(404).json({ error: '采购单不存在' });
+    const row = rows[0];
+    if (row.purchase_type !== 'prepay') {
+      return res.status(400).json({ error: '非预付款采购单' });
+    }
+
+    const writeoffDone = await autoWriteoffPrepayIfReady(row);
+    if (!writeoffDone) {
+      return res.json({
+        success: false,
+        message: '当前状态不满足自动核销条件（需已收货+已回填凭证+未核销）',
+      });
+    }
+    const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    res.json({ success: true, data: normalizePurchaseRow(freshRows[0]) });
+  } catch (err) {
+    console.error('手动触发自动核销失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 15. POST /:id/writeoff-prepay — 手动核销预付款
 router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();

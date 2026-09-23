@@ -611,6 +611,23 @@ export default function WarehousePurchaseList() {
     }
   };
 
+  // 手动触发预付款自动核销（兜底入口，用于历史已回填凭证但未核销的订单）
+  const handleAutoWriteoff = async (id: string) => {
+    setActioningId(id);
+    try {
+      const result = await api.post<{ success: boolean; message?: string; data: WarehousePurchase }>(`/warehouse-purchases/${id}/auto-writeoff`);
+      if (!result.success) {
+        setError(result.message || '无法自动核销');
+        return;
+      }
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '核销失败');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
   const handleWriteoffPrepay = async (id: string) => {
     if (!window.confirm('确定手动核销预付款吗？')) return;
     setActioningId(id);
@@ -1325,6 +1342,21 @@ export default function WarehousePurchaseList() {
                               <AlertCircle size={14} />
                               待核销（请到对账中心处理）
                             </span>
+                          )}
+
+                          {/* 预付款已回填凭证但未核销：手动触发自动核销（兜底入口） */}
+                          {p.purchase_type === 'prepay' && p.prepay_status === 'paid' && !p.writeoff_status && safeNum(p.actual_amount) > 0 && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAutoWriteoff(p.id);
+                              }}
+                              disabled={actioningId === p.id}
+                              className="btn-primary text-xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              <CheckCircle2 size={14} />
+                              完成核销
+                            </button>
                           )}
 
                           {/* 预付订单状态异常（confirmed但无收货数据）：允许重新录入收货 */}
