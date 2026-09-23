@@ -73,6 +73,7 @@ function getCurrentIndex(status: string, purchaseType: string, prepayStatus?: st
     confirmed: 'confirmed',
     reimbursing: 'confirmed', // 报销中视同已确认阶段
     reimbursed: 'reimbursed',
+    completed: 'reimbursed', // 预付订单全额预付自动核销后 status=completed，视同已完成最后一步
   };
 
   const nodeKey = statusMap[status] || 'draft';
@@ -94,7 +95,8 @@ export default function WarehousePurchaseProgress({ status, purchaseType = 'norm
   const currentIndex = getCurrentIndex(status, purchaseType, prepayStatus, writeoffStatus);
 
   // 预付核销完成（writeoff_status = auto）且已报销，标记为完成
-  const isFullyDone = status === 'reimbursed';
+  // completed 状态（预付自动核销完成）也视同全部完成
+  const isFullyDone = status === 'reimbursed' || status === 'completed';
 
   return (
     <div className="flex items-center w-full mt-2 px-1">
