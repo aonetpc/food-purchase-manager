@@ -1860,12 +1860,13 @@ router.post('/confirm-submit', async (req, res) => {
       }
 
       if (row.purchase_type === 'prepay') {
-        // 预付款采购：确认后不立即发起报销，等待手动核销后再发起尾款报销
+        // 预付款采购：确认后若已回填凭证（prepay_status='paid'），自动核销；否则等待回填凭证后核销
         // 预付款流程：确认 → 核销 → 尾款报销
+        const writeoffDone = await autoWriteoffPrepayIfReady(row, connection);
         await connection.commit();
         res.json({
           success: true,
-          message: '确认成功，预付款采购单待核销处理',
+          message: writeoffDone ? '确认成功，预付款已自动核销完成' : '确认成功，预付款采购单待核销处理',
           confirmed_at: now,
           confirmed_departments: confirmedDeptNames,
           progress: { confirmed_users: confirmedTasks, total_users: totalTasks, all_confirmed: true },
@@ -3704,6 +3705,40 @@ router.post('/:id/refresh-prepay', requireAuth, async (req, res) => {
   }
 });
 
+// 预付款自动核销：货物已收货且预付款已支付时，根据预付与实际金额关系自动核销
+// - prepay >= actual：writeoff_status='auto', status='completed'，多付部分计入供应商余额
+// - prepay < actual：writeoff_status='manual'（对账中心发起尾款报销）
+// 由 /prepay-voucher（回填凭证）和 confirm-submit（收货确认）共同调用，覆盖两种执行顺序
+async function autoWriteoffPrepayIfReady(row, connection = null) {
+  const actualAmount = toNum(row.actual_amount);
+  const prepayAmount = toNum(row.prepay_amount);
+  // 需同时满足：已收货 + 已回填凭证（prepay_status='paid'）+ 尚未核销
+  if (actualAmount <= 0 || row.prepay_status !== 'paid' || row.writeoff_status) return false;
+
+  const id = row.id;
+  const exec = (sql, params) => (connection ? connection.query(sql, params) : pool.query(sql, params));
+  if (prepayAmount >= actualAmount) {
+    const diffAmount = prepayAmount - actualAmount;
+    await exec(
+      `UPDATE warehouse_purchases SET writeoff_status = 'auto', writeoff_amount = ?, status = 'completed' WHERE id = ?`,
+      [actualAmount, id]
+    );
+    if (diffAmount > 0 && row.supplier_id) {
+      const [supplierRows] = await exec('SELECT prepay_balance FROM suppliers WHERE id = ?', [row.supplier_id]);
+      if (supplierRows.length > 0) {
+        const currentBalance = toNum(supplierRows[0].prepay_balance);
+        await exec('UPDATE suppliers SET prepay_balance = ? WHERE id = ?', [currentBalance + diffAmount, row.supplier_id]);
+      }
+    }
+  } else {
+    await exec(
+      `UPDATE warehouse_purchases SET writeoff_status = 'manual', writeoff_amount = ? WHERE id = ?`,
+      [prepayAmount, id]
+    );
+  }
+  return true;
+}
+
 // 14. POST /:id/prepay-voucher — 回填预付款付款凭证
 router.post('/:id/prepay-voucher', requireAuth, async (req, res) => {
   try {
@@ -3727,6 +3762,10 @@ router.post('/:id/prepay-voucher', requireAuth, async (req, res) => {
        WHERE id = ?`,
       [payment_voucher_no || null, payment_voucher_at || null, id]
     );
+
+    // 回填凭证后自动核销：若货物已收货，根据预付与实际金额关系自动处理
+    row.prepay_status = 'paid';
+    await autoWriteoffPrepayIfReady(row);
 
     const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     res.json(normalizePurchaseRow(freshRows[0]));
