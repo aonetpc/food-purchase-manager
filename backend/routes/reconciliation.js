@@ -90,6 +90,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       purchases = pRows.map(p => ({
         ...p,
         total_amount: toNum(p.total_amount),
+        actual_amount: toNum(p.actual_amount),
         prepay_amount: toNum(p.prepay_amount),
       }));
     }
@@ -578,7 +579,10 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     }
 
     const supplierName = purchases[0].supplier_name || '供应商';
-    const totalAmount = purchases.reduce((sum, p) => sum + toNum(p.total_amount), 0);
+    const totalAmount = purchases.reduce((sum, p) => {
+      const amt = toNum(p.actual_amount) > 0 ? toNum(p.actual_amount) : toNum(p.total_amount);
+      return sum + amt;
+    }, 0);
     const purchaseNos = purchases.map(p => p.purchase_no || p.id.substring(0, 8));
 
     // 付款事由和备注
@@ -695,7 +699,8 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     if (fieldMapping.details) {
       let detailText = `月结供应商：${supplierName}\n采购单数：${purchases.length}张\n合计金额：¥${totalAmount.toFixed(2)}\n\n`;
       for (const p of purchases) {
-        const line = `${p.purchase_no || p.id.substring(0, 8)}  ¥${toNum(p.total_amount).toFixed(2)}`;
+        const lineAmt = toNum(p.actual_amount) > 0 ? toNum(p.actual_amount) : toNum(p.total_amount);
+        const line = `${p.purchase_no || p.id.substring(0, 8)}  ¥${lineAmt.toFixed(2)}`;
         // 明细文本里始终追加审批单号（无论是否有效），方便审批人查看
         if (p.approval_sp_no) {
           detailText += `${line}  审批单号：${p.approval_sp_no}\n`;

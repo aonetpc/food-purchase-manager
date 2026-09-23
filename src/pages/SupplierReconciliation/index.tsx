@@ -298,7 +298,10 @@ export default function SupplierReconciliation() {
   }
 
   function getSelectedTotal(): number {
-    return getSelectedPurchasesDetail().reduce((sum, p) => sum + (p.total_amount || 0), 0);
+    return getSelectedPurchasesDetail().reduce((sum, p) => {
+      const amt = (p.actual_amount && p.actual_amount > 0) ? p.actual_amount : (p.total_amount || 0);
+      return sum + amt;
+    }, 0);
   }
 
   function generatePaymentReason(): string {
@@ -589,7 +592,7 @@ export default function SupplierReconciliation() {
                                       </td>
                                       <td className="px-3 py-2 font-mono">{p.id.substring(0, 12)}</td>
                                       <td className="px-3 py-2">{p.purchase_date}</td>
-                                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(p.total_amount || 0)}</td>
+                                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency((p.actual_amount && p.actual_amount > 0) ? p.actual_amount : (p.total_amount || 0))}</td>
                                       <td className="px-3 py-2">
                                         <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{p.status}</span>
                                       </td>
@@ -983,7 +986,7 @@ export default function SupplierReconciliation() {
                       <tr key={p.id}>
                         <td className="px-3 py-2 font-mono">{p.id.substring(0, 12)}</td>
                         <td className="px-3 py-2">{p.purchase_date}</td>
-                        <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(p.total_amount || 0)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700">{formatCurrency((p.actual_amount && p.actual_amount > 0) ? p.actual_amount : (p.total_amount || 0))}</td>
                         <td className="px-3 py-2">
                           <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{p.status}</span>
                         </td>
