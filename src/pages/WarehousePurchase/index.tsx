@@ -244,6 +244,11 @@ export default function WarehousePurchaseList() {
   const [prepayUploadProgress, setPrepayUploadProgress] = useState<number | null>(null);
   const [prepaySubmitting, setPrepaySubmitting] = useState(false);
 
+  // 回填付款凭证弹窗
+  const [showVoucherModal, setShowVoucherModal] = useState(false);
+  const [voucherTargetId, setVoucherTargetId] = useState<string | null>(null);
+  const [voucherNo, setVoucherNo] = useState('');
+
   // 发送确认通知弹窗
   const [showSendConfirmModal, setShowSendConfirmModal] = useState(false);
   const [sendConfirmTarget, setSendConfirmTarget] = useState<WarehousePurchase | null>(null);
@@ -580,16 +585,25 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  const handlePrepayVoucher = async (id: string) => {
-    const voucherNo = window.prompt('请输入付款凭证号/银行流水号：');
-    if (voucherNo === null) return;
-    setActioningId(id);
+  const handlePrepayVoucher = (id: string) => {
+    setVoucherTargetId(id);
+    setVoucherNo('');
+    setShowVoucherModal(true);
+  };
+
+  const submitPrepayVoucher = async () => {
+    if (!voucherTargetId) return;
+    setActioningId(voucherTargetId);
     try {
-      await api.post(`/warehouse-purchases/${id}/prepay-voucher`, {
-        payment_voucher_no: voucherNo || '',
-        payment_voucher_at: new Date().toISOString(),
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const mysqlDatetime = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      await api.post(`/warehouse-purchases/${voucherTargetId}/prepay-voucher`, {
+        payment_voucher_no: voucherNo.trim() || '',
+        payment_voucher_at: mysqlDatetime,
       });
       await fetchList();
+      setShowVoucherModal(false);
     } catch (err: any) {
       setError(err.message || '回填付款凭证失败');
     } finally {
@@ -1782,6 +1796,46 @@ export default function WarehousePurchaseList() {
               >
                 <Send size={16} />
                 {prepaySubmitting ? '提交中...' : '发起审批'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 回填付款凭证弹窗 ===== */}
+      {showVoucherModal && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+          onClick={() => !actioningId && setShowVoucherModal(false)}
+        >
+          <div
+            className="bg-white rounded-lg p-6 w-full max-w-md"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">回填付款凭证</h3>
+            <label className="block text-sm font-medium text-gray-700 mb-1">付款凭证号/银行流水号</label>
+            <input
+              type="text"
+              value={voucherNo}
+              onChange={e => setVoucherNo(e.target.value)}
+              placeholder="可选，留空表示仅记录回填时间"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400"
+              autoFocus
+            />
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setShowVoucherModal(false)}
+                disabled={!!actioningId}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={submitPrepayVoucher}
+                disabled={!!actioningId}
+                className="px-4 py-2 text-sm text-white bg-orange-500 hover:bg-orange-600 rounded-lg disabled:opacity-50"
+              >
+                {actioningId ? '提交中...' : '确定'}
               </button>
             </div>
           </div>
