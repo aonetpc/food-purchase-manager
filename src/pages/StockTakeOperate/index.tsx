@@ -244,6 +244,10 @@ export default function StockTakeOperate() {
   const [viewMode, setViewMode] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
+  // 草稿字符串：保存用户正在输入的原始字符串，避免 Number→String 吞掉尾部零（如 "3.0" 被重渲染为 "3" 导致无法输入 "3.06"）
+  const [draftActual, setDraftActual] = useState<Record<string, string>>({});
+  const [draftVerify, setDraftVerify] = useState<Record<string, string>>({});
+
   // 筛选
   const [keyword, setKeyword] = useState('');
   const [catFilter, setCatFilter] = useState('');
@@ -814,7 +818,11 @@ export default function StockTakeOperate() {
               // 受控 input 的 value：空值（用户删除完数字）时保持空字符串，
               // 绝不能显示系统数量，否则 React 会在用户刚删除完就强制回填为系统数，
               // 导致「删除完就跳回10」的糟糕输入体验。
-              const inputValue = actual === null ? '' : String(actual);
+              // 同时用草稿字符串保存正在输入的原始值，避免 Number→String 吞掉尾部零
+              // （如 "3.0" 被重渲染为 "3" 导致无法继续输入 "3.06"）。
+              const inputValue = draftActual[it.id] !== undefined
+                ? draftActual[it.id]
+                : (actual === null ? '' : String(actual));
 
               return (
                 <div key={it.id} className="bg-white rounded-lg shadow-sm p-2 sm:p-3">
@@ -852,7 +860,17 @@ export default function StockTakeOperate() {
                           value={inputValue}
                           onChange={(e) => {
                             const v = e.target.value;
+                            // 只更新草稿字符串，保留用户原始输入（含尾部零）
+                            setDraftActual(prev => ({ ...prev, [it.id]: v }));
+                            // 同步解析给 diff 计算（数学运算用 Number 即可）
                             updateItem(it.id, { actual_quantity: v === '' ? null : Number(v) });
+                          }}
+                          onBlur={() => {
+                            // 失焦时提交最终解析值，清除草稿（回落到 String(actual)）
+                            const raw = draftActual[it.id] ?? '';
+                            const parsed = raw === '' ? null : Number(raw);
+                            updateItem(it.id, { actual_quantity: parsed });
+                            setDraftActual(prev => { const n = { ...prev }; delete n[it.id]; return n; });
                           }}
                           className={`w-24 sm:w-28 text-right text-sm sm:text-base px-2.5 sm:px-3 py-1.5 sm:py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 ${
                             isUnconfirmed ? 'bg-amber-50 border-amber-300' : 'border-gray-200 bg-white'
@@ -955,10 +973,19 @@ export default function StockTakeOperate() {
                         type="number"
                         step="any"
                         inputMode="decimal"
-                        value={vq === null || vq === undefined ? '' : String(vq)}
+                        value={draftVerify[s.item_detail_id] !== undefined
+                          ? draftVerify[s.item_detail_id]
+                          : (vq === null || vq === undefined ? '' : String(vq))}
                         onChange={e => {
                           const v = e.target.value;
+                          setDraftVerify(prev => ({ ...prev, [s.item_detail_id]: v }));
                           updateSample(s.item_detail_id, v === '' ? null : Number(v));
+                        }}
+                        onBlur={() => {
+                          const raw = draftVerify[s.item_detail_id] ?? '';
+                          const parsed = raw === '' ? null : Number(raw);
+                          updateSample(s.item_detail_id, parsed);
+                          setDraftVerify(prev => { const n = { ...prev }; delete n[s.item_detail_id]; return n; });
                         }}
                         className="w-24 sm:w-28 text-right text-sm sm:text-base px-2.5 sm:px-3 py-1.5 sm:py-2 border border-gray-200 rounded-lg bg-amber-50 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
                         placeholder="请输入"
