@@ -35,6 +35,7 @@ export default function TempCheckin() {
   const [hours, setHours] = useState('');
   const [todayChecked, setTodayChecked] = useState(false);
   const [todayRecords, setTodayRecords] = useState<CheckinRecord[]>([]);
+  const [showTempWarning, setShowTempWarning] = useState(false);
 
   useEffect(() => {
     if (!session) {
@@ -111,10 +112,21 @@ export default function TempCheckin() {
       return;
     }
 
+    // 已有分配岗位却选临时岗位时，弹出警告确认
+    const hasAssignedPositions = positions.some(p => p.name !== '临时岗位');
+    if (hasAssignedPositions && isTempPosition(position)) {
+      setShowTempWarning(true);
+      return;
+    }
+
+    await doCheckin();
+  };
+
+  const doCheckin = async () => {
     try {
       await api.post('/temp/checkins', {
         position_id: selectedPosition,
-        hours: position.pay_type === 'per_hour' ? parseFloat(hours) : null,
+        hours: positions.find(p => p.id === selectedPosition)?.pay_type === 'per_hour' ? parseFloat(hours) : null,
       }, {
         headers: { Authorization: `Bearer ${session.token}` },
       });
@@ -122,10 +134,16 @@ export default function TempCheckin() {
       setError('');
       setSelectedPosition('');
       setHours('');
+      setShowTempWarning(false);
       fetchData();
     } catch (err: any) {
       setError(err.message || '打卡失败');
     }
+  };
+
+  const cancelTempCheckin = () => {
+    setShowTempWarning(false);
+    setSelectedPosition('');
   };
 
   const getStatusText = (status: string) => {
@@ -381,6 +399,48 @@ export default function TempCheckin() {
           </>
         )}
       </div>
+
+      {showTempWarning && (() => {
+        const assignedNames = positions.filter(p => p.name !== '临时岗位').map(p => p.name);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-6 bg-black/50">
+            <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden">
+              <div className="px-6 pt-6 pb-4 text-center">
+                <div className="w-14 h-14 mx-auto rounded-full bg-orange-100 flex items-center justify-center mb-3">
+                  <svg className="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-gray-800 mb-2">请确认岗位选择</h3>
+                <p className="text-sm text-gray-600 leading-relaxed">
+                  您已有审核员分配的固定岗位：
+                  <span className="font-semibold text-purple-600">「{assignedNames.join('、')}」</span>
+                </p>
+                <p className="text-sm text-gray-500 leading-relaxed mt-2">
+                  临时岗位打卡后需由审核员手动分配岗位和金额，可能影响您的结算进度。
+                </p>
+                <p className="text-sm text-gray-500 leading-relaxed mt-1">
+                  如非临时调岗，建议选择已分配岗位打卡。
+                </p>
+              </div>
+              <div className="px-6 pb-6 flex gap-3">
+                <button
+                  onClick={cancelTempCheckin}
+                  className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold rounded-xl shadow-md active:scale-95 transition-transform"
+                >
+                  返回修改
+                </button>
+                <button
+                  onClick={doCheckin}
+                  className="flex-1 py-3 bg-white border-2 border-gray-200 text-gray-600 font-semibold rounded-xl active:scale-95 transition-transform"
+                >
+                  继续打卡
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
