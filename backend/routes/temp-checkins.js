@@ -145,6 +145,56 @@ router.post('/', requireTempAuth, async (req, res) => {
     }
 
     const [records] = await pool.query('SELECT * FROM checkin_records WHERE id = ?', [id]);
+
+    // 打卡成功后，给对应岗位的审核员发送企微通知
+    try {
+      const { getWecomConfig, sendTextCardToUser } = require('./wecom');
+      const config = await getWecomConfig();
+      if (config && config.app_domain) {
+        const isTemp = position.name === '临时岗位';
+        let auditorRows = [];
+        if (isTemp) {
+          // 临时岗位：通知所有 temp_auditor 角色的审核员
+          [auditorRows] = await pool.query(`
+            SELECT DISTINCT u.wecom_userid
+            FROM users u
+            JOIN user_roles ur ON u.id = ur.user_id
+            JOIN roles r ON ur.role_id = r.id
+            WHERE r.code = 'temp_auditor' AND u.status = 1
+              AND u.wecom_userid IS NOT NULL AND u.wecom_userid != ''
+          `);
+        } else {
+          // 固定岗位：通知该岗位的审核员
+          [auditorRows] = await pool.query(`
+            SELECT u.wecom_userid
+            FROM position_auditors pa
+            JOIN users u ON pa.user_id = u.id
+            WHERE pa.position_id = ?
+              AND u.wecom_userid IS NOT NULL AND u.wecom_userid != ''
+          `, [realPositionId]);
+        }
+
+        if (auditorRows.length > 0) {
+          const auditUrl = `${config.app_domain}/temp-audit`;
+          const description = `打卡人：${req.tempUser.name}\n岗位：${position.name}\n时间：${checkinTime}\n请尽快审核`;
+          for (const auditor of auditorRows) {
+            try {
+              await sendTextCardToUser(config, auditor.wecom_userid, {
+                title: '🔔 新打卡待审核',
+                description,
+                url: auditUrl,
+                btntxt: '点击审核',
+              });
+            } catch (sendErr) {
+              console.error(`[temp-checkin] 发送审核通知失败 userid=${auditor.wecom_userid}:`, sendErr.message);
+            }
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error('[temp-checkin] 审核通知流程异常:', notifyErr.message);
+    }
+
     res.json(records[0]);
   } catch (err) {
     console.error('checkin submit error:', err);
