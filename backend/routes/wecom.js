@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const pool = require('../db');
+const { requireAuth, requireRole } = require('../middleware/rbac');
 const { generateConfirmationPDF: generatePDF } = require('../utils/pdf');
 
 const PDF_DIR = '/opt/food-purchase/backend/uploads/pdfs';
@@ -334,7 +335,35 @@ async function updateTemplateCard(config, userid, cardType, identifier, { main_t
   return data;
 }
 
+/**
+ * 校验 Webhook URL 必须指向企业微信群机器人官方域名
+ * 防止 SSRF：禁止任何内网 IP / 云元数据服务 / 非 qyapi.weixin.qq.com 域名
+ * @param {string|null|undefined} url 待校验的 URL
+ * @param {string} field 字段名（用于错误提示）
+ */
+function validateWebhookUrl(url, field = 'webhook_url') {
+  if (url === null || url === undefined) return; // 允许清空
+  if (typeof url !== 'string') {
+    throw new Error(`${field} 必须是字符串`);
+  }
+  const trimmed = url.trim();
+  if (!trimmed) return; // 空字符串视为清空
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    throw new Error(`${field} 不是合法的 URL`);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`${field} 必须使用 https 协议，禁止 http/ftp/file 等`);
+  }
+  if (parsed.hostname !== 'qyapi.weixin.qq.com') {
+    throw new Error(`${field} 必须指向企业微信官方域名 qyapi.weixin.qq.com，禁止指向其他主机`);
+  }
+}
+
 async function sendViaWebhook(webhookUrl, content) {
+  validateWebhookUrl(webhookUrl);
   const res = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -349,6 +378,7 @@ async function sendViaWebhook(webhookUrl, content) {
 }
 
 async function sendMarkdownViaWebhook(webhookUrl, content, mentionedList = []) {
+  validateWebhookUrl(webhookUrl);
   const body = {
     msgtype: 'markdown',
     markdown: { content }
@@ -365,6 +395,7 @@ async function sendMarkdownViaWebhook(webhookUrl, content, mentionedList = []) {
 
 // 发送文本消息到群（支持真正的@提醒）
 async function sendTextViaWebhook(webhookUrl, content, mentionedList = []) {
+  validateWebhookUrl(webhookUrl);
   const body = {
     msgtype: 'text',
     text: { content }
@@ -516,8 +547,8 @@ function decryptMsg(encodingAESKey, msgEncrypt, corpid) {
   return msgContent;
 }
 
-// 获取配置
-router.get('/config', async (req, res) => {
+// 获取配置（仅管理员，配置含 secret 字段）
+router.get('/config', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
     if (rows.length === 0) {
@@ -545,8 +576,8 @@ router.get('/config', async (req, res) => {
   }
 });
 
-// 获取敏感字段（需要明确请求）
-router.get('/config/secret/:field', async (req, res) => {
+// 获取敏感字段（仅管理员，明文返回 secret 字段）
+router.get('/config/secret/:field', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { field } = req.params;
     const allowedFields = ['app_secret', 'query_app_secret', 'bank_account', 'callback_aes_key', 'wx_app_secret'];
@@ -574,8 +605,8 @@ router.get('/config/secret/:field', async (req, res) => {
   }
 });
 
-// 保存配置
-router.put('/config', async (req, res) => {
+// 保存配置（仅管理员，含 webhook URL 白名单校验防止 SSRF）
+router.put('/config', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const {
       corp_id, app_secret, agent_id, chat_id, webhook_url, test_webhook_url,
@@ -593,6 +624,22 @@ router.put('/config', async (req, res) => {
       expense_payment_template_id
       // expense_payment_applyer_userid 保留字段，前端暂不配置（未来用于筛选默认值）
     } = req.body;
+
+    // Webhook URL 白名单校验：仅允许 https://qyapi.weixin.qq.com/
+    // 防止 SSRF（如攻击者把 test_webhook_url 改为 http://169.254.169.254/... 读云元数据）
+    for (const [name, value] of [
+      ['webhook_url', webhook_url],
+      ['test_webhook_url', test_webhook_url],
+      ['booking_webhook_url', booking_webhook_url],
+    ]) {
+      if (value !== undefined) {
+        try {
+          validateWebhookUrl(value, name);
+        } catch (e) {
+          return res.status(400).json({ error: e.message });
+        }
+      }
+    }
 
     await pool.query('INSERT IGNORE INTO wecom_config (id) VALUES (1)');
 
@@ -671,7 +718,7 @@ router.put('/config', async (req, res) => {
 // ================================================
 // 预订通知调试接口（发送模板卡片到指定用户）
 // ================================================
-router.post('/test-booking-card', async (req, res) => {
+router.post('/test-booking-card', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const config = await getWecomConfig();
     if (!config) return res.status(400).json({ error: 'wecom_config 未配置' });
@@ -751,8 +798,8 @@ router.post('/test-booking-card', async (req, res) => {
   }
 });
 
-// 测试发送消息到群
-router.post('/test-message', async (req, res) => {
+// 测试发送消息到群（仅管理员，使用生产 webhook_url，慎用）
+router.post('/test-message', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const config = await getWecomConfig();
     if (!config) {
@@ -779,8 +826,8 @@ router.post('/test-message', async (req, res) => {
   }
 });
 
-// 发送消息到测试群（使用 test_webhook_url，与生产 webhook_url 完全隔离）
-router.post('/test-group-send', async (req, res) => {
+// 发送消息到测试群（仅管理员，使用 test_webhook_url，与生产 webhook_url 完全隔离）
+router.post('/test-group-send', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const config = await getWecomConfig();
     const testWebhookUrl = config && config.test_webhook_url;

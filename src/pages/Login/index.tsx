@@ -111,28 +111,27 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-gray-100">
-            <p className="text-xs text-gray-400 text-center mb-3">快速登录（体验账号）</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => handleQuickLogin('admin')}
-                className="py-2 px-3 text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors font-medium"
-              >
-                管理员账号
-              </button>
-              <button
-                onClick={() => handleQuickLogin('viewer')}
-                className="py-2 px-3 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-              >
-                查看员账号
-              </button>
+          {/* 开发环境快速登录：生产构建（npm run build）会剔除 import.meta.env.DEV 分支 */}
+          {import.meta.env.DEV && (
+            <div className="mt-6 pt-5 border-t border-gray-100">
+              <p className="text-xs text-gray-400 text-center mb-3">快速登录（仅开发环境）</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => handleQuickLogin('admin')}
+                  className="py-2 px-3 text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors font-medium"
+                >
+                  管理员账号
+                </button>
+                <button
+                  onClick={() => handleQuickLogin('viewer')}
+                  className="py-2 px-3 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                >
+                  查看员账号
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
-
-        <p className="text-center text-xs text-gray-400 mt-6">
-          默认管理员：admin / admin123 &nbsp;|&nbsp; 查看员：viewer / viewer123
-        </p>
       </div>
     </div>
   );
