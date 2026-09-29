@@ -134,6 +134,19 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
 
+    // 类型校验：username 必须是非空字符串，防止类型混淆攻击
+    // （如 username:0 / username:true / username:null 被某些 ORM 当作通配匹配）
+    if (typeof username !== 'string' || !username.trim()) {
+      return res.status(400).json({ error: '用户名不能为空' });
+    }
+    // password 必须是非空字符串，且长度 ≤ 100（防止超长密码 DoS）
+    if (typeof password !== 'string' || !password) {
+      return res.status(400).json({ error: '密码不能为空' });
+    }
+    if (password.length > 100) {
+      return res.status(400).json({ error: '密码长度超过限制' });
+    }
+
     const [rows] = await pool.query(
       'SELECT id, username, name, role, role_id, status, password_hash, wecom_userid, phone, department_id FROM users WHERE username = ?',
       [username]
@@ -298,12 +311,21 @@ router.get('/users', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/change-password', async (req, res) => {
+router.post('/change-password', requireAuth, async (req, res) => {
   try {
-    const { userId, oldPassword, newPassword } = req.body;
+    // 安全限制：只能修改自己账户的密码，忽略前端传的 userId
+    // 攻击者无法通过 userId 字段越权修改他人密码
+    const userId = req.user.id;
+    const { oldPassword, newPassword } = req.body;
 
-    if (!userId || !oldPassword || !newPassword) {
-      return res.status(400).json({ error: '缺少参数' });
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ error: '缺少原密码或新密码' });
+    }
+    if (typeof oldPassword !== 'string' || typeof newPassword !== 'string') {
+      return res.status(400).json({ error: '密码参数类型错误' });
+    }
+    if (newPassword.length > 100) {
+      return res.status(400).json({ error: '新密码长度超过限制' });
     }
 
     const [rows] = await pool.query(
@@ -336,12 +358,19 @@ router.post('/change-password', async (req, res) => {
   }
 });
 
-router.post('/reset-password', async (req, res) => {
+// 管理员重置任意用户密码：仅 admin 角色可调，仍要传 userId 指定目标用户
+router.post('/reset-password', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { userId, newPassword } = req.body;
 
     if (!userId || !newPassword) {
-      return res.status(400).json({ error: '缺少参数' });
+      return res.status(400).json({ error: '缺少用户 ID 或新密码' });
+    }
+    if (typeof userId !== 'string' || typeof newPassword !== 'string') {
+      return res.status(400).json({ error: '参数类型错误' });
+    }
+    if (newPassword.length > 100) {
+      return res.status(400).json({ error: '新密码长度超过限制' });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
