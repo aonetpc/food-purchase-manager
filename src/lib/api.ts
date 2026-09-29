@@ -371,6 +371,8 @@ export interface BookingConfig {
   paymentMethods?: PaymentMethodRow[];
   checkupItems?: CheckupItemRow[];
   salesUsers?: BookingSalesUser[];
+  /** 企微配置中指定的预订审核员（用于 H5 审核/驳回/标记完成按钮的身份过滤） */
+  bookingApprover?: { userid: string; name: string } | null;
 }
 
 export const bookingApi = {
@@ -566,6 +568,7 @@ export const bookingApi = {
       // 体检项目不走 fromBackend（渲染代码用 snake_case，保持与后端一致）
       checkupItems: (d.checkupItems || d.checkup_items || []) as CheckupItemRow[],
       salesUsers:   (d.salesUsers   || d.sales_users   || []).map(fromBackend),
+      bookingApprover: d.bookingApprover || d.booking_approver || null,
     };
   },
 
