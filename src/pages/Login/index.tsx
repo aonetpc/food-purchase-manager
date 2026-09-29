@@ -36,14 +36,10 @@ export default function Login() {
     setLoading(false);
   };
 
-  const handleQuickLogin = (role: 'admin' | 'viewer') => {
-    if (role === 'admin') {
-      setUsername('admin');
-      setPassword('admin123');
-    } else {
-      setUsername('viewer');
-      setPassword('viewer123');
-    }
+  // 快速填充用户名：仅填用户名框，密码必须手动输入（避免在生产登录页暴露任何密码）
+  const handleQuickFillUsername = (uname: string) => {
+    setUsername(uname);
+    setPassword('');
   };
 
   return (
@@ -111,26 +107,16 @@ export default function Login() {
             </button>
           </form>
 
-          {/* 开发环境快速登录：生产构建（npm run build）会剔除 import.meta.env.DEV 分支 */}
-          {import.meta.env.DEV && (
-            <div className="mt-6 pt-5 border-t border-gray-100">
-              <p className="text-xs text-gray-400 text-center mb-3">快速登录（仅开发环境）</p>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => handleQuickLogin('admin')}
-                  className="py-2 px-3 text-sm bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors font-medium"
-                >
-                  管理员账号
-                </button>
-                <button
-                  onClick={() => handleQuickLogin('viewer')}
-                  className="py-2 px-3 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-                >
-                  查看员账号
-                </button>
-              </div>
-            </div>
-          )}
+          {/* 快速填用户名：仅填充用户名框，密码必须手动输入，生产环境也显示 */}
+          <div className="mt-6 pt-5 border-t border-gray-100">
+            <p className="text-xs text-gray-400 text-center mb-3">快速填用户名（密码需手动输入）</p>
+            <button
+              onClick={() => handleQuickFillUsername('viewer')}
+              className="w-full py-2 px-3 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+            >
+              查看员账号
+            </button>
+          </div>
         </div>
       </div>
     </div>
