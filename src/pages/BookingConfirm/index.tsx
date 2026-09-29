@@ -130,6 +130,8 @@ export default function BookingConfirmPage() {
   const [mealTypes, setMealTypes] = useState<MealTypeRow[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomTypeRow[]>([]);
   const [capsules, setCapsules] = useState<any[]>([]); // 销售体检胶囊，含 prices[role].discount_price
+  // 企微配置中指定的预订审核员（用于判断当前用户是否可执行审核/驳回/标记完成）
+  const [bookingApprover, setBookingApprover] = useState<{ userid: string; name: string } | null>(null);
 
   // 操作 UI
   const [showRejectBox, setShowRejectBox] = useState(false);
@@ -231,6 +233,7 @@ export default function BookingConfirmPage() {
         setPackages(cfg.packages || []);
         setMealTypes(cfg.mealTypes || []);
         setRoomTypes(cfg.roomTypes || []);
+        setBookingApprover(cfg.bookingApprover || null);
 
         // 若订单有销售员，加载销售体检胶囊（用于体检套餐价/折扣率显示）
         const sid = orderData.salesPersonId;
@@ -359,6 +362,33 @@ export default function BookingConfirmPage() {
 
   // 生成流程步骤
   const flowSteps = buildFlowSteps(order);
+
+  // ============================================================
+  // 🔧 前端身份过滤：与后端 isSalesOwnerOfOrder / isConfiguredBookingReviewer 对齐
+  //    销售员确认：仅限订单销售员本人
+  //    审核通过/驳回(reviewing阶段)/标记完成：仅限企微配置中指定的审核员
+  //    不满足条件的用户不展示对应操作区（直接隐藏，不提示）
+  // ============================================================
+  const isOrderSalesPerson = (() => {
+    if (!user) return false;
+    const uid = String(user.id || '');
+    const wecom = String((user as any).wecom_userid || (user as any).wecomUserId || '');
+    const name = user.name || (user as any).realName || (user as any).displayName || '';
+    if (uid && order.salesPersonId && String(order.salesPersonId) === uid) return true;
+    if (wecom && order.salesWecomUserid && String(order.salesWecomUserid) === wecom) return true;
+    if (name && order.salesPerson && order.salesPerson.includes(name)) return true;
+    return false;
+  })();
+
+  const isConfiguredReviewer = (() => {
+    if (!user || !bookingApprover) return false;
+    const wecom = String((user as any).wecom_userid || (user as any).wecomUserId || '');
+    if (!wecom || !bookingApprover.userid) return false;
+    return wecom === String(bookingApprover.userid);
+  })();
+
+  const canSalesConfirm = isOrderSalesPerson;
+  const canReviewOrComplete = isConfiguredReviewer;
 
   return (
     <Shell>
@@ -503,8 +533,8 @@ export default function BookingConfirmPage() {
           </div>
         </InfoCard>
 
-        {/* 操作区：销售确认 / 审核 / 标记完成 */}
-        {order.status === 'sales_confirming' && (
+        {/* 操作区：销售确认 / 审核 / 标记完成 —— 仅当前用户有权限时才展示 */}
+        {order.status === 'sales_confirming' && canSalesConfirm && (
           <ActionBox
             icon={<User size={16} />}
             title="销售员待确认"
@@ -535,7 +565,7 @@ export default function BookingConfirmPage() {
           </ActionBox>
         )}
 
-        {order.status === 'reviewing' && (
+        {order.status === 'reviewing' && canReviewOrComplete && (
           <ActionBox icon={<ShieldCheck size={16} />} title="审核操作" tone="blue" desc="请确认订单信息无误，签字后审核通过">
             {showRejectBox ? (
               <div className="space-y-3">
@@ -585,7 +615,7 @@ export default function BookingConfirmPage() {
           </ActionBox>
         )}
 
-        {order.status === 'confirmed' && (
+        {order.status === 'confirmed' && canReviewOrComplete && (
           <ActionBox icon={<CheckCircle2 size={16} />} title="订单已确认" desc="业务执行完毕后可标记完成" tone="green">
             <SignatureActionsBar onLoadSaved={() => applySavedSignature('complete')} loadingSavedSig={loadingSavedSig} hasSavedSig={!!savedSignature} />
             <SignatureCanvas ref={completeSigRef} onChange={setCompleteSig} />
