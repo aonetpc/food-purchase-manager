@@ -59,6 +59,9 @@ export default function ScanRequisition() {
   const [selectedWarehouse, setSelectedWarehouse] = useState('');
   const [outboundWarehouse, setOutboundWarehouse] = useState<{ id: string; name: string } | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  // 草稿字符串：保存用户正在输入的原始字符串（如 "0."、"0.25"、"3.0"），
+  // 避免 Number→String 重渲染吞掉小数中间态与尾部零（参考 StockTakeOperate）
+  const [cartQtyDraft, setCartQtyDraft] = useState<Record<string, string>>({});
   const [searchKeyword, setSearchKeyword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [resultMsg, setResultMsg] = useState('');
@@ -280,6 +283,8 @@ export default function ScanRequisition() {
   };
 
   const updateCartQty = (itemId: string, delta: number) => {
+    // 加减按钮触发：清掉对应草稿，避免下次进入输入框时草稿覆盖当前 cartQty
+    setCartQtyDraft(prev => { const next = { ...prev }; delete next[itemId]; return next; });
     setCart(prev => prev.map(c => {
       if (c.item_id !== itemId) return c;
       const newQty = c.cartQty + delta;
@@ -292,14 +297,16 @@ export default function ScanRequisition() {
       const item = items.find(i => i.item_id === itemId);
       if (!item) return prev;
       const clamped = Math.max(0, Math.min(qty, item.quantity));
-      if (clamped === 0) return prev.filter(c => c.item_id !== itemId);
       const existing = prev.find(c => c.item_id === itemId);
       if (existing) return prev.map(c => c.item_id === itemId ? { ...c, cartQty: clamped } : c);
+      // 0 时不再新增，但已在购物车的保留，避免用户输入小数中间态（如 "0."、"0.2"）时输入框被移除
+      if (clamped === 0) return prev;
       return [...prev, { ...item, cartQty: clamped }];
     });
   };
 
   const removeFromCart = (itemId: string) => {
+    setCartQtyDraft(prev => { const next = { ...prev }; delete next[itemId]; return next; });
     setCart(prev => prev.filter(c => c.item_id !== itemId));
   };
 
@@ -307,7 +314,9 @@ export default function ScanRequisition() {
   // 提交领料
   // ================================================
   const handleSubmit = async () => {
-    if (cart.length === 0) { setError('请至少选择一项物资'); return; }
+    // 过滤掉数量 <=0 的项（输入中间态可能留下 0 数量商品，后端虽会跳过，前端过滤更稳）
+    const validCart = cart.filter(c => c.cartQty > 0);
+    if (validCart.length === 0) { setError('请至少选择一项物资'); return; }
     if (!session) { setError('登录状态失效'); return; }
 
     if (!session.has_bound_warehouse && !selectedWarehouse) {
@@ -318,7 +327,7 @@ export default function ScanRequisition() {
     setError('');
     try {
       const payload = {
-        items: cart.map(c => ({
+        items: validCart.map(c => ({
           item_id: c.item_id,
           item_name: c.item_name,
           quantity: c.cartQty,
@@ -525,8 +534,29 @@ export default function ScanRequisition() {
                             className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center active:scale-90 transition-transform">
                             <Minus className="w-3.5 h-3.5 text-gray-600" />
                           </button>
-                          <input type="number" value={inCart.cartQty}
-                            onChange={(e) => setCartQty(item.item_id, parseInt(e.target.value) || 0)}
+                          <input
+                            type="number"
+                            step="any"
+                            inputMode="decimal"
+                            value={cartQtyDraft[item.item_id] !== undefined
+                              ? cartQtyDraft[item.item_id]
+                              : String(inCart.cartQty)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // 只更新草稿字符串，保留用户原始输入（含 "0."、"3.0" 等中间态与尾部零）
+                              setCartQtyDraft(prev => ({ ...prev, [item.item_id]: v }));
+                              // 同步解析给购物车数量（用 parseFloat 支持小数，NaN/负数兜底 0）
+                              const parsed = parseFloat(v);
+                              setCartQty(item.item_id, isNaN(parsed) || parsed < 0 ? 0 : parsed);
+                            }}
+                            onBlur={() => {
+                              // 失焦时清除草稿，回落到 String(cartQty) 显示
+                              setCartQtyDraft(prev => {
+                                const next = { ...prev };
+                                delete next[item.item_id];
+                                return next;
+                              });
+                            }}
                             className="w-12 text-center text-xs border border-gray-200 rounded-lg py-1" />
                           <button onClick={() => updateCartQty(item.item_id, 1)}
                             className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center active:scale-90 transition-transform"
