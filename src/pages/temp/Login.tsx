@@ -110,7 +110,7 @@ export default function TempLogin() {
   };
 
   const getWechatAuthUrl = async () => {
-    const configRes = await api.get<any>('/wecom/config');
+    const configRes = await api.get<any>('/wecom/wx-app-id');
     const appId = configRes.wx_app_id || '';
     if (!appId) {
       throw new Error('微信公众号未配置，请联系管理员');
@@ -284,8 +284,12 @@ export default function TempLogin() {
 
           <button
             onClick={async () => {
-              const authUrl = await getWechatAuthUrl();
-              window.location.href = authUrl;
+              try {
+                const authUrl = await getWechatAuthUrl();
+                window.location.href = authUrl;
+              } catch (err: any) {
+                setError(err.message || '获取微信授权失败');
+              }
             }}
             className="mt-8 w-full py-3 bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold rounded-xl shadow-md active:scale-95 transition-transform"
           >

@@ -548,6 +548,17 @@ function decryptMsg(encodingAESKey, msgEncrypt, corpid) {
 }
 
 // 获取配置（仅管理员，配置含 secret 字段）
+// 公开接口：获取微信公众号 AppID（前端 OAuth 跳转用，不含敏感信息）
+router.get('/wx-app-id', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT app_id FROM wechat_config WHERE id = 1');
+    res.json({ wx_app_id: rows.length > 0 ? rows[0].app_id : '' });
+  } catch (err) {
+    console.error('[/wx-app-id] 获取微信公众号 AppID 失败:', err);
+    res.status(500).json({ error: '获取微信配置失败' });
+  }
+});
+
 router.get('/config', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM wecom_config WHERE id = 1');
