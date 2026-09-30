@@ -2521,10 +2521,10 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
         WHERE id = ?`, [orderId]);
     }
 
-    // sales_confirming 状态修改 → 回到 reviewing，清空销售员确认痕迹
+    // sales_confirming 状态修改 → 保持 sales_confirming，清空销售员确认痕迹，等销售员重新确认
+    //   不能改成 reviewing，否则销售员收到"请重新确认"通知后点进去看不到确认按钮（状态已跳过）
     if (originalStatus === 'sales_confirming') {
       await conn.query(`UPDATE booking_orders SET
-          status = 'reviewing',
           sales_confirmed_at = NULL,
           sales_confirmed_by = NULL,
           sales_confirmed_by_name = NULL,
