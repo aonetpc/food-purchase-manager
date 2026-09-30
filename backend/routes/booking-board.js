@@ -28,6 +28,32 @@ function validateSignatureSize(signatureData, res) {
 }
 
 // ============================================================
+// 审批流程历史记录 helper
+// 写入 booking_order_flow_logs 表，记录每一步操作
+// ============================================================
+async function writeFlowLog(conn, orderId, action, actionLabel, user, extra) {
+  try {
+    const id = uuidv4();
+    await conn.query(
+      'INSERT INTO booking_order_flow_logs (id, order_id, action, action_label, operator_id, operator_name, remark, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        id,
+        orderId,
+        action,
+        actionLabel,
+        user?.id || null,
+        user?.name || user?.realName || user?.displayName || null,
+        extra?.remark || null,
+        extra?.signature || null,
+      ]
+    );
+  } catch (e) {
+    // 流程日志写入失败不应阻断主流程
+    console.error(`[writeFlowLog] 写入失败 orderId=${orderId} action=${action}:`, e && e.message);
+  }
+}
+
+// ============================================================
 // 业务角色判断 helper（requireBookingWrite 已放开入口白名单，
 //                    这里做细粒度"谁能操作什么"的限制）
 // ============================================================
@@ -1929,6 +1955,7 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
       await pool.query("UPDATE booking_orders SET status = 'sales_confirming' WHERE id = ?", [orderId]);
     }
     logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
+    await writeFlowLog(pool, orderId, 'submit', '预订员提交', user, {});
 
     // 【方案 S】submitAttempt 走原生列 submit_resend_count（更新后已自增 1）
     //   N=1 -> 首次任务卡：task_id = booking_{orderNo}（兼容老卡）
@@ -2054,6 +2081,7 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
       orderId,
     ]);
     logOperation(req, '预订订单', '销售员确认', `订单号=${o.order_no} 确认人=${user.name || user.id}`, orderId);
+    await writeFlowLog(pool, orderId, 'sales_confirm', '销售员确认', user, { signature: signatureData });
 
     // 🔧 对齐采购确认页：签字保存同步 await + 双写 wecom+system 两把 key（销售快照优先），不再 fire-and-forget
     const sigResult = await saveUserSignature({ order: o, loginUser: user }, signatureData);
@@ -2170,6 +2198,7 @@ router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req
 
     await pool.query("UPDATE booking_orders SET status = 'pending' WHERE id = ?", [orderId]);
     logOperation(req, '预订订单', '撤回', `订单号=${o.order_no}`, orderId);
+    await writeFlowLog(pool, orderId, 'withdraw', '撤回', user, {});
 
     // 【方案 S】撤回 = 当前销售卡作废（语义化标记 status='discarded' + 记录时间）
     //   同步 await：确保返回前端时标记已落库 → 避免 submit 重发起读到旧 attempt / 旧状态命中去重
@@ -2225,6 +2254,7 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
       orderId,
     ]);
     logOperation(req, '预订订单', '审核通过', `订单号=${o.order_no} 审核人=${user.name || user.id}`, orderId);
+    await writeFlowLog(pool, orderId, 'approve', '审核通过', user, { signature: signatureData });
 
     // 🔧 对齐采购确认页：审核通过签字 同步 await 双写（审核人通常=系统管理员PC端，保证system键+企微审核员键都能读到）
     await saveUserSignature({ order: o, loginUser: user }, signatureData);
@@ -2301,6 +2331,7 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
       orderId,
     ]);
     logOperation(req, '预订订单', '驳回', `订单号=${o.order_no} 原因=${rejectionReason}`, orderId);
+    await writeFlowLog(pool, orderId, 'reject', `驳回（${o.status === 'reviewing' ? '审核员' : '销售员'}）`, user, { remark: rejectionReason });
 
     const order = await readOrderFull(orderId);
 
@@ -2383,6 +2414,7 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
       WHERE id = ?
     `, [signatureData, completedByName, orderId]);
     logOperation(req, '预订订单', '标记完成', `订单号=${o.order_no} 操作人=${user.name || user.id}`, orderId);
+    await writeFlowLog(pool, orderId, 'complete', '标记完成', user, { signature: signatureData });
 
     // 🔧 对齐采购确认页：标记完成签字 同步 await 双写
     await saveUserSignature({ order: o, loginUser: user }, signatureData);
@@ -2461,6 +2493,24 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking GET order] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/booking/orders/:id/flow-logs  获取订单审批流程历史
+router.get('/orders/:id/flow-logs', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, order_id, action, action_label, operator_id, operator_name, remark, signature, created_at FROM booking_order_flow_logs WHERE order_id = ? ORDER BY created_at ASC',
+      [req.params.id]
+    );
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    // 表不存在时降级返回空数组（迁移未跑时的兼容窗口）
+    if (/Table .* doesn'?t exist/i.test(e.message)) {
+      return res.json({ ok: true, data: [] });
+    }
+    console.error('[booking flow-logs] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -2549,6 +2599,8 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
 
     await conn.commit();
     logOperation(req, '预订订单', '编辑', `订单号=${cur.order_no} 原状态=${originalStatus}`, orderId);
+    // flow_log 写入需在事务内（conn 有事务上下文），修改摘要在 diffJson 里
+    await writeFlowLog(conn, orderId, 'edit', '修改', user, { remark: diffJson ? JSON.stringify(diffJson) : null });
 
     // --- 提交后通知逻辑（事务外，失败不回滚）---
     const order = await readOrderFull(orderId);

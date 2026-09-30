@@ -7,7 +7,7 @@ import {
   Target, Download, ChevronRight, RotateCcw, Trash2, Signature as SignatureIcon,
   ShieldCheck,
 } from 'lucide-react';
-import { api, bookingApi, type BookingApiOrder, type PackageRow, type MealTypeRow, type RoomTypeRow } from '@/lib/api';
+import { api, bookingApi, type BookingApiOrder, type PackageRow, type MealTypeRow, type RoomTypeRow, type FlowLog } from '@/lib/api';
 import { checkupApi } from '@/pages/CheckupTemplates/api';
 import { useAuthStore } from '@/store/authStore';
 import SignatureCanvas, { type SignatureCanvasHandle } from '@/components/SignatureCanvas';
@@ -132,6 +132,8 @@ export default function BookingConfirmPage() {
   const [capsules, setCapsules] = useState<any[]>([]); // 销售体检胶囊，含 prices[role].discount_price
   // 企微配置中指定的预订审核员（用于判断当前用户是否可执行审核/驳回/标记完成）
   const [bookingApprover, setBookingApprover] = useState<{ userid: string; name: string } | null>(null);
+  // 审批流程历史记录
+  const [flowLogs, setFlowLogs] = useState<FlowLog[]>([]);
 
   // 操作 UI
   const [showRejectBox, setShowRejectBox] = useState(false);
@@ -243,6 +245,11 @@ export default function BookingConfirmPage() {
             if (!cancelled && res?.ok) setCapsules(res.data || []);
           } catch { /* ignore */ }
         }
+        // 加载审批流程历史
+        try {
+          const logs = await bookingApi.getFlowLogs(orderId);
+          if (!cancelled) setFlowLogs(logs);
+        } catch { /* 表不存在时后端返回空数组，忽略 */ }
       } catch (e: any) {
         if (!cancelled) setError(e.message || '加载订单失败');
       } finally {
@@ -360,8 +367,8 @@ export default function BookingConfirmPage() {
   }
   const bizSummary = Object.keys(grouped).map(k => BIZ_MAP[k]?.label || k).join('、');
 
-  // 生成流程步骤
-  const flowSteps = buildFlowSteps(order);
+  // 生成流程步骤：优先从 flowLogs 构建完整历史，无记录时回退到原有逻辑（兼容老订单）
+  const flowSteps = buildFlowSteps(order, flowLogs);
 
   // ============================================================
   // 🔧 前端身份过滤：与后端 isSalesOwnerOfOrder / isConfiguredBookingReviewer 对齐
@@ -654,7 +661,60 @@ export default function BookingConfirmPage() {
 // ============================================================
 // 子组件：流程卡
 // ============================================================
-function buildFlowSteps(order: BookingApiOrder): FlowStep[] {
+function buildFlowSteps(order: BookingApiOrder, flowLogs: FlowLog[] = []): FlowStep[] {
+  // 有流程日志时，从日志构建完整历史（含多次循环）
+  if (flowLogs.length > 0) {
+    const steps: FlowStep[] = flowLogs.map((log, idx) => {
+      const status: StepStatus =
+        log.action === 'reject' ? 'rejected' : 'done';
+      let title = log.actionLabel;
+      // 驳回时在标题中注明原因
+      let remark: string | undefined;
+      if (log.action === 'reject' && log.remark) {
+        remark = `驳回原因：${log.remark}`;
+      } else if (log.action === 'edit' && log.remark) {
+        // 修改摘要：尝试解析 JSON diff，展示简短摘要
+        try {
+          const diff = JSON.parse(log.remark);
+          const parts = Object.entries(diff).map(([k, v]) => k);
+          if (parts.length) remark = `修改项：${parts.join('、')}`;
+        } catch { remark = log.remark; }
+      }
+      return {
+        key: `${log.action}_${idx}`,
+        title,
+        status,
+        name: log.operatorName || undefined,
+        time: formatDateTime(log.createdAt),
+        signature: log.signature || undefined,
+        remark,
+      };
+    });
+
+    // 追加"当前进行中"步骤和"待完成"步骤
+    if (order.status === 'sales_confirming') {
+      steps.push({ key: 'current_sales', title: '销售员确认（待操作）', status: 'current' });
+    } else if (order.status === 'reviewing') {
+      steps.push({ key: 'current_review', title: '审核员审核（待操作）', status: 'current' });
+    } else if (order.status === 'confirmed') {
+      steps.push({ key: 'current_complete', title: '订单完成（待操作）', status: 'current' });
+    } else if (order.status === 'pending') {
+      steps.push({ key: 'current_submit', title: '预订员提交（待操作）', status: 'current' });
+    } else if (order.status === 'completed') {
+      // 已完成不需要追加
+    } else if (order.status === 'rejected') {
+      // 已驳回，已在上面的日志中体现
+    }
+
+    // 如果订单已完成且最后一条日志不是 complete，追加完成步骤
+    if (order.status === 'completed' && steps[steps.length - 1]?.status !== 'done') {
+      steps.push({ key: 'final_complete', title: '订单完成', status: 'done', name: order.completedByName, time: formatDateTime(order.completedAt), signature: order.completedSignature });
+    }
+
+    return steps;
+  }
+
+  // 无流程日志 → 回退到原有逻辑（兼容迁移未跑或老订单）
   // Step 1：创建
   const step1: FlowStep = {
     key: 'create', title: '预订员提交', status: 'done',
