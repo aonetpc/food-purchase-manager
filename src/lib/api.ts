@@ -362,6 +362,19 @@ export interface PaymentMethodRow {
   sort_order: number;
 }
 
+/** 审批流程历史记录 */
+export interface FlowLog {
+  id: string;
+  orderId: string;
+  action: string;
+  actionLabel: string;
+  operatorId: string | null;
+  operatorName: string | null;
+  remark: string | null;
+  signature: string | null;
+  createdAt: string;
+}
+
 export interface BookingConfig {
   packages: PackageRow[];
   roomTypes: RoomTypeRow[];
@@ -408,6 +421,22 @@ export const bookingApi = {
   async getOrder(id: string): Promise<BookingApiOrder> {
     const res = await api.get<{ ok: boolean; data: any }>(`/booking/orders/${id}`);
     return fromBackend(res.data);
+  },
+
+  // 获取订单审批流程历史
+  async getFlowLogs(orderId: string): Promise<FlowLog[]> {
+    const res = await api.get<{ ok: boolean; data: any[] }>(`/booking/orders/${orderId}/flow-logs`);
+    return (res.data || []).map(d => ({
+      id: d.id,
+      orderId: d.order_id,
+      action: d.action,
+      actionLabel: d.action_label,
+      operatorId: d.operator_id,
+      operatorName: d.operator_name,
+      remark: d.remark,
+      signature: d.signature,
+      createdAt: d.created_at,
+    }));
   },
 
   // 历史订单搜索（无日期限制）
