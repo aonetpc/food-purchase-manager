@@ -834,10 +834,21 @@ router.post('/monthly/payment/refresh', requireAuth, async (req, res) => {
     const spStatus = detail.info?.sp_status;
 
     if (spStatus === 2) {
-      // 付款通过
+      // 付款通过：从审批单 sp_record 中取最后一个已通过节点的实际审批时间作为付款时间
+      const spRecord = detail.info?.sp_record || [];
+      let finalApproveTime = null;
+      for (let i = spRecord.length - 1; i >= 0; i--) {
+        if (spRecord[i].sp_status === 2) {
+          const sptime = spRecord[i].details?.[0]?.sptime;
+          if (sptime) {
+            finalApproveTime = new Date(Number(sptime) * 1000);
+            break;
+          }
+        }
+      }
       await pool.query(
-        'UPDATE warehouse_purchases SET monthly_paid_at = NOW() WHERE monthly_payment_sp_no = ?',
-        [sp_no]
+        'UPDATE warehouse_purchases SET monthly_paid_at = ? WHERE monthly_payment_sp_no = ?',
+        [finalApproveTime || new Date(), sp_no]
       );
     } else if (spStatus === 3 || spStatus === 4) {
       // 驳回(3) 或 撤销(4)：恢复采购单到待月结列表，清空审批单号让其从审批中列表消失
@@ -855,8 +866,13 @@ router.post('/monthly/payment/refresh', requireAuth, async (req, res) => {
 });
 
 // 查询月结付款审批中的采购单（按 sp_no 分组）
+// 支持 ?month=2026-09 按审批单号提取的申请月份筛选
 router.get('/monthly/payment/pending-approval', requireAuth, async (req, res) => {
   try {
+    const month = req.query.month; // 格式 "2026-09"
+    const monthFilter = month ? ` AND LEFT(monthly_payment_sp_no, 6) = ?` : '';
+    const params = month ? [month.replace('-', '')] : [];
+
     const [rows] = await pool.query(`
       SELECT monthly_payment_sp_no as sp_no,
              supplier_id,
@@ -868,9 +884,10 @@ router.get('/monthly/payment/pending-approval', requireAuth, async (req, res) =>
       WHERE purchase_type = 'monthly'
         AND monthly_payment_sp_no IS NOT NULL
         AND monthly_paid_at IS NULL
+        ${monthFilter}
       GROUP BY monthly_payment_sp_no, supplier_id, supplier_name
       ORDER BY latest_confirmed_at DESC
-    `);
+    `, params);
     res.json(rows.map(r => ({
       sp_no: r.sp_no,
       supplier_id: r.supplier_id,
@@ -886,8 +903,13 @@ router.get('/monthly/payment/pending-approval', requireAuth, async (req, res) =>
 });
 
 // 查询月结已付款的采购单（按 sp_no 分组，monthly_paid_at IS NOT NULL）
+// 支持 ?month=2026-09 按审批单号提取的申请月份筛选
 router.get('/monthly/payment/paid', requireAuth, async (req, res) => {
   try {
+    const month = req.query.month; // 格式 "2026-09"
+    const monthFilter = month ? ` AND LEFT(monthly_payment_sp_no, 6) = ?` : '';
+    const params = month ? [month.replace('-', '')] : [];
+
     const [rows] = await pool.query(`
       SELECT monthly_payment_sp_no as sp_no,
              supplier_id,
@@ -899,9 +921,10 @@ router.get('/monthly/payment/paid', requireAuth, async (req, res) => {
       WHERE purchase_type = 'monthly'
         AND monthly_payment_sp_no IS NOT NULL
         AND monthly_paid_at IS NOT NULL
+        ${monthFilter}
       GROUP BY monthly_payment_sp_no, supplier_id, supplier_name
       ORDER BY paid_at DESC
-    `);
+    `, params);
     res.json(rows.map(r => ({
       sp_no: r.sp_no,
       supplier_id: r.supplier_id,
