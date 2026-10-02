@@ -191,7 +191,25 @@ export interface MealSession {
   tables: number;              // 按桌：桌数
   perTable: number;            // 按桌：每桌人数
   pax: number;                 // 按人：总人数
-  remark: string;              // 特殊要求
+  remark: string;              // 特殊要求（忌口/偏好/分餐）
+  // feat/199: 菜单字段（从模板库回填或手动输入/上传图片）
+  menuText?: string;           // 菜单文本
+  menuImages?: string[];       // 菜单图片URL数组（base64 data URL 或外部 URL）
+  menuTemplateId?: string;     // 来源模板ID（用于追溯，可选）
+  menuTemplateName?: string;   // 来源模板名（快照，可选）
+}
+
+export interface MenuTemplate {
+  id: string;
+  name: string;
+  scope: 'lunch' | 'dinner' | 'both';   // 适用范围
+  content_text?: string | null;          // 菜单文本
+  content_json?: Record<string, unknown> | null;  // 结构化分组（冷菜/热菜/汤/主食）
+  image_urls?: string[];                 // 多图URL数组
+  sort_order: number;
+  status: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface MealTypeRow {

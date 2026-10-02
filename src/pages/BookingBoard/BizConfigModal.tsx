@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Plus, Trash2, Save, Settings, ChevronDown, AlertCircle, CheckCircle } from 'lucide-react';
 import { bookingApi, type RoomTypeRow, type MeetingHallRow, type WellnessTypeRow, type MealTypeRow, type PaymentMethodRow } from '../../lib/api';
 import { useToast } from '@/components/Toast';
+import MenuTemplateManager from './MenuTemplateManager';
 
 // ================================================
 // 样式常量（与 Create.tsx 一致）
@@ -14,13 +15,14 @@ const btnGhost =
 const btnGold =
   'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white font-medium transition-colors';
 
-type TabKey = 'roomTypes' | 'meetingHalls' | 'wellnessTypes' | 'mealTypes' | 'paymentMethods';
+type TabKey = 'roomTypes' | 'meetingHalls' | 'wellnessTypes' | 'mealTypes' | 'paymentMethods' | 'menuTemplates';
 const TABS: { key: TabKey; label: string; color: string }[] = [
   { key: 'roomTypes',    label: '房型',     color: '#3b82f6' },
   { key: 'meetingHalls', label: '会议厅',   color: '#8b5cf6' },
   { key: 'wellnessTypes',label: '康乐项目', color: '#f59e0b' },
   { key: 'mealTypes',    label: '用餐标准', color: '#ef4444' },
   { key: 'paymentMethods', label: '付款方式', color: '#10b981' },
+  { key: 'menuTemplates', label: '菜单模板', color: '#0ea5e9' },
 ];
 
 // 新增默认值
@@ -117,7 +119,7 @@ export default function BizConfigModal({
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState<Record<TabKey, boolean>>({
-    roomTypes: false, meetingHalls: false, wellnessTypes: false, mealTypes: false, paymentMethods: false,
+    roomTypes: false, meetingHalls: false, wellnessTypes: false, mealTypes: false, paymentMethods: false, menuTemplates: false,
   });
 
   // 5 类数据
@@ -501,6 +503,11 @@ export default function BizConfigModal({
               )}
               saving={saving}
             />
+          )}
+
+          {/* feat/199: 菜单模板库 - 独立子组件，自维护 state，不走 makeBizConfigCrud 模式 */}
+          {tab === 'menuTemplates' && (
+            <MenuTemplateManager />
           )}
         </div>
 
