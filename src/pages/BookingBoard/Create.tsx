@@ -1628,9 +1628,9 @@ export default function BookingBoardCreate(props: {
   // feat/199: 菜单模板弹出面板状态（同 mlPickerOpen 模式）
   const [mlMenuPickerOpen, setMlMenuPickerOpen] = useState<number | null>(null);
   // feat/199: 菜单图片上传 input ref（场次维度，避免多场次冲突，统一用一个 ref 即可，文件选择时按 mlMenuPickerOpen 判定目标场次）
-  const mlMenuImageInputRef = React.useRef<HTMLInputElement>(null);
+  const mlMenuImageInputRef = useRef<HTMLInputElement>(null);
   // feat/199: 当前正在上传图片的场次索引（用于 file input onChange 时确定目标）
-  const mlMenuImageTargetIdx = React.useRef<number | null>(null);
+  const mlMenuImageTargetIdx = useRef<number | null>(null);
 
   // 会务表单
   const [mtSessions, setMtSessions] = useState<MeetingSession[]>([]);
