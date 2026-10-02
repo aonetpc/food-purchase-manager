@@ -885,4 +885,35 @@ router.get('/monthly/payment/pending-approval', requireAuth, async (req, res) =>
   }
 });
 
+// 查询月结已付款的采购单（按 sp_no 分组，monthly_paid_at IS NOT NULL）
+router.get('/monthly/payment/paid', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT monthly_payment_sp_no as sp_no,
+             supplier_id,
+             supplier_name,
+             COUNT(*) as purchase_count,
+             IFNULL(SUM(total_amount), 0) as total_amount,
+             MAX(monthly_paid_at) as paid_at
+      FROM warehouse_purchases
+      WHERE purchase_type = 'monthly'
+        AND monthly_payment_sp_no IS NOT NULL
+        AND monthly_paid_at IS NOT NULL
+      GROUP BY monthly_payment_sp_no, supplier_id, supplier_name
+      ORDER BY paid_at DESC
+    `);
+    res.json(rows.map(r => ({
+      sp_no: r.sp_no,
+      supplier_id: r.supplier_id,
+      supplier_name: r.supplier_name || '未命名',
+      purchase_count: r.purchase_count,
+      total_amount: toNum(r.total_amount),
+      paid_at: r.paid_at,
+    })));
+  } catch (err) {
+    console.error('[monthly payment paid]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
