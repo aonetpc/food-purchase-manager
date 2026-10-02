@@ -130,11 +130,15 @@ export default function SupplierReconciliation() {
   const [loadingPaymentPending, setLoadingPaymentPending] = useState(true);
   const [refreshingPaymentSpNo, setRefreshingPaymentSpNo] = useState<string | null>(null);
 
+  // ====== 月结已付款 state ======
+  const [paymentPaidList, setPaymentPaidList] = useState<any[]>([]);
+  const [loadingPaymentPaid, setLoadingPaymentPaid] = useState(true);
+
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
-  useEffect(() => { fetchStats(); fetchPendingSuppliers(); fetchPaymentPending(); }, []);
+  useEffect(() => { fetchStats(); fetchPendingSuppliers(); fetchPaymentPending(); fetchPaymentPaid(); }, []);
   useEffect(() => { fetchStatements(); }, [stmtStatusFilter, stmtMonthFilter]);
   useEffect(() => { fetchWriteoffs(); }, [writeoffStatusFilter]);
 
@@ -367,6 +371,15 @@ export default function SupplierReconciliation() {
     finally { setLoadingPaymentPending(false); }
   }
 
+  async function fetchPaymentPaid() {
+    setLoadingPaymentPaid(true); setError('');
+    try {
+      const data = await api.get<any[]>('/reconciliation/monthly/payment/paid');
+      setPaymentPaidList(data);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingPaymentPaid(false); }
+  }
+
   async function handleRefreshPaymentStatus(spNo: string) {
     setRefreshingPaymentSpNo(spNo);
     try {
@@ -376,7 +389,9 @@ export default function SupplierReconciliation() {
       else if (r?.sp_status === 4) showToast(`审批已撤销，相关采购单已退回待月结`);
       else showToast(`状态已更新`);
       // 驳回/撤销后采购单恢复 monthly_pending=1，需同步刷新待月结供应商列表；通过/驳回都需刷新审批中列表
+      // 审批通过后记录会从审批中移到已付款，需同时刷新已付款列表
       fetchPaymentPending();
+      fetchPaymentPaid();
       fetchPendingSuppliers();
       fetchStats();
     } catch (e: any) { setError(e.message); }
@@ -678,6 +693,57 @@ export default function SupplierReconciliation() {
                         )}
                         刷新审批状态
                       </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ====== 月结已付款 ====== */}
+            <div className="border-b border-slate-200">
+              <div className="px-4 py-3 flex items-center justify-between bg-emerald-50/50 border-b border-emerald-100">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  <h3 className="text-sm font-semibold text-slate-800">月结已付款</h3>
+                  <span className="text-xs text-slate-500">（{paymentPaidList.length} 笔已完成付款）</span>
+                </div>
+                <button onClick={fetchPaymentPaid}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-slate-300 rounded-lg hover:bg-slate-100">
+                  <RefreshCw className="w-4 h-4" /> 刷新
+                </button>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {loadingPaymentPaid && (
+                  <div className="px-4 py-10 text-center text-slate-400">加载中...</div>
+                )}
+                {!loadingPaymentPaid && paymentPaidList.length === 0 && (
+                  <div className="px-4 py-10 text-center text-slate-400">
+                    <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                    暂无已付款的月结采购单
+                  </div>
+                )}
+                {paymentPaidList.map(item => (
+                  <div key={item.sp_no}
+                    className="px-4 py-3 grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
+                    <div>
+                      <div className="text-xs text-slate-500">审批单号</div>
+                      <div className="text-sm font-mono text-slate-700">{item.sp_no}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">供应商</div>
+                      <div className="text-sm text-slate-700 font-medium">{item.supplier_name}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">关联采购单</div>
+                      <div className="text-sm text-slate-700">{item.purchase_count} 张</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">合计金额</div>
+                      <div className="text-sm text-emerald-700 font-semibold">¥{formatCurrency(item.total_amount)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">付款时间</div>
+                      <div className="text-sm text-slate-700">{item.paid_at ? String(item.paid_at).substring(0, 16) : '-'}</div>
                     </div>
                   </div>
                 ))}
