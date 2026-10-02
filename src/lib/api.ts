@@ -386,6 +386,22 @@ export interface BookingConfig {
   salesUsers?: BookingSalesUser[];
   /** 企微配置中指定的预订审核员（用于 H5 审核/驳回/标记完成按钮的身份过滤） */
   bookingApprover?: { userid: string; name: string } | null;
+  /** feat/199: 菜单模板库（午餐/晚餐菜单模板，仅启用的） */
+  menuTemplates?: MenuTemplate[];
+}
+
+// feat/199: 菜单模板库（午餐/晚餐菜单，独立定义避免与 BookingBoard/types.ts 循环依赖）
+export interface MenuTemplate {
+  id: string;
+  name: string;
+  scope: 'lunch' | 'dinner' | 'both';
+  content_text?: string | null;
+  content_json?: Record<string, unknown> | null;
+  image_urls?: string[];
+  sort_order: number;
+  status: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export const bookingApi = {
@@ -598,6 +614,8 @@ export const bookingApi = {
       checkupItems: (d.checkupItems || d.checkup_items || []) as CheckupItemRow[],
       salesUsers:   (d.salesUsers   || d.sales_users   || []).map(fromBackend),
       bookingApprover: d.bookingApprover || d.booking_approver || null,
+      // feat/199: 菜单模板库（仅启用的，已由后端 parse JSON）
+      menuTemplates: (d.menuTemplates || d.menu_templates || []) as MenuTemplate[],
     };
   },
 
@@ -773,6 +791,24 @@ export const bookingApi = {
   },
   async deletePaymentMethod(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/config/payment-methods/${id}`);
+  },
+
+  // feat/199: 菜单模板库 CRUD（午餐/晚餐菜单模板，独立路由 /booking/menu-templates）
+  async listMenuTemplates(scope?: 'lunch' | 'dinner' | 'both'): Promise<MenuTemplate[]> {
+    const params = scope ? { scope } : {};
+    const res = await api.get<{ ok: boolean; data: any[] }>('/booking/menu-templates', { params });
+    return (res.data || []) as MenuTemplate[];
+  },
+  async createMenuTemplate(payload: Partial<MenuTemplate>): Promise<MenuTemplate> {
+    const res = await api.post<{ ok: boolean; data: any }>('/booking/menu-templates', payload);
+    return res.data as MenuTemplate;
+  },
+  async updateMenuTemplate(id: string, payload: Partial<MenuTemplate>): Promise<MenuTemplate> {
+    const res = await api.put<{ ok: boolean; data: any }>(`/booking/menu-templates/${id}`, payload);
+    return res.data as MenuTemplate;
+  },
+  async deleteMenuTemplate(id: string): Promise<void> {
+    await api.delete<{ ok: boolean }>(`/booking/menu-templates/${id}`);
   },
 };
 

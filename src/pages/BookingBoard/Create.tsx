@@ -1625,6 +1625,12 @@ export default function BookingBoardCreate(props: {
   const [mlSessions, setMlSessions] = useState<MealSession[]>([]);
   // 用餐标准弹出面板状态：null=无，否则=当前正在修改的场次索引
   const [mlPickerOpen, setMlPickerOpen] = useState<number | null>(null);
+  // feat/199: 菜单模板弹出面板状态（同 mlPickerOpen 模式）
+  const [mlMenuPickerOpen, setMlMenuPickerOpen] = useState<number | null>(null);
+  // feat/199: 菜单图片上传 input ref（场次维度，避免多场次冲突，统一用一个 ref 即可，文件选择时按 mlMenuPickerOpen 判定目标场次）
+  const mlMenuImageInputRef = React.useRef<HTMLInputElement>(null);
+  // feat/199: 当前正在上传图片的场次索引（用于 file input onChange 时确定目标）
+  const mlMenuImageTargetIdx = React.useRef<number | null>(null);
 
   // 会务表单
   const [mtSessions, setMtSessions] = useState<MeetingSession[]>([]);
@@ -1678,6 +1684,8 @@ export default function BookingBoardCreate(props: {
           paymentMethods: Array.isArray(cfg.paymentMethods) ? cfg.paymentMethods.filter((m: any) => Number(m.status) === 1) : [],
           checkupItems: Array.isArray(cfg.checkupItems) ? cfg.checkupItems : [],
           salesUsers: cfg.salesUsers || [],
+          // feat/199: 菜单模板库（已由后端 parse，直接接收）
+          menuTemplates: Array.isArray(cfg.menuTemplates) ? cfg.menuTemplates : [],
         });
       } catch (e) {
         // 静默失败，下方使用兜底
@@ -2174,6 +2182,11 @@ export default function BookingBoardCreate(props: {
         perTable: s.perTable ?? 10,
         pax: (s as any).pax ?? 0,
         remark: (s as any).remark || '',
+        // feat/199: 恢复菜单字段（老订单无这些字段时 undefined，不影响渲染）
+        menuText: (s as any).menuText || '',
+        menuImages: Array.isArray((s as any).menuImages) ? (s as any).menuImages : [],
+        menuTemplateId: (s as any).menuTemplateId || undefined,
+        menuTemplateName: (s as any).menuTemplateName || undefined,
       })));
     } else if (item.itemType === 'meeting') {
       setMtSessions((item.extra.sessions as MeetingSession[] || []).map((s) => ({ ...s })));
@@ -4682,9 +4695,88 @@ export default function BookingBoardCreate(props: {
                               </div>
                             </div>
 
-                            {/* 特殊要求 */}
+                            {/* feat/199: 菜单区块（选模板/手动输入/上传图片） */}
                             <div>
-                              <label className="text-[10px] text-gray-400 mb-0.5 block">特殊要求（忌口/偏好/分餐）</label>
+                              <div className="flex items-center justify-between mb-0.5">
+                                <label className="text-[10px] text-gray-400">📝 菜单（点击选模板或手动输入）</label>
+                                <div className="flex gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setMlMenuPickerOpen(mlMenuPickerOpen === idx ? null : idx)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-white hover:bg-gray-100 text-gray-700 border border-gray-200"
+                                  >
+                                    📋 选模板
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      try {
+                                        mlMenuImageTargetIdx.current = idx;
+                                        if (mlMenuImageInputRef.current) {
+                                          mlMenuImageInputRef.current.value = '';
+                                          mlMenuImageInputRef.current.click();
+                                        }
+                                      } catch (e) {
+                                        console.error('[menu image upload] click error:', e);
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-white hover:bg-gray-100 text-gray-700 border border-gray-200"
+                                  >
+                                    📷 上传图片
+                                  </button>
+                                  {(!!s.menuText || (s.menuImages && s.menuImages.length > 0)) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setMlSessions((prev) => prev.map((x, i) =>
+                                        i === idx ? { ...x, menuText: '', menuImages: [], menuTemplateId: undefined, menuTemplateName: undefined } : x,
+                                      ))}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-white hover:bg-red-50 text-red-600 border border-red-200"
+                                    >
+                                      清空
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {s.menuTemplateName && (
+                                <div className="text-[10px] text-blue-600 mb-0.5">📋 来自模板：{s.menuTemplateName}</div>
+                              )}
+                              <textarea
+                                value={s.menuText || ''}
+                                placeholder={'菜单文本（可手动输入或从模板回填），如：\n冷菜：凉拌黄瓜、白切鸡\n热菜：红烧肉、清蒸鲈鱼\n汤：西红柿蛋汤\n主食：米饭'}
+                                rows={3}
+                                onChange={(e) =>
+                                  setMlSessions((prev) => prev.map((x, i) =>
+                                    i === idx ? { ...x, menuText: e.target.value } : x,
+                                  ))
+                                }
+                                className={`${inputCls} w-full text-xs resize-none font-mono`}
+                              />
+                              {s.menuImages && s.menuImages.length > 0 && (
+                                <div className="flex gap-1 flex-wrap mt-1 p-1 bg-gray-50 border border-gray-200 rounded">
+                                  {s.menuImages.map((u, i) => (
+                                    <div key={i} className="relative">
+                                      <a href={u} target="_blank" rel="noreferrer">
+                                        <img src={u} alt={`图${i + 1}`} className="h-16 w-16 object-cover rounded border border-gray-200" />
+                                      </a>
+                                      <button
+                                        type="button"
+                                        onClick={() => setMlSessions((prev) => prev.map((x, j) =>
+                                          j === idx ? { ...x, menuImages: (x.menuImages || []).filter((_, k) => k !== i) } : x,
+                                        ))}
+                                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center hover:bg-red-600"
+                                        title="移除"
+                                      >
+                                        <X size={10} />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* 特殊要求（忌口/偏好/分餐） */}
+                            <div>
+                              <label className="text-[10px] text-gray-400 mb-0.5 block">⚠️ 特殊要求（忌口/偏好/分餐）</label>
                               <textarea
                                 value={s.remark}
                                 placeholder="例如：3份素食、1份清真、5份儿童餐、高血糖不要甜点..."
@@ -4760,6 +4852,140 @@ export default function BookingBoardCreate(props: {
                                 </div>
                               </>
                             )}
+
+                            {/* feat/199: 菜单模板选择面板 */}
+                            {mlMenuPickerOpen === idx && (
+                              <>
+                                {/* 背景遮罩 */}
+                                <div
+                                  className="fixed inset-0 z-40 bg-black/20"
+                                  onClick={() => setMlMenuPickerOpen(null)}
+                                />
+                                {/* 面板主体 */}
+                                <div
+                                  className="absolute z-50 top-10 left-2 right-2 bg-white rounded-xl shadow-2xl border border-gray-200 p-3 animate-in fade-in zoom-in-95 duration-100 max-h-[60vh] overflow-y-auto"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="text-xs text-gray-500">
+                                      选择菜单模板
+                                      <span className="text-[10px] text-gray-400 ml-1">
+                                        （{drawer.itemType === 'dinner' ? '晚餐/通用' : '午餐/通用'}）
+                                      </span>
+                                    </div>
+                                    <button
+                                      onClick={() => setMlMenuPickerOpen(null)}
+                                      className="text-gray-400 hover:text-gray-600"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  {(() => {
+                                    // 按当前业务（lunch/dinner）筛选模板：lunch → lunch+both，dinner → dinner+both
+                                    const cur = drawer.itemType;
+                                    const list = (bizConfig.menuTemplates || []).filter(m =>
+                                      m.scope === cur || m.scope === 'both',
+                                    );
+                                    if (list.length === 0) {
+                                      return (
+                                        <div className="text-center py-6 text-xs text-gray-400">
+                                          暂无菜单模板，请先在「业务配置-菜单模板」中维护
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <div className="space-y-2">
+                                        {list.map((m) => {
+                                          const imgCount = (m.image_urls || []).length;
+                                          const selected = s.menuTemplateId === m.id;
+                                          return (
+                                            <button
+                                              key={m.id}
+                                              onClick={() => {
+                                                setMlSessions((prev) => prev.map((x, i) =>
+                                                  i === idx ? {
+                                                    ...x,
+                                                    menuText: m.content_text || '',
+                                                    menuImages: [...(m.image_urls || [])],
+                                                    menuTemplateId: m.id,
+                                                    menuTemplateName: m.name,
+                                                  } : x,
+                                                ));
+                                                setMlMenuPickerOpen(null);
+                                              }}
+                                              className={`w-full text-left px-2 py-2 rounded-lg text-xs border transition-colors ${
+                                                selected
+                                                  ? 'bg-blue-50 border-blue-500 ring-2 ring-blue-500/30'
+                                                  : 'bg-gray-50 border-gray-200 hover:border-gray-300'
+                                              }`}
+                                            >
+                                              <div className="flex items-center justify-between">
+                                                <div className="font-medium text-gray-900 truncate">{m.name}</div>
+                                                <div className="text-[10px] text-gray-400 shrink-0 ml-2">
+                                                  {imgCount > 0 ? `${imgCount}图` : '无图'}
+                                                </div>
+                                              </div>
+                                              {m.content_text && (
+                                                <div className="text-[10px] text-gray-600 mt-0.5 line-clamp-2 whitespace-pre-wrap">
+                                                  {m.content_text.slice(0, 80)}
+                                                  {m.content_text.length > 80 ? '...' : ''}
+                                                </div>
+                                              )}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              </>
+                            )}
+
+                            {/* feat/199: 菜单图片上传 input（隐藏，按场次触发） */}
+                            <input
+                              type="file"
+                              multiple
+                              accept="image/*"
+                              className="hidden"
+                              ref={mlMenuImageInputRef}
+                              onChange={async (e) => {
+                                const targetIdx = mlMenuImageTargetIdx.current;
+                                if (targetIdx == null) return;
+                                const files = e.target.files;
+                                if (!files || !files.length) return;
+                                try {
+                                  const arr = Array.from(files).slice(0, 20);
+                                  const maxBytes = 3 * 1024 * 1024;
+                                  const newUrls: string[] = [];
+                                  for (const f of arr) {
+                                    if (!f.type.startsWith('image/')) continue;
+                                    if (f.size > maxBytes) {
+                                      console.warn('[menu image] skipped oversized image:', f.name, f.size);
+                                      continue;
+                                    }
+                                    const url = await new Promise<string>((resolve, reject) => {
+                                      const reader = new FileReader();
+                                      reader.onload = () => resolve(String(reader.result || ''));
+                                      reader.onerror = reject;
+                                      reader.readAsDataURL(f);
+                                    });
+                                    newUrls.push(url);
+                                  }
+                                  if (newUrls.length) {
+                                    setMlSessions((prev) => prev.map((x, i) =>
+                                      i === targetIdx ? {
+                                        ...x,
+                                        menuImages: [...(x.menuImages || []), ...newUrls],
+                                      } : x,
+                                    ));
+                                  }
+                                } catch (err) {
+                                  console.error('[menu image upload] error:', err);
+                                } finally {
+                                  mlMenuImageTargetIdx.current = null;
+                                  if (e.target) e.target.value = '';
+                                }
+                              }}
+                            />
                           </div>
                         );
                       })}

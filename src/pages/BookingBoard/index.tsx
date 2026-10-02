@@ -1589,6 +1589,85 @@ function DetailModal({
                                         </tfoot>
                                       </table>
                                     </div>
+
+                                    {/* feat/199: 菜单展示区（折叠 + 多图缩略图） */}
+                                    {(() => {
+                                      const sessions = (it.extra.sessions as any[] || []);
+                                      // 兼容老订单：menuText 不存在但 remark 长度>50 → 当作菜单显示
+                                      const menuSessions = sessions
+                                        .map((s, i) => {
+                                          const hasMenuText = !!(s.menuText && String(s.menuText).trim());
+                                          const hasMenuImages = !!(s.menuImages && Array.isArray(s.menuImages) && s.menuImages.length);
+                                          const legacy = !hasMenuText && !hasMenuImages && s.remark && String(s.remark).length > 50;
+                                          if (!hasMenuText && !hasMenuImages && !legacy) return null;
+                                          return {
+                                            i,
+                                            date: s.date,
+                                            time: s.time,
+                                            mealName: mealName(s.mealType),
+                                            menuText: hasMenuText ? s.menuText : (legacy ? s.remark : ''),
+                                            menuImages: hasMenuImages ? s.menuImages : [],
+                                            menuTemplateName: s.menuTemplateName || '',
+                                            legacyRemarkAsMenu: legacy,
+                                          };
+                                        })
+                                        .filter(Boolean) as Array<{
+                                          i: number; date: string; time: string; mealName: string;
+                                          menuText: string; menuImages: string[];
+                                          menuTemplateName: string; legacyRemarkAsMenu: boolean;
+                                        }>;
+                                      if (menuSessions.length === 0) return null;
+                                      return (
+                                        <div className="mt-2 p-2 bg-white rounded border border-gray-200">
+                                          <div className="text-[11px] text-gray-500 font-medium mb-1.5">📝 菜单明细（点击场次展开/收起）</div>
+                                          <div className="space-y-1">
+                                            {menuSessions.map((m) => (
+                                              <details key={m.i} className="group bg-gray-50 rounded border border-gray-100">
+                                                <summary className="cursor-pointer px-2 py-1 text-[11px] text-gray-700 select-none flex items-center justify-between hover:bg-gray-100">
+                                                  <span>
+                                                    <span className="font-mono text-gray-400">#{m.i + 1}</span>
+                                                    <span className="ml-1 font-mono">{m.date || '-'}</span>
+                                                    <span className="ml-1 text-gray-400">{m.time || ''}</span>
+                                                    <span className="ml-1">{m.mealName}</span>
+                                                    {m.menuTemplateName && (
+                                                      <span className="ml-1 text-[10px] text-blue-600">📋 {m.menuTemplateName}</span>
+                                                    )}
+                                                    {m.legacyRemarkAsMenu && (
+                                                      <span className="ml-1 text-[10px] text-amber-600">⚠ 历史备注（超过50字自动识别为菜单）</span>
+                                                    )}
+                                                  </span>
+                                                  <span className="text-[10px] text-gray-400">
+                                                    {m.menuImages.length > 0 ? `${m.menuImages.length}图 · ` : ''}点击展开
+                                                  </span>
+                                                </summary>
+                                                <div className="px-2 pb-2 pt-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                  <div>
+                                                    <div className="text-[10px] text-gray-500 mb-0.5">菜单文本：</div>
+                                                    <pre className="text-[11px] text-gray-800 whitespace-pre-wrap bg-white border border-gray-200 rounded p-1.5 max-h-60 overflow-y-auto font-mono">
+                                                      {m.menuText || '（无文本）'}
+                                                    </pre>
+                                                  </div>
+                                                  <div>
+                                                    <div className="text-[10px] text-gray-500 mb-0.5">菜单图片（{m.menuImages.length} 张）：</div>
+                                                    {m.menuImages.length > 0 ? (
+                                                      <div className="flex gap-1 overflow-x-auto pb-1">
+                                                        {m.menuImages.map((u, idx) => (
+                                                          <a key={idx} href={u} target="_blank" rel="noreferrer" className="shrink-0">
+                                                            <img src={u} alt={`图${idx + 1}`} className="h-20 w-20 object-cover rounded border border-gray-200 hover:border-blue-400" />
+                                                          </a>
+                                                        ))}
+                                                      </div>
+                                                    ) : (
+                                                      <div className="text-[10px] text-gray-400">（无图片）</div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </details>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 )}
 

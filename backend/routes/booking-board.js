@@ -678,6 +678,19 @@ router.get('/config', requireAuth, async (_req, res) => {
     const [meetingHalls] = await pool.query('SELECT * FROM booking_meeting_halls WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [wellnessTypes] = await pool.query('SELECT * FROM booking_wellness_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
     const [mealTypes] = await pool.query('SELECT * FROM booking_meal_types WHERE status = 1 ORDER BY sort_order ASC, id ASC');
+    // feat/199: 菜单模板库（午餐/晚餐菜单模板，仅返回启用的）
+    let menuTemplates = [];
+    try {
+      const [mtRows] = await pool.query('SELECT id, name, scope, content_text, content_json, image_urls, sort_order FROM booking_menu_templates WHERE status = 1 ORDER BY sort_order ASC, created_at ASC');
+      menuTemplates = mtRows.map(r => ({
+        ...r,
+        content_json: parseMaybeJson(r.content_json),
+        image_urls: parseMaybeJson(r.image_urls) || [],
+      }));
+    } catch (e) {
+      // 迁移未执行时降级为空数组
+      menuTemplates = [];
+    }
     // feat/141: 付款方式配置（前端下单下拉项 + 业务配置弹窗管理）
     let paymentMethods = [];
     try {
@@ -737,7 +750,7 @@ router.get('/config', requireAuth, async (_req, res) => {
 
     res.json({
       ok: true,
-      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, paymentMethods, checkupItems, salesUsers, bookingApprover },
+      data: { packages, roomTypes, meetingHalls, wellnessTypes, mealTypes, paymentMethods, checkupItems, salesUsers, bookingApprover, menuTemplates },
     });
   } catch (e) {
     console.error('[booking config] error:', e);
@@ -3113,6 +3126,136 @@ router.post('/templates/:id/apply', requireAuth, requireBookingWrite, async (req
     res.status(500).json({ ok: false, error: e.message });
   } finally {
     conn.release();
+  }
+});
+
+// ============================================================
+// feat/199: 菜单模板库 CRUD（午餐/晚餐菜单模板，独立实现而非复用 makeBizConfigCrud）
+//   原因：含 JSON 字段 content_json / image_urls，mysql2 部分版本返回 string 需 parse；
+//         且 image_urls 存的是 base64 data URL 数组，需保证写入时序列化、读取时反序列化。
+//   权限：requireAuth + requireBookingWrite（admin/booker 可写，与 mealTypes 一致）
+// ============================================================
+function normalizeMenuTemplate(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    content_json: parseMaybeJson(row.content_json),
+    image_urls: parseMaybeJson(row.image_urls) || [],
+  };
+}
+
+// GET /api/booking/menu-templates  列表（含禁用，按 sort_order+created_at 排）
+router.get('/menu-templates', requireAuth, async (req, res) => {
+  try {
+    const { scope } = req.query;
+    const where = scope ? 'WHERE scope = ?' : '';
+    const params = scope ? [scope] : [];
+    const [rows] = await pool.query(
+      `SELECT id, name, scope, content_text, content_json, image_urls, sort_order, status, created_at, updated_at
+       FROM booking_menu_templates ${where}
+       ORDER BY sort_order ASC, created_at ASC`,
+      params
+    );
+    res.json({ ok: true, data: rows.map(normalizeMenuTemplate) });
+  } catch (e) {
+    console.error('[menu-templates list] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/booking/menu-templates  创建
+router.post('/menu-templates', requireAuth, requireBookingWrite, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { name, scope = 'both', content_text = '', content_json = null, image_urls = [], sort_order = 100, status = 1 } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ ok: false, error: '模板名称必填' });
+    }
+    if (!['lunch', 'dinner', 'both'].includes(scope)) {
+      return res.status(400).json({ ok: false, error: 'scope 必须为 lunch/dinner/both' });
+    }
+    if (!Array.isArray(image_urls)) {
+      return res.status(400).json({ ok: false, error: 'image_urls 必须为数组' });
+    }
+    const id = uuidv4();
+    await conn.query(
+      `INSERT INTO booking_menu_templates (id, name, scope, content_text, content_json, image_urls, sort_order, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        name.trim().slice(0, 100),
+        scope,
+        String(content_text || '').slice(0, 65535),
+        content_json ? (typeof content_json === 'string' ? content_json : JSON.stringify(content_json)) : null,
+        JSON.stringify(image_urls),
+        Number(sort_order) || 100,
+        Number(status) === 0 ? 0 : 1,
+      ]
+    );
+    const [rows] = await conn.query('SELECT * FROM booking_menu_templates WHERE id = ?', [id]);
+    await logOperation(req, '预订菜单模板', '新增', `模板=${name}`, id);
+    res.json({ ok: true, data: normalizeMenuTemplate(rows[0]) });
+  } catch (e) {
+    console.error('[menu-templates create] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// PUT /api/booking/menu-templates/:id  更新
+router.put('/menu-templates/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const [exist] = await conn.query('SELECT id FROM booking_menu_templates WHERE id = ?', [id]);
+    if (!exist.length) return res.status(404).json({ ok: false, error: '模板不存在' });
+
+    const allowedFields = ['name', 'scope', 'content_text', 'content_json', 'image_urls', 'sort_order', 'status'];
+    const sets = [];
+    const values = [];
+    allowedFields.forEach(f => {
+      if (req.body[f] === undefined) return;
+      let v = req.body[f];
+      if (f === 'name') v = String(v || '').trim().slice(0, 100);
+      if (f === 'scope' && !['lunch', 'dinner', 'both'].includes(v)) return;
+      if (f === 'content_text') v = String(v || '').slice(0, 65535);
+      if (f === 'content_json') v = v ? (typeof v === 'string' ? v : JSON.stringify(v)) : null;
+      if (f === 'image_urls') {
+        if (!Array.isArray(v)) return;
+        v = JSON.stringify(v);
+      }
+      if (f === 'sort_order') v = Number(v) || 0;
+      if (f === 'status') v = Number(v) === 0 ? 0 : 1;
+      sets.push(`${f} = ?`);
+      values.push(v);
+    });
+
+    if (sets.length > 0) {
+      values.push(id);
+      await conn.query(`UPDATE booking_menu_templates SET ${sets.join(', ')} WHERE id = ?`, values);
+    }
+    const [rows] = await conn.query('SELECT * FROM booking_menu_templates WHERE id = ?', [id]);
+    await logOperation(req, '预订菜单模板', '修改', `模板=${rows[0]?.name || id}`, id);
+    res.json({ ok: true, data: normalizeMenuTemplate(rows[0]) });
+  } catch (e) {
+    console.error('[menu-templates update] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// DELETE /api/booking/menu-templates/:id  软删除（status=0）
+router.delete('/menu-templates/:id', requireAuth, requireBookingWrite, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('UPDATE booking_menu_templates SET status = 0 WHERE id = ?', [id]);
+    await logOperation(req, '预订菜单模板', '删除', `模板ID=${id}`, id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[menu-templates delete] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

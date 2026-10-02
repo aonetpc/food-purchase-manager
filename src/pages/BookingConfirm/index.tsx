@@ -1264,6 +1264,45 @@ function MealDetails({ item, mealTypes, bizKey, pax, bizColor, unit }: {
                   <span className="text-gray-500">{[sessDate, sessTime].filter(Boolean).join(' ') || '时间未设'}</span>
                   <span>{qtyText}</span>
                 </div>
+                {/* feat/199: 菜单展示区（H5 端，与 PC 端 index.tsx 同步：折叠 + 多图） */}
+                {(() => {
+                  const hasMenuText = !!(s.menuText && String(s.menuText).trim());
+                  const hasMenuImages = !!(s.menuImages && Array.isArray(s.menuImages) && s.menuImages.length);
+                  const legacy = !hasMenuText && !hasMenuImages && s.remark && String(s.remark).length > 50;
+                  if (!hasMenuText && !hasMenuImages && !legacy) return null;
+                  const menuText = hasMenuText ? s.menuText : (legacy ? s.remark : '');
+                  const menuImages: string[] = hasMenuImages ? s.menuImages : [];
+                  return (
+                    <details className="mt-1.5 bg-white/60 rounded border border-gray-100">
+                      <summary className="cursor-pointer px-2 py-1 text-[11px] text-gray-700 select-none flex items-center justify-between">
+                        <span>
+                          📝 菜单
+                          {s.menuTemplateName ? <span className="ml-1 text-blue-600">· 📋 {s.menuTemplateName}</span> : null}
+                          {legacy ? <span className="ml-1 text-amber-600">· ⚠ 历史备注</span> : null}
+                        </span>
+                        <span className="text-[10px] text-gray-400">
+                          {menuImages.length > 0 ? `${menuImages.length}图 · ` : ''}点击展开
+                        </span>
+                      </summary>
+                      <div className="px-2 pb-2 pt-1 space-y-1.5">
+                        {menuText && (
+                          <pre className="text-[11px] text-gray-800 whitespace-pre-wrap bg-white border border-gray-200 rounded p-1.5 max-h-40 overflow-y-auto">
+                            {menuText}
+                          </pre>
+                        )}
+                        {menuImages.length > 0 && (
+                          <div className="flex gap-1 overflow-x-auto pb-1">
+                            {menuImages.map((u, idx) => (
+                              <a key={idx} href={u} target="_blank" rel="noreferrer" className="shrink-0">
+                                <img src={u} alt={`图${idx + 1}`} className="h-16 w-16 object-cover rounded border border-gray-200" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  );
+                })()}
               </div>
             );
           })}
