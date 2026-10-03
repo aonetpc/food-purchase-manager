@@ -2455,7 +2455,7 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
       return res.status(400).json({ ok: false, error: '模板订单请使用 unset-template 接口删除' });
     }
 
-    const isAdmin = req.user && req.user.role === 'admin';
+    const isAdmin = req.user && (req.user.role === 'admin' || (Array.isArray(req.user.roles) && req.user.roles.includes('admin')));
 
     // feat/140: 预订员可删除 pending/sales_confirming/rejected 三种"未最终确认"状态
     // confirmed/completed 仅 admin 可删（防误删已生效订单）

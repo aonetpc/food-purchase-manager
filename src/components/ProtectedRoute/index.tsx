@@ -14,7 +14,7 @@ export default function ProtectedRoute({
   requiredPermission,
   requireAuth = true,
 }: ProtectedRouteProps) {
-  const { user, isAdmin, hasPermission } = useAuthStore();
+  const { user, isAdmin, hasRole, hasPermission } = useAuthStore();
   const location = useLocation();
 
   if (requireAuth && !user) {
@@ -26,7 +26,8 @@ export default function ProtectedRoute({
   }
 
   if (Array.isArray(requiredRole)) {
-    const hasAccess = requiredRole.includes(user?.role as UserRole);
+    // 多角色用户：只要拥有其中任意一个角色即可访问
+    const hasAccess = requiredRole.some(r => hasRole(r as UserRole));
     if (!hasAccess) {
       return <Navigate to="/daily" replace />;
     }

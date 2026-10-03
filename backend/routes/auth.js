@@ -66,10 +66,12 @@ async function getUserMergedPermissions(userId) {
   }
 
   const modules = {};
-  const seenCodes = new Set();
+  // 按 module_code + code 组合去重，避免不同 module 的同名权限互相覆盖
+  const seenModuleCodes = new Set();
   permRows.forEach(perm => {
-    if (seenCodes.has(perm.code)) return;
-    seenCodes.add(perm.code);
+    const dedupKey = `${perm.module_code}|${perm.code}`;
+    if (seenModuleCodes.has(dedupKey)) return;
+    seenModuleCodes.add(dedupKey);
     if (!modules[perm.module_code]) {
       modules[perm.module_code] = {
         code: moduleInfoMap[perm.module_code]?.code || perm.module_code,
@@ -223,6 +225,52 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取当前登录用户的最新信息（角色 + 权限），供前端刷新权限用
+// 管理员修改用户角色后，前端调此接口可拿到最新 roles，无需重新登录
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const [userRows] = await pool.query(
+      'SELECT id, username, name, role, role_id, status, phone, department_id, wecom_userid FROM users WHERE id = ?',
+      [userId]
+    );
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+    const user = userRows[0];
+
+    const mergedPerms = await getUserMergedPermissions(userId);
+    const roleCodes = await getUserRoleCodes(userId);
+
+    let roleCode = user.role;
+    if (roleCodes.length > 0) {
+      roleCode = roleCodes[0];
+    } else if (user.role_id) {
+      try {
+        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
+        if (roleRows.length > 0) roleCode = roleRows[0].code;
+      } catch (_) { /* ignore */ }
+    }
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: roleCode,
+      role_id: user.role_id,
+      roles: roleCodes,
+      status: user.status,
+      phone: user.phone,
+      department_id: user.department_id,
+      wecom_userid: user.wecom_userid,
+      permissions: mergedPerms,
+    });
+  } catch (err) {
+    console.error('GET /auth/me error:', err);
     res.status(500).json({ error: err.message });
   }
 });

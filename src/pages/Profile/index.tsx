@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, ROLE_LABELS } from '@/store/authStore';
 import { api } from '@/lib/api';
 
 export default function Profile() {
@@ -10,6 +10,19 @@ export default function Profile() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  // 多角色显示：合并 user.role 和 user.roles，取所有角色的中文名
+  const getRoleLabel = () => {
+    if (!user) return '';
+    const codes = new Set<string>();
+    if (user.role) codes.add(user.role);
+    (user.roles || []).forEach((r: any) => {
+      const code = typeof r === 'string' ? r : r?.code;
+      if (code) codes.add(code);
+    });
+    const labels = Array.from(codes).map(c => ROLE_LABELS[c]?.label || c);
+    return labels.length > 0 ? labels.join(' / ') : '普通员工';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,7 +72,7 @@ export default function Profile() {
             </div>
             <h2 className="text-xl font-bold text-gray-800">{user?.name || user?.username}</h2>
             <p className="text-gray-500 mt-1">
-              {user?.role === 'admin' ? '管理员' : '查看者'}
+              {getRoleLabel()}
             </p>
           </div>
 
