@@ -72,7 +72,7 @@ async function requireAuth(req, res, next) {
     let roleCodes = [];
     try {
       const [roleRows] = await pool.query(`
-        SELECT DISTINCT r.code
+        SELECT DISTINCT r.code, r.sort_order
         FROM (
           SELECT role_id FROM user_roles WHERE user_id = ?
           UNION
