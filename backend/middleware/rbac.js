@@ -67,8 +67,9 @@ async function requireAuth(req, res, next) {
       return res.status(403).json({ error: '用户已被禁用' });
     }
 
-    // 直接从数据库查询用户的角色代码（不依赖 user.role 或 user.role_id 字段）
-    let roleCode = null;
+    // 直接从数据库查询用户的全部角色代码（不依赖 user.role 或 user.role_id 字段）
+    // 多角色场景：req.user.roles 为完整角色列表，req.user.role 取 sort_order 最小的主角色（兼容旧代码）
+    let roleCodes = [];
     try {
       const [roleRows] = await pool.query(`
         SELECT DISTINCT r.code
@@ -79,24 +80,25 @@ async function requireAuth(req, res, next) {
         ) t
         JOIN roles r ON r.id = t.role_id
         ORDER BY r.sort_order ASC
-        LIMIT 1
       `, [userId, userId]);
-      if (roleRows.length > 0) {
-        roleCode = roleRows[0].code;
-      }
+      roleCodes = roleRows.map(r => r.code);
     } catch (e) {
       // 查询失败，忽略
     }
 
-    // 如果查询到角色代码，更新 user.role 字段
-    if (roleCode) {
-      user.role = roleCode;
+    // 挂载完整角色列表（多角色权限判断统一用 req.user.roles.includes(code)）
+    user.roles = roleCodes;
+
+    // 主角色取 sort_order 最小的（兼容仅依赖 req.user.role 的旧代码）
+    if (roleCodes.length > 0) {
+      user.role = roleCodes[0];
     } else if (user.role_id) {
       // 降级：尝试从 role_id 查询
       try {
         const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
         if (roleRows.length > 0) {
           user.role = roleRows[0].code;
+          user.roles = [roleRows[0].code];
         }
       } catch (e) {
         // 查询失败，忽略
@@ -364,28 +366,54 @@ async function getUserPermissions(req, res) {
       return res.status(401).json({ error: '未登录' });
     }
 
-    const { role_id } = req.user;
+    const userId = req.user.id;
 
-    // 获取角色信息
+    // 查询用户所有角色（多角色合并：user_roles 表 + users.role_id）
+    let roleIds = [];
+    try {
+      const [roleRows] = await pool.query(`
+        SELECT DISTINCT role_id FROM (
+          SELECT role_id FROM user_roles WHERE user_id = ?
+          UNION
+          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+        ) t
+      `, [userId, userId]);
+      roleIds = roleRows.map(r => r.role_id);
+    } catch (e) {
+      // 降级：仅用 users.role_id
+      if (req.user.role_id) roleIds = [req.user.role_id];
+    }
+
+    if (roleIds.length === 0) {
+      return res.json({ role: null, modules: [], permissionCodes: [], menuPaths: [] });
+    }
+
+    // 获取角色信息（取第一个角色作为主角色展示）
     const [roleRows] = await pool.query(
       'SELECT id, code, name, description FROM roles WHERE id = ?',
-      [role_id]
+      [roleIds[0]]
     );
     const role = roleRows.length > 0 ? roleRows[0] : null;
 
-    // 获取权限列表（按模块分组）
+    // 获取所有角色的权限列表（按模块分组）
+    const placeholders = roleIds.map(() => '?').join(',');
     const [permRows] = await pool.query(`
       SELECT p.id, p.code, p.name, p.type, p.path, p.icon, p.parent_id, p.module_id, m.code as module_code, m.name as module_name
       FROM role_permissions rp
       JOIN permissions p ON rp.permission_id = p.id
       JOIN modules m ON p.module_id = m.id
-      WHERE rp.role_id = ? AND p.status = 1 AND m.status = 1
+      WHERE rp.role_id IN (${placeholders}) AND p.status = 1 AND m.status = 1
       ORDER BY m.sort_order ASC, p.sort_order ASC
-    `, [role_id]);
+    `, roleIds);
 
-    // 按模块分组
+    // 按模块分组，按 module_code + code 去重（避免不同 module 同名权限覆盖）
     const modules = {};
+    const seenModuleCodes = new Set();
     permRows.forEach(perm => {
+      const dedupKey = `${perm.module_code}|${perm.code}`;
+      if (seenModuleCodes.has(dedupKey)) return;
+      seenModuleCodes.add(dedupKey);
+
       if (!modules[perm.module_code]) {
         modules[perm.module_code] = {
           code: perm.module_code,
@@ -416,9 +444,10 @@ async function getUserPermissions(req, res) {
 
     res.json({
       role,
+      roles: roleIds,
       modules: Object.values(modules),
-      permissionCodes: permRows.map(p => p.code),
-      menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path),
+      permissionCodes: Array.from(seenModuleCodes).map(k => k.split('|')[1]),
+      menuPaths: permRows.filter(p => p.type === 'menu' && p.path).map(p => p.path).filter((v, i, a) => a.indexOf(v) === i),
     });
   } catch (err) {
     console.error('getUserPermissions error:', err);

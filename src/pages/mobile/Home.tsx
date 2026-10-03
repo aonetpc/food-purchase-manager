@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, ROLE_LABELS } from '@/store/authStore';
 import { api } from '@/lib/api';
 
 /**
@@ -286,10 +286,16 @@ export default function MobileHome() {
           </button>
         </div>
         <div className="text-xs text-white/60">
-          {user.role === 'admin' && '管理员'}
-          {user.role === 'finance' && '财务'}
-          {user.role === 'boss' && '董事长'}
-          {user.role === 'viewer' && '员工'}
+          {(() => {
+            const codes = new Set<string>();
+            if (user.role) codes.add(user.role);
+            (user.roles || []).forEach((r: any) => {
+              const c = typeof r === 'string' ? r : r?.code;
+              if (c) codes.add(c);
+            });
+            const labels = Array.from(codes).map(c => ROLE_LABELS[c]?.label || c).slice(0, 3);
+            return labels.length > 0 ? labels.join(' / ') : '员工';
+          })()}
         </div>
       </div>
 

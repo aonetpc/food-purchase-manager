@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import { useAuthStore } from '@/store/authStore';
+import { useAuthStore, ROLE_LABELS } from '@/store/authStore';
 import { Plus, Edit, Trash2, Unlock, Lock, RefreshCw, X, Search, Phone, Building2, User } from 'lucide-react';
 
 interface UserItem {
@@ -17,19 +17,6 @@ interface UserItem {
   created_at: string;
   last_login_at?: string;
 }
-
-const ROLE_LABELS: Record<string, { label: string; color: string }> = {
-  admin: { label: '管理员', color: 'bg-red-100 text-red-700' },
-  finance: { label: '财务', color: 'bg-purple-100 text-purple-700' },
-  boss: { label: '董事长', color: 'bg-amber-100 text-amber-700' },
-  viewer: { label: '普通员工', color: 'bg-gray-100 text-gray-700' },
-  temp_auditor: { label: '外请审核员', color: 'bg-blue-100 text-blue-700' },
-  temp_chairman: { label: '外请董事长', color: 'bg-teal-100 text-teal-700' },
-  purchaser: { label: '采购员', color: 'bg-green-100 text-green-700' },
-  warehouse: { label: '仓库管理员', color: 'bg-orange-100 text-orange-700' },
-  booker: { label: '预订员', color: 'bg-indigo-100 text-indigo-700' },
-  sales: { label: '销售员', color: 'bg-pink-100 text-pink-700' },
-};
 
 export default function UserManager(props: { embedded?: boolean }) {
   const { embedded = false } = props || {};

@@ -117,7 +117,7 @@ function getUserRoleText(user: any): string {
 
 export default function Layout() {
   const navigate = useNavigate();
-  const { user, isAdmin, canViewMonthly, logout, getUserMenus } = useAuthStore();
+  const { user, isAdmin, canViewMonthly, logout, getUserMenus, set } = useAuthStore();
   const { fetchRecords, records, fetchLastMonthAveragePrices, getComparePrice } = usePurchaseStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -145,6 +145,28 @@ export default function Layout() {
     }, 60000);
     return () => clearInterval(timer);
   }, [fetchRecords, fetchLastMonthAveragePrices, todayKey]);
+
+  // 挂载时刷新当前用户的角色和权限（管理员改角色后无需重新登录）
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    api.get('/auth/me').then((data: any) => {
+      if (cancelled || !data) return;
+      set({
+        user: {
+          ...user,
+          role: data.role as any,
+          role_id: data.role_id,
+          roles: data.roles || [],
+          permissions: data.permissions,
+          status: data.status,
+        },
+      });
+    }).catch((_err: any) => {
+      // 刷新失败不影响使用，忽略
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const todayItems = records[todayKey] || [];
   const totalAmount = todayItems.reduce((sum, item) => sum + item.amount, 0);
