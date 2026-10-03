@@ -125,7 +125,7 @@ async function getUserMergedPermissions(userId) {
 async function getUserRoleCodes(userId) {
   try {
     const [rows] = await pool.query(`
-      SELECT DISTINCT r.code
+      SELECT DISTINCT r.code, r.sort_order
       FROM (
         SELECT role_id FROM user_roles WHERE user_id = ?
         UNION
