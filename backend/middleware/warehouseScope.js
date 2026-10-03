@@ -32,7 +32,16 @@ async function isManagerUser(userId) {
        LIMIT 1`,
       [userId, userId, ...SUPER_ROLES]
     );
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+
+    // 兼容旧版数据：users.role 字段可能直接存储角色代码字符串
+    const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+    const legacyRole = userRows[0]?.role;
+    if (legacyRole && SUPER_ROLES.includes(legacyRole)) {
+      return true;
+    }
+
+    return false;
   } catch (e) {
     console.error('[warehouseScope.isManagerUser] error:', e);
     return false;

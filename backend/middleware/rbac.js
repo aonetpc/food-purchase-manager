@@ -86,23 +86,25 @@ async function requireAuth(req, res, next) {
       // 查询失败，忽略
     }
 
+    // 兼容旧版数据：users.role 字段可能直接存储角色代码字符串（未同步到 role_id / user_roles）
+    // 如果 user.role 是有效角色代码且不在 roleCodes 中，补充进去
+    if (user.role && typeof user.role === 'string' && !roleCodes.includes(user.role)) {
+      try {
+        const [legacyRoleRows] = await pool.query('SELECT code FROM roles WHERE code = ?', [user.role]);
+        if (legacyRoleRows.length > 0) {
+          roleCodes.push(user.role);
+        }
+      } catch (e) {
+        // 查询失败，忽略
+      }
+    }
+
     // 挂载完整角色列表（多角色权限判断统一用 req.user.roles.includes(code)）
     user.roles = roleCodes;
 
     // 主角色取 sort_order 最小的（兼容仅依赖 req.user.role 的旧代码）
     if (roleCodes.length > 0) {
       user.role = roleCodes[0];
-    } else if (user.role_id) {
-      // 降级：尝试从 role_id 查询
-      try {
-        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [user.role_id]);
-        if (roleRows.length > 0) {
-          user.role = roleRows[0].code;
-          user.roles = [roleRows[0].code];
-        }
-      } catch (e) {
-        // 查询失败，忽略
-      }
     }
 
     // 更新最后登录时间
@@ -170,40 +172,47 @@ function requireRole(...roles) {
       return res.status(401).json({ error: '未登录' });
     }
 
-    // 检查单角色（兼容旧字段）
-    if (roles.includes(req.user.role)) {
-      return next();
-    }
+    // 优先使用 requireAuth 已设置的 req.user.roles（包含 user_roles + role_id + users.role 兼容）
+    if (Array.isArray(req.user.roles) && req.user.roles.length > 0) {
+      if (roles.some(r => req.user.roles.includes(r))) {
+        return next();
+      }
+    } else {
+      // 降级：检查单角色（兼容旧字段）
+      if (roles.includes(req.user.role)) {
+        return next();
+      }
 
-    // 检查 role_id 对应的角色代码
-    if (req.user.role_id) {
+      // 检查 role_id 对应的角色代码
+      if (req.user.role_id) {
+        try {
+          const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [req.user.role_id]);
+          if (roleRows.length > 0 && roles.includes(roleRows[0].code)) {
+            return next();
+          }
+        } catch (e) {
+          // 查询失败，忽略
+        }
+      }
+
+      // 查多角色（user_roles 表 + users.role_id）
       try {
-        const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ?', [req.user.role_id]);
-        if (roleRows.length > 0 && roles.includes(roleRows[0].code)) {
+        const [roleCodeRows] = await pool.query(`
+          SELECT DISTINCT r.code
+          FROM (
+            SELECT role_id FROM user_roles WHERE user_id = ?
+            UNION
+            SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
+          ) t
+          JOIN roles r ON r.id = t.role_id
+        `, [req.user.id, req.user.id]);
+        const multiRoleCodes = roleCodeRows.map(r => r.code);
+        if (roles.some(r => multiRoleCodes.includes(r))) {
           return next();
         }
       } catch (e) {
         // 查询失败，忽略
       }
-    }
-
-    // 查多角色（user_roles 表 + users.role_id）
-    try {
-      const [roleCodeRows] = await pool.query(`
-        SELECT DISTINCT r.code
-        FROM (
-          SELECT role_id FROM user_roles WHERE user_id = ?
-          UNION
-          SELECT role_id FROM users WHERE id = ? AND role_id IS NOT NULL
-        ) t
-        JOIN roles r ON r.id = t.role_id
-      `, [req.user.id, req.user.id]);
-      const multiRoleCodes = roleCodeRows.map(r => r.code);
-      if (roles.some(r => multiRoleCodes.includes(r))) {
-        return next();
-      }
-    } catch (e) {
-      // 查询失败，忽略
     }
 
     // 降级：检查用户是否拥有管理员级别的权限码
@@ -382,6 +391,19 @@ async function getUserPermissions(req, res) {
     } catch (e) {
       // 降级：仅用 users.role_id
       if (req.user.role_id) roleIds = [req.user.role_id];
+    }
+
+    // 兼容旧版数据：users.role 字段可能直接存储角色代码字符串（未同步到 role_id / user_roles）
+    // 如果 req.user.role 是有效角色代码且其 role_id 不在 roleIds 中，补充进去
+    if (req.user.role && typeof req.user.role === 'string') {
+      try {
+        const [legacyRoleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', [req.user.role]);
+        if (legacyRoleRows.length > 0 && !roleIds.includes(legacyRoleRows[0].id)) {
+          roleIds.push(legacyRoleRows[0].id);
+        }
+      } catch (e) {
+        // 忽略
+      }
     }
 
     if (roleIds.length === 0) {

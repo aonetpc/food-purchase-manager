@@ -32,11 +32,26 @@ async function getUserMergedPermissions(userId) {
     }
   }
 
-  if (roleRows.length === 0) {
+  const roleIds = roleRows.map(r => r.role_id);
+
+  // 兼容旧版数据：users.role 字段可能直接存储角色代码字符串（未同步到 role_id / user_roles）
+  try {
+    const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+    const legacyRole = userRows[0]?.role;
+    if (legacyRole && typeof legacyRole === 'string') {
+      const [legacyRoleRows] = await pool.query('SELECT id FROM roles WHERE code = ?', [legacyRole]);
+      if (legacyRoleRows.length > 0 && !roleIds.includes(legacyRoleRows[0].id)) {
+        roleIds.push(legacyRoleRows[0].id);
+      }
+    }
+  } catch (e) {
+    // 忽略
+  }
+
+  if (roleIds.length === 0) {
     return { modules: [], codes: [], menuPaths: [], roleIds: [] };
   }
 
-  const roleIds = roleRows.map(r => r.role_id);
   const placeholders = roleIds.map(() => '?').join(',');
 
   let permRows = [];
@@ -119,7 +134,23 @@ async function getUserRoleCodes(userId) {
       JOIN roles r ON r.id = t.role_id
       ORDER BY r.sort_order ASC
     `, [userId, userId]);
-    return rows.map(r => r.code);
+    const roleCodes = rows.map(r => r.code);
+
+    // 兼容旧版数据：users.role 字段可能直接存储角色代码字符串（未同步到 role_id / user_roles）
+    try {
+      const [userRows] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+      const legacyRole = userRows[0]?.role;
+      if (legacyRole && typeof legacyRole === 'string' && !roleCodes.includes(legacyRole)) {
+        const [checkRows] = await pool.query('SELECT code FROM roles WHERE code = ?', [legacyRole]);
+        if (checkRows.length > 0) {
+          roleCodes.push(legacyRole);
+        }
+      }
+    } catch (e) {
+      // 忽略
+    }
+
+    return roleCodes;
   } catch (e) {
     try {
       const [rows] = await pool.query(`
