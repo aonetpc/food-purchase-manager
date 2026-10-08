@@ -1942,6 +1942,7 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
+    const user = req.user || {};
     // 允许 pending 和 rejected 状态提交
     if (!['pending', 'rejected'].includes(o.status)) {
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能提交` });
@@ -2205,6 +2206,7 @@ router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
+    const user = req.user || {};
     if (o.status !== 'sales_confirming') {
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能撤回` });
     }
@@ -2535,6 +2537,7 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     await conn.beginTransaction();
 
     const orderId = req.params.id;
+    const user = req.user || {};
     const [rows] = await conn.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1 FOR UPDATE', [orderId]);
     if (!rows.length) {
       await conn.rollback();
