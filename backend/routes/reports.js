@@ -1106,7 +1106,7 @@ router.get('/supplier-statistics', async (req, res) => {
         WHERE movement_type = 'inbound' AND related_type = 'purchase'
         GROUP BY related_id
       ) sm ON sm.related_id = wp.id
-      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
+      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed','completed')
         AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
       GROUP BY group_key, supplier_name, supplier_id
       ORDER BY amount DESC
@@ -1178,7 +1178,7 @@ router.get('/supplier-statistics/detail', async (req, res) => {
         WHERE movement_type = 'inbound' AND related_type = 'purchase'
         GROUP BY related_id
       ) sm ON sm.related_id = wp.id
-      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
+      WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed','completed')
         AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
         AND (
           -- group_key = 'none' → supplier_id 和 supplier_name 都为空
@@ -1237,7 +1237,7 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
           WHERE movement_type = 'inbound' AND related_type = 'purchase'
           GROUP BY related_id
         ) sm ON sm.related_id = wp.id
-        WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
+        WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed','completed')
           AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
       ) t
       GROUP BY t.group_key, t.supplier_name
@@ -1285,7 +1285,7 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
           WHERE movement_type = 'inbound' AND related_type = 'purchase'
           GROUP BY related_id
         ) sm ON sm.related_id = wp.id
-        WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed')
+        WHERE wp.status IN ('received','confirming','confirmed','reimbursing','reimbursed','completed')
           AND DATE_FORMAT(sm.inbound_at, '%Y-%m') = ?
       ) t
       GROUP BY t.group_key, t.cat_name
