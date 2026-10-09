@@ -1990,23 +1990,33 @@ function DetailModal({
 
         {/* 底部按钮 */}
         <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white flex-wrap">
-          {/* 所有非 completed 状态均可修改；confirmed 需强提示 */}
+          {/* 所有非 completed 状态均可修改 + 复制为新单；confirmed 修改需强提示 */}
           {canOperate && order.status !== 'completed' && (
-            <button
-              type="button"
-              onClick={() => {
-                if (order.status === 'confirmed') {
-                  setShowEditConfirm(true);
-                } else {
-                  onEdit();
-                }
-              }}
-              className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
-            >
-              修改此单
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  if (order.status === 'confirmed') {
+                    setShowEditConfirm(true);
+                  } else {
+                    onEdit();
+                  }
+                }}
+                className="px-3 py-1.5 text-xs rounded bg-green-500 hover:bg-green-600 text-white font-medium"
+              >
+                修改此单
+              </button>
+              <button
+                type="button"
+                onClick={onCopy}
+                title="基于此订单复制为新订单（日期自动+7天）"
+                className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium"
+              >
+                复制为新单
+              </button>
+            </>
           )}
-          {/* pending / rejected: 额外显示提交确认 + 复制 + 模板 */}
+          {/* pending / rejected: 额外显示提交确认 + 模板 */}
           {(order.status === 'pending' || order.status === 'rejected') && canOperate && (
             <>
               <button
@@ -2015,13 +2025,6 @@ function DetailModal({
                 className="px-3 py-1.5 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white font-medium"
               >
                 提交确认
-              </button>
-              <button
-                type="button"
-                onClick={onCopy}
-                className="px-3 py-1.5 text-xs rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-              >
-                复制为新单
               </button>
               <button
                 type="button"
@@ -2154,11 +2157,23 @@ function DetailModal({
             </div>
           )}
 
-          {/* completed: 只读 */}
+          {/* completed: 只读标记 + 复制为新单（admin/booker 可见） */}
           {order.status === 'completed' && (
-            <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
-              ✓ 已完成
-            </span>
+            <>
+              <span className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-500 inline-flex items-center gap-1">
+                ✓ 已完成
+              </span>
+              {canOperate && (
+                <button
+                  type="button"
+                  onClick={onCopy}
+                  title="基于此订单复制为新订单（日期自动+7天）"
+                  className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium"
+                >
+                  复制为新单
+                </button>
+              )}
+            </>
           )}
 
           {/* feat/140: 删除按钮 — admin 可删任何状态；booker 仅可删 pending/sales_confirming/rejected */}
