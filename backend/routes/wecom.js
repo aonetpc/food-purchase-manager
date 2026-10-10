@@ -2799,6 +2799,11 @@ async function sendBookingNotification(type, order, extra = {}) {
   const dateRange = buildDateRange(order.items);          // feat/140: 群消息新增预订日期
   const isPlaceholder = isPlaceholderOrder(order.items);  // feat/140: 占位单标题区分
   const frontEndBase = config.app_domain || '';
+  // feat/206: 群消息底部附订单 H5 详情链接（app_domain 未配置时自动省略整行）
+  const detailLink = frontEndBase && order.id
+    ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}`
+    : '';
+  const linkLine = detailLink ? `> [📱 点击查看订单](${detailLink})\n` : '';
 
   // 查找销售员企微userid：优先订单快照 → 兜底查users表
   const findSalesUserid = async () => {
@@ -2958,7 +2963,8 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 预订日期：${dateRange}\n` +
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
-          `> 状态：预测单（待提交确认）`;
+          `> 状态：预测单（待提交确认）\n` +
+          linkLine;
         await sendGroupMsg(md, '新建订单群通知');
       }
       break;
@@ -2989,7 +2995,8 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 预订日期：${dateRange}\n` +
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
-          `> 状态：待销售员确认`;
+          `> 状态：待销售员确认\n` +
+          linkLine;
         await sendGroupMsg(md, '预订群通知');
       }
       // ② 销售员模板卡片通知（task_id = booking_${orderNo}_S{attempt}，每次 resubmit 递增以绕过企微 task_id 去重）
@@ -3146,7 +3153,8 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 确认人：${confirmByName}\n` +
           `> 确认时间：${confirmAtStr}\n` +
           `> 签字：${hasSignature ? '✅ 已签字' : '⚠ 未签字'}\n` +
-          `> 状态：待审核员审核`;
+          `> 状态：待审核员审核\n` +
+          linkLine;
         await sendGroupMsg(md, '预订群通知');
       }
       break;
@@ -3160,7 +3168,8 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 客户：${customerName}\n` +
           remarkLine +
           `> 涉及业务：${bizSummary}\n` +
-          `> 状态：已确认（已锁定，不可修改）`;
+          `> 状态：已确认（已锁定，不可修改）\n` +
+          linkLine;
         await sendGroupMsg(md, '预订群通知');
       }
       // ② 销售员模板卡片通知
