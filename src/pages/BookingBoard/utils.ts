@@ -459,8 +459,10 @@ export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, st
     if (bizFilter.has('breakfast')) {
       const breakfastSessions = deriveBreakfastSessions(group, config);
       for (const bs of breakfastSessions) {
+        // fix/207: id 含 pax，使不同人数的天数不合并成同一张卡；
+        // 同一人数的连续天数仍会合并（如退房后仅剩 1 人住 2 晚 → "1人 2天"）
         const fakeItem: BookingItem = {
-          id: `${group.id}_breakfast`,
+          id: `${group.id}_breakfast_p${bs.pax}`,
           itemType: 'breakfast',
           date: bs.date,
           startTime: bs.startTime,
