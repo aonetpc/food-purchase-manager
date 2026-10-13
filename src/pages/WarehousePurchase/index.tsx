@@ -124,6 +124,14 @@ interface ListResponse {
   page_size: number;
 }
 
+// 系统用户（采购员筛选下拉用）
+interface SystemUser {
+  id: string;
+  name: string;
+  username: string;
+  status?: number;
+}
+
 // 收货表单行
 interface ReceiveFormRow {
   itemId: string;
@@ -217,6 +225,9 @@ export default function WarehousePurchaseList() {
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  // 采购员筛选（仅管理员可用）
+  const [purchaserFilter, setPurchaserFilter] = useState('');
+  const [purchasers, setPurchasers] = useState<SystemUser[]>([]);
 
   // 展开的卡片ID
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -265,6 +276,7 @@ export default function WarehousePurchaseList() {
     try {
       const params: Record<string, any> = { page, page_size: PAGE_SIZE };
       if (statusFilter) params.status = statusFilter;
+      if (purchaserFilter) params.created_by = purchaserFilter;
       const res = await api.get<ListResponse>('/warehouse-purchases', { params });
       setPurchases(res.data || []);
       setTotal(res.total || 0);
@@ -273,11 +285,36 @@ export default function WarehousePurchaseList() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter]);
+  }, [page, statusFilter, purchaserFilter]);
 
   useEffect(() => {
     fetchList();
   }, [fetchList]);
+
+  // 管理员加载系统用户列表（用于采购员筛选下拉）
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.get<SystemUser[]>('/auth/users');
+        if (cancelled) return;
+        // 过滤启用用户并按 id 去重（同一用户多角色可能返回多条）
+        const seenIds = new Set<string>();
+        const deduped: SystemUser[] = [];
+        for (const u of (data || []).filter((x: any) => x.status !== 0)) {
+          if (!seenIds.has(u.id)) {
+            seenIds.add(u.id);
+            deduped.push(u);
+          }
+        }
+        setPurchasers(deduped);
+      } catch (e: any) {
+        console.warn('获取用户列表失败:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   // 切换状态筛选时回到第一页
   const handleTabChange = (value: string) => {
@@ -791,21 +828,47 @@ export default function WarehousePurchaseList() {
         </div>
       )}
 
-      {/* 状态筛选标签栏 */}
-      <div className="flex flex-wrap gap-2">
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab.value || 'all'}
-            onClick={() => handleTabChange(tab.value)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-              statusFilter === tab.value
-                ? 'bg-primary-500 text-white shadow-sm'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* 状态筛选标签栏 + 采购员筛选（仅管理员） */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {STATUS_TABS.map((tab) => (
+            <button
+              key={tab.value || 'all'}
+              onClick={() => handleTabChange(tab.value)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                statusFilter === tab.value
+                  ? 'bg-primary-500 text-white shadow-sm'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1 text-xs text-gray-500">
+              <User size={14} />
+              采购员
+            </span>
+            <select
+              value={purchaserFilter}
+              onChange={(e) => {
+                setPurchaserFilter(e.target.value);
+                setPage(1);
+                setExpandedId(null);
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+            >
+              <option value="">全部</option>
+              {purchasers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* 列表 */}
