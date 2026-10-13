@@ -124,12 +124,10 @@ interface ListResponse {
   page_size: number;
 }
 
-// 系统用户（采购员筛选下拉用）
-interface SystemUser {
+// 采购员选项（筛选下拉用，来自 /purchasers 接口）
+interface PurchaserOption {
   id: string;
   name: string;
-  username: string;
-  status?: number;
 }
 
 // 收货表单行
@@ -215,6 +213,8 @@ const getConfirmProgress = (p: WarehousePurchase): { confirmed: number; total: n
 export default function WarehousePurchaseList() {
   const navigate = useNavigate();
   const { isAdmin, user } = useAuthStore();
+  // isAdmin 是函数（非布尔值），必须调用取值；否则条件恒为真导致所有用户可见管理功能
+  const isAdminUser = isAdmin();
 
   // 列表数据
   const [purchases, setPurchases] = useState<WarehousePurchase[]>([]);
@@ -227,7 +227,7 @@ export default function WarehousePurchaseList() {
   const [total, setTotal] = useState(0);
   // 采购员筛选（仅管理员可用）
   const [purchaserFilter, setPurchaserFilter] = useState('');
-  const [purchasers, setPurchasers] = useState<SystemUser[]>([]);
+  const [purchasers, setPurchasers] = useState<PurchaserOption[]>([]);
 
   // 展开的卡片ID
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -291,30 +291,21 @@ export default function WarehousePurchaseList() {
     fetchList();
   }, [fetchList]);
 
-  // 管理员加载系统用户列表（用于采购员筛选下拉）
+  // 管理员加载采购员列表（仅实际创建过采购单的用户，用于筛选下拉）
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdminUser) return;
     let cancelled = false;
     (async () => {
       try {
-        const data = await api.get<SystemUser[]>('/auth/users');
+        const data = await api.get<PurchaserOption[]>('/warehouse-purchases/purchasers');
         if (cancelled) return;
-        // 过滤启用用户并按 id 去重（同一用户多角色可能返回多条）
-        const seenIds = new Set<string>();
-        const deduped: SystemUser[] = [];
-        for (const u of (data || []).filter((x: any) => x.status !== 0)) {
-          if (!seenIds.has(u.id)) {
-            seenIds.add(u.id);
-            deduped.push(u);
-          }
-        }
-        setPurchasers(deduped);
+        setPurchasers(data || []);
       } catch (e: any) {
-        console.warn('获取用户列表失败:', e);
+        console.warn('获取采购员列表失败:', e);
       }
     })();
     return () => { cancelled = true; };
-  }, [isAdmin]);
+  }, [isAdminUser]);
 
   // 切换状态筛选时回到第一页
   const handleTabChange = (value: string) => {
@@ -845,7 +836,7 @@ export default function WarehousePurchaseList() {
             </button>
           ))}
         </div>
-        {isAdmin && (
+        {isAdminUser && (
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1 text-xs text-gray-500">
               <User size={14} />
@@ -1231,7 +1222,7 @@ export default function WarehousePurchaseList() {
                                   </>
                                 )}
                               </button>
-                              {(isAdmin || p.created_by === user?.id) && (
+                              {(isAdminUser || p.created_by === user?.id) && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -1545,7 +1536,7 @@ export default function WarehousePurchaseList() {
                           )}
 
                           {/* 非草稿/非审批中：仅管理员可删除已收货/已确认订单 */}
-                          {isAdmin && ['received', 'confirming', 'confirmed'].includes(p.status) && (
+                          {isAdminUser && ['received', 'confirming', 'confirmed'].includes(p.status) && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1560,7 +1551,7 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
                           {/* pending_approval 审批中：创建人自己可撤回 */}
-                          {p.status === 'pending_approval' && p.created_by === user?.id && !isAdmin && (
+                          {p.status === 'pending_approval' && p.created_by === user?.id && !isAdminUser && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

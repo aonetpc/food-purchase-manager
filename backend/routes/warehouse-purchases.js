@@ -1548,6 +1548,30 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
+// 1.5 GET /purchasers — 采购员筛选列表（实际创建过采购单的用户），需在 /:id 之前注册
+router.get('/purchasers', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = Array.isArray(req.user?.roles) && req.user.roles.includes('admin');
+    if (!isAdmin) {
+      return res.status(403).json({ error: '无权限访问' });
+    }
+    // 只返回实际创建过采购单的用户（含历史离职人员，保证能按人筛选历史订单）
+    const [rows] = await pool.query(`
+      SELECT wp.created_by AS id,
+             COALESCE(MAX(NULLIF(u.name, '')), MAX(NULLIF(wp.created_by_name, '')), wp.created_by) AS name
+      FROM warehouse_purchases wp
+      LEFT JOIN users u ON u.id = wp.created_by
+      WHERE wp.created_by IS NOT NULL AND wp.created_by != ''
+      GROUP BY wp.created_by
+      ORDER BY name ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('获取采购员筛选列表失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 8. GET /confirm-page — 确认页数据（免登录），需在 /:id 之前注册
 router.get('/confirm-page', async (req, res) => {
   try {
