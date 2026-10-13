@@ -1510,7 +1510,7 @@ async function generateWarehousePDF(purchaseId) {
 // 1. GET / — 采购单列表
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const { status, warehouse_id, page = 1, page_size = 20 } = req.query;
+    const { status, warehouse_id, created_by, page = 1, page_size = 20 } = req.query;
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const pageSize = Math.max(1, parseInt(page_size, 10) || 20);
     const offset = (pageNum - 1) * pageSize;
@@ -1519,9 +1519,13 @@ router.get('/', requireAuth, async (req, res) => {
     const params = [];
     if (status) { conditions.push('status = ?'); params.push(status); }
     if (warehouse_id) { conditions.push('warehouse_id = ?'); params.push(warehouse_id); }
-    // 非管理员只能看到自己创建的采购单
-    const userRole = req.user?.role;
-    if (userRole !== 'admin') {
+    // 角色判断使用 roles 数组（支持多角色用户）
+    const isAdmin = Array.isArray(req.user?.roles) && req.user.roles.includes('admin');
+    if (isAdmin) {
+      // 管理员可按采购员筛选；未传 created_by 则返回全部
+      if (created_by) { conditions.push('created_by = ?'); params.push(created_by); }
+    } else {
+      // 非管理员强制只能看自己的单，忽略前端传来的 created_by（防越权）
       conditions.push('created_by = ?');
       params.push(req.user.id);
     }
