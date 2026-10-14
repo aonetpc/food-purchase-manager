@@ -532,8 +532,9 @@ const BIZ_MAP = {
   carpickup: { label: '用车' },
 };
 
-// 可编辑状态：除 completed 外均可编辑；reviewing/confirmed/sales_confirming 修改后会触发卡片更新+通知
-const EDITABLE_STATUS = ['pending', 'rejected', 'sales_confirming', 'reviewing', 'confirmed'];
+// 可编辑状态：除 completed 外均可编辑；reviewing/confirmed/sales_confirming/parallel_sign 修改后会触发卡片更新+通知
+// parallel_sign = 并行审批中（销售员确认 ∥ 审核员审核，任意一侧未签完即停留此状态）
+const EDITABLE_STATUS = ['pending', 'rejected', 'sales_confirming', 'reviewing', 'parallel_sign', 'confirmed'];
 
 // ============================================================
 // Out of sort 终极修复：TEMPORARY TABLE + STRAIGHT_JOIN 分页取单
@@ -1954,11 +1955,22 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     //   catch 分支降级成"只UPDATE status，submitAttempt = 1"兜底，不让用户看到 500。
     // 兜底期间 task_id 会用 booking_{orderNo} 老卡命名：如果历史上推送过同名卡且重发起，可能触发企微去重（这是降级模式可接受的代价），
     //   一旦迁移101执行完，下次submit就切回原生计数，task_id S{N} 永久唯一。
+    // 读取企微配置中的预订审批流程模式：serial（串行：销售员确认 → 审核员审核，默认）/ parallel（并行：两者同时开始）
+    //   配置缺失或读取失败 → 一律按 serial（安全默认，行为与改动前一致）
+    let flowMode = 'serial';
+    try {
+      const wcfg = await getWecomConfig();
+      flowMode = wcfg && wcfg.booking_flow_mode === 'parallel' ? 'parallel' : 'serial';
+    } catch (eCfg) {
+      console.warn('[booking submit] 读取 wecom 配置失败，按串行流程处理:', eCfg && eCfg.message);
+    }
+    const submitStatus = flowMode === 'parallel' ? 'parallel_sign' : 'sales_confirming';
+
     let usingNativeCount = true;
     try {
       await pool.query(
-        "UPDATE booking_orders SET status = 'sales_confirming', submit_resend_count = submit_resend_count + 1 WHERE id = ?",
-        [orderId]
+        "UPDATE booking_orders SET status = ?, submit_resend_count = submit_resend_count + 1 WHERE id = ?",
+        [submitStatus, orderId]
       );
     } catch (eUpdate) {
       // 只在"列不存在"错误降级；其他 SQL 错误（连接失败/权限/主键等）继续抛，避免掩盖真实问题
@@ -1966,7 +1978,7 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
       if (!/Unknown column 'submit_resend_count' in 'field list'/i.test(msg)) throw eUpdate;
       console.warn(`[booking submit] submit_resend_count列缺失，降级运行(orderId=${orderId}, orderNo=${o.order_no})：请尽快执行migrations/101_booking_submit_resend_count.sql`);
       usingNativeCount = false;
-      await pool.query("UPDATE booking_orders SET status = 'sales_confirming' WHERE id = ?", [orderId]);
+      await pool.query("UPDATE booking_orders SET status = ? WHERE id = ?", [submitStatus, orderId]);
     }
     logOperation(req, '预订订单', '提交确认', `订单号=${o.order_no}`, orderId);
     await writeFlowLog(pool, orderId, 'submit', '预订员提交', user, {});
@@ -1994,7 +2006,7 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     let notifyError = null;
     let notifyRes = null;
     try {
-      notifyRes = await sendBookingNotification('submit', order, { submitAttempt });
+      notifyRes = await sendBookingNotification(flowMode === 'parallel' ? 'parallelSubmit' : 'submit', order, { submitAttempt });
       if (notifyRes && notifyRes.salesResponseCode) {
         await saveCardResponseCodes(orderId, {
           sales_confirm: {
@@ -2018,9 +2030,27 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
           notifyError = notifyRes.salesCardError;
         }
       }
-      // R4：submit 发卡后创建催办任务（sales_confirming 阶段）
+      // 并行模式：提交时同时保存审核员卡的 response_code（供后续灰化/催办使用）
+      if (flowMode === 'parallel' && notifyRes && notifyRes.approverResponseCode) {
+        await saveCardResponseCodes(orderId, {
+          approve: {
+            userid: notifyRes.approverUserid,
+            response_code: notifyRes.approverResponseCode,
+            task_id: notifyRes.approveTaskId || null,
+            status: 'sent',
+          },
+        });
+      } else if (flowMode === 'parallel' && notifyRes && notifyRes.approveCardError) {
+        console.error(`[booking submit notify] 并行审核员卡发送 FAIL orderNo=${o.order_no}:`, JSON.stringify(notifyRes.approveCardError));
+      }
+      // R4：submit 发卡后创建催办任务
+      //   serial  ：仅 sales_confirming 阶段
+      //   parallel：sales_confirming 与 reviewing 两阶段同时创建（两侧都有待办）
       if (notifyRes && notifyRes.salesUserid) {
         bookingReminder.createReminderTask(orderId, 'sales_confirming', notifyRes.salesUserid).catch(()=>{});
+      }
+      if (flowMode === 'parallel' && notifyRes && notifyRes.approverUserid) {
+        bookingReminder.createReminderTask(orderId, 'reviewing', notifyRes.approverUserid).catch(()=>{});
       }
     } catch (e) {
       notifyError = { errmsg: e && e.message || String(e) };
@@ -2045,6 +2075,10 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
         submitTaskId: (notifyRes && notifyRes.submitTaskId) || null,
         salesCardError: (notifyRes && notifyRes.salesCardError) || notifyError || null,
         salesWecomUserid: o.sales_wecom_userid || null,
+        flowMode,
+        approverUserid: (notifyRes && notifyRes.approverUserid) || null,
+        approverResponseCode: (notifyRes && notifyRes.approverResponseCode) || null,
+        approveCardError: (notifyRes && notifyRes.approveCardError) || null,
       },
     });
   } catch (e) {
@@ -2067,7 +2101,9 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (o.status !== 'sales_confirming') {
+    // 串行：sales_confirming；并行：parallel_sign（销售员确认 与 审核员审核 同时进行）
+    const isParallel = o.status === 'parallel_sign';
+    if (!['sales_confirming', 'parallel_sign'].includes(o.status)) {
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能确认` });
     }
 
@@ -2080,15 +2116,22 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
       });
     }
 
+    // 并行模式：审核员若已先签字（confirmed_at 已写），本次销售确认即为"双方签齐" → 直接 confirmed
+    const approverSigned = isParallel && !!o.confirmed_at;
+    const nextStatus = isParallel
+      ? (approverSigned ? 'confirmed' : 'parallel_sign')
+      : 'reviewing';
+
     await pool.query(`
       UPDATE booking_orders SET
-        status = 'reviewing',
+        status = ?,
         sales_confirmed_at = NOW(),
         sales_confirmed_by = ?,
         sales_confirmed_by_name = ?,
         sales_confirmed_signature = ?
       WHERE id = ?
     `, [
+      nextStatus,
       user.id || null,
       user.name || user.realName || user.displayName || null,
       signatureData,
@@ -2146,51 +2189,71 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
       _notifyDebug.greySalesButton = { ok: false, reason: 'submit时没有保存response_code或userid', salesCardExists: !!salesCard, salesCardUserid: salesGreyUserid || null, salesCardHasCode: !!salesGreyCode };
     }
 
-    // 2) 🔁 对齐采购确认页：审核员通知 = 同步 await（采购for循环同步，不再IIFE fire-and-forget）
-    //    成功 -> 同步保存approve卡response_code + status='sent'
-    //    失败 -> 把approverUserid/approveCardError直接写到_ntifyDebug，前端toast红条
-    try {
-      const notifyRes = await sendBookingNotification('salesConfirm', order);
-      if (notifyRes && notifyRes.approverResponseCode) {
-        await saveCardResponseCodes(orderId, {
-          approve: {
-            userid: notifyRes.approverUserid,
-            response_code: notifyRes.approverResponseCode,
-            task_id: notifyRes.approveTaskId || null,
-            status: 'sent',
-          },
-        });
-        _notifyDebug.approveNotify = {
-          ok: true,
-          approverUserid: notifyRes.approverUserid,
-          approverResponseCode: notifyRes.approverResponseCode,
-          approveTaskId: notifyRes.approveTaskId || null,
-        };
-      } else {
-        const errInfo = (notifyRes && notifyRes.approveCardError) || { errmsg: 'approverResponseCode为空（审核员通知未发）' };
-        const approver  = (notifyRes && notifyRes.approverUserid) || (function(){ try{ const w=getWecomConfig(); return w && w.booking_approver_userid || 'unconfigured'; }catch(_){return 'wecom_config_failed';}})();
+    // 2) 审核员通知 / 最终确认通知
+    if (isParallel) {
+      // 并行：审核员卡在 submit 时已发送，这里不重复发卡
+      //   - 审核员已先签字 → 本次销售确认为"双方签齐"，发最终确认通知（群 + 销售卡）
+      //   - 审核员未签   → 订单保持 parallel_sign，等审核员处理即可
+      _notifyDebug.approveNotify = {
+        ok: !!approverSigned,
+        reason: approverSigned ? 'both_signed_final' : 'waiting_reviewer（审核卡已在提交时发送）',
+      };
+      if (approverSigned) {
+        try {
+          await sendBookingNotification('approve', order);
+        } catch (e) {
+          console.error(`[booking sales-confirm] 并行最终确认通知失败 orderNo=${o.order_no}:`, e && e.message);
+        }
+      }
+      // 仅结束"销售确认"阶段催办，保留"审核"阶段催办（并行两侧互不影响）
+      bookingReminder.completeStageReminders(orderId, 'sales_confirming').catch(()=>{});
+    } else {
+      // 串行（原有逻辑）：审核员通知 = 同步 await（采购for循环同步，不再IIFE fire-and-forget）
+      //    成功 -> 同步保存approve卡response_code + status='sent'
+      //    失败 -> 把approverUserid/approveCardError直接写到_ntifyDebug，前端toast红条
+      try {
+        const notifyRes = await sendBookingNotification('salesConfirm', order);
+        if (notifyRes && notifyRes.approverResponseCode) {
+          await saveCardResponseCodes(orderId, {
+            approve: {
+              userid: notifyRes.approverUserid,
+              response_code: notifyRes.approverResponseCode,
+              task_id: notifyRes.approveTaskId || null,
+              status: 'sent',
+            },
+          });
+          _notifyDebug.approveNotify = {
+            ok: true,
+            approverUserid: notifyRes.approverUserid,
+            approverResponseCode: notifyRes.approverResponseCode,
+            approveTaskId: notifyRes.approveTaskId || null,
+          };
+        } else {
+          const errInfo = (notifyRes && notifyRes.approveCardError) || { errmsg: 'approverResponseCode为空（审核员通知未发）' };
+          const approver  = (notifyRes && notifyRes.approverUserid) || (function(){ try{ const w=getWecomConfig(); return w && w.booking_approver_userid || 'unconfigured'; }catch(_){return 'wecom_config_failed';}})();
+          _notifyDebug.approveNotify = {
+            ok: false,
+            approverUserid: approver,
+            approveTaskId: (notifyRes && notifyRes.approveTaskId) || null,
+            approveCardError: errInfo,
+          };
+          console.error(`[booking sales-confirm] 审核员通知 FAIL: orderNo=${o.order_no}, approver=${approver}, detail=${JSON.stringify(errInfo)}`);
+        }
+      } catch (e) {
         _notifyDebug.approveNotify = {
           ok: false,
-          approverUserid: approver,
-          approveTaskId: (notifyRes && notifyRes.approveTaskId) || null,
-          approveCardError: errInfo,
+          approverUserid: 'notify-throw',
+          approveCardError: { errmsg: e && e.message || String(e) },
         };
-        console.error(`[booking sales-confirm] 审核员通知 FAIL: orderNo=${o.order_no}, approver=${approver}, detail=${JSON.stringify(errInfo)}`);
+        console.error(`[booking sales-confirm notify] catch FAIL orderNo=${o.order_no}:`, e && e.message, e);
       }
-    } catch (e) {
-      _notifyDebug.approveNotify = {
-        ok: false,
-        approverUserid: 'notify-throw',
-        approveCardError: { errmsg: e && e.message || String(e) },
-      };
-      console.error(`[booking sales-confirm notify] catch FAIL orderNo=${o.order_no}:`, e && e.message, e);
-    }
 
-    // R4：salesConfirm 后 — 灰化销售卡历史 + 销售催办完成 + 审核阶段新建催办
-    bookingReminder.greyAllCardsOnApprove(orderId, 'sales_confirming', '已确认').catch(()=>{});
-    bookingReminder.cancelReminder(orderId).catch(()=>{});
-    const approver = (() => { try { return (notifyRes && notifyRes.approverUserid) || null; } catch(_) { return null; } })();
-    if (approver) bookingReminder.createReminderTask(orderId, 'reviewing', approver).catch(()=>{});
+      // R4：salesConfirm 后 — 灰化销售卡历史 + 销售催办完成 + 审核阶段新建催办
+      bookingReminder.greyAllCardsOnApprove(orderId, 'sales_confirming', '已确认').catch(()=>{});
+      bookingReminder.cancelReminder(orderId).catch(()=>{});
+      const approver = (() => { try { return (notifyRes && notifyRes.approverUserid) || null; } catch(_) { return null; } })();
+      if (approver) bookingReminder.createReminderTask(orderId, 'reviewing', approver).catch(()=>{});
+    }
 
     res.json({ ok: true, data: order, _notifyDebug });
   } catch (e) {
@@ -2207,11 +2270,22 @@ router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
     const user = req.user || {};
-    if (o.status !== 'sales_confirming') {
+    // 串行：sales_confirming；并行：parallel_sign（撤回 = 退回 pending 重新提交）
+    const isParallel = o.status === 'parallel_sign';
+    if (!['sales_confirming', 'parallel_sign'].includes(o.status)) {
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能撤回` });
     }
 
-    await pool.query("UPDATE booking_orders SET status = 'pending' WHERE id = ?", [orderId]);
+    if (isParallel) {
+      // 并行：同时清空销售/审核双方已签痕迹，回到 pending
+      await pool.query(`UPDATE booking_orders SET
+          status = 'pending',
+          sales_confirmed_at = NULL, sales_confirmed_by = NULL, sales_confirmed_by_name = NULL, sales_confirmed_signature = NULL,
+          confirmed_at = NULL, approved_by = NULL, approved_by_name = NULL, approved_signature = NULL
+        WHERE id = ?`, [orderId]);
+    } else {
+      await pool.query("UPDATE booking_orders SET status = 'pending' WHERE id = ?", [orderId]);
+    }
     logOperation(req, '预订订单', '撤回', `订单号=${o.order_no}`, orderId);
     await writeFlowLog(pool, orderId, 'withdraw', '撤回', user, {});
 
@@ -2219,6 +2293,11 @@ router.post('/orders/:id/withdraw', requireAuth, requireBookingWrite, async (req
     //   同步 await：确保返回前端时标记已落库 → 避免 submit 重发起读到旧 attempt / 旧状态命中去重
     //   计数不变量 submit_resend_count 由原生列接管，这里不需要再改 attempt
     await saveCardResponseCodes(orderId, { sales_confirm: { cleared: true } }).catch(() => {});
+    if (isParallel) {
+      // 并行：审核卡一并作废 + 取消两侧催办
+      await saveCardResponseCodes(orderId, { approve: { cleared: true } }).catch(() => {});
+      bookingReminder.cancelReminder(orderId).catch(()=>{});
+    }
 
     const order = await readOrderFull(orderId);
     res.json({ ok: true, data: order });
@@ -2242,7 +2321,11 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (o.status !== 'reviewing') return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能审核` });
+    // 串行：reviewing；并行：parallel_sign（销售员确认 与 审核员审核 同时进行）
+    const isParallel = o.status === 'parallel_sign';
+    if (!['reviewing', 'parallel_sign'].includes(o.status)) {
+      return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能审核` });
+    }
 
     // --- 业务角色限制 ---
     // 审核通过仅限配置的审核员（wecom_config.booking_approver_userid）
@@ -2254,15 +2337,22 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
       });
     }
 
+    // 并行模式：销售员若已先签字（sales_confirmed_at 已写），本次审核即为"双方签齐" → confirmed；否则仍停留 parallel_sign
+    const salesSigned = isParallel && !!o.sales_confirmed_at;
+    const nextStatus = isParallel
+      ? (salesSigned ? 'confirmed' : 'parallel_sign')
+      : 'confirmed';
+
     await pool.query(`
       UPDATE booking_orders SET
-        status = 'confirmed',
+        status = ?,
         confirmed_at = NOW(),
         approved_signature = ?,
         approved_by = ?,
         approved_by_name = ?
       WHERE id = ?
     `, [
+      nextStatus,
       signatureData,
       user.id || null,
       user.name || user.realName || user.displayName || null,
@@ -2290,11 +2380,22 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
         .then(() => saveCardResponseCodes(orderId, { approve: { status: 'greyed' } }).catch(()=>{}))
         .catch(()=>{});
     }
-    // 异步通知预订群+销售员
-    sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
-    // R4：approve 后 — 灰化所有审核卡历史 + 取消催办
-    bookingReminder.greyAllCardsOnApprove(orderId, 'reviewing', '已审核').catch(()=>{});
-    bookingReminder.cancelReminder(orderId).catch(()=>{});
+    if (isParallel) {
+      if (salesSigned) {
+        // 双方签齐 → 最终确认：通知预订群+销售员，结束全部催办
+        sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
+        bookingReminder.cancelReminder(orderId).catch(()=>{});
+      } else {
+        // 审核已签字，等待销售员确认：仅结束"审核"阶段催办，保留"销售确认"阶段催办
+        bookingReminder.completeStageReminders(orderId, 'reviewing').catch(()=>{});
+      }
+    } else {
+      // 异步通知预订群+销售员
+      sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
+      // R4：approve 后 — 灰化所有审核卡历史 + 取消催办
+      bookingReminder.greyAllCardsOnApprove(orderId, 'reviewing', '已审核').catch(()=>{});
+      bookingReminder.cancelReminder(orderId).catch(()=>{});
+    }
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking approve] error:', e);
@@ -2305,6 +2406,7 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
 // POST /api/booking/orders/:id/reject   驳回
 //   sales_confirming → rejected（销售员驳回/撤回修改）
 //   reviewing → rejected（审核员驳回）
+//   parallel_sign → rejected（销售员或审核员任一方驳回，即整单重走：清空双方签字）
 router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, res) => {
   try {
     const user = req.user || {};
@@ -2312,46 +2414,92 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
     const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
     const o = rows[0];
-    if (!['sales_confirming', 'reviewing'].includes(o.status)) {
+    if (!['sales_confirming', 'reviewing', 'parallel_sign'].includes(o.status)) {
       return res.status(400).json({ ok: false, error: `状态 ${o.status} 不能驳回` });
     }
     const rejectionReason = (req.body && req.body.rejectionReason) || '未填驳回原因';
 
     // --- 业务角色限制（按驳回阶段区分）---
     // ① sales_confirming 阶段：仅订单销售员本人可撤回
-    // ② reviewing     阶段：仅配置的审核员可驳回
+    // ② reviewing        阶段：仅配置的审核员可驳回
+    // ③ parallel_sign    阶段：销售员本人或配置的审核员均可驳回（任一方驳回 = 整单重走）
     const isReviewer = await isConfiguredBookingReviewer(user);
+    const isSalesOwner = isSalesOwnerOfOrder(user, o);
+    const isParallel = o.status === 'parallel_sign';
     if (o.status === 'reviewing' && !isReviewer) {
       return res.status(403).json({
         ok: false,
         error: '仅企业微信配置中指定的审核员可驳回此订单',
       });
     }
-    if (o.status === 'sales_confirming' && !isSalesOwnerOfOrder(user, o)) {
+    if (o.status === 'sales_confirming' && !isSalesOwner) {
       return res.status(403).json({
         ok: false,
         error: `仅订单登记的销售员本人（${o.sales_person || '—'}）可撤回此订单`,
       });
     }
+    if (isParallel && !isSalesOwner && !isReviewer) {
+      return res.status(403).json({
+        ok: false,
+        error: `仅订单登记的销售员本人（${o.sales_person || '—'}）或企业微信配置中指定的审核员可驳回此订单`,
+      });
+    }
 
-    await pool.query(`
-      UPDATE booking_orders SET
-        status = 'rejected',
-        rejected_by = ?, rejected_by_name = ?, rejection_reason = ?, rejected_at = NOW()
-      WHERE id = ?
-    `, [
-      user.id || null,
-      user.name || user.realName || user.displayName || null,
-      rejectionReason,
-      orderId,
-    ]);
+    // 并行驳回 = 整单重走 → 一并清空双方签字痕迹（另一方已签作废）
+    const rejectByRole = isParallel ? (isReviewer && !isSalesOwner ? '审核员' : '销售员') : (o.status === 'reviewing' ? '审核员' : '销售员');
+    if (isParallel) {
+      await pool.query(`
+        UPDATE booking_orders SET
+          status = 'rejected',
+          rejected_by = ?, rejected_by_name = ?, rejection_reason = ?, rejected_at = NOW(),
+          sales_confirmed_at = NULL, sales_confirmed_by = NULL, sales_confirmed_by_name = NULL, sales_confirmed_signature = NULL,
+          confirmed_at = NULL, approved_by = NULL, approved_by_name = NULL, approved_signature = NULL
+        WHERE id = ?
+      `, [
+        user.id || null,
+        user.name || user.realName || user.displayName || null,
+        rejectionReason,
+        orderId,
+      ]);
+    } else {
+      await pool.query(`
+        UPDATE booking_orders SET
+          status = 'rejected',
+          rejected_by = ?, rejected_by_name = ?, rejection_reason = ?, rejected_at = NOW()
+        WHERE id = ?
+      `, [
+        user.id || null,
+        user.name || user.realName || user.displayName || null,
+        rejectionReason,
+        orderId,
+      ]);
+    }
     logOperation(req, '预订订单', '驳回', `订单号=${o.order_no} 原因=${rejectionReason}`, orderId);
-    await writeFlowLog(pool, orderId, 'reject', `驳回（${o.status === 'reviewing' ? '审核员' : '销售员'}）`, user, { remark: rejectionReason });
+    await writeFlowLog(pool, orderId, 'reject', isParallel ? `驳回（并行·${rejectByRole}，整单重走）` : `驳回（${rejectByRole}）`, user, { remark: rejectionReason });
 
     const order = await readOrderFull(orderId);
 
     // 根据驳回阶段灰对应按钮
-    if (o.status === 'sales_confirming') {
+    if (isParallel) {
+      // 并行驳回：两张卡（销售确认 + 审核）全部作废
+      const salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
+      const approveCard = order.wecom_card_response_codes && order.wecom_card_response_codes.approve;
+      if (salesCard && salesCard.response_code && salesCard.userid) {
+        greyBookingCardButton(salesCard.userid, salesCard.response_code, '已驳回').catch(()=>{});
+      }
+      let approveGreyUserid = (approveCard && approveCard.userid) || null;
+      if (!approveGreyUserid) {
+        try {
+          const wcfg = await getWecomConfig();
+          approveGreyUserid = wcfg && wcfg.booking_approver_userid ? wcfg.booking_approver_userid : null;
+        } catch(_) { /* ignore */ }
+      }
+      if (approveGreyUserid && approveCard && approveCard.response_code) {
+        greyBookingCardButton(approveGreyUserid, approveCard.response_code, '已驳回').catch(()=>{});
+      }
+      await saveCardResponseCodes(orderId, { sales_confirm: { cleared: true } }).catch(() => {});
+      await saveCardResponseCodes(orderId, { approve: { cleared: true } }).catch(() => {});
+    } else if (o.status === 'sales_confirming') {
       // 销售员自己驳回→灰化图 1 原「订单待确认」按钮为"已驳回 (时间)"
       const salesCard = order.wecom_card_response_codes && order.wecom_card_response_codes.sales_confirm;
       const greyUserId = user.wecom_userid || (salesCard && salesCard.userid) || null;
@@ -2378,14 +2526,24 @@ router.post('/orders/:id/reject', requireAuth, requireBookingWrite, async (req, 
       await saveCardResponseCodes(orderId, { approve: { cleared: true } }).catch(() => {});
     }
 
-    // 异步通知销售员（仅审核员驳回时通知）
-    if (o.status === 'reviewing') {
+    // 异步通知销售员（仅非销售本人驳回时通知）
+    if (isParallel) {
+      if (!isSalesOwner) {
+        sendBookingNotification('reject', order, { rejectionReason }).catch(e => console.error('[booking reject notify] error:', e));
+      }
+    } else if (o.status === 'reviewing') {
       sendBookingNotification('reject', order, { rejectionReason }).catch(e => console.error('[booking reject notify] error:', e));
     }
-    // R4：reject 后 — 灰化当前阶段所有历史卡 + 取消催办
-    const rejectStage = o.status === 'sales_confirming' ? 'sales_confirming' : 'reviewing';
-    bookingReminder.greyAllCardsOnApprove(orderId, rejectStage, '已驳回').catch(()=>{});
-    bookingReminder.cancelReminder(orderId).catch(()=>{});
+    // R4：reject 后 — 灰化当前阶段所有历史卡 + 取消催办（并行下整单重走，两侧催办全清）
+    if (isParallel) {
+      bookingReminder.greyAllCardsOnApprove(orderId, 'sales_confirming', '已驳回').catch(()=>{});
+      bookingReminder.greyAllCardsOnApprove(orderId, 'reviewing', '已驳回').catch(()=>{});
+      bookingReminder.cancelReminder(orderId).catch(()=>{});
+    } else {
+      const rejectStage = o.status === 'sales_confirming' ? 'sales_confirming' : 'reviewing';
+      bookingReminder.greyAllCardsOnApprove(orderId, rejectStage, '已驳回').catch(()=>{});
+      bookingReminder.cancelReminder(orderId).catch(()=>{});
+    }
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking reject] error:', e);
@@ -2461,9 +2619,9 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
 
     // feat/140: 预订员可删除 pending/sales_confirming/rejected 三种"未最终确认"状态
     // confirmed/completed 仅 admin 可删（防误删已生效订单）
-    const bookerDeletableStatuses = ['pending', 'sales_confirming', 'rejected'];
+    const bookerDeletableStatuses = ['pending', 'sales_confirming', 'rejected', 'parallel_sign'];
     if (!isAdmin && !bookerDeletableStatuses.includes(o.status)) {
-      return res.status(400).json({ ok: false, error: `当前状态 ${o.status} 不允许预订员删除（仅预测单/待确认/已驳回可删），如需删除请联系管理员` });
+      return res.status(400).json({ ok: false, error: `当前状态 ${o.status} 不允许预订员删除（仅预测单/待确认/已驳回/并行审批中可删），如需删除请联系管理员` });
     }
 
     // feat/140: 删除前读取完整订单快照（含 items），用于删除后发群消息通知
@@ -2476,7 +2634,7 @@ router.delete('/orders/:id', requireAuth, requireBookingWrite, async (req, res) 
       await conn.query('DELETE FROM booking_orders WHERE id = ? AND is_template = 0', [req.params.id]);
     } else {
       // 预订员：仅删除白名单状态订单
-      await conn.query('DELETE FROM booking_orders WHERE id = ? AND status IN (?, ?, ?) AND is_template = 0', [req.params.id, ...bookerDeletableStatuses]);
+      await conn.query('DELETE FROM booking_orders WHERE id = ? AND status IN (?, ?, ?, ?) AND is_template = 0', [req.params.id, ...bookerDeletableStatuses]);
     }
     await conn.commit();
     logOperation(req, '预订订单', isAdmin ? '管理员删除订单' : '删除订单', `订单号=${o.order_no}`, req.params.id);
@@ -2598,6 +2756,20 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
         WHERE id = ?`, [orderId]);
     }
 
+    // parallel_sign 状态修改 → 保持 parallel_sign，清空双方签字痕迹（任一侧已签作废），等双方重新处理
+    if (originalStatus === 'parallel_sign') {
+      await conn.query(`UPDATE booking_orders SET
+          sales_confirmed_at = NULL,
+          sales_confirmed_by = NULL,
+          sales_confirmed_by_name = NULL,
+          sales_confirmed_signature = NULL,
+          confirmed_at = NULL,
+          approved_by = NULL,
+          approved_by_name = NULL,
+          approved_signature = NULL
+        WHERE id = ?`, [orderId]);
+    }
+
     // R3：计算本次编辑的变更摘要，写入 last_edit_diff 列（booking-confirm 审批页用）
     // 【方案S：兼容迁移104未跑】列缺失时降级不写（部署竞态窗口：代码先到 vs 迁移后到）
     //   迁移 104 跑后自动恢复写 diff；降级期间审批页 diff 块不显示即可，编辑保存主体不受影响
@@ -2653,10 +2825,11 @@ async function handleOrderEditNotification(originalStatus, order, req) {
     const cardUrl = config.app_domain ? `${config.app_domain}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
     const cardCodes = parseMaybeJson(order.wecom_card_response_codes) || {};
 
-    // --- 更新审核卡片内容（reviewing / confirmed 均更新）---
+    // --- 更新审核卡片内容（reviewing / confirmed / parallel_sign 均更新）---
     // 策略：优先 update 已有交互卡；无 response_code 时降级发新卡；都失败时 fallback 文字通知
     let cardSent = false;
-    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed') && config.booking_approver_userid) {
+    const isParallelEdit = originalStatus === 'parallel_sign';
+    if ((originalStatus === 'reviewing' || originalStatus === 'confirmed' || isParallelEdit) && config.booking_approver_userid) {
       const hContentBase = [
         { keyname: '客户', value: customerName },
         { keyname: '业务', value: bizSummary },
@@ -2666,7 +2839,9 @@ async function handleOrderEditNotification(originalStatus, order, req) {
 
       const mainTitle = originalStatus === 'confirmed'
         ? '📋 订单待审核（已变更·需重审）'
-        : '📋 订单待审核（已修改）';
+        : isParallelEdit
+          ? '📋 订单待审核（已修改·并行）'
+          : '📋 订单待审核（已修改）';
       const subTitle = `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请${originalStatus === 'confirmed' ? '重新审批' : '重新审核'}`;
       const btnLabel = originalStatus === 'confirmed' ? '重新审批' : '去审核';
 
@@ -2731,9 +2906,9 @@ async function handleOrderEditNotification(originalStatus, order, req) {
       }
     }
 
-    // --- 更新销售员确认卡片（sales_confirming）---
+    // --- 更新销售员确认卡片（sales_confirming / parallel_sign）---
     // 对称审核员：优先 update；无 code 或失败则降级新发
-    if (originalStatus === 'sales_confirming') {
+    if (originalStatus === 'sales_confirming' || isParallelEdit) {
       const salesCard = cardCodes.sales_confirm;
       const salesUserid = salesCard && salesCard.userid;
       const hasCode = salesCard && salesCard.response_code;
@@ -2747,10 +2922,11 @@ async function handleOrderEditNotification(originalStatus, order, req) {
         ];
         if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
 
+        const salesTitle = isParallelEdit ? '📋 订单待确认（已修改·并行）' : '📋 订单待确认（已修改）';
         if (hasCode) {
           try {
             await updateTemplateCard(config, salesUserid, 'button_interaction', salesCard.response_code, {
-              main_title: { title: '📋 订单待确认（已修改）', desc: customerName },
+              main_title: { title: salesTitle, desc: customerName },
               sub_title_text: `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请重新确认`,
               horizontal_content_list: hContent,
               button_list: [{ text: '去确认', style: 1, type: 1, key: `go_booking_${order.id}`, url: cardUrl }],
@@ -2769,7 +2945,7 @@ async function handleOrderEditNotification(originalStatus, order, req) {
             await sendTemplateCardToUser(config, salesUserid, {
               card_type: 'button_interaction',
               source: { desc: '预订管理系统' },
-              main_title: { title: '📋 订单待确认（已修改）', desc: customerName },
+              main_title: { title: salesTitle, desc: customerName },
               sub_title_text: `订单号：${orderNo}\n订单已于 ${changeTime} 被修改，请重新确认`,
               horizontal_content_list: hContent,
               button_list: [{ text: '去确认', style: 1, type: 1, key: `go_booking_${order.id}`, url: cardUrl }],
@@ -2794,7 +2970,7 @@ async function handleOrderEditNotification(originalStatus, order, req) {
     }
 
     // --- 群通知（可选）---
-    if (config.booking_webhook_url && (originalStatus === 'confirmed')) {
+    if (config.booking_webhook_url && (originalStatus === 'confirmed' || isParallelEdit)) {
       try {
         const md = `⚠️ **订单已修改（需重新审核）**\n` +
           `> 订单号：${orderNo}\n` +
@@ -2803,7 +2979,7 @@ async function handleOrderEditNotification(originalStatus, order, req) {
           `> 业务：${bizSummary}\n` +
           `> 金额：¥${order.total_amount || 0}\n` +
           `> 修改时间：${changeTime}\n` +
-          `> 状态：已退回审批中`;
+          `> 状态：${originalStatus === 'confirmed' ? '已退回审批中' : '审批中（已更新）'}`;
         await sendMarkdownViaWebhook(config.booking_webhook_url, md);
       } catch (e) {
         console.error(`[handleOrderEditNotification] 群通知失败:`, e && e.message);

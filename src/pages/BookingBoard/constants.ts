@@ -30,6 +30,7 @@ export const STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg:
   pending:           { label: '预测单', color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
   sales_confirming:  { label: '审批中', color: '#F59E0B', bg: 'rgba(245,158,11,.12)' },
   reviewing:         { label: '审批中', color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
+  parallel_sign:     { label: '审批中', color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
   confirmed:         { label: '已确认', color: '#10B981', bg: 'rgba(16,185,129,.12)' },
   rejected:          { label: '审批中', color: '#EF4444', bg: 'rgba(239,68,68,.12)' },
   completed:         { label: '已确认', color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
@@ -45,14 +46,14 @@ export const DISPLAY_STATUSES: { key: DisplayStatus; label: string; color: strin
 // 展示状态 → 实际状态分组
 export const STATUS_GROUP: Record<DisplayStatus, OrderStatus[]> = {
   pending:   ['pending'],
-  reviewing: ['sales_confirming', 'reviewing', 'rejected'],
+  reviewing: ['sales_confirming', 'reviewing', 'parallel_sign', 'rejected'],
   confirmed: ['confirmed', 'completed'],
 };
 
 // 实际状态 → 展示状态
 export function getDisplayStatus(s: OrderStatus): DisplayStatus {
   if (s === 'pending') return 'pending';
-  if (s === 'sales_confirming' || s === 'reviewing' || s === 'rejected') return 'reviewing';
+  if (s === 'sales_confirming' || s === 'reviewing' || s === 'parallel_sign' || s === 'rejected') return 'reviewing';
   return 'confirmed';
 }
 

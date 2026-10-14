@@ -631,7 +631,7 @@ router.put('/config', requireAuth, requireRole('admin'), async (req, res) => {
       warehouse_approval_template_id, warehouse_field_mapping, warehouse_dept_options,
       booking_webhook_url, booking_notify_submit, booking_notify_sales,
       booking_notify_approve, booking_notify_reject,
-      booking_approver_userid, booking_approver_name,
+      booking_approver_userid, booking_approver_name, booking_flow_mode,
       expense_payment_template_id
       // expense_payment_applyer_userid 保留字段，前端暂不配置（未来用于筛选默认值）
     } = req.body;
@@ -687,6 +687,11 @@ router.put('/config', requireAuth, requireRole('admin'), async (req, res) => {
     if (booking_notify_reject !== undefined) { fields.push('booking_notify_reject = ?'); values.push(Number(booking_notify_reject) || 0); }
     if (booking_approver_userid !== undefined) { fields.push('booking_approver_userid = ?'); values.push(booking_approver_userid || null); }
     if (booking_approver_name !== undefined) { fields.push('booking_approver_name = ?'); values.push(booking_approver_name || null); }
+    // booking_flow_mode：预订审批流程模式（serial=串行默认 / parallel=并行）；非法值一律回落 serial
+    if (booking_flow_mode !== undefined) {
+      const mode = String(booking_flow_mode) === 'parallel' ? 'parallel' : 'serial';
+      fields.push('booking_flow_mode = ?'); values.push(mode);
+    }
     if (expense_payment_template_id !== undefined) { fields.push('expense_payment_template_id = ?'); values.push(expense_payment_template_id || null); }
     // expense_payment_applyer_userid 读写保留（前端暂不传，后端兼容未来扩展）
     // if (expense_payment_applyer_userid !== undefined) { fields.push('expense_payment_applyer_userid = ?'); values.push(expense_payment_applyer_userid || null); }
@@ -2951,6 +2956,125 @@ async function sendBookingNotification(type, order, extra = {}) {
     rejectSalesResponseCode: null,
   };
 
+  // submit 销售员「待确认」卡（含 42014 递增后缀重试）——submit 与 parallelSubmit 复用
+  const sendSalesPendingCard = async (extraSubmit) => {
+    if (config.booking_notify_sales === 0) return;
+    const salesUserid = await findSalesUserid();
+    if (!salesUserid) {
+      console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
+      result.salesCardError = { errcode: -2, errmsg: 'sales_userid_not_found', hint: 'users.wecom_userid / sales_wecom_userid 快照均为空' };
+      return;
+    }
+    const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
+    const submitAttempt = Number(extraSubmit && extraSubmit.submitAttempt) > 0 ? Number(extraSubmit.submitAttempt) : 1;
+    // 【42014 自动重试】task_id 可能与历史卡重名，企微返回 errcode=42014；
+    //   从 submitAttempt 起步，最多 10 次递增后缀重试（_S2 _S3 … _S11）直到成功
+    const MAX_RETRY = 10;
+    let finalSuffixUse = (extraSubmit && extraSubmit.submitSuffix)
+      ? String(extraSubmit.submitSuffix)
+      : (submitAttempt > 1 ? `_S${submitAttempt}` : '');
+    let finalSubmitAttemptUse = submitAttempt;
+    let r = null;
+    for (let i = 0; i < MAX_RETRY; i++) {
+      const curSuffix = i === 0 ? finalSuffixUse : `_S${submitAttempt + i}`;
+      const innerTaskId = `${orderNo}${curSuffix}`;
+      const fullTaskId = `booking_${innerTaskId}`;
+      const card = buildTemplateCard(
+        '📋 订单待确认',
+        `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
+        [
+          { keyname: '客户', value: customerName },
+          { keyname: '预订日期', value: dateRange },
+          { keyname: '业务', value: bizSummary },
+          { keyname: '销售员', value: salesPerson || '未指定' },
+          ...(remark ? [{ keyname: '备注', value: remark }] : []),
+        ],
+        '去确认',
+        cardUrl,
+        innerTaskId
+      );
+      r = await sendCard(salesUserid, card, `销售员模板卡片 attempt=${submitAttempt} retry=${i} taskId=${fullTaskId}`);
+      const is42014 = r && r.ok === false && (Number(r.errcode) === 42014 || /taskid has existed/i.test(String(r.errmsg || '')));
+      if (!is42014) {
+        finalSubmitAttemptUse = submitAttempt + Math.max(0, i);
+        finalSuffixUse = curSuffix;
+        break;
+      }
+      console.warn(`[sendBookingNotification] submit taskId=${fullTaskId} hit errcode=42014 taskid已存在，递增后缀重试 (${i + 1}/${MAX_RETRY})`);
+    }
+    const finalInnerTaskId = `${orderNo}${finalSuffixUse}`;
+    result.salesUserid = salesUserid;
+    if (r && r.response_code) result.salesResponseCode = r.response_code;
+    if (r && r.ok === false) result.salesCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
+    result.submitTaskId = `booking_${finalInnerTaskId}`;
+    result.submitAttempt = finalSubmitAttemptUse;
+  };
+
+  // 审核员「待审核」卡（含 42014 递增后缀重试）——salesConfirm 与 parallelSubmit 复用
+  //   opts: { titleText?, subTitleText?, salesRows }
+  const sendApproverPendingCard = async (opts) => {
+    const { titleText = '📋 订单待审核', subTitleText = `订单号：${orderNo}\n请审核订单信息`, salesRows = [] } = opts || {};
+    const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
+    const approverUserid = config.booking_approver_userid;
+    if (!approverUserid) {
+      // guard：审核员未配置 → 固定审批流阻塞；错误结构化返回给调用方落日志
+      result.approveCardError = { errcode: -3, errmsg: 'approver_userid_not_configured', hint: 'wecom_config.booking_approver_userid 为空，请在企微通知配置页填写固定审核员' };
+      console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知，并回发警告给销售员');
+      if (config.booking_notify_sales !== 0) {
+        const salesUserid = await findSalesUserid();
+        if (salesUserid && cardUrl) {
+          const warnCard = buildTemplateCard(
+            '⚠ 审核员未配置，审批流程阻塞',
+            `订单号：${orderNo}\n请联系管理员配置固定审核员（wecom_config.booking_approver_userid）。`,
+            [
+              { keyname: '客户', value: customerName },
+              ...salesRows,
+              ...(remark ? [{ keyname: '备注', value: remark }] : []),
+            ],
+            '查看订单',
+            cardUrl,
+            `${orderNo}_approver_missing`
+          );
+          await sendCard(salesUserid, warnCard, '审核员缺失警告卡');
+        }
+      }
+      return;
+    }
+    const APPROVE_MAX_RETRY = 10;
+    const approveBaseInner = `${orderNo}_approve`;
+    let finalApproveSuffix = '';
+    let approveR = null;
+    for (let i = 0; i < APPROVE_MAX_RETRY; i++) {
+      const curSuffix = i === 0 ? '' : `_S${i + 1}`;
+      const approveInnerTaskId = `${approveBaseInner}${curSuffix}`;
+      const approveCard = buildTemplateCard(
+        titleText,
+        subTitleText,
+        [
+          { keyname: '客户', value: customerName },
+          { keyname: '业务', value: bizSummary },
+          ...salesRows,
+          ...(remark ? [{ keyname: '备注', value: remark }] : []),
+        ],
+        '去审核',
+        cardUrl,
+        approveInnerTaskId
+      );
+      approveR = await sendCard(approverUserid, approveCard, `审核员模板卡片 retry=${i} taskId=booking_${approveInnerTaskId}`);
+      const is42014 = approveR && approveR.ok === false && (Number(approveR.errcode) === 42014 || /taskid has existed/i.test(String(approveR.errmsg || '')));
+      if (!is42014) {
+        finalApproveSuffix = curSuffix;
+        break;
+      }
+      console.warn(`[sendBookingNotification] approver taskId=booking_${approveInnerTaskId} hit errcode=42014 taskid已存在，递增后缀重试 (${i + 1}/${APPROVE_MAX_RETRY})`);
+    }
+    const finalApproveInner = `${approveBaseInner}${finalApproveSuffix}`;
+    result.approverUserid = approverUserid;
+    if (approveR && approveR.response_code) result.approverResponseCode = approveR.response_code;
+    if (approveR && approveR.ok === false) result.approveCardError = { errcode: approveR.errcode, errmsg: approveR.errmsg, invaliduser: approveR.invaliduser };
+    result.approveTaskId = `booking_${finalApproveInner}`;
+  };
+
   switch (type) {
     case 'create': {
       // feat/140: 新建订单（预测单）发群消息通知各部门占位
@@ -2999,65 +3123,38 @@ async function sendBookingNotification(type, order, extra = {}) {
           linkLine;
         await sendGroupMsg(md, '预订群通知');
       }
-      // ② 销售员模板卡片通知（task_id = booking_${orderNo}_S{attempt}，每次 resubmit 递增以绕过企微 task_id 去重）
-      if (config.booking_notify_sales !== 0) {
-        const salesUserid = await findSalesUserid();
-        if (salesUserid) {
-          const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
-          const submitAttempt = Number(extra && extra.submitAttempt) > 0 ? Number(extra.submitAttempt) : 1;
-          // 【42014 自动重试】迁移 101 未跑或回填遗漏时，首次 submitAttempt=1 生成的 task_id
-          //   可能与历史卡重名，企微会返回 errcode=42014 "taskid has existed or empty or exceed max len"。
-          //   这里从 submitAttempt 起步，最多 10 次递增后缀重试（_S2 _S3 … _S11）直到成功，
-          //   保证"无报错但收不到消息"这种情况永不发生。
-          const MAX_RETRY = 10;
-          let finalSubmitAttemptUse = submitAttempt;
-          let finalSuffixUse = (extra && extra.submitSuffix)
-            ? String(extra.submitSuffix)
-            : (submitAttempt > 1 ? `_S${submitAttempt}` : '');
-          let r = null;
-          for (let i = 0; i < MAX_RETRY; i++) {
-            const curSuffix = i === 0
-              ? finalSuffixUse
-              : `_S${submitAttempt + i}`;
-            const innerTaskId = `${orderNo}${curSuffix}`;
-            const fullTaskId = `booking_${innerTaskId}`;
-            const card = buildTemplateCard(
-              '📋 订单待确认',
-              `订单号：${orderNo}\n请尽快确认订单信息${submitAttempt > 1 ? `（第 ${submitAttempt} 次发起）` : ''}`,
-              [
-                { keyname: '客户', value: customerName },
-                { keyname: '预订日期', value: dateRange },
-                { keyname: '业务', value: bizSummary },
-                { keyname: '销售员', value: salesPerson || '未指定' },
-                ...(remark ? [{ keyname: '备注', value: remark }] : []),
-              ],
-              '去确认',
-              cardUrl,
-              innerTaskId
-            );
-            r = await sendCard(salesUserid, card, `销售员模板卡片 attempt=${submitAttempt} retry=${i} taskId=${fullTaskId}`);
-            // 成功 或 不是 42014 重名错误 → 跳出重试
-            const is42014 = r && r.ok === false && (Number(r.errcode) === 42014 || /taskid has existed/i.test(String(r.errmsg || '')));
-            if (!is42014) {
-              finalSubmitAttemptUse = submitAttempt + Math.max(0, i);
-              finalSuffixUse = curSuffix;
-              break;
-            }
-            // 是 42014 → 下一轮换 _S{submitAttempt + i}（第 1 次重试从 submitAttempt + 1 起步）
-            console.warn(`[sendBookingNotification] submit taskId=${fullTaskId} hit errcode=42014 taskid已存在，递增后缀重试 (${i + 1}/${MAX_RETRY})`);
-          }
-          const finalInnerTaskId = `${orderNo}${finalSuffixUse}`;
-          const finalFullTaskId = `booking_${finalInnerTaskId}`;
-          result.salesUserid = salesUserid;
-          if (r && r.response_code) result.salesResponseCode = r.response_code;
-          if (r && r.ok === false) result.salesCardError = { errcode: r.errcode, errmsg: r.errmsg, invaliduser: r.invaliduser };
-          result.submitTaskId = finalFullTaskId;
-          result.submitAttempt = finalSubmitAttemptUse;
-        } else {
-          console.warn('[sendBookingNotification] 销售员企微userid为空，跳过应用通知');
-          result.salesCardError = { errcode: -2, errmsg: 'sales_userid_not_found', hint: 'users.wecom_userid / sales_wecom_userid 快照均为空' };
-        }
+      // ② 销售员模板卡片通知（复用 sendSalesPendingCard，含 42014 递增后缀重试）
+      await sendSalesPendingCard(extra);
+      break;
+    }
+
+    case 'parallelSubmit': {
+      // 并行审批模式：提交后销售员确认 与 审核员审核 同时开始
+      // ① 预订群通知（并行文案）
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const title = isPlaceholder ? '📋 **已有新订单（占位）**' : '📋 **已有新订单**';
+        const md = `${title}\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          remarkLine +
+          `> 预订日期：${dateRange}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 状态：待销售员确认 & 待审核员审核（并行）\n` +
+          linkLine;
+        await sendGroupMsg(md, '预订群（并行）通知');
       }
+      // ② 销售员「待确认」卡
+      await sendSalesPendingCard(extra);
+      // ③ 审核员「待审核」卡（销售侧尚未确认，salesRows 提示并行处理）
+      await sendApproverPendingCard({
+        titleText: '📋 订单待审核（并行）',
+        subTitleText: `订单号：${orderNo}\n请审核订单信息（销售员确认与审核并行处理）`,
+        salesRows: [
+          { keyname: '销售员', value: salesPerson || '未指定' },
+          { keyname: '销售确认', value: '待确认（并行）' },
+        ],
+      });
       break;
     }
 
@@ -3068,80 +3165,19 @@ async function sendBookingNotification(type, order, extra = {}) {
       const hasSignature = !!(order.sales_confirmed_signature && order.sales_confirmed_signature.length > 20);
       const sigStatus = hasSignature ? '✅ 已签字' : '⚠ 未签字';
 
-      // 通用 URL
-      const cardUrl = frontEndBase ? `${frontEndBase}/booking-confirm?id=${encodeURIComponent(order.id || '')}` : '';
-
       // 【注意】已删除上一轮"销售员完成卡"——不再发送图 2 冗余的「✅ 订单已确认（完成）」给销售本人
       // 现在改为通过 response_code 直接把图 1 原蓝卡按钮灰化为"已确认 (时间)"（对齐食材采购，booking-board.js 中调）
 
-      // ① 审核员模板卡片通知：追加"销售确认时间 + 签字状态"（task_id 后缀避免覆盖 submit 原卡 task_id）
-      // 🔧 42014 自动重试：驳回/撤回后重新走 sales-confirm，审核员是固定单人，
-      //    task_id = `{orderNo}_approve` 会和历史上已经推送的同名审核卡撞名，
-      //    企微返回 errcode=42014 直接拒绝（不会静默，但调用方不知道会丢消息）。
-      //    与 submit 销售卡统一 for 循环递增后缀 _approve_S2 … _approve_S11 重试。
-      const approverUserid = config.booking_approver_userid;
-      if (approverUserid) {
-        const APPROVE_MAX_RETRY = 10;
-        const approveBaseInner = `${orderNo}_approve`;
-        let finalApproveSuffix = '';
-        let approveR = null;
-        for (let i = 0; i < APPROVE_MAX_RETRY; i++) {
-          const curSuffix = i === 0 ? '' : `_S${i + 1}`;
-          const approveInnerTaskId = `${approveBaseInner}${curSuffix}`;
-          const approveCard = buildTemplateCard(
-            '📋 订单待审核',
-            `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
-            [
-              { keyname: '客户', value: customerName },
-              { keyname: '业务', value: bizSummary },
-              { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
-              { keyname: '销售确认', value: confirmAtStr },
-              { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
-              ...(remark ? [{ keyname: '备注', value: remark }] : []),
-            ],
-            '去审核',
-            cardUrl,
-            approveInnerTaskId,
-            null
-          );
-          approveR = await sendCard(approverUserid, approveCard, `审核员模板卡片 retry=${i} taskId=${approveInnerTaskId}`);
-          const is42014 = approveR && approveR.ok === false && (Number(approveR.errcode) === 42014 || /taskid has existed/i.test(String(approveR.errmsg || '')));
-          if (!is42014) {
-            finalApproveSuffix = curSuffix;
-            break;
-          }
-          console.warn(`[sendBookingNotification] salesConfirm approver taskId=booking_${approveInnerTaskId} hit errcode=42014 taskid已存在，递增后缀重试 (${i + 1}/${APPROVE_MAX_RETRY})`);
-        }
-        const finalApproveInner = `${approveBaseInner}${finalApproveSuffix}`;
-        result.approverUserid = approverUserid;
-        if (approveR && approveR.response_code) result.approverResponseCode = approveR.response_code;
-        if (approveR && approveR.ok === false) result.approveCardError = { errcode: approveR.errcode, errmsg: approveR.errmsg, invaliduser: approveR.invaliduser };
-        result.approveTaskId = `booking_${finalApproveInner}`;
-      } else {
-        // guard：审核员未配置 → 固定审批流阻塞；错误结构化返回给调用方落日志
-        //   （警告卡仍回发销售员，避免 booking_approver_userid 为空时全链路静悄悄完全没人知道）
-        result.approveCardError = { errcode: -3, errmsg: 'approver_userid_not_configured', hint: 'wecom_config.booking_approver_userid 为空，请在企微通知配置页填写固定审核员' };
-        console.warn('[sendBookingNotification] 固定审核员企微userid未配置，跳过审核员通知，并回发警告给销售员');
-        if (config.booking_notify_sales !== 0) {
-          const salesUserid = await findSalesUserid();
-          if (salesUserid && cardUrl) {
-            const warnCard = buildTemplateCard(
-              '⚠ 审核员未配置，审批流程阻塞',
-              `订单号：${orderNo}\n已完成销售确认，但 wecom_config.booking_approver_userid 为空，请联系管理员配置。`,
-              [
-                { keyname: '客户', value: customerName },
-                { keyname: '销售确认', value: confirmAtStr },
-                { keyname: '签字状态', value: sigStatus },
-                ...(remark ? [{ keyname: '备注', value: remark }] : []),
-              ],
-              '查看订单',
-              cardUrl,
-              `${orderNo}_approver_missing`
-            );
-            await sendCard(salesUserid, warnCard, '审核员缺失警告卡');
-          }
-        }
-      }
+      // ① 审核员模板卡片通知：复用 sendApproverPendingCard（含 42014 递增后缀重试，避免驳回/撤回后重发撞 task_id）
+      await sendApproverPendingCard({
+        titleText: '📋 订单待审核',
+        subTitleText: `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
+        salesRows: [
+          { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
+          { keyname: '销售确认', value: confirmAtStr },
+          { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
+        ],
+      });
 
       // ② 预订群通知
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {

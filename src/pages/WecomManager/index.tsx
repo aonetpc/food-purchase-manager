@@ -33,6 +33,8 @@ interface WecomConfig {
   booking_notify_reject?: number;
   booking_approver_userid?: string;
   booking_approver_name?: string;
+  // 预订审批流程模式：serial=串行（默认） / parallel=并行
+  booking_flow_mode?: string;
   // 费用支付申请配置（独立配置，不复用 approval_template_id）
   expense_payment_template_id?: string;
   // expense_payment_applyer_userid 保留字段，前端暂不配置（未来用于筛选默认值）
@@ -661,6 +663,41 @@ export default function WecomManager() {
           </div>
 
           <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">审批流程模式</h3>
+            <div className="space-y-3">
+              <label className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  name="booking_flow_mode"
+                  checked={(getFieldValue('booking_flow_mode') || 'serial') === 'serial'}
+                  onChange={() => setFieldValue('booking_flow_mode', 'serial')}
+                  className="mt-0.5"
+                />
+                <span className="text-sm text-gray-600">
+                  串行（默认）
+                  <span className="block text-xs text-gray-400">提交 → 销售员确认 → 审核员审核。对现有在途订单零影响</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  name="booking_flow_mode"
+                  checked={getFieldValue('booking_flow_mode') === 'parallel'}
+                  onChange={() => setFieldValue('booking_flow_mode', 'parallel')}
+                  className="mt-0.5"
+                />
+                <span className="text-sm text-gray-600">
+                  并行
+                  <span className="block text-xs text-gray-400">提交后销售员确认与审核员审核同时进行，任一方驳回则整单重走</span>
+                </span>
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              📌 仅对新提交的订单生效；切换模式不影响已在途订单
+            </p>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
             <h3 className="text-sm font-medium text-gray-700 mb-3">固定审核员</h3>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -699,6 +736,7 @@ export default function WecomManager() {
                 booking_notify_reject: getFieldValue('booking_notify_reject') !== 0 ? 1 : 0,
                 booking_approver_userid: getFieldValue('booking_approver_userid'),
                 booking_approver_name: getFieldValue('booking_approver_name'),
+                booking_flow_mode: getFieldValue('booking_flow_mode') || 'serial',
               })}
               disabled={sectionStatus['预订审批通知'] === 'saving'}
               className="btn-primary flex items-center gap-2 disabled:opacity-50"

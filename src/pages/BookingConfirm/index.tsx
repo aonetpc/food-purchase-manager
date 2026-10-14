@@ -29,6 +29,7 @@ const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> =
   pending:           { label: '预测单',       color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
   sales_confirming:  { label: '待销售确认',   color: '#F59E0B', bg: 'rgba(245,158,11,.12)' },
   reviewing:         { label: '待审核',       color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
+  parallel_sign:     { label: '待确认&待审核', color: '#3B82F6', bg: 'rgba(59,130,246,.12)' },
   confirmed:         { label: '已确认',       color: '#10B981', bg: 'rgba(16,185,129,.12)' },
   rejected:          { label: '已驳回',       color: '#EF4444', bg: 'rgba(239,68,68,.12)' },
   completed:         { label: '已完成',       color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
@@ -541,7 +542,7 @@ export default function BookingConfirmPage() {
         </InfoCard>
 
         {/* 操作区：销售确认 / 审核 / 标记完成 —— 仅当前用户有权限时才展示 */}
-        {order.status === 'sales_confirming' && canSalesConfirm && (
+        {(order.status === 'sales_confirming' || order.status === 'parallel_sign') && canSalesConfirm && (
           <ActionBox
             icon={<User size={16} />}
             title="销售员待确认"
@@ -572,7 +573,7 @@ export default function BookingConfirmPage() {
           </ActionBox>
         )}
 
-        {order.status === 'reviewing' && canReviewOrComplete && (
+        {(order.status === 'reviewing' || order.status === 'parallel_sign') && canReviewOrComplete && (
           <ActionBox icon={<ShieldCheck size={16} />} title="审核操作" tone="blue" desc="请确认订单信息无误，签字后审核通过">
             {showRejectBox ? (
               <div className="space-y-3">
@@ -696,6 +697,10 @@ function buildFlowSteps(order: BookingApiOrder, flowLogs: FlowLog[] = []): FlowS
       steps.push({ key: 'current_sales', title: '销售员确认（待操作）', status: 'current' });
     } else if (order.status === 'reviewing') {
       steps.push({ key: 'current_review', title: '审核员审核（待操作）', status: 'current' });
+    } else if (order.status === 'parallel_sign') {
+      // 并行：两方待办同时进行；已签的一侧会由上一步日志体现，仅追加未完成的一侧
+      if (!order.salesConfirmedAt) steps.push({ key: 'current_sales', title: '销售员确认（待操作·并行）', status: 'current' });
+      if (!order.confirmedAt) steps.push({ key: 'current_review', title: '审核员审核（待操作·并行）', status: 'current' });
     } else if (order.status === 'confirmed') {
       steps.push({ key: 'current_complete', title: '订单完成（待操作）', status: 'current' });
     } else if (order.status === 'pending') {
@@ -725,7 +730,7 @@ function buildFlowSteps(order: BookingApiOrder, flowLogs: FlowLog[] = []): FlowS
   let step2: FlowStep;
   if (order.salesConfirmedAt || order.salesConfirmedByName || order.salesConfirmedSignature) {
     step2 = { key: 'sales', title: '销售员确认', status: 'done', name: order.salesConfirmedByName || order.salesPerson, time: formatDateTime(order.salesConfirmedAt), signature: order.salesConfirmedSignature };
-  } else if (order.status === 'sales_confirming') {
+  } else if (order.status === 'sales_confirming' || order.status === 'parallel_sign') {
     step2 = { key: 'sales', title: '销售员确认', status: 'current' };
   } else if (order.status === 'pending') {
     step2 = { key: 'sales', title: '销售员确认', status: 'waiting' };
@@ -739,7 +744,7 @@ function buildFlowSteps(order: BookingApiOrder, flowLogs: FlowLog[] = []): FlowS
     step3 = { key: 'approve', title: '审核员审核通过', status: 'done', name: order.approvedByName, time: formatDateTime(order.confirmedAt), signature: order.approvedSignature };
   } else if (order.status === 'rejected') {
     step3 = { key: 'approve', title: '审核员审核', status: 'rejected', name: order.rejectedByName, time: formatDateTime(order.rejectedAt), remark: order.rejectionReason ? `驳回原因：${order.rejectionReason}` : undefined, signature: (order as any).rejectedSignature };
-  } else if (order.status === 'reviewing') {
+  } else if (order.status === 'reviewing' || order.status === 'parallel_sign') {
     step3 = { key: 'approve', title: '审核员审核', status: 'current' };
   } else {
     step3 = { key: 'approve', title: '审核员审核', status: 'waiting' };
