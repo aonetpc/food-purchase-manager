@@ -57,6 +57,7 @@ import {
   resolvePaxItems,
   calcLodgingAmount,
   getBedsPerRoom,
+  getLodgingBasePrice,
   isRoomTypeModeSupported,
   calcMeetingAmount,
   calcWellnessAmount,
@@ -2557,6 +2558,8 @@ export default function BookingBoardCreate(props: {
         const displayPax = pm === 'per_person' ? pax : rooms;
         // 床位快照（早餐历史一致性）
         const bedsSnapshot = getBedsPerRoom(s.lodgingType, finalBizConfigForCalc);
+        // 标准价快照（议价折扣率历史一致性，feat/211）
+        const basePriceSnapshot = getLodgingBasePrice(s.lodgingType, finalBizConfigForCalc, pm);
         return {
           id: i === 0 ? keepId : (s.id && s.id.startsWith('lg_') ? s.id : genItemId()),
           itemType,
@@ -2575,6 +2578,8 @@ export default function BookingBoardCreate(props: {
             pax,
             // ✅ 床位快照，后续配置变更不影响历史早餐
             bedsPerRoomSnapshot: bedsSnapshot,
+            // ✅ 标准价快照，后续配置变更不影响历史议价折扣率
+            basePriceSnapshot,
             ...(hasCP ? { customPrice: Number(s.customPrice) } : {}),
             ...(lgRemark.trim() ? { remark: lgRemark.trim() } : {}),  // feat/142: 住宿备注
           },
