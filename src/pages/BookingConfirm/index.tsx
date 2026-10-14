@@ -1345,6 +1345,12 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
   const refPerRoom = stdPerRoom;
   const refPerPerson = stdPerPerson;
 
+  // feat/210: 议价折扣率——仅当议价低于同口径标准价时显示（如 7.8折）
+  const hasDiscount = hasCustom && displayStd > 0 && customPrice < displayStd;
+  const discountLabel = hasDiscount
+    ? `${(Math.round((customPrice / displayStd) * 100) / 10).toFixed(1)}折`
+    : '';
+
   const mainQty = pricingMode === 'per_room' ? rooms : persons;
   const mainUnit = pricingMode === 'per_room' ? '间' : '人';
   const mainSubtotal = mainUnitPrice * mainQty * nights;
@@ -1353,7 +1359,11 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
     <div className="py-1">
       <div className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
         <span className="font-medium">{typeName}</span>
-        {hasCustom && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">议价</span>}
+        {hasCustom && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+            议价{hasDiscount ? ` ${discountLabel}` : ''}
+          </span>
+        )}
         <span className="text-xs text-gray-400">· {nights}晚</span>
       </div>
       <div className={`mt-2 rounded-lg border p-2.5 space-y-2`} style={{ borderColor: `${bizColor}25`, background: `${bizColor}08` }}>
