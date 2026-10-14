@@ -130,6 +130,20 @@ async function executeOneReminder(config, task) {
     return;
   }
 
+  // 该阶段已完成 → 仅结束本阶段催办（并行模式下不动另一侧）
+  //   sales_confirming：销售员已签（sales_confirmed_at 有值）
+  //   reviewing       ：审核员已签（confirmed_at 有值）
+  if (task.stage === 'sales_confirming' && order.sales_confirmed_at) {
+    try { await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE id=?", [task.id]); }
+    catch (e) { if (_isMigrationRaceError(e)) _warnTableMissingOnce('executeOneReminder stage-satisfied(sales)'); }
+    return;
+  }
+  if (task.stage === 'reviewing' && order.confirmed_at) {
+    try { await pool.query("UPDATE booking_reminder_tasks SET status='completed' WHERE id=?", [task.id]); }
+    catch (e) { if (_isMigrationRaceError(e)) _warnTableMissingOnce('executeOneReminder stage-satisfied(review)'); }
+    return;
+  }
+
   const cardCodes = safeParse(order.wecom_card_response_codes) || {};
   const stageKey = task.stage === 'reviewing' ? 'approve'
                  : task.stage === 'sales_confirming' ? 'sales_confirm'
@@ -289,6 +303,27 @@ async function greyAllCardsOnApprove(orderId, stage, resultLabel) {
 }
 
 // ============================================================
+// 3.5 按阶段结束催办（并行流程专用）
+//   并行模式下两侧签字独立，一侧签齐只需结束该侧催办，
+//   不能像 greyAllCardsOnApprove 那样按 order_id 全清（会误杀另一侧）。
+// ============================================================
+async function completeStageReminders(orderId, stage) {
+  if (!orderId || !stage) return;
+  try {
+    await pool.query(
+      "UPDATE booking_reminder_tasks SET status='completed' WHERE order_id=? AND stage=? AND status='pending'",
+      [orderId, stage]
+    );
+  } catch (e) {
+    if (_isMigrationRaceError(e)) {
+      _warnTableMissingOnce('completeStageReminders');
+    } else {
+      console.warn('[reminder] 按阶段结束催办失败:', e.message);
+    }
+  }
+}
+
+// ============================================================
 // 4. 取消催办（订单撤回/删除）
 // ============================================================
 async function cancelReminder(orderId) {
@@ -335,6 +370,7 @@ module.exports = {
   createReminderTask,
   runPendingReminders,
   greyAllCardsOnApprove,
+  completeStageReminders,
   cancelReminder,
   startReminderScheduler,
 };

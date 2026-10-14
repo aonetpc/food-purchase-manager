@@ -1143,6 +1143,9 @@ function DetailModal({
               {order.status === 'reviewing' && (
                 <TimelineItem label="待审核员审核" time="等待中" state="active" />
               )}
+              {order.status === 'parallel_sign' && (
+                <TimelineItem label="待销售员确认 & 待审核员审核（并行）" time="等待中" state="active" />
+              )}
               {order.status === 'rejected' && (
                 <TimelineItem
                   label="已驳回（可修改重提）"
@@ -2036,8 +2039,8 @@ function DetailModal({
             </>
           )}
 
-          {/* sales_confirming: 仅订单销售员本人可确认（需签字） */}
-          {order.status === 'sales_confirming' && canSalesConfirm && (
+          {/* sales_confirming / parallel_sign: 仅订单销售员本人可确认（需签字） */}
+          {(order.status === 'sales_confirming' || order.status === 'parallel_sign') && canSalesConfirm && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-amber-200 rounded-lg bg-amber-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium text-amber-700">请先手写签名再点"销售员确认"</span>
@@ -2077,8 +2080,8 @@ function DetailModal({
             </div>
           )}
 
-          {/* reviewing: 审核通过/驳回 仅限审核员（admin/booker） */}
-          {order.status === 'reviewing' && canReviewOrComplete && (
+          {/* reviewing / parallel_sign: 审核通过/驳回 仅限审核员 */}
+          {(order.status === 'reviewing' || order.status === 'parallel_sign') && canReviewOrComplete && (
             <div className="col-span-full mt-4 p-3 border border-dashed border-blue-200 rounded-lg bg-blue-50/30 space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span className="font-medium text-blue-700">请先手写签名再点"审核通过"</span>
@@ -2176,8 +2179,8 @@ function DetailModal({
             </>
           )}
 
-          {/* feat/140: 删除按钮 — admin 可删任何状态；booker 仅可删 pending/sales_confirming/rejected */}
-          {(isAdmin || (canOperate && ['pending', 'sales_confirming', 'rejected'].includes(order.status))) && (
+          {/* feat/140: 删除按钮 — admin 可删任何状态；booker 仅可删 pending/sales_confirming/rejected/parallel_sign */}
+          {(isAdmin || (canOperate && ['pending', 'sales_confirming', 'rejected', 'parallel_sign'].includes(order.status))) && (
             <button
               type="button"
               onClick={onDelete}
@@ -2821,6 +2824,8 @@ export default function BookingBoard() {
           toast.success('订单已修改，审核员将收到更新提醒');
         } else if (notify?.action === 'sales_confirming_modified') {
           toast.success('订单已修改，销售员确认卡片已更新');
+        } else if (notify?.action === 'parallel_sign_modified') {
+          toast.success('订单已修改，销售员与审核员的卡片已同步更新');
         }
       } else {
         // create 或 copy 都走新建
