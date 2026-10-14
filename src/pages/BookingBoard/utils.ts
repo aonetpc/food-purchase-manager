@@ -164,16 +164,24 @@ export function calcCheckupAmount(paxList: PaxEntry[], config?: BizConfigInput):
 }
 
 /**
- * 住宿金额计算（方案A+：一房双价 + 会话永远同时存 rooms/pax）
- *
- * @param lodgingType  房型code
- * @param rooms        间数（两种模式都必须传；即便按人计算也保留房间数不丢）
- * @param pax          人数（两种模式都必须传；按人=算钱+早餐；按间=仅记录+校验上限）
- * @param nights       晚数
- * @param config       业务配置（读取 price_per_room / price_per_person / beds_per_room）
- * @param customPrice  议价。按间模式=元/间/晚；按人模式=元/人/晚。允许显式0=免费
- * @param pricingMode  计价口径：per_room=按间算钱；per_person=按人算钱
+ * 取某房型在指定计价口径下的标准单价（用于议价对比/快照）
  */
+export function getLodgingBasePrice(
+  lodgingType: string,
+  config: BizConfigInput | undefined,
+  pricingMode: 'per_room' | 'per_person',
+): number {
+  const row = buildMap(config?.roomTypes)[lodgingType];
+  if (pricingMode === 'per_person') {
+    return row
+      ? (Number(row.price_per_person) > 0 ? Number(row.price_per_person) : (row.pricing_mode === 'per_person' ? Number(row.price) : 0))
+      : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+  }
+  return row
+    ? (Number(row.price_per_room) > 0 ? Number(row.price_per_room) : Number(row.price))
+    : (FALLBACK_ROOMS[lodgingType]?.price || 0);
+}
+
 export function calcLodgingAmount(
   lodgingType: string,
   rooms: number,
@@ -183,19 +191,8 @@ export function calcLodgingAmount(
   customPrice?: number,
   pricingMode: 'per_room' | 'per_person' = 'per_room',
 ): number {
-  const row = buildMap(config?.roomTypes)[lodgingType];
-
   // ① 标准单价：取决于计价口径，优先读新列，fallback到老price列
-  let basePrice: number;
-  if (pricingMode === 'per_person') {
-    basePrice = row
-      ? (Number(row.price_per_person) > 0 ? Number(row.price_per_person) : (row.pricing_mode === 'per_person' ? Number(row.price) : 0))
-      : (FALLBACK_ROOMS[lodgingType]?.price || 0);
-  } else {
-    basePrice = row
-      ? (Number(row.price_per_room) > 0 ? Number(row.price_per_room) : Number(row.price))
-      : (FALLBACK_ROOMS[lodgingType]?.price || 0);
-  }
+  const basePrice = getLodgingBasePrice(lodgingType, config, pricingMode);
 
   // ② 议价覆盖
   const useCustom = customPrice !== undefined && customPrice !== null && !Number.isNaN(Number(customPrice));

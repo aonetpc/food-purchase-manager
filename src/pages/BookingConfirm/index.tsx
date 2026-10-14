@@ -1345,10 +1345,13 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
   const refPerRoom = stdPerRoom;
   const refPerPerson = stdPerPerson;
 
-  // feat/210: 议价折扣率——仅当议价低于同口径标准价时显示（如 7.8折）
-  const hasDiscount = hasCustom && displayStd > 0 && customPrice < displayStd;
+  // feat/211: 议价对比基准——优先用下单时的标准价快照，回退当前房型配置价
+  const basePrice = Number(extra.basePriceSnapshot) > 0 ? Number(extra.basePriceSnapshot) : displayStd;
+  // 仅当议价真正不等于标准价时才算议价；低于标准价显示折扣率
+  const isNegotiated = hasCustom && customPrice !== basePrice;
+  const hasDiscount = hasCustom && basePrice > 0 && customPrice < basePrice;
   const discountLabel = hasDiscount
-    ? `${(Math.round((customPrice / displayStd) * 100) / 10).toFixed(1)}折`
+    ? `${(Math.round((customPrice / basePrice) * 100) / 10).toFixed(1)}折`
     : '';
 
   const mainQty = pricingMode === 'per_room' ? rooms : persons;
@@ -1359,7 +1362,7 @@ function LodgingDetails({ item, roomTypes, pax, bizColor }: {
     <div className="py-1">
       <div className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
         <span className="font-medium">{typeName}</span>
-        {hasCustom && (
+        {isNegotiated && (
           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
             议价{hasDiscount ? ` ${discountLabel}` : ''}
           </span>
