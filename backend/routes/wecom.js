@@ -3123,7 +3123,10 @@ async function sendBookingNotification(type, order, extra = {}) {
     case 'submit': {
       // ① 预订群通知
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
-        const title = isPlaceholder ? '📋 **已有新订单（占位）**' : '📋 **已有新订单**';
+        // feat/214: 驳回单修改后重新发起 → 区分群消息文案，群里能看出这是驳回后重走的单
+        const title = (extra && extra.isResubmit)
+          ? '🔄 **驳回订单已修改并重新提交**'
+          : (isPlaceholder ? '📋 **已有新订单（占位）**' : '📋 **已有新订单**');
         const md = `${title}\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +

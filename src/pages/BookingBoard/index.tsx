@@ -2826,6 +2826,8 @@ export default function BookingBoard() {
           toast.success('订单已修改，销售员确认卡片已更新');
         } else if (notify?.action === 'parallel_sign_modified') {
           toast.success('订单已修改，销售员与审核员的卡片已同步更新');
+        } else if (notify?.action === 'rejected_resubmitted') {
+          toast.success('订单已修改并重新发起审批，销售员/审核员将收到通知');
         }
       } else {
         // create 或 copy 都走新建

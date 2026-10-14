@@ -2779,6 +2779,23 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
         WHERE id = ?`, [orderId]);
     }
 
+    // rejected 状态修改 → feat/214: 自动重新发起审批（修改即重走，不再要求手动点"提交确认"）
+    //   状态按流程模式推进：串行 → sales_confirming；并行 → parallel_sign
+    //   同时清空驳回痕迹（rejected_by/rejection_reason/rejected_at），避免详情页残留旧驳回原因
+    if (originalStatus === 'rejected') {
+      let flowModeResubmit = 'serial';
+      try {
+        const wcfg = await getWecomConfig();
+        flowModeResubmit = wcfg && wcfg.booking_flow_mode === 'parallel' ? 'parallel' : 'serial';
+      } catch (eCfg) {
+        console.warn('[booking PUT] 读取流程模式失败，按串行重新发起:', eCfg && eCfg.message);
+      }
+      await conn.query(`UPDATE booking_orders SET
+          status = ?,
+          rejected_by = NULL, rejected_by_name = NULL, rejection_reason = NULL, rejected_at = NULL
+        WHERE id = ?`, [flowModeResubmit === 'parallel' ? 'parallel_sign' : 'sales_confirming', orderId]);
+    }
+
     // R3：计算本次编辑的变更摘要，写入 last_edit_diff 列（booking-confirm 审批页用）
     // 【方案S：兼容迁移104未跑】列缺失时降级不写（部署竞态窗口：代码先到 vs 迁移后到）
     //   迁移 104 跑后自动恢复写 diff；降级期间审批页 diff 块不显示即可，编辑保存主体不受影响
@@ -2798,6 +2815,10 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     logOperation(req, '预订订单', '编辑', `订单号=${cur.order_no} 原状态=${originalStatus}`, orderId);
     // flow_log 写入需在事务内（conn 有事务上下文），修改摘要在 diffJson 里
     await writeFlowLog(conn, orderId, 'edit', '修改', user, { remark: diffJson ? JSON.stringify(diffJson) : null });
+    // feat/214: 驳回单修改后自动重新发起 → 追加一条 submit 流水，H5 流程时间线才能正确显示"重新提交"步骤
+    if (originalStatus === 'rejected') {
+      await writeFlowLog(conn, orderId, 'submit', '修改后重新发起', user, {});
+    }
 
     // --- 提交后通知逻辑（事务外，失败不回滚）---
     const order = await readOrderFull(orderId);
@@ -2824,6 +2845,47 @@ async function handleOrderEditNotification(originalStatus, order, req) {
     const config = await getWecomConfig();
     if (!config) {
       console.warn('[handleOrderEditNotification] wecom_config 未配置，跳过通知');
+      return result;
+    }
+
+    // --- feat/214: rejected 编辑 → 自动重新发起，走完整 submit 通知链路 ---
+    //   群消息（区分"驳回后重新提交"文案）+ 销售员卡 + 并行时审核员卡 + 双阶段催办任务
+    if (originalStatus === 'rejected') {
+      result.action = 'rejected_resubmitted';
+      const flowModeResubmit = config && config.booking_flow_mode === 'parallel' ? 'parallel' : 'serial';
+      const notifyRes = await sendBookingNotification('submit', order, {
+        isResubmit: true,
+        sendApproverCard: flowModeResubmit === 'parallel',
+      }) || {};
+      if (notifyRes.salesResponseCode) {
+        await saveCardResponseCodes(order.id, {
+          sales_confirm: {
+            userid: notifyRes.salesUserid,
+            response_code: notifyRes.salesResponseCode,
+            task_id: notifyRes.submitTaskId || null,
+            status: 'sent',
+          },
+        }).catch(() => {});
+      }
+      if (flowModeResubmit === 'parallel' && notifyRes.approverResponseCode) {
+        await saveCardResponseCodes(order.id, {
+          approve: {
+            userid: notifyRes.approverUserid,
+            response_code: notifyRes.approverResponseCode,
+            task_id: notifyRes.approveTaskId || null,
+            status: 'sent',
+          },
+        }).catch(() => {});
+      }
+      if (notifyRes.salesUserid) {
+        bookingReminder.createReminderTask(order.id, 'sales_confirming', notifyRes.salesUserid).catch(()=>{});
+      }
+      if (flowModeResubmit === 'parallel' && notifyRes.approverUserid) {
+        bookingReminder.createReminderTask(order.id, 'reviewing', notifyRes.approverUserid).catch(()=>{});
+      }
+      if (notifyRes && notifyRes.salesCardError) {
+        console.error(`[handleOrderEditNotification] 重新发起销售卡 FAIL orderNo=${order.order_no || order.id}:`, JSON.stringify(notifyRes.salesCardError));
+      }
       return result;
     }
 
