@@ -3138,6 +3138,13 @@ export default function BookingBoardCreate(props: {
       setErr('请至少添加一个业务项目');
       return;
     }
+    // feat/214: 编辑已驳回订单保存 = 后端自动重新发起审批（状态推进+群消息+销售/审核卡片），
+    //   二次确认防误操作；取消则直接返回，抽屉保持打开
+    if (isEdit && editOrder?.status === 'rejected') {
+      if (!window.confirm('保存后将自动重新发起审批，销售员/审核员会收到通知。\n确认保存并重新发起？')) {
+        return;
+      }
+    }
     const order = buildOrder();
     setSaving(true);
     try {
