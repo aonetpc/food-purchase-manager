@@ -2006,7 +2006,7 @@ router.post('/orders/:id/submit', requireAuth, requireBookingWrite, async (req, 
     let notifyError = null;
     let notifyRes = null;
     try {
-      notifyRes = await sendBookingNotification(flowMode === 'parallel' ? 'parallelSubmit' : 'submit', order, { submitAttempt });
+      notifyRes = await sendBookingNotification('submit', order, { submitAttempt, sendApproverCard: flowMode === 'parallel' });
       if (notifyRes && notifyRes.salesResponseCode) {
         await saveCardResponseCodes(orderId, {
           sales_confirm: {
@@ -2199,10 +2199,18 @@ router.post('/orders/:id/sales-confirm', requireAuth, requireBookingWrite, async
         reason: approverSigned ? 'both_signed_final' : 'waiting_reviewer（审核卡已在提交时发送）',
       };
       if (approverSigned) {
+        // 双方签齐 → 只发一条「订单已确认（双方签齐）」
         try {
           await sendBookingNotification('approve', order);
         } catch (e) {
           console.error(`[booking sales-confirm] 并行最终确认通知失败 orderNo=${o.order_no}:`, e && e.message);
+        }
+      } else {
+        // feat/213：销售先签 → 补发群消息「销售员已确认，待审核员审核」（审核员卡 submit 时已发，不重复）
+        try {
+          await sendBookingNotification('salesConfirm', order, { skipApproverCard: true });
+        } catch (e) {
+          console.error(`[booking sales-confirm] 并行销售确认群消息失败 orderNo=${o.order_no}:`, e && e.message);
         }
       }
       // 仅结束"销售确认"阶段催办，保留"审核"阶段催办（并行两侧互不影响）
@@ -2386,7 +2394,8 @@ router.post('/orders/:id/approve', requireAuth, requireBookingWrite, async (req,
         sendBookingNotification('approve', order).catch(e => console.error('[booking approve notify] error:', e));
         bookingReminder.cancelReminder(orderId).catch(()=>{});
       } else {
-        // 审核已签字，等待销售员确认：仅结束"审核"阶段催办，保留"销售确认"阶段催办
+        // feat/213：审核先签 → 补发群消息「审核员已通过，待销售员确认」；仅结束"审核"阶段催办，保留"销售确认"阶段催办
+        sendBookingNotification('approverSigned', order).catch(e => console.error('[booking approverSigned notify] error:', e));
         bookingReminder.completeStageReminders(orderId, 'reviewing').catch(()=>{});
       }
     } else {

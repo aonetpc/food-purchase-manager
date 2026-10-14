@@ -2810,6 +2810,18 @@ async function sendBookingNotification(type, order, extra = {}) {
     : '';
   const linkLine = detailLink ? `> [📱 点击查看订单](${detailLink})\n` : '';
 
+  // feat/213: 通用状态行——由订单实际签字状态推导，与审批流程模式（serial/parallel）完全解耦
+  //   串行/并行两种模式共用同一套群消息文案，不再按模式开分支
+  const salesSignedNow = !!order.sales_confirmed_at;
+  const approverSignedNow = !!order.confirmed_at;
+  const statusLine = salesSignedNow && approverSignedNow
+    ? '双方已签齐，订单已确认'
+    : salesSignedNow
+      ? '销售员已确认，待审核员审核'
+      : approverSignedNow
+        ? '审核员已通过，待销售员确认'
+        : '待销售员确认 & 待审核员审核';
+
   // 查找销售员企微userid：优先订单快照 → 兜底查users表
   const findSalesUserid = async () => {
     console.log(`[sendBookingNotification] findSalesUserid: sales_wecom_userid=${order.sales_wecom_userid}, sales_person_id=${order.sales_person_id}, sales_person=${order.sales_person}`);
@@ -2956,7 +2968,7 @@ async function sendBookingNotification(type, order, extra = {}) {
     rejectSalesResponseCode: null,
   };
 
-  // submit 销售员「待确认」卡（含 42014 递增后缀重试）——submit 与 parallelSubmit 复用
+  // submit 销售员「待确认」卡（含 42014 递增后缀重试）——submit 串行/并行复用
   const sendSalesPendingCard = async (extraSubmit) => {
     if (config.booking_notify_sales === 0) return;
     const salesUserid = await findSalesUserid();
@@ -3010,7 +3022,7 @@ async function sendBookingNotification(type, order, extra = {}) {
     result.submitAttempt = finalSubmitAttemptUse;
   };
 
-  // 审核员「待审核」卡（含 42014 递增后缀重试）——salesConfirm 与 parallelSubmit 复用
+  // 审核员「待审核」卡（含 42014 递增后缀重试）——salesConfirm 与 submit（并行 sendApproverCard）复用
   //   opts: { titleText?, subTitleText?, salesRows }
   const sendApproverPendingCard = async (opts) => {
     const { titleText = '📋 订单待审核', subTitleText = `订单号：${orderNo}\n请审核订单信息`, salesRows = [] } = opts || {};
@@ -3119,42 +3131,23 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 预订日期：${dateRange}\n` +
           `> 涉及业务：${bizSummary}\n` +
           `> 销售员：${salesPerson || '未指定'}\n` +
-          `> 状态：待销售员确认\n` +
+          `> 状态：${statusLine}\n` +
           linkLine;
         await sendGroupMsg(md, '预订群通知');
       }
       // ② 销售员模板卡片通知（复用 sendSalesPendingCard，含 42014 递增后缀重试）
       await sendSalesPendingCard(extra);
-      break;
-    }
-
-    case 'parallelSubmit': {
-      // 并行审批模式：提交后销售员确认 与 审核员审核 同时开始
-      // ① 预订群通知（并行文案）
-      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
-        const title = isPlaceholder ? '📋 **已有新订单（占位）**' : '📋 **已有新订单**';
-        const md = `${title}\n` +
-          `> 订单号：${orderNo}\n` +
-          `> 客户：${customerName}\n` +
-          remarkLine +
-          `> 预订日期：${dateRange}\n` +
-          `> 涉及业务：${bizSummary}\n` +
-          `> 销售员：${salesPerson || '未指定'}\n` +
-          `> 状态：待销售员确认 & 待审核员审核（并行）\n` +
-          linkLine;
-        await sendGroupMsg(md, '预订群（并行）通知');
+      // ③ 并行模式：同时发审核员「待审核」卡（extra.sendApproverCard 标记；群消息与串行共用同一条，不再单独开 parallelSubmit）
+      if (extra && extra.sendApproverCard) {
+        await sendApproverPendingCard({
+          titleText: '📋 订单待审核（并行）',
+          subTitleText: `订单号：${orderNo}\n请审核订单信息（销售员确认与审核并行处理）`,
+          salesRows: [
+            { keyname: '销售员', value: salesPerson || '未指定' },
+            { keyname: '销售确认', value: '待确认（并行）' },
+          ],
+        });
       }
-      // ② 销售员「待确认」卡
-      await sendSalesPendingCard(extra);
-      // ③ 审核员「待审核」卡（销售侧尚未确认，salesRows 提示并行处理）
-      await sendApproverPendingCard({
-        titleText: '📋 订单待审核（并行）',
-        subTitleText: `订单号：${orderNo}\n请审核订单信息（销售员确认与审核并行处理）`,
-        salesRows: [
-          { keyname: '销售员', value: salesPerson || '未指定' },
-          { keyname: '销售确认', value: '待确认（并行）' },
-        ],
-      });
       break;
     }
 
@@ -3169,17 +3162,20 @@ async function sendBookingNotification(type, order, extra = {}) {
       // 现在改为通过 response_code 直接把图 1 原蓝卡按钮灰化为"已确认 (时间)"（对齐食材采购，booking-board.js 中调）
 
       // ① 审核员模板卡片通知：复用 sendApproverPendingCard（含 42014 递增后缀重试，避免驳回/撤回后重发撞 task_id）
-      await sendApproverPendingCard({
-        titleText: '📋 订单待审核',
-        subTitleText: `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
-        salesRows: [
-          { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
-          { keyname: '销售确认', value: confirmAtStr },
-          { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
-        ],
-      });
+      //    feat/213：并行模式下审核员卡在 submit 时已发，调用方传 extra.skipApproverCard 跳过，只发群消息
+      if (!extra || !extra.skipApproverCard) {
+        await sendApproverPendingCard({
+          titleText: '📋 订单待审核',
+          subTitleText: `订单号：${orderNo}\n销售员已确认，请审核订单信息`,
+          salesRows: [
+            { keyname: '销售员', value: `${confirmByName}${order.sales_confirmed_at ? ` (${confirmAtStr} 已确认)` : ''}` },
+            { keyname: '销售确认', value: confirmAtStr },
+            { keyname: '签字状态', value: `${sigStatus}（点击订单可查看签字图片）` },
+          ],
+        });
+      }
 
-      // ② 预订群通知
+      // ② 预订群通知（feat/213：状态行由订单签字状态动态推导，串行/并行通用）
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
         const md = `✅ **销售员已确认**\n` +
           `> 订单号：${orderNo}\n` +
@@ -3189,7 +3185,29 @@ async function sendBookingNotification(type, order, extra = {}) {
           `> 确认人：${confirmByName}\n` +
           `> 确认时间：${confirmAtStr}\n` +
           `> 签字：${hasSignature ? '✅ 已签字' : '⚠ 未签字'}\n` +
-          `> 状态：待审核员审核\n` +
+          `> 状态：${statusLine}\n` +
+          linkLine;
+        await sendGroupMsg(md, '预订群通知');
+      }
+      break;
+    }
+
+    case 'approverSigned': {
+      // feat/213 新增：审核员已签、但销售员未签（并行模式第一方签字）——纯群消息事件，不发任何个人卡
+      //   状态行动态推导为「审核员已通过，待销售员确认」
+      if (config.booking_webhook_url && config.booking_notify_approve !== 0) {
+        const approveAtStr = formatCardDate(order.confirmed_at) || '时间未记录';
+        const approveByName = order.approved_by_name || config.booking_approver_name || '审核员';
+        const hasApproveSig = !!(order.approved_signature && order.approved_signature.length > 20);
+        const md = `✅ **审核员已通过**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          remarkLine +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 审核人：${approveByName}\n` +
+          `> 审核时间：${approveAtStr}\n` +
+          `> 签字：${hasApproveSig ? '✅ 已签字' : '⚠ 未签字'}\n` +
+          `> 状态：${statusLine}\n` +
           linkLine;
         await sendGroupMsg(md, '预订群通知');
       }
@@ -3197,9 +3215,10 @@ async function sendBookingNotification(type, order, extra = {}) {
     }
 
     case 'approve': {
+      // feat/213：第二方签齐 → 只发这一条「订单已确认（双方签齐）」，不再单独发"X已签字"
       // ① 预订群通知
       if (config.booking_webhook_url && config.booking_notify_approve !== 0) {
-        const md = `✅ **订单已确认**\n` +
+        const md = `✅ **订单已确认（双方签齐）**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
           remarkLine +
