@@ -2083,8 +2083,15 @@ router.get('/:id', requireAuth, async (req, res) => {
       'SELECT * FROM warehouse_purchase_items WHERE purchase_id = ? ORDER BY sort_order ASC, id ASC',
       [id]
     );
+    // 入库时间：从 stock_movements 派生（最近一次收货入库的最早时间），与出入库记录页同源
+    const [receivedRows] = await pool.query(
+      `SELECT MIN(created_at) AS received_at FROM stock_movements
+       WHERE related_type = 'purchase' AND related_id = ? AND movement_type = 'inbound'`,
+      [id]
+    );
     res.json({
       ...normalizePurchaseRow(rows[0]),
+      received_at: receivedRows[0]?.received_at || null,
       items: itemRows.map(normalizeItemRow),
     });
   } catch (err) {
