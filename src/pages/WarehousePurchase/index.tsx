@@ -86,6 +86,8 @@ interface WarehousePurchase {
   warehouse_id?: string;
   warehouse_name?: string;
   total_amount: number;
+  actual_amount?: number;
+  received_at?: string | null;
   created_at?: string;
   updated_at?: string;
   items?: PurchaseItem[];
@@ -1048,15 +1050,17 @@ export default function WarehousePurchaseList() {
                             </p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2">
-                            <p className="text-gray-500">总金额</p>
+                            <p className="text-gray-500">实际入库金额</p>
                             <p className="font-medium text-primary-600 mt-0.5">
-                              {formatCurrency(safeNum(p.total_amount))}
+                              {p.received_at
+                                ? formatCurrency(safeNum(p.actual_amount ?? p.total_amount))
+                                : '-'}
                             </p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2">
-                            <p className="text-gray-500">创建时间</p>
+                            <p className="text-gray-500">入库时间</p>
                             <p className="font-medium text-gray-800 mt-0.5">
-                              {formatDateTime(p.created_at)}
+                              {p.received_at ? formatDateTime(p.received_at) : '-'}
                             </p>
                           </div>
                         </div>
