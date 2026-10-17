@@ -52,6 +52,7 @@ export interface PasteLine {
   supplier_id?: string;
   supplier_name?: string;
   reason: string;
+  stock: string; // 采购人申报的当前库存（字符串，提交时解析）
 }
 
 // 解析行状态
@@ -68,6 +69,7 @@ interface ParsedRow {
   warehouse: string;
   supplier: string;
   reason: string;
+  stock: string;
   status: RowStatus;
   matchedItem?: WhItem;
   matchedWarehouse?: Wh;
@@ -178,7 +180,7 @@ export default function WarehouseBatchPasteModal({
 
       // 跳过表头（第一行且关键词命中≥2个）
       if (idx === 0) {
-        const hits = (line.match(/物资名称|单位|数量|单价|仓库|供应商|理由/g) || []).length;
+        const hits = (line.match(/物资名称|单位|数量|单价|仓库|供应商|理由|库存/g) || []).length;
         if (hits >= 2) return;
       }
 
@@ -194,6 +196,7 @@ export default function WarehouseBatchPasteModal({
           warehouse: '',
           supplier: '',
           reason: '',
+          stock: '',
           status: 'error',
           error: '格式不正确，至少需要物资名称',
         });
@@ -207,6 +210,7 @@ export default function WarehouseBatchPasteModal({
       let warehouse = '';
       let supplier = '';
       let reason = '';
+      let stock = '';
 
       if (cols.length <= 3) {
         // 简写格式：名称 [数量] 单价
@@ -217,17 +221,19 @@ export default function WarehouseBatchPasteModal({
           unitPrice = cols[2];
         }
       } else {
-        // 完整格式：名称 | 单位 | 数量 | 单价 | 仓库 | 供应商 | 理由
-        // 合并方案后规格已并入名称，不再单独解析规格列
+        // 完整格式：名称 | 单位 | 数量 | 单价 | 仓库 | [供应商] | 理由 | 当前库存
+        // 合并方案后规格已并入名称，不再单独解析规格列；当前库存为最后一列（可选）
         unit = cols[1] || '';
         quantity = cols[2] || '1';
         unitPrice = cols[3] || '0';
         warehouse = cols[4] || '';
         if (useFixedSupplier) {
           reason = cols[5] || '';
+          stock = cols[6] || '';
         } else {
           supplier = cols[5] || '';
           reason = cols[6] || '';
+          stock = cols[7] || '';
         }
       }
 
@@ -278,6 +284,7 @@ export default function WarehouseBatchPasteModal({
         warehouse,
         supplier,
         reason,
+        stock,
         status,
         matchedItem,
         matchedWarehouse,
@@ -527,6 +534,7 @@ export default function WarehouseBatchPasteModal({
         ? fixedSupplier?.name
         : r.matchedSupplier?.name || r.supplier,
       reason: r.reason,
+      stock: r.stock,
     }));
     onConfirm(lines);
     onClose();
@@ -572,10 +580,10 @@ export default function WarehouseBatchPasteModal({
                 onChange={(e) => setPasteText(e.target.value)}
                 placeholder={
                   useFixedSupplier
-                    ? '格式：物资名称 单位 数量 单价 仓库名称 采购理由\n例如：\n洗洁精5L 桶 10 35.00 厨房仓 日常补充\n灯泡LED12W 个 20 8.50 总仓\n（供应商已自动使用表头选择的：' +
+                    ? '格式：物资名称 单位 数量 单价 仓库名称 采购理由 当前库存\n例如：\n洗洁精5L 桶 10 35.00 厨房仓 日常补充 2\n灯泡LED12W 个 20 8.50 总仓 补货 0\n（供应商已自动使用表头选择的：' +
                       (fixedSupplier?.name || '') +
-                      '）\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
-                    : '格式：物资名称 单位 数量 单价 仓库名称 供应商 采购理由\n例如：\n洗洁精5L 桶 10 35.00 厨房仓 永辉超市 日常补充\n灯泡LED12W 个 20 8.50 总仓 飞利浦 月度补充\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
+                      '；当前库存可留空）\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
+                    : '格式：物资名称 单位 数量 单价 仓库名称 供应商 采购理由 当前库存\n例如：\n洗洁精5L 桶 10 35.00 厨房仓 永辉超市 日常补充 2\n灯泡LED12W 个 20 8.50 总仓 飞利浦 月度补充 0\n（当前库存可留空）\n\n简写（3列）：物资名称 数量 单价\n白菜 2 5.00'
                 }
                 className="w-full h-56 border border-gray-200 rounded-lg px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none"
               />
@@ -588,8 +596,8 @@ export default function WarehouseBatchPasteModal({
                 列顺序：
                 <code className="bg-amber-100 px-1 rounded">
                   {useFixedSupplier
-                    ? '物资名称（含规格） | 单位 | 数量 | 单价 | 仓库名称 | 采购理由'
-                    : '物资名称（含规格） | 单位 | 数量 | 单价 | 仓库名称 | 供应商 | 采购理由'}
+                    ? '物资名称（含规格） | 单位 | 数量 | 单价 | 仓库名称 | 采购理由 | 当前库存（可选）'
+                    : '物资名称（含规格） | 单位 | 数量 | 单价 | 仓库名称 | 供应商 | 采购理由 | 当前库存（可选）'}
                 </code>
               </p>
               {useFixedSupplier ? (
@@ -675,6 +683,7 @@ export default function WarehouseBatchPasteModal({
                             ? ` · 供应商: ${row.supplier}`
                             : ''}
                           {row.reason && ` · ${row.reason}`}
+                          {row.stock && ` · 库存: ${row.stock}`}
                         </div>
                       </div>
                     </div>
