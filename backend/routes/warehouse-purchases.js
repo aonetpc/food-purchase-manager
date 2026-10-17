@@ -221,6 +221,8 @@ function normalizeItemRow(item) {
     received_quantity: toNum(item.received_quantity),
     received_unit_price: toNum(item.received_unit_price),
     received_amount: toNum(item.received_amount),
+    // 采购人申报的当前库存（NULL = 未填报）
+    stock_at_purchase: item.stock_at_purchase != null ? toNum(item.stock_at_purchase) : null,
   };
 }
 
@@ -1085,13 +1087,14 @@ async function generatePurchaseApplyPDF(purchaseId) {
     groupedItems[whName].push(item);
   }
 
-  // 表头与列宽（物资名称/单价/单位/数量/单位/金额/理由）
-  const headers = ['物资名称', '单价/单位', '数量', '单位', '金额', '理由'];
+  // 表头与列宽（物资名称/单价单位/数量/单位/当前库存/金额/理由）
+  const headers = ['物资名称', '单价/单位', '数量', '单位', '当前库存', '金额', '理由'];
   const colWidths = [
-    tableWidth * 0.29,
-    tableWidth * 0.13,
+    tableWidth * 0.26,
+    tableWidth * 0.12,
     tableWidth * 0.06,
     tableWidth * 0.06,
+    tableWidth * 0.09,
     tableWidth * 0.13,
     tableWidth * 0.25,
   ];
@@ -1171,11 +1174,13 @@ async function generatePurchaseApplyPDF(purchaseId) {
       const amt = toNum(item.requested_amount);
       const unit = item.requested_unit || '';
       const reason = item.reason || '';
+      const stockText = item.stock_at_purchase != null ? String(toNum(item.stock_at_purchase)) : '-';
       const cells = [
         item.item_name,
         `${price.toFixed(2)}/${unit}`,
         String(qty),
         unit,
+        stockText,
         `¥${amt.toFixed(2)}`,
         reason,
       ];
@@ -2023,13 +2028,16 @@ router.post('/', requireAuth, async (req, res) => {
       const amount = toNum(item.amount ?? item.requested_amount) > 0 ? toNum(item.amount ?? item.requested_amount) : (qty * price);
       const itemWhId = item.warehouse_id || null;
       const itemWhName = item.warehouse_name || whMap[itemWhId] || null;
+      // 采购人申报的当前库存（未填为 NULL）
+      const stockAtPurchase = item.stock_at_purchase != null && item.stock_at_purchase !== '' && !isNaN(Number(item.stock_at_purchase))
+        ? Number(item.stock_at_purchase) : null;
       await connection.query(
         `INSERT INTO warehouse_purchase_items
          (id, purchase_id, item_id, item_name, category_name, spec, department_id, department_name,
           warehouse_id, warehouse_name,
           requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order,
-          instant_use_override)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          instant_use_override, stock_at_purchase)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId, id,
           item.item_id || null,
@@ -2047,6 +2055,7 @@ router.post('/', requireAuth, async (req, res) => {
           item.reason || null,
           sortOrder++,
           item.instant_use_override !== undefined ? item.instant_use_override : null,
+          stockAtPurchase,
         ]
       );
     }
@@ -2139,13 +2148,16 @@ router.put('/:id', requireAuth, async (req, res) => {
       totalAmount += amount;
       const itemWhId = item.warehouse_id || null;
       const itemWhName = item.warehouse_name || whMap[itemWhId] || null;
+      // 采购人申报的当前库存（未填为 NULL）
+      const stockAtPurchase = item.stock_at_purchase != null && item.stock_at_purchase !== '' && !isNaN(Number(item.stock_at_purchase))
+        ? Number(item.stock_at_purchase) : null;
       await connection.query(
         `INSERT INTO warehouse_purchase_items
          (id, purchase_id, item_id, item_name, category_name, spec, department_id, department_name,
           warehouse_id, warehouse_name,
           requested_quantity, requested_unit, requested_unit_price, requested_amount, reason, sort_order,
-          instant_use_override)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          instant_use_override, stock_at_purchase)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId, id,
           item.item_id || null,
@@ -2163,6 +2175,7 @@ router.put('/:id', requireAuth, async (req, res) => {
           item.reason || null,
           sortOrder++,
           item.instant_use_override !== undefined ? item.instant_use_override : null,
+          stockAtPurchase,
         ]
       );
     }

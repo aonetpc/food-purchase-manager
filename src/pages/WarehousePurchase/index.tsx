@@ -61,6 +61,8 @@ interface PurchaseItem {
   department_id?: string;
   department_name?: string;
   reason?: string;
+  // 采购人申报的当前库存（null = 未填报）
+  stock_at_purchase?: number | null;
   // 收货录入信息
   received_quantity?: number;
   received_unit?: string;
@@ -1150,6 +1152,7 @@ export default function WarehousePurchaseList() {
                                     <th className="px-3 py-2 text-left">物资名称</th>
                                     <th className="px-3 py-2 text-left">单位</th>
                                     <th className="px-3 py-2 text-right">数量</th>
+                                    <th className="px-3 py-2 text-right">当前库存</th>
                                     <th className="px-3 py-2 text-right">单价</th>
                                     <th className="px-3 py-2 text-right">金额</th>
                                     <th className="px-3 py-2 text-left">采购理由</th>
@@ -1166,6 +1169,9 @@ export default function WarehousePurchaseList() {
                                       <td className="px-3 py-2 text-gray-500">{it.unit || '-'}</td>
                                       <td className="px-3 py-2 text-right text-gray-700">
                                         {safeNum(it.quantity)}
+                                      </td>
+                                      <td className="px-3 py-2 text-right text-gray-700">
+                                        {it.stock_at_purchase != null ? safeNum(it.stock_at_purchase) : '-'}
                                       </td>
                                       <td className="px-3 py-2 text-right text-gray-700">
                                         {safeNum(it.unit_price).toFixed(2)}

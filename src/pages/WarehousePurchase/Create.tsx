@@ -78,6 +78,7 @@ interface LineItem {
   department_name: string;
   reason: string;
   instant_use_override: number | null;
+  stock: string; // 采购人申报的当前库存（字符串草稿，提交时解析）
 }
 
 // 后端返回的采购单明细（用于编辑模式回填）
@@ -95,6 +96,7 @@ interface PurchaseItemDTO {
   department_id?: string;
   department_name?: string;
   reason?: string;
+  stock_at_purchase?: number | null;
 }
 
 // 后端返回的采购单详情
@@ -160,6 +162,7 @@ const emptyLine = (): LineItem => ({
   department_name: '',
   reason: '',
   instant_use_override: null,
+  stock: '',
 });
 
 export default function WarehousePurchaseCreate() {
@@ -203,9 +206,6 @@ export default function WarehousePurchaseCreate() {
 
   // 批量粘贴
   const [showBatchPaste, setShowBatchPaste] = useState(false);
-
-  // 库存数据：{ [warehouse_id]: { [item_id]: { quantity, unit } } }
-  const [inventoryMap, setInventoryMap] = useState<Record<string, Record<string, { quantity: number; unit?: string }>>>({});
 
   // 物资搜索弹窗
   const [showAddPanel, setShowAddPanel] = useState(false);
@@ -255,7 +255,7 @@ export default function WarehousePurchaseCreate() {
     return () => clearTimeout(timer);
   }, [quickAddData.name, showQuickAdd]);
 
-  // ===== 初始化：加载仓库、物资、分类树、部门、库存 =====
+  // ===== 初始化：加载仓库、物资、分类树、部门 =====
   // 注意：采购单创建时需要显示所有仓库供选择，故调用 /warehouses?all=1 绕过权限过滤
   useEffect(() => {
     fetchDepartments();
@@ -264,22 +264,11 @@ export default function WarehousePurchaseCreate() {
       api.get<Warehouse[]>('/warehouses?all=1').catch(() => [] as Warehouse[]),
       api.get<WarehouseItem[]>('/warehouses/items').catch(() => [] as WarehouseItem[]),
       api.get<CategoryNode[]>('/warehouses/categories/tree').catch(() => [] as CategoryNode[]),
-      api.get<Array<{ warehouse_id: string; item_id: string; quantity: number; unit?: string }>>('/inventory').catch(() => []),
     ])
-      .then(([wh, it, tree, inv]) => {
+      .then(([wh, it, tree]) => {
         setWarehouses(wh);
         setItems(it);
         setCategoryTree(tree);
-        // 构建库存映射 { warehouse_id: { item_id: { quantity, unit } } }
-        const map: Record<string, Record<string, { quantity: number; unit?: string }>> = {};
-        (inv || []).forEach((row) => {
-          if (!map[row.warehouse_id]) map[row.warehouse_id] = {};
-          map[row.warehouse_id][row.item_id] = {
-            quantity: safeNum(row.quantity),
-            unit: row.unit,
-          };
-        });
-        setInventoryMap(map);
       })
       .finally(() => {
         if (!isEdit) setLoading(false);
@@ -327,6 +316,7 @@ export default function WarehousePurchaseCreate() {
           department_name: it.department_name || '',
           reason: it.reason || '',
           instant_use_override: it.instant_use_override !== undefined ? it.instant_use_override : null,
+          stock: it.stock_at_purchase != null ? String(safeNum(it.stock_at_purchase)) : '',
         }));
         setLines(restoredLines.length > 0 ? restoredLines : [emptyLine()]);
       } catch (err: any) {
@@ -496,6 +486,7 @@ export default function WarehousePurchaseCreate() {
       department_name: '',
       reason: l.reason,
       instant_use_override: null,
+      stock: l.stock || '',
     }));
     // 检查现有行是否都是空行（未选择物资），如果是则用导入数据替换
     setLines((prev) => {
@@ -513,12 +504,6 @@ export default function WarehousePurchaseCreate() {
   // 供应商新增后同步刷新供应商库
   const handleSupplierCreated = () => {
     fetchSuppliers();
-  };
-
-  // 获取某行当前库存（按所选仓库+物资）
-  const getStockInfo = (line: LineItem): { quantity: number; unit?: string } | null => {
-    if (!line.warehouse_id || !line.item_id) return null;
-    return inventoryMap[line.warehouse_id]?.[line.item_id] || null;
   };
 
   // ===== 校验 =====
@@ -572,20 +557,24 @@ export default function WarehousePurchaseCreate() {
       supplier_id: supplierId,
       supplier_name: supplierName,
       prepay_amount: purchaseType === 'prepay' ? prepayAmount : 0,
-      items: validLines.map((l) => ({
-        item_id: l.item_id || null,
-        item_name: l.item_name.trim(),
-        unit: l.unit.trim(),
-        quantity: parseFloat(l.quantity) || 0,
-        unit_price: parseFloat(l.unit_price) || 0,
-        amount: lineAmount(l),
-        warehouse_id: l.warehouse_id || null,
-        warehouse_name: l.warehouse_name || null,
-        department_id: null,
-        department_name: null,
-        reason: l.reason.trim() || null,
-        instant_use_override: l.instant_use_override,
-      })),
+      items: validLines.map((l) => {
+        const stockNum = parseFloat(l.stock);
+        return {
+          item_id: l.item_id || null,
+          item_name: l.item_name.trim(),
+          unit: l.unit.trim(),
+          quantity: parseFloat(l.quantity) || 0,
+          unit_price: parseFloat(l.unit_price) || 0,
+          amount: lineAmount(l),
+          warehouse_id: l.warehouse_id || null,
+          warehouse_name: l.warehouse_name || null,
+          department_id: null,
+          department_name: null,
+          reason: l.reason.trim() || null,
+          instant_use_override: l.instant_use_override,
+          stock_at_purchase: l.stock.trim() === '' || isNaN(stockNum) ? null : stockNum,
+        };
+      }),
     };
   };
 
@@ -1034,22 +1023,18 @@ export default function WarehousePurchaseCreate() {
                         ))}
                       </select>
                     </td>
-                    {/* 当前库存 */}
+                    {/* 当前库存（采购人手工申报，非必填；系统比对值不再展示） */}
                     <td className="text-right">
-                      {(() => {
-                        const stock = getStockInfo(line);
-                        if (!line.warehouse_id) return <span className="text-xs text-gray-300">-</span>;
-                        if (!line.item_id) return <span className="text-xs text-gray-300">-</span>;
-                        if (!stock) return <span className="text-xs text-gray-400">0</span>;
-                        const qty = stock.quantity;
-                        const color = qty <= 0 ? 'text-red-500' : qty < 5 ? 'text-amber-600' : 'text-gray-700';
-                        return (
-                          <span className={`text-sm font-medium ${color}`} title="该仓库当前剩余库存">
-                            {qty}
-                            {stock.unit ? ` ${stock.unit}` : ''}
-                          </span>
-                        );
-                      })()}
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        value={line.stock}
+                        onChange={(e) => updateLine(line.key, { stock: e.target.value })}
+                        placeholder="库存"
+                        className="w-20 text-right border border-gray-200 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                      />
                     </td>
                     {/* 采购理由 */}
                     <td>
