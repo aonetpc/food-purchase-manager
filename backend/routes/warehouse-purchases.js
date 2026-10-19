@@ -1244,6 +1244,22 @@ async function generateWarehousePDF(purchaseId) {
     [purchaseId]
   );
 
+  // 入库时间：从 stock_movements 派生（最近一次收货入库的最早时间），与订单详情、出入库记录页同源
+  // 必须限定 movement_type='inbound'：即采即用物资收货时同表还会写入一条 expense（自动出库）流水
+  const [receivedRows] = await pool.query(
+    `SELECT MIN(created_at) AS received_at FROM stock_movements
+     WHERE related_type = 'purchase' AND related_id = ? AND movement_type = 'inbound'`,
+    [purchaseId]
+  );
+  const receivedAt = receivedRows[0]?.received_at || null;
+  const receivedAtText = receivedAt
+    ? (() => {
+        const d = new Date(receivedAt);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      })()
+    : '-';
+
   const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
@@ -1274,7 +1290,7 @@ async function generateWarehousePDF(purchaseId) {
   const pdfWarehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
   doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${pdfWarehouseNames.join('、') || '-'}    供应商：${row.supplier_name || '-'}`);
   doc.moveDown(0.3);
-  doc.text(`金额：¥${amountLabel.toFixed(2)}    状态：${statusLabel}`);
+  doc.text(`金额：¥${amountLabel.toFixed(2)}    状态：${statusLabel}    入库时间：${receivedAtText}`);
   doc.moveDown(0.5);
 
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
