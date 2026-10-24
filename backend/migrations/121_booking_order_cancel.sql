@@ -1,5 +1,7 @@
 -- ================================================
--- 120 - 预订订单：取消订单功能（feat/218）
+-- 121 - 预订订单：取消订单功能（feat/218）
+-- 注意：原编号 120 与 120_purchase_item_stock_at_purchase.sql 冲突，
+--       migrate.js 以数字前缀作为 schema_migrations.id（主键），会导致本文件被误判为已执行而跳过。
 --
 -- 背景：
 --   已确认/已完成的订单客户临时取消是高频业务场景，此前只能物理删除（无留痕）。
@@ -89,7 +91,7 @@ WHERE r.code = 'admin'
 -- ================================================
 -- 7. 验证
 -- ================================================
-SELECT '===== 120_booking_order_cancel.sql 执行完成 =====' AS info;
+SELECT '===== 121_booking_order_cancel.sql 执行完成 =====' AS info;
 SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_COMMENT
 FROM information_schema.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'booking_orders'
