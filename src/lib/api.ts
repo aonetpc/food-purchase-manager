@@ -209,6 +209,11 @@ export interface BookingApiOrder {
   completedSignature?: string;       // base64 PNG
   completedByName?: string;
   rejectedSignature?: string;        // base64 PNG（预留）
+  // feat/218: 取消订单留痕（cancelled 终态）
+  cancelledBy?: string;
+  cancelledByName?: string;
+  cancelledAt?: string;
+  cancelledReason?: string;
   items: any[];
   derivedBreakfasts?: any[];
 }
@@ -574,6 +579,12 @@ export const bookingApi = {
   // 标记完成（confirmed → completed）
   async completeOrder(id: string, signatureData: string): Promise<BookingApiOrder> {
     const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/complete`, { signature_data: signatureData });
+    return fromBackend(res.data);
+  },
+
+  // 取消订单（feat/218：任意非终态 → cancelled，软取消留痕，需 action:booking:cancel 权限）
+  async cancelOrder(id: string, cancelReason: string): Promise<BookingApiOrder> {
+    const res = await api.post<{ ok: boolean; data: any }>(`/booking/orders/${id}/cancel`, { cancel_reason: cancelReason });
     return fromBackend(res.data);
   },
 

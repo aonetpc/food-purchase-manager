@@ -33,6 +33,7 @@ const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> =
   confirmed:         { label: '已确认',       color: '#10B981', bg: 'rgba(16,185,129,.12)' },
   rejected:          { label: '已驳回',       color: '#EF4444', bg: 'rgba(239,68,68,.12)' },
   completed:         { label: '已完成',       color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
+  cancelled:         { label: '已取消',       color: '#9CA3AF', bg: 'rgba(156,163,175,.12)' },
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -649,6 +650,14 @@ export default function BookingConfirmPage() {
             {order.rejectionReason && <Row label="驳回原因" value={<span className="whitespace-pre-wrap break-words">{order.rejectionReason}</span>} />}
           </InfoCard>
         )}
+        {/* feat/218：已取消订单叠加取消信息卡（终态留痕，所有操作区按状态不匹配自然隐藏） */}
+        {order.status === 'cancelled' && (
+          <InfoCard icon={<X size={16} className="text-gray-400" />} title="取消信息">
+            {order.cancelledByName && <Row label="取消人" value={order.cancelledByName} />}
+            {order.cancelledAt && <Row label="取消时间" value={formatDateTime(order.cancelledAt)} />}
+            {order.cancelledReason && <Row label="取消原因" value={<span className="whitespace-pre-wrap break-words">{order.cancelledReason}</span>} />}
+          </InfoCard>
+        )}
         <ApprovalFlowCard steps={flowSteps} />
 
         <button onClick={refresh} className="w-full py-2 text-xs text-gray-400 flex items-center justify-center gap-1">
@@ -667,12 +676,15 @@ function buildFlowSteps(order: BookingApiOrder, flowLogs: FlowLog[] = []): FlowS
   if (flowLogs.length > 0) {
     const steps: FlowStep[] = flowLogs.map((log, idx) => {
       const status: StepStatus =
-        log.action === 'reject' ? 'rejected' : 'done';
+        log.action === 'reject' || log.action === 'cancel' ? 'rejected' : 'done';
       let title = log.actionLabel;
       // 驳回时在标题中注明原因
       let remark: string | undefined;
       if (log.action === 'reject' && log.remark) {
         remark = `驳回原因：${log.remark}`;
+      } else if (log.action === 'cancel' && log.remark) {
+        // feat/218：取消原因展示在流程卡
+        remark = `取消原因：${log.remark}`;
       } else if (log.action === 'edit' && log.remark) {
         // 修改摘要：尝试解析 JSON diff，展示简短摘要
         try {

@@ -1628,22 +1628,26 @@ router.get('/orders/monthly-pax', requireAuth, async (req, res) => {
     const end = new Date(y, m, 0).toISOString().slice(0, 10);
 
     // ① 体检：直接 SUM(pax)
+    // feat/218：JOIN booking_orders 排除已取消订单（取消单不计入任何统计）
     const [checkupRows] = await pool.query(
-      `SELECT COALESCE(SUM(pax), 0) AS total_pax
-       FROM booking_items
-       WHERE date BETWEEN ? AND ?
-         AND item_type = 'checkup'
-         AND pax > 0`,
+      `SELECT COALESCE(SUM(i.pax), 0) AS total_pax
+       FROM booking_items i
+       JOIN booking_orders o ON o.id = i.order_id AND o.status <> 'cancelled'
+       WHERE i.date BETWEEN ? AND ?
+         AND i.item_type = 'checkup'
+         AND i.pax > 0`,
       [start, end]
     );
     const checkupTotal = Number(checkupRows[0]?.total_pax) || 0;
 
     // ② 早餐：查该月所有 checkup + lodging items，复用 deriveBreakfastItems 派生
+    // feat/218：排除已取消订单
     const [bfSourceRows] = await pool.query(
-      `SELECT item_type, date, pax, extra
-       FROM booking_items
-       WHERE date BETWEEN ? AND ?
-         AND item_type IN ('checkup','lodging')`,
+      `SELECT i.item_type, i.date, i.pax, i.extra
+       FROM booking_items i
+       JOIN booking_orders o ON o.id = i.order_id AND o.status <> 'cancelled'
+       WHERE i.date BETWEEN ? AND ?
+         AND i.item_type IN ('checkup','lodging')`,
       [start, end]
     );
     const bfSourceItems = bfSourceRows.map(normalizeItem);
@@ -1651,11 +1655,13 @@ router.get('/orders/monthly-pax', requireAuth, async (req, res) => {
     const breakfastTotal = derivedBreakfasts.reduce((s, b) => s + (Number(b.pax) || 0), 0);
 
     // ③ 午餐/晚餐：解析 extra.sessions 计算人数
+    // feat/218：排除已取消订单
     const [mealRows] = await pool.query(
-      `SELECT item_type, pax, extra
-       FROM booking_items
-       WHERE date BETWEEN ? AND ?
-         AND item_type IN ('lunch','dinner')`,
+      `SELECT i.item_type, i.pax, i.extra
+       FROM booking_items i
+       JOIN booking_orders o ON o.id = i.order_id AND o.status <> 'cancelled'
+       WHERE i.date BETWEEN ? AND ?
+         AND i.item_type IN ('lunch','dinner')`,
       [start, end]
     );
     let lunchTotal = 0;
@@ -2605,6 +2611,64 @@ router.post('/orders/:id/complete', requireAuth, requireBookingWrite, async (req
     res.json({ ok: true, data: order });
   } catch (e) {
     console.error('[booking complete] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================
+// POST /api/booking/orders/:id/cancel  取消订单（feat/218）
+// - 软取消终态：status → cancelled，数据保留可追溯；看板置灰展示、各统计口径排除
+// - 权限：action:booking:cancel（admin 默认有；其他角色由管理员在角色管理手动分配）
+// - 可取消范围：全部 7 个在途/终态（pending/sales_confirming/parallel_sign/reviewing/
+//   confirmed/rejected/completed）；cancelled 不可重复取消；模板单不支持
+// - body: { cancel_reason: string（必填，无需签字） }
+// ============================================================
+router.post('/orders/:id/cancel', requireAuth, requireBookingWrite, async (req, res) => {
+  try {
+    const user = req.user || {};
+    const orderId = req.params.id;
+    const reason = String((req.body && req.body.cancel_reason) || '').trim();
+    if (!reason) return res.status(400).json({ ok: false, error: '请填写取消原因' });
+
+    const [rows] = await pool.query('SELECT * FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
+    const o = rows[0];
+    if (o.is_template === 1) return res.status(400).json({ ok: false, error: '模板订单不支持取消' });
+    if (o.status === 'cancelled') return res.status(400).json({ ok: false, error: '订单已是已取消状态，请勿重复操作' });
+
+    // 权限校验（服务端从 req.user 取，不信请求体）：admin 放行；其他角色必须有 cancel 权限码
+    const isAdmin = user.role === 'admin' || (Array.isArray(user.roles) && user.roles.includes('admin'));
+    const hasCancelPerm = !!(user.permissionCodes && user.permissionCodes.has('action:booking:cancel'));
+    if (!isAdmin && !hasCancelPerm) {
+      return res.status(403).json({ ok: false, error: '无取消订单权限，请联系管理员在角色管理中分配「取消订单」权限' });
+    }
+
+    const cancelledByName = user.name || user.realName || user.displayName || null;
+    await pool.query(`
+      UPDATE booking_orders SET
+        status = 'cancelled',
+        cancelled_by = ?,
+        cancelled_by_name = ?,
+        cancelled_at = NOW(),
+        cancelled_reason = ?
+      WHERE id = ?
+    `, [user.id || null, cancelledByName, reason, orderId]);
+    logOperation(req, '预订订单', '取消订单', `订单号=${o.order_no} 原状态=${o.status} 取消人=${cancelledByName || user.id} 原因=${reason}`, orderId);
+    await writeFlowLog(pool, orderId, 'cancel', '取消订单', user, { remark: reason });
+
+    // 清理动作（对齐 reject，非阻塞）：灰化销售/审核两侧全部历史待办卡 + 取消催办
+    bookingReminder.greyAllCardsOnApprove(orderId, 'sales_confirming', '已取消').catch(() => {});
+    bookingReminder.greyAllCardsOnApprove(orderId, 'reviewing', '已取消').catch(() => {});
+    bookingReminder.cancelReminder(orderId).catch(() => {});
+
+    // 群通知各部门（非阻塞，失败不影响取消结果）
+    const order = await readOrderFull(orderId);
+    sendBookingNotification('cancel', order, { cancelReason: reason, cancelledByName })
+      .catch(e => console.error('[booking cancel notify] error:', e));
+
+    res.json({ ok: true, data: order });
+  } catch (e) {
+    console.error('[booking cancel] error:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

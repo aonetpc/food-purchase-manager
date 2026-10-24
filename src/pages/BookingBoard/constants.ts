@@ -25,7 +25,7 @@ export function hexAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// 订单状态（实际存储 6 个状态，UI 展示归为 3 类）
+// 订单状态（实际存储 8 个状态，UI 展示归为 3 类；cancelled 为终态不参与三态归类，看板置灰独立展示）
 export const STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg: string }> = {
   pending:           { label: '预测单', color: '#E8B339', bg: 'rgba(232,179,57,.12)' },
   sales_confirming:  { label: '审批中', color: '#F59E0B', bg: 'rgba(245,158,11,.12)' },
@@ -34,6 +34,7 @@ export const STATUS_MAP: Record<OrderStatus, { label: string; color: string; bg:
   confirmed:         { label: '已确认', color: '#10B981', bg: 'rgba(16,185,129,.12)' },
   rejected:          { label: '审批中', color: '#EF4444', bg: 'rgba(239,68,68,.12)' },
   completed:         { label: '已确认', color: '#6366F1', bg: 'rgba(99,102,241,.12)' },
+  cancelled:         { label: '已取消', color: '#9CA3AF', bg: 'rgba(156,163,175,.12)' },
 };
 
 // UI 展示用的 3 类状态（预测单、审批中、已确认）
@@ -51,6 +52,7 @@ export const STATUS_GROUP: Record<DisplayStatus, OrderStatus[]> = {
 };
 
 // 实际状态 → 展示状态
+// 注意：cancelled 为终态，不归入三态（调用处统计前需先排除）；这里兜底归入 confirmed 仅为类型完整
 export function getDisplayStatus(s: OrderStatus): DisplayStatus {
   if (s === 'pending') return 'pending';
   if (s === 'sales_confirming' || s === 'reviewing' || s === 'parallel_sign' || s === 'rejected') return 'reviewing';

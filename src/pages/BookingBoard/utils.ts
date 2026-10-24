@@ -431,7 +431,8 @@ export function flattenItems(orders: BookingOrder[], bizFilter: Set<BizType>, st
   const result: FlatItem[] = [];
 
   for (const group of orders) {
-    if (!statusFilter.has(getDisplayStatus(group.status))) continue;
+    // feat/218：已取消订单不受状态筛选开关控制，始终展示（看板置灰留痕，统计口径另行排除）
+    if (group.status !== 'cancelled' && !statusFilter.has(getDisplayStatus(group.status))) continue;
 
     // 收集该订单所有展开后的 items
     const expanded: { item: BookingItem; date: string }[] = [];

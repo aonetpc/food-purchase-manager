@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar, X, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar, X, XCircle, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy, RefreshCw } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, DisplayStatus, OrderStatus, PaxEntry, CustomPackageItem } from './types';
 import {
   BUSINESS,
@@ -147,6 +147,10 @@ function adaptOrder(apiOrder: BookingApiOrder, cfg?: { roomTypes?: any[] }): Boo
     confirmedAt: apiOrder.confirmedAt,
     rejectedBy: apiOrder.rejectedByName || apiOrder.rejectedBy || '',
     rejectReason: apiOrder.rejectionReason || '',
+    // feat/218: 取消订单留痕字段
+    cancelledByName: apiOrder.cancelledByName || '',
+    cancelledAt: apiOrder.cancelledAt || '',
+    cancelledReason: apiOrder.cancelledReason || '',
   };
 }
 
@@ -337,14 +341,21 @@ function GanttCard({
   const top = `${track * 96}px`;
   const status = STATUS_MAP[group.status];
   const days = endCol - startCol + 1;
-  const cardBg = hexAlpha(bizColor, 0.06);
-  const borderCol = hexAlpha(bizColor, 0.35);
+  // feat/218：已取消订单卡片整体置灰（灰色系 + 半透明 + 客户名删除线 + 「已取消」角标）
+  const isCancelled = group.status === 'cancelled';
+  const effBizColor = isCancelled ? '#9CA3AF' : bizColor;
+  const cardBg = hexAlpha(effBizColor, 0.06);
+  const borderCol = hexAlpha(effBizColor, 0.35);
+  const cancelTip = isCancelled
+    ? `已取消${group.cancelledByName ? ` · ${group.cancelledByName}` : ''}${group.cancelledReason ? ` · ${group.cancelledReason}` : ''}`
+    : undefined;
 
   if (isMerged) {
     return (
       <button
         type="button"
         onClick={onClick}
+        title={cancelTip}
         className="absolute text-left rounded-lg shadow-sm hover:shadow-md transition-all overflow-hidden hover:-translate-y-0.5"
         style={{
           left,
@@ -353,27 +364,33 @@ function GanttCard({
           height: '88px',
           background: cardBg,
           border: `1.5px solid ${borderCol}`,
-          borderLeft: `4px solid ${bizColor}`,
+          borderLeft: `4px solid ${effBizColor}`,
+          opacity: isCancelled ? 0.55 : undefined,
         }}
       >
-        {item.extra.isPlaceholder && (
+        {isCancelled && (
+          <span className="absolute top-0 right-0 bg-gray-400 text-white text-[9px] font-medium px-1.5 py-0.5 rounded-bl leading-none z-10">
+            已取消
+          </span>
+        )}
+        {item.extra.isPlaceholder && !isCancelled && (
           <span className="absolute top-0 right-0 bg-amber-500 text-white text-[9px] font-medium px-1.5 py-0.5 rounded-bl leading-none">
             占位
           </span>
         )}
         <div
           className="flex items-center justify-between px-2.5 py-0.5"
-          style={{ borderBottom: `1px solid ${hexAlpha(bizColor, 0.25)}`, background: hexAlpha(bizColor, 0.08) }}
+          style={{ borderBottom: `1px solid ${hexAlpha(effBizColor, 0.25)}`, background: hexAlpha(effBizColor, 0.08) }}
         >
           <span className="text-[10px] font-medium text-gray-700">
             {BIZ_MAP[item.itemType].label}
           </span>
-          <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: bizColor }}>
+          <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: effBizColor }}>
             <ArrowLeftRight size={10} /> {days}天
           </span>
         </div>
         <div className="px-2.5 py-1">
-          <div className="text-xs font-bold text-gray-900 truncate">{group.customerName}</div>
+          <div className={`text-xs font-bold text-gray-900 truncate ${isCancelled ? 'line-through' : ''}`}>{group.customerName}</div>
           <div className="text-[11px] text-gray-700 truncate">{cardSummary(item, days)}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
@@ -388,6 +405,7 @@ function GanttCard({
     <button
       type="button"
       onClick={onClick}
+      title={cancelTip}
       className="absolute text-left rounded-lg shadow-sm hover:shadow-md transition-all overflow-hidden hover:-translate-y-0.5"
       style={{
         left,
@@ -396,10 +414,16 @@ function GanttCard({
         height: '88px',
         background: cardBg,
         border: `1.5px solid ${borderCol}`,
-        borderLeft: `4px solid ${bizColor}`,
+        borderLeft: `4px solid ${effBizColor}`,
+        opacity: isCancelled ? 0.55 : undefined,
       }}
     >
-      {item.extra.isPlaceholder && (
+      {isCancelled && (
+        <span className="absolute top-0 right-0 bg-gray-400 text-white text-[9px] font-medium px-1.5 py-0.5 rounded-bl leading-none z-10">
+          已取消
+        </span>
+      )}
+      {item.extra.isPlaceholder && !isCancelled && (
         <span className="absolute top-0 right-0 bg-amber-500 text-white text-[9px] font-medium px-1.5 py-0.5 rounded-bl leading-none z-10">
           占位
         </span>
@@ -412,7 +436,7 @@ function GanttCard({
           </span>
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: status.color }} />
         </div>
-        <div className="text-xs font-bold text-gray-900 truncate mt-0.5">{group.customerName}</div>
+        <div className={`text-xs font-bold text-gray-900 truncate mt-0.5 ${isCancelled ? 'line-through' : ''}`}>{group.customerName}</div>
         <div className="text-[11px] text-gray-700 truncate">
           {item.itemType === 'lunch' || item.itemType === 'dinner' ? (() => {
             const sess = item.extra.sessions || [];
@@ -466,7 +490,8 @@ function BizRow({
         <span className="text-xl leading-none flex-shrink-0">{biz.icon}</span>
         <div className="min-w-0">
           <div className="text-sm font-semibold text-gray-800 truncate">{biz.label}</div>
-          <div className="text-[11px] text-gray-500">{cards.length} 项</div>
+          {/* feat/218：项数统计排除已取消订单（卡片仍置灰展示留痕） */}
+          <div className="text-[11px] text-gray-500">{cards.filter(c => c.group.status !== 'cancelled').length} 项</div>
           {monthlyPax !== undefined && monthLabel && (
             <div className="text-[11px] text-gray-600 font-medium mt-0.5">{monthLabel}: {monthlyPax}人</div>
           )}
@@ -554,6 +579,8 @@ function DetailModal({
   onReject,
   onComplete,
   onDelete,
+  onCancel,
+  canCancel,
   authUser,
   bookingApprover,
 }: {
@@ -570,11 +597,13 @@ function DetailModal({
   onReject: (order: BookingOrder) => void;
   onComplete: (order: BookingOrder, signatureData: string) => void;
   onDelete: () => void;
+  onCancel: () => void;
+  canCancel: boolean;
   authUser: any;
   bookingApprover: null | { userid: string; name: string };
 }) {
-  // 所有非 completed 状态均可编辑；reviewing/confirmed 修改会触发通知
-  const canEdit = canOperate && order.status !== 'completed';
+  // 所有非 completed/cancelled 状态均可编辑；reviewing/confirmed 修改会触发通知
+  const canEdit = canOperate && order.status !== 'completed' && order.status !== 'cancelled';
   const total = groupTotal(order);
   const status = STATUS_MAP[order.status];
   const toast = useToast();
@@ -1107,6 +1136,21 @@ function DetailModal({
         </div>
 
         <div className="p-5 space-y-4">
+          {/* feat/218：已取消横幅（终态留痕：取消人/时间/原因） */}
+          {order.status === 'cancelled' && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 space-y-1">
+              <div className="text-sm font-semibold text-red-600 flex items-center gap-1.5">
+                ❌ 此订单已取消（终态，不可再操作）
+              </div>
+              <div className="text-xs text-red-500">
+                取消人：{order.cancelledByName || '未知'}
+                {order.cancelledAt ? ` · 取消时间：${order.cancelledAt}` : ''}
+              </div>
+              {order.cancelledReason && (
+                <div className="text-xs text-red-500">取消原因：{order.cancelledReason}</div>
+              )}
+            </div>
+          )}
           {/* 客户 & 联系信息 */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1166,6 +1210,14 @@ function DetailModal({
                   label="已完成"
                   time={order.confirmedAt || '已完成'}
                   state="done"
+                />
+              )}
+              {order.status === 'cancelled' && (
+                <TimelineItem
+                  label="已取消（终态）"
+                  time={order.cancelledAt || '已取消'}
+                  state="danger"
+                  note={order.cancelledReason}
                 />
               )}
             </div>
@@ -1993,8 +2045,27 @@ function DetailModal({
 
         {/* 底部按钮 */}
         <div className="flex gap-2 px-5 py-3 border-t border-gray-200 sticky bottom-0 bg-white flex-wrap">
-          {/* 所有非 completed 状态均可修改 + 复制为新单；confirmed 修改需强提示 */}
-          {canOperate && order.status !== 'completed' && (
+          {/* feat/218：已取消终态 —— 隐藏全部操作按钮，仅保留「复制为新单」（便于基于取消单重建） */}
+          {order.status === 'cancelled' && (
+            <>
+              <span className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-500 inline-flex items-center gap-1">
+                ❌ 已取消 · 终态不可操作
+              </span>
+              {canOperate && (
+                <button
+                  type="button"
+                  onClick={onCopy}
+                  title="基于此订单复制为新订单（日期自动+7天）"
+                  className="px-3 py-1.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium"
+                >
+                  复制为新单
+                </button>
+              )}
+            </>
+          )}
+
+          {/* 所有非 completed/cancelled 状态均可修改 + 复制为新单；confirmed 修改需强提示 */}
+          {canOperate && order.status !== 'completed' && order.status !== 'cancelled' && (
             <>
               <button
                 type="button"
@@ -2177,6 +2248,18 @@ function DetailModal({
                 </button>
               )}
             </>
+          )}
+
+          {/* feat/218: 取消订单按钮 — 需 action:booking:cancel 权限（admin 默认有，其他角色管理员手动分配）；已取消终态不显示 */}
+          {canCancel && order.status !== 'cancelled' && (
+            <button
+              type="button"
+              onClick={onCancel}
+              title="取消订单（软取消留痕，需填取消原因，不可恢复）"
+              className="px-3 py-1.5 text-xs rounded border border-orange-300 bg-orange-50 text-orange-600 hover:bg-orange-100 hover:border-orange-400 font-medium flex items-center gap-1"
+            >
+              <XCircle size={12} /> 取消订单
+            </button>
           )}
 
           {/* feat/140: 删除按钮 — admin 可删任何状态；booker 仅可删 pending/sales_confirming/rejected/parallel_sign */}
@@ -2388,6 +2471,9 @@ export default function BookingBoard() {
     const roleCodes = roles.map((r: any) => (typeof r === 'string' ? r : r?.code)).filter(Boolean);
     return role === 'admin' || roleCodes.includes('admin');
   })();
+  // feat/218：取消订单权限 — admin 默认有；其他角色需管理员分配 action:booking:cancel 权限码
+  const hasPermission = useAuthStore(s => s.hasPermission);
+  const canCancelOrder = isAdminOnly || hasPermission('action:booking:cancel');
 
   // 统一的加载订单函数（切周 / 修复数据后刷新都复用）
   const loadOrders = useCallback(async (ws?: Date) => {
@@ -2742,13 +2828,40 @@ export default function BookingBoard() {
     }
   }, [refreshOrderAfterAction, toast]);
 
+  // feat/218：取消订单（软取消终态，需 action:booking:cancel 权限；必填取消原因，无需签字）
+  const [cancelModal, setCancelModal] = useState<BookingOrder | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const handleCancelClick = useCallback((order: BookingOrder) => {
+    setCancelModal(order);
+    setCancelReason('');
+  }, []);
+  const handleCancelConfirm = useCallback(async () => {
+    if (!cancelModal) return;
+    if (!cancelReason.trim()) {
+      toast.error('请填写取消原因');
+      return;
+    }
+    const uuid = orderUuidMap.current[cancelModal.id] || cancelModal.id;
+    try {
+      const updated = await bookingApi.cancelOrder(uuid, cancelReason.trim());
+      await refreshOrderAfterAction(updated);
+      toast.success('订单已取消，已通知各部门');
+      setCancelModal(null);
+      setCancelReason('');
+    } catch (e) {
+      toast.error('取消失败: ' + (e as Error).message);
+    }
+  }, [cancelModal, cancelReason, refreshOrderAfterAction, toast]);
+
   // 统计卡片（3 类：预测单、审批中、已确认）
   const stats = useMemo(() => {
-    const total = orders.length;
-    const pending = orders.filter(o => getDisplayStatus(o.status) === 'pending').length;
-    const reviewing = orders.filter(o => getDisplayStatus(o.status) === 'reviewing').length;
-    const confirmed = orders.filter(o => getDisplayStatus(o.status) === 'confirmed').length;
-    const amount = orders.reduce((s, o) => s + groupTotal(o), 0);
+    // feat/218：所有统计口径排除已取消订单（取消单不参与计数与金额汇总）
+    const active = orders.filter(o => o.status !== 'cancelled');
+    const total = active.length;
+    const pending = active.filter(o => getDisplayStatus(o.status) === 'pending').length;
+    const reviewing = active.filter(o => getDisplayStatus(o.status) === 'reviewing').length;
+    const confirmed = active.filter(o => getDisplayStatus(o.status) === 'confirmed').length;
+    const amount = active.reduce((s, o) => s + groupTotal(o), 0);
     return { total, pending, reviewing, confirmed, amount };
   }, [orders]);
 
@@ -2757,6 +2870,7 @@ export default function BookingBoard() {
     const counts: Record<string, number> = {};
     weekDates.forEach(d => { counts[fmt(d)] = 0; });
     for (const o of orders) {
+      if (o.status === 'cancelled') continue; // feat/218：已取消订单不计入每日订单数
       const touched = new Set<string>();
       o.items.forEach(it => getItemDateRange(it).dates.forEach(d => touched.add(d)));
       touched.forEach(d => { if (counts[d] !== undefined) counts[d]++; });
@@ -3314,6 +3428,8 @@ export default function BookingBoard() {
           onApprove={handleApprove}
           onReject={handleRejectClick}
           onComplete={handleComplete}
+          onCancel={() => selectedOrder && handleCancelClick(selectedOrder)}
+          canCancel={canCancelOrder}
           onDelete={() => {
             if (!selectedOrder) return;
             const orderId = selectedOrder.id;
@@ -3388,6 +3504,58 @@ export default function BookingBoard() {
                 className="px-4 py-1.5 text-sm rounded bg-red-500 hover:bg-red-600 text-white font-medium"
               >
                 确认驳回
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ feat/218：取消订单原因弹窗 ============ */}
+      {cancelModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setCancelModal(null)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+              <h3 className="text-base font-semibold text-gray-900">取消订单</h3>
+              <button onClick={() => setCancelModal(null)} className="p-1 rounded hover:bg-gray-100">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="text-xs text-gray-500">
+                <div>订单号：{cancelModal.id}</div>
+                <div>客户：{cancelModal.customerName}</div>
+                <div>当前状态：{STATUS_MAP[cancelModal.status]?.label || cancelModal.status}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  取消原因 <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={cancelReason}
+                  onChange={e => setCancelReason(e.target.value)}
+                  rows={4}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                  placeholder="请填写取消原因，如：客户临时取消行程..."
+                  autoFocus
+                />
+              </div>
+              <div className="text-xs text-red-600 bg-red-50 rounded p-2 border border-red-100">
+                ⚠️ 取消后订单进入「已取消」终态，不可恢复、不可再编辑；看板上置灰留痕，各部门将收到群通知。如需重新预订请使用「复制为新单」。
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-200">
+              <button
+                onClick={() => setCancelModal(null)}
+                className="px-4 py-1.5 text-sm rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              >
+                再想想
+              </button>
+              <button
+                onClick={handleCancelConfirm}
+                className="px-4 py-1.5 text-sm rounded bg-orange-500 hover:bg-orange-600 text-white font-medium"
+              >
+                确认取消订单
               </button>
             </div>
           </div>

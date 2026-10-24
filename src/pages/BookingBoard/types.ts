@@ -1,5 +1,5 @@
 // 订单状态
-export type OrderStatus = 'pending' | 'sales_confirming' | 'reviewing' | 'parallel_sign' | 'confirmed' | 'rejected' | 'completed';
+export type OrderStatus = 'pending' | 'sales_confirming' | 'reviewing' | 'parallel_sign' | 'confirmed' | 'rejected' | 'completed' | 'cancelled';
 
 // UI 展示用的 3 类状态（预测单 / 审批中 / 已确认）
 export type DisplayStatus = 'pending' | 'reviewing' | 'confirmed';
@@ -286,6 +286,10 @@ export interface BookingOrder {
   confirmedAt?: string;
   rejectedBy?: string;
   rejectReason?: string;
+  // feat/218: 取消订单留痕（cancelled 终态时由后端返回）
+  cancelledByName?: string;
+  cancelledAt?: string;
+  cancelledReason?: string;
 }
 
 // 业务常量定义

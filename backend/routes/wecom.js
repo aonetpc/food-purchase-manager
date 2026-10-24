@@ -3120,6 +3120,27 @@ async function sendBookingNotification(type, order, extra = {}) {
       }
       break;
     }
+    case 'cancel': {
+      // feat/218: 取消订单发群消息通知各部门
+      // 与 delete 不同：cancel 是软取消终态，订单保留可追溯，因此附 H5 详情链接（点开可见取消人/原因/时间）
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const cancelledByName = (extra && extra.cancelledByName) || '未知';
+        const cancelReason = (extra && extra.cancelReason) || '未填写';
+        const md = `❌ **订单已取消**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          remarkLine +
+          `> 预订日期：${dateRange}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 取消人：${cancelledByName}\n` +
+          `> 取消原因：${cancelReason}\n` +
+          `> 状态：已取消\n` +
+          linkLine;
+        await sendGroupMsg(md, '取消订单群通知');
+      }
+      break;
+    }
     case 'submit': {
       // ① 预订群通知
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
