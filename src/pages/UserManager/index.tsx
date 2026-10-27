@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore, ROLE_LABELS } from '@/store/authStore';
-import { Plus, Edit, Trash2, Unlock, Lock, RefreshCw, X, Search, Phone, Building2, User } from 'lucide-react';
+import { useToast } from '@/components/Toast';
+import { Plus, Edit, Trash2, Unlock, Lock, RefreshCw, X, Search, Phone, Building2, User, Eye, EyeOff, Wand2, Copy, Check } from 'lucide-react';
 
 interface UserItem {
   id: string;
@@ -21,6 +22,7 @@ interface UserItem {
 export default function UserManager(props: { embedded?: boolean }) {
   const { embedded = false } = props || {};
   const { user, isAdmin } = useAuthStore();
+  const toast = useToast();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,6 +31,8 @@ export default function UserManager(props: { embedded?: boolean }) {
   const [newPassword, setNewPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [passwordCopied, setPasswordCopied] = useState(false);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -166,23 +170,67 @@ export default function UserManager(props: { embedded?: boolean }) {
     }
   };
 
-  const handleResetPassword = async () => {
-    if (!resetUserId || !newPassword) return;
+  const resetTargetUser = users.find((u) => u.id === resetUserId);
 
+  const closeResetModal = () => {
+    setResetUserId(null);
+    setNewPassword('');
+    setResetMessage('');
+    setShowNewPassword(false);
+    setPasswordCopied(false);
+  };
+
+  const generateRandomPassword = () => {
+    // 去掉易混淆字符（0/O、1/l 等），便于线下转达
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    const arr = new Uint32Array(10);
+    crypto.getRandomValues(arr);
+    let pwd = '';
+    for (let i = 0; i < 10; i++) pwd += chars[arr[i] % chars.length];
+    setNewPassword(pwd);
+    setShowNewPassword(true);
+    setResetMessage('');
+    setPasswordCopied(false);
+  };
+
+  const handleCopyPassword = async () => {
+    if (!newPassword) return;
+    try {
+      await navigator.clipboard.writeText(newPassword);
+      setPasswordCopied(true);
+      setTimeout(() => setPasswordCopied(false), 2000);
+    } catch (err) {
+      console.error('复制密码失败:', err);
+      toast.error('复制失败，请手动选择密码复制');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetUserId) return;
+
+    if (!newPassword) {
+      setResetMessage('请输入新密码');
+      return;
+    }
     if (newPassword.length < 6) {
       setResetMessage('密码长度不能少于6位');
       return;
     }
+    if (newPassword.length > 100) {
+      setResetMessage('密码长度不能超过100位');
+      return;
+    }
 
     setResetLoading(true);
+    setResetMessage('');
     try {
       await api.post('/auth/reset-password', {
         userId: resetUserId,
         newPassword,
       });
-      setResetMessage('密码重置成功');
-      setResetUserId(null);
-      setNewPassword('');
+      const targetName = resetTargetUser?.name || '';
+      closeResetModal();
+      toast.success(`已为用户「${targetName}」重置密码`);
     } catch (err: any) {
       setResetMessage(err.message || '重置失败');
     } finally {
@@ -442,6 +490,8 @@ export default function UserManager(props: { embedded?: boolean }) {
                                 setResetUserId(userItem.id);
                                 setNewPassword('');
                                 setResetMessage('');
+                                setShowNewPassword(false);
+                                setPasswordCopied(false);
                               }}
                               className="text-green-600 hover:text-green-700 text-sm"
                               title="重置密码"
@@ -465,43 +515,6 @@ export default function UserManager(props: { embedded?: boolean }) {
                   没有找到匹配的用户
                 </div>
               )}
-            </div>
-          )}
-
-          {resetUserId && (
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-              <h3 className="text-sm font-semibold text-gray-800 mb-3">重置密码</h3>
-
-              {resetMessage && (
-                <div className={`mb-3 p-2 text-sm rounded ${
-                  resetMessage.includes('成功') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                }`}>
-                  {resetMessage}
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                  placeholder="请输入新密码（至少6位）"
-                />
-                <button
-                  onClick={handleResetPassword}
-                  disabled={resetLoading}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-                >
-                  {resetLoading ? '重置中...' : '确认重置'}
-                </button>
-                <button
-                  onClick={() => setResetUserId(null)}
-                  className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
-                >
-                  取消
-                </button>
-              </div>
             </div>
           )}
         </div>
@@ -818,6 +831,93 @@ export default function UserManager(props: { embedded?: boolean }) {
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
                 {roleLoading ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 重置密码弹窗 */}
+      {resetUserId && resetTargetUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-800">重置密码</h3>
+              <button onClick={closeResetModal} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">目标用户</label>
+                <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
+                  <User size={16} className="text-gray-400" />
+                  <span className="text-gray-800 font-medium">{resetTargetUser.name}</span>
+                  <span className="text-gray-400 text-sm">（{resetTargetUser.username}）</span>
+                </div>
+              </div>
+              <div className="p-3 bg-amber-50 text-amber-700 rounded-lg text-sm">
+                重置立即生效，原密码将失效，请将新密码线下告知该用户。
+              </div>
+              {resetMessage && (
+                <div className="p-2 text-sm rounded bg-red-50 text-red-700">
+                  {resetMessage}
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">新密码 *</label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => { setNewPassword(e.target.value); setPasswordCopied(false); }}
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                    placeholder="请输入新密码（6-100位）"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    title={showNewPassword ? '隐藏密码' : '显示密码'}
+                  >
+                    {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={generateRandomPassword}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-green-700 border border-green-300 rounded-lg hover:bg-green-50 transition-colors"
+                  >
+                    <Wand2 size={14} />
+                    随机生成
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyPassword}
+                    disabled={!newPassword}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {passwordCopied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+                    {passwordCopied ? '已复制' : '复制密码'}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 p-4 border-t">
+              <button
+                onClick={closeResetModal}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleResetPassword}
+                disabled={resetLoading || !newPassword}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {resetLoading ? '重置中...' : '确认重置'}
               </button>
             </div>
           </div>
