@@ -3107,6 +3107,8 @@ async function handleOrderEditNotification(originalStatus, order, req) {
     // --- 群通知（可选）---
     if (config.booking_webhook_url && (originalStatus === 'confirmed' || isParallelEdit)) {
       try {
+        // feat/220: 群消息底部附订单 H5 详情链接，与 sendBookingNotification 的 submit 等通知保持一致
+        const editLinkLine = cardUrl ? `> [📱 点击查看订单](${cardUrl})\n` : '';
         const md = `⚠️ **订单已修改（需重新审核）**\n` +
           `> 订单号：${orderNo}\n` +
           `> 客户：${customerName}\n` +
@@ -3114,7 +3116,8 @@ async function handleOrderEditNotification(originalStatus, order, req) {
           `> 业务：${bizSummary}\n` +
           `> 金额：¥${order.total_amount || 0}\n` +
           `> 修改时间：${changeTime}\n` +
-          `> 状态：${originalStatus === 'confirmed' ? '已退回审批中' : '审批中（已更新）'}`;
+          `> 状态：${originalStatus === 'confirmed' ? '已退回审批中' : '审批中（已更新）'}\n` +
+          editLinkLine;
         await sendMarkdownViaWebhook(config.booking_webhook_url, md);
       } catch (e) {
         console.error(`[handleOrderEditNotification] 群通知失败:`, e && e.message);
