@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Calendar, X, XCircle, ArrowLeftRight, Download, Upload, FileText, Star, Edit2, ChevronDown, AlertCircle, Settings, Trash2, Users, ClipboardList, Search, Eye, Copy, RefreshCw } from 'lucide-react';
 import type { BookingOrder, BookingItem, BizType, DisplayStatus, OrderStatus, PaxEntry, CustomPackageItem } from './types';
+import { printBookingMenu } from '@/lib/printMenu';
 import {
   BUSINESS,
   BIZ_MAP,
@@ -1668,12 +1669,16 @@ function DetailModal({
                                             menuImages: hasMenuImages ? s.menuImages : [],
                                             menuTemplateName: s.menuTemplateName || '',
                                             legacyRemarkAsMenu: legacy,
+                                            // feat/223: 打印菜单用的人数/桌数
+                                            paxText: s.pricingMode === 'per_table'
+                                              ? `${s.tables || 0}桌 · 每桌${s.perTable || 0}人`
+                                              : `${s.pax || 0}人`,
                                           };
                                         })
                                         .filter(Boolean) as Array<{
                                           i: number; date: string; time: string; mealName: string;
                                           menuText: string; menuImages: string[];
-                                          menuTemplateName: string; legacyRemarkAsMenu: boolean;
+                                          menuTemplateName: string; legacyRemarkAsMenu: boolean; paxText: string;
                                         }>;
                                       if (menuSessions.length === 0) return null;
                                       return (
@@ -1699,6 +1704,25 @@ function DetailModal({
                                                     {m.menuImages.length > 0 ? `${m.menuImages.length}图 · ` : ''}点击展开
                                                   </span>
                                                 </summary>
+                                                {/* feat/223: 打印该场次菜单（居中 A4） */}
+                                                <div className="px-2 pt-1.5 flex justify-end">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => printBookingMenu({
+                                                      title: `${m.mealName}菜单`,
+                                                      customerName: order.customerName,
+                                                      date: m.date,
+                                                      time: m.time,
+                                                      paxText: m.paxText,
+                                                      menuText: m.menuText,
+                                                      menuImages: m.menuImages,
+                                                      templateName: m.menuTemplateName,
+                                                    })}
+                                                    className="px-2 py-0.5 text-[10px] rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 flex items-center gap-1"
+                                                  >
+                                                    🖨 打印菜单
+                                                  </button>
+                                                </div>
                                                 <div className="px-2 pb-2 pt-1 grid grid-cols-1 md:grid-cols-2 gap-2">
                                                   <div>
                                                     <div className="text-[10px] text-gray-500 mb-0.5">菜单文本：</div>

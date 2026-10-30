@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { printBookingMenu } from '@/lib/printMenu';
 import {
   CheckCircle2, AlertCircle, ArrowLeft, Loader2, Phone, User,
   FileText, Calendar, Clock, Users, MessageSquare, RefreshCw, X,
@@ -531,6 +532,7 @@ export default function BookingConfirmPage() {
                           mealTypes={mealTypes}
                           roomTypes={roomTypes}
                           capsules={capsules}
+                          customerName={order.customerName}
                         />
                       </div>
                     ))}
@@ -911,8 +913,8 @@ function ItemHeader({ item, bizKey }: { item: any; bizKey: string }) {
   );
 }
 
-function ItemDetails({ item, bizKey, packages, mealTypes, roomTypes, capsules }: {
-  item: any; bizKey: string; packages: PackageRow[]; mealTypes: MealTypeRow[]; roomTypes: RoomTypeRow[]; capsules: any[];
+function ItemDetails({ item, bizKey, packages, mealTypes, roomTypes, capsules, customerName }: {
+  item: any; bizKey: string; packages: PackageRow[]; mealTypes: MealTypeRow[]; roomTypes: RoomTypeRow[]; capsules: any[]; customerName?: string;
 }) {
   const pax = Number(item.pax || 0);
   const biz = BIZ_MAP[bizKey] || { label: bizKey, icon: null, color: '#6B7280' };
@@ -924,7 +926,7 @@ function ItemDetails({ item, bizKey, packages, mealTypes, roomTypes, capsules }:
     case 'lunch':
     case 'dinner':
     case 'breakfast':
-      return <MealDetails item={item} mealTypes={mealTypes} bizKey={bizKey} pax={pax} bizColor={biz.color} unit={unit} />;
+      return <MealDetails item={item} mealTypes={mealTypes} bizKey={bizKey} pax={pax} bizColor={biz.color} unit={unit} customerName={customerName} />;
     case 'lodging':
       return <LodgingDetails item={item} roomTypes={roomTypes} pax={pax} bizColor={biz.color} />;
     case 'carpickup':
@@ -1216,8 +1218,8 @@ function CheckupDetails({ item, packages, capsules, pax, bizColor }: {
 }
 
 // --- 用餐：餐标 ---
-function MealDetails({ item, mealTypes, bizKey, pax, bizColor, unit }: {
-  item: any; mealTypes: MealTypeRow[]; bizKey: string; pax: number; bizColor: string; unit: Record<string, string>;
+function MealDetails({ item, mealTypes, bizKey, pax, bizColor, unit, customerName }: {
+  item: any; mealTypes: MealTypeRow[]; bizKey: string; pax: number; bizColor: string; unit: Record<string, string>; customerName?: string;
 }) {
   const extra = item.extra || {};
   const sessions: any[] = extra.sessions || [];
@@ -1302,6 +1304,25 @@ function MealDetails({ item, mealTypes, bizKey, pax, bizColor, unit }: {
                         </span>
                       </summary>
                       <div className="px-2 pb-2 pt-1 space-y-1.5">
+                        {/* feat/223: 打印该场次菜单（居中 A4） */}
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => printBookingMenu({
+                              title: `${BIZ_MAP[bizKey]?.label || '餐'}菜单`,
+                              customerName,
+                              date: sessDate,
+                              time: sessTime,
+                              paxText: qtyText,
+                              menuText,
+                              menuImages,
+                              templateName: s.menuTemplateName || '',
+                            })}
+                            className="px-2 py-0.5 text-[10px] rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100"
+                          >
+                            🖨 打印菜单
+                          </button>
+                        </div>
                         {menuText && (
                           <pre className="text-[11px] text-gray-800 whitespace-pre-wrap bg-white border border-gray-200 rounded p-1.5 max-h-40 overflow-y-auto">
                             {menuText}
