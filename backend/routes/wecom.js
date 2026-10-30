@@ -3141,6 +3141,34 @@ async function sendBookingNotification(type, order, extra = {}) {
       }
       break;
     }
+    case 'renotify': {
+      // feat/220: 手动重新发送群通知（订单内容变更后让各营运部门重新关注）
+      if (config.booking_webhook_url && config.booking_notify_submit !== 0) {
+        const renotifyStatusLabels = {
+          pending: '预测单（待提交确认）',
+          sales_confirming: '待销售确认',
+          parallel_sign: '待确认&待审核',
+          reviewing: '待审核',
+          confirmed: '已确认',
+          rejected: '已驳回',
+          completed: '已完成',
+        };
+        const statusText = renotifyStatusLabels[order.status] || order.status;
+        const operatorName = (extra && extra.operatorName) || '未知';
+        const md = `🔔 **订单通知（重新发送）**\n` +
+          `> 订单号：${orderNo}\n` +
+          `> 客户：${customerName}\n` +
+          remarkLine +
+          `> 预订日期：${dateRange}\n` +
+          `> 涉及业务：${bizSummary}\n` +
+          `> 销售员：${salesPerson || '未指定'}\n` +
+          `> 状态：${statusText}\n` +
+          `> 操作人：${operatorName}\n` +
+          linkLine;
+        await sendGroupMsg(md, '订单重新通知群消息');
+      }
+      break;
+    }
     case 'submit': {
       // ① 预订群通知
       if (config.booking_webhook_url && config.booking_notify_submit !== 0) {

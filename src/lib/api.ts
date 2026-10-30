@@ -588,6 +588,11 @@ export const bookingApi = {
     return fromBackend(res.data);
   },
 
+  // feat/220：手动重新发送群通知（admin 或 action:booking:create 权限）
+  async renotifyOrder(id: string): Promise<void> {
+    await api.post<{ ok: boolean }>(`/booking/orders/${id}/renotify`, {});
+  },
+
   // 删除草稿订单（仅 pending 状态）
   async deleteOrder(id: string): Promise<void> {
     await api.delete<{ ok: boolean }>(`/booking/orders/${id}`);
