@@ -2674,6 +2674,42 @@ router.post('/orders/:id/cancel', requireAuth, requireBookingWrite, async (req, 
 });
 
 // ============================================================
+// POST /api/booking/orders/:id/renotify  手动重新发送群通知（feat/220）
+// - 场景：订单内容变更后群里需要重新关注，但编辑动作本身未必触发群消息
+// - 权限：admin 或 action:booking:create（创建/编辑订单，预订员默认有）
+// - 限制：已取消订单不发送（终态无需再通知）
+// ============================================================
+router.post('/orders/:id/renotify', requireAuth, requireBookingWrite, async (req, res) => {
+  try {
+    const user = req.user || {};
+    const orderId = req.params.id;
+
+    const [rows] = await pool.query('SELECT id, order_no, status FROM booking_orders WHERE id = ? LIMIT 1', [orderId]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: '订单不存在' });
+    if (rows[0].status === 'cancelled') {
+      return res.status(400).json({ ok: false, error: '已取消订单无需重新通知' });
+    }
+
+    // 权限校验（服务端从 req.user 取，不信请求体）：admin 放行；其他角色需「创建/编辑订单」权限码
+    const isAdmin = user.role === 'admin' || (Array.isArray(user.roles) && user.roles.includes('admin'));
+    const hasEditPerm = !!(user.permissionCodes && user.permissionCodes.has('action:booking:create'));
+    if (!isAdmin && !hasEditPerm) {
+      return res.status(403).json({ ok: false, error: '无重新发送通知权限' });
+    }
+
+    const order = await readOrderFull(orderId);
+    const operatorName = user.name || user.realName || user.displayName || '';
+    await sendBookingNotification('renotify', order, { operatorName });
+    logOperation(req, '预订订单', '重新发送群通知', `订单号=${rows[0].order_no} 状态=${rows[0].status}`, orderId);
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[booking renotify] error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============================================================
 // DELETE /api/booking/orders/:id  删除订单
 // - admin：可删除任何状态的订单（级联删 items）
 // - 其他角色：仅允许删除 pending 状态的订单（草稿专用）
@@ -2807,15 +2843,29 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
     await conn.query('DELETE FROM booking_items WHERE order_id = ?', [orderId]);
     await insertItems(conn, orderId, items);
 
-    // confirmed 状态修改 → 自动降级为 reviewing 重新审批，同步清空审核通过相关字段
+    // confirmed 状态修改 → 退回重新审批，同步清空审核通过相关字段
+    // feat/220: 按流程模式分流——并行模式退回 parallel_sign（销售确认 ∥ 审核员审核），
+    //   串行模式维持 reviewing；并行需同时清空销售确认签字，否则"销售已签"会被复用而跳过销售重回炉
     if (originalStatus === 'confirmed') {
+      let flowModeConfirmed = 'serial';
+      try {
+        const wcfgConfirmed = await getWecomConfig();
+        flowModeConfirmed = wcfgConfirmed && wcfgConfirmed.booking_flow_mode === 'parallel' ? 'parallel' : 'serial';
+      } catch (eCfgConfirmed) {
+        console.warn('[booking PUT] 读取流程模式失败，confirmed 按串行退回:', eCfgConfirmed && eCfgConfirmed.message);
+      }
+      const toParallel = flowModeConfirmed === 'parallel';
       await conn.query(`UPDATE booking_orders SET
-          status = 'reviewing',
+          status = ?,
           confirmed_at = NULL,
           approved_by = NULL,
           approved_by_name = NULL,
-          approved_signature = NULL
-        WHERE id = ?`, [orderId]);
+          approved_signature = NULL${toParallel ? `,
+          sales_confirmed_at = NULL,
+          sales_confirmed_by = NULL,
+          sales_confirmed_by_name = NULL,
+          sales_confirmed_signature = NULL` : ''}
+        WHERE id = ?`, [toParallel ? 'parallel_sign' : 'reviewing', orderId]);
     }
 
     // sales_confirming 状态修改 → 保持 sales_confirming，清空销售员确认痕迹，等销售员重新确认
@@ -2899,7 +2949,7 @@ router.put('/orders/:id', requireAuth, requireBookingWrite, async (req, res) => 
 });
 
 // ============================================================
-// 订单编辑后通知处理（reviewing 更新审核卡+通知；confirmed→reviewing 重走审批；sales_confirming 更新销售卡）
+// 订单编辑后通知处理（reviewing 更新审核卡+通知；confirmed 退回重新审批（并行→parallel_sign，串行→reviewing）；sales_confirming 更新销售卡）
 // ============================================================
 async function handleOrderEditNotification(originalStatus, order, req) {
   const result = { action: originalStatus === 'confirmed' ? 'confirmed_to_reviewing' : (originalStatus + '_modified') };
@@ -2964,6 +3014,8 @@ async function handleOrderEditNotification(originalStatus, order, req) {
     // 策略：优先 update 已有交互卡；无 response_code 时降级发新卡；都失败时 fallback 文字通知
     let cardSent = false;
     const isParallelEdit = originalStatus === 'parallel_sign';
+    // feat/220: 并行模式下已确认订单修改会退回 parallel_sign，销售员同样需要重新确认
+    const returnsToParallel = originalStatus === 'confirmed' && config.booking_flow_mode === 'parallel';
     if ((originalStatus === 'reviewing' || originalStatus === 'confirmed' || isParallelEdit) && config.booking_approver_userid) {
       const hContentBase = [
         { keyname: '客户', value: customerName },
@@ -3043,7 +3095,7 @@ async function handleOrderEditNotification(originalStatus, order, req) {
 
     // --- 更新销售员确认卡片（sales_confirming / parallel_sign）---
     // 对称审核员：优先 update；无 code 或失败则降级新发
-    if (originalStatus === 'sales_confirming' || isParallelEdit) {
+    if (originalStatus === 'sales_confirming' || isParallelEdit || returnsToParallel) {
       const salesCard = cardCodes.sales_confirm;
       const salesUserid = salesCard && salesCard.userid;
       const hasCode = salesCard && salesCard.response_code;
@@ -3057,7 +3109,7 @@ async function handleOrderEditNotification(originalStatus, order, req) {
         ];
         if (order.remark) hContent.push({ keyname: '备注', value: order.remark });
 
-        const salesTitle = isParallelEdit ? '📋 订单待确认（已修改·并行）' : '📋 订单待确认（已修改）';
+        const salesTitle = (isParallelEdit || returnsToParallel) ? '📋 订单待确认（已修改·并行）' : '📋 订单待确认（已修改）';
         if (hasCode) {
           try {
             await updateTemplateCard(config, salesUserid, 'button_interaction', salesCard.response_code, {

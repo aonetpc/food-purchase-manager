@@ -581,6 +581,8 @@ function DetailModal({
   onDelete,
   onCancel,
   canCancel,
+  onRenotify,
+  canRenotify,
   authUser,
   bookingApprover,
 }: {
@@ -599,6 +601,8 @@ function DetailModal({
   onDelete: () => void;
   onCancel: () => void;
   canCancel: boolean;
+  onRenotify: () => void;
+  canRenotify: boolean;
   authUser: any;
   bookingApprover: null | { userid: string; name: string };
 }) {
@@ -2262,6 +2266,18 @@ function DetailModal({
             </button>
           )}
 
+          {/* feat/220: 重新发送群通知 — 需 action:booking:create 权限（admin 默认有） */}
+          {canRenotify && order.status !== 'cancelled' && (
+            <button
+              type="button"
+              onClick={onRenotify}
+              title="向预订群重新发送一次订单通知（不改变订单状态）"
+              className="px-3 py-1.5 text-xs rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 font-medium flex items-center gap-1"
+            >
+              <RefreshCw size={12} /> 重新发送群通知
+            </button>
+          )}
+
           {/* feat/140: 删除按钮 — admin 可删任何状态；booker 仅可删 pending/sales_confirming/rejected/parallel_sign */}
           {(isAdmin || (canOperate && ['pending', 'sales_confirming', 'rejected', 'parallel_sign'].includes(order.status))) && (
             <button
@@ -2474,6 +2490,8 @@ export default function BookingBoard() {
   // feat/218：取消订单权限 — admin 默认有；其他角色需管理员分配 action:booking:cancel 权限码
   const hasPermission = useAuthStore(s => s.hasPermission);
   const canCancelOrder = isAdminOnly || hasPermission('action:booking:cancel');
+  // feat/220：重新发送群通知 — admin 或「创建/编辑订单」权限（预订员默认有）
+  const canRenotifyOrder = isAdminOnly || hasPermission('action:booking:create');
 
   // 统一的加载订单函数（切周 / 修复数据后刷新都复用）
   const loadOrders = useCallback(async (ws?: Date) => {
@@ -2852,6 +2870,17 @@ export default function BookingBoard() {
       toast.error('取消失败: ' + (e as Error).message);
     }
   }, [cancelModal, cancelReason, refreshOrderAfterAction, toast]);
+
+  // feat/220：重新发送群通知（不改变订单状态，仅补发一次群消息）
+  const handleRenotify = useCallback(async (order: BookingOrder) => {
+    const uuid = orderUuidMap.current[order.id] || order.id;
+    try {
+      await bookingApi.renotifyOrder(uuid);
+      toast.success('已重新发送群通知');
+    } catch (e) {
+      toast.error('发送失败: ' + (e as Error).message);
+    }
+  }, [toast]);
 
   // 统计卡片（3 类：预测单、审批中、已确认）
   const stats = useMemo(() => {
@@ -3430,6 +3459,8 @@ export default function BookingBoard() {
           onComplete={handleComplete}
           onCancel={() => selectedOrder && handleCancelClick(selectedOrder)}
           canCancel={canCancelOrder}
+          onRenotify={() => selectedOrder && handleRenotify(selectedOrder)}
+          canRenotify={canRenotifyOrder}
           onDelete={() => {
             if (!selectedOrder) return;
             const orderId = selectedOrder.id;
