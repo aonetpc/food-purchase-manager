@@ -3,6 +3,7 @@
  *
  * 接口列表：
  *   GET    /api/temp/workers           外请人员列表（管理员）
+ *   POST   /api/temp/workers           新增人员（管理员手动建档，无手机人员兜底）
  *   GET    /api/temp/workers/:id       人员详情
  *   PUT    /api/temp/workers/:id       编辑人员（禁用/启用）
  *   GET    /api/temp/workers/:id/positions  人员已分配岗位
@@ -49,6 +50,49 @@ router.get('/', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('workers list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 新增人员（管理员手动建档：无手机人员不扫码也可建档）
+router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: '姓名为必填' });
+    }
+    const trimmedName = name.trim();
+    const trimmedPhone = (phone && phone.trim()) || null;
+
+    // 防重复建档（含禁用用户）
+    if (trimmedPhone) {
+      const [dup] = await pool.query(
+        'SELECT id, status FROM temp_worker_users WHERE name = ? AND phone = ? LIMIT 1',
+        [trimmedName, trimmedPhone]
+      );
+      if (dup.length > 0) {
+        return res.status(400).json({ error: `已存在同名同手机号的人员档案（${dup[0].status === 1 ? '正常' : '已禁用'}），请勿重复建档` });
+      }
+    } else {
+      const [dup] = await pool.query(
+        'SELECT id, status FROM temp_worker_users WHERE name = ? LIMIT 1',
+        [trimmedName]
+      );
+      if (dup.length > 0) {
+        return res.status(400).json({ error: `已存在同名人员「${trimmedName}」（${dup[0].status === 1 ? '正常' : '已禁用'}），如确为不同人请填写手机号区分` });
+      }
+    }
+
+    const id = uuidv4();
+    await pool.query(
+      'INSERT INTO temp_worker_users (id, name, phone, status) VALUES (?, ?, ?, 1)',
+      [id, trimmedName, trimmedPhone]
+    );
+
+    await logOperation(req.user.id, id, 'temp_worker', 'create', { name: trimmedName, phone: trimmedPhone }, req);
+    res.json({ success: true, id });
+  } catch (err) {
+    console.error('worker create error:', err);
     res.status(500).json({ error: err.message });
   }
 });

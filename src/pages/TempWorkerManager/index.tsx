@@ -38,6 +38,9 @@ export default function TempWorkerManager() {
   const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [selectedPositionId, setSelectedPositionId] = useState('');
   const [assigning, setAssigning] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: '', phone: '' });
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     fetchWorkers();
@@ -130,6 +133,28 @@ export default function TempWorkerManager() {
     }
   };
 
+  const handleCreateWorker = async () => {
+    if (!createForm.name.trim()) {
+      setError('请输入姓名');
+      return;
+    }
+    setCreating(true);
+    setError('');
+    try {
+      await api.post('/temp/workers', {
+        name: createForm.name.trim(),
+        phone: createForm.phone.trim() || undefined,
+      });
+      setShowCreateModal(false);
+      setCreateForm({ name: '', phone: '' });
+      fetchWorkers();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const handleUpdateWorker = async (worker: TempWorker) => {
     const newName = prompt('请输入新姓名:', worker.name);
     if (!newName) return;
@@ -166,6 +191,12 @@ export default function TempWorkerManager() {
           />
         </div>
         <button onClick={fetchWorkers} className="btn-primary">搜索</button>
+        <button
+          onClick={() => { setCreateForm({ name: '', phone: '' }); setShowCreateModal(true); }}
+          className="btn-primary flex items-center gap-1"
+        >
+          <Plus size={18} /> 新增人员
+        </button>
       </div>
 
       {error && (
@@ -276,6 +307,60 @@ export default function TempWorkerManager() {
             </div>
           )}
         </>
+      )}
+
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">新增外请人员</h3>
+              <button onClick={() => setShowCreateModal(false)} className="p-1 hover:bg-gray-100 rounded-md">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-500 mb-4">用于无手机、无法扫码注册的人员手动建档</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">姓名 *</label>
+                <input
+                  type="text"
+                  value={createForm.name}
+                  onChange={(e) => setCreateForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="请输入姓名"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">手机号</label>
+                <input
+                  type="tel"
+                  value={createForm.phone}
+                  onChange={(e) => setCreateForm(prev => ({ ...prev, phone: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder="可选，用于区分同名人员"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-medium hover:bg-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateWorker}
+                disabled={creating || !createForm.name.trim()}
+                className="flex-1 py-3 bg-primary-500 text-white rounded-xl font-medium hover:bg-primary-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creating ? '创建中...' : '确认创建'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showPositionModal && selectedWorker && (
