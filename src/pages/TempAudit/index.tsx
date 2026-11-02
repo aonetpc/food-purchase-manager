@@ -97,6 +97,7 @@ export default function TempAudit() {
     })(),
     hours: '',
     add_reason: '',
+    adjust_amount: '',
   });
   const [showReAuditModal, setShowReAuditModal] = useState(false);
   const [reAuditForm, setReAuditForm] = useState({
@@ -324,6 +325,7 @@ export default function TempAudit() {
       checkin_date: selectedDate,
       hours: '',
       add_reason: '',
+      adjust_amount: '',
     });
     setShowAddRecordModal(true);
   };
@@ -332,7 +334,7 @@ export default function TempAudit() {
     setAddRecordForm(prev => ({ ...prev, [field]: value }));
   };
 
-  const submitAddRecord = async () => {
+  const submitAddRecord = async (createIfMissing = false) => {
     if (!addRecordForm.user_name || !addRecordForm.position_id || !addRecordForm.checkin_date) {
       setError('请填写姓名、岗位和日期');
       return;
@@ -340,10 +342,15 @@ export default function TempAudit() {
 
     try {
       setSubmitting(true);
-      await api.post('/temp/checkins/add-record', {
+      setError('');
+      const body: any = {
         ...addRecordForm,
         hours: addRecordForm.hours ? parseFloat(addRecordForm.hours) : null,
-      }, {
+      };
+      if (addRecordForm.adjust_amount) body.adjust_amount = parseFloat(addRecordForm.adjust_amount);
+      if (createIfMissing) body.create_if_missing = true;
+
+      await api.post('/temp/checkins/add-record', body, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -355,10 +362,19 @@ export default function TempAudit() {
         checkin_date: selectedDate,
         hours: '',
         add_reason: '',
+        adjust_amount: '',
       });
       fetchData();
     } catch (err: any) {
-      setError(err.message || '补录失败');
+      // 匹配不到人员档案：确认后再建档补录，防止重复建垃圾档案
+      if (err.debug_info?.need_create && !createIfMissing) {
+        if (window.confirm(`未找到「${addRecordForm.user_name}」的外请人员档案。\n\n是否为其新建档案并完成补录？`)) {
+          await submitAddRecord(true);
+          return;
+        }
+      } else {
+        setError(err.message || '补录失败');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1210,11 +1226,22 @@ export default function TempAudit() {
                 </div>
               )}
 
-              {getSelectedPosition()?.pay_type === 'per_time' && (
-                <div className="p-3 bg-gray-50 rounded-xl">
-                  <p className="text-sm text-gray-600">
-                    按次计费：<span className="font-semibold text-orange-600">¥{getSelectedPosition()?.rate}</span>
-                  </p>
+              {getSelectedPosition() && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">金额（选填，可改价）</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={addRecordForm.adjust_amount}
+                    onChange={(e) => handleAddRecordFieldChange('adjust_amount', e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                    placeholder={
+                      getSelectedPosition()?.pay_type === 'per_hour'
+                        ? `留空则按 单价¥${getSelectedPosition()?.rate}/小时 × 小时数 计算`
+                        : `留空则使用岗位单价（当前¥${getSelectedPosition()?.rate}）`
+                    }
+                  />
                 </div>
               )}
 
@@ -1251,7 +1278,7 @@ export default function TempAudit() {
                 取消
               </button>
               <button
-                onClick={submitAddRecord}
+                onClick={() => submitAddRecord()}
                 disabled={submitting || !addRecordForm.user_name || !addRecordForm.position_id || !addRecordForm.checkin_date}
                 className="flex-1 py-3 bg-green-500 text-white rounded-xl font-medium hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >

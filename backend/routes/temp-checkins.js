@@ -650,7 +650,7 @@ router.put('/:id/re-audit', requireAuth, async (req, res) => {
 // 补录打卡（审核员代填）
 router.post('/add-record', requireAuth, async (req, res) => {
   try {
-    const { user_name, user_phone, position_id, checkin_date, hours, add_reason } = req.body;
+    const { user_name, user_phone, position_id, checkin_date, hours, add_reason, adjust_amount, create_if_missing } = req.body;
 
     if (!user_name || !position_id || !checkin_date) {
       return res.status(400).json({ error: '姓名、岗位、日期为必填' });
@@ -684,33 +684,58 @@ router.post('/add-record', requireAuth, async (req, res) => {
       return res.status(403).json({ error: '无权在此岗位补录' });
     }
 
-    // 尝试匹配已注册用户
+    // 尝试匹配已注册用户（含禁用用户检测，避免重复建档）
     let matchedUserId = null;
     let userSource = 'temp';
 
     if (user_phone) {
       const [tempMatch] = await pool.query(
-        'SELECT id FROM temp_worker_users WHERE phone = ? AND status = 1 LIMIT 1',
+        'SELECT id, status FROM temp_worker_users WHERE phone = ? LIMIT 1',
         [user_phone]
       );
       if (tempMatch.length > 0) {
+        if (tempMatch[0].status !== 1) {
+          return res.status(400).json({ error: `手机号 ${user_phone} 对应的人员已被禁用，请先在人员管理中启用` });
+        }
         matchedUserId = tempMatch[0].id;
       }
     }
 
     if (!matchedUserId && user_name) {
       const [tempMatch] = await pool.query(
-        'SELECT id FROM temp_worker_users WHERE name = ? AND status = 1 LIMIT 1',
+        'SELECT id, status FROM temp_worker_users WHERE name = ? LIMIT 1',
         [user_name]
       );
       if (tempMatch.length > 0) {
+        if (tempMatch[0].status !== 1) {
+          return res.status(400).json({ error: `人员「${user_name}」已被禁用，请先在人员管理中启用` });
+        }
         matchedUserId = tempMatch[0].id;
       }
     }
 
-    // 计算金额
+    // 匹配不到：先返回提示，由前端确认后再建档（防止重复建垃圾档案）
+    if (!matchedUserId && !create_if_missing) {
+      return res.status(400).json({
+        error: `未找到「${user_name}」的外请人员档案`,
+        debug_info: { need_create: true }
+      });
+    }
+
+    // 前端确认后自动建档（无手机人员兜底，openid 留空）
+    if (!matchedUserId) {
+      matchedUserId = uuidv4();
+      await pool.query(
+        'INSERT INTO temp_worker_users (id, name, phone, status) VALUES (?, ?, ?, 1)',
+        [matchedUserId, user_name, user_phone || null]
+      );
+    }
+
+    // 计算金额（管理员改价优先，否则按岗位单价计算）
     let amount;
-    if (position.pay_type === 'per_hour') {
+    if (adjust_amount !== undefined && adjust_amount !== null && adjust_amount !== '') {
+      amount = parseFloat(adjust_amount);
+    } else if (position.pay_type === 'per_hour') {
       amount = parseFloat(position.rate) * parseFloat(hours || 0);
     } else {
       amount = parseFloat(position.rate);
