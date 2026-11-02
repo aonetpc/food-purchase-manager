@@ -351,25 +351,39 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
 
     const colWidths = [60, 100, 60, 60, 60, 80];
     const headers = ['姓名', '电话', '打卡次数', '正常考核', '折扣考核', '最终金额'];
-    
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+
     let y = doc.y;
-    
-    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
     let x = startX;
-    headers.forEach((header, index) => {
-      doc.text(header, x, y, { width: colWidths[index], align: 'center' });
-      x += colWidths[index];
-    });
-    y += 12;
-    
-    doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke();
-    y += 4;
+
+    // 绘制表头（新页面需重复打印，防止换页后无表头）
+    const drawHeader = () => {
+      doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold');
+      let hx = startX;
+      headers.forEach((header, index) => {
+        doc.text(header, hx, y, { width: colWidths[index], align: 'center' });
+        hx += colWidths[index];
+      });
+      y += 12;
+      doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke();
+      y += 4;
+    };
+
+    drawHeader();
 
     let totalApproved = 0;
     let totalFinal = 0;
 
     doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
     rows.forEach((row, index) => {
+      // 手动分页：y 超过页底前换新页并重打表头（PDFKit 不会对手动 y 坐标的 text() 正确分页）
+      if (y + 18 > pageBottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader();
+        doc.fontSize(8).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica');
+      }
+
       const approved = parseFloat(row.approved_amount);
       const final = parseFloat(row.final_amount);
 
@@ -396,6 +410,12 @@ router.get('/export-salary', requireAuth, attachDataScope, async (req, res) => {
       totalApproved += approved;
       totalFinal += final;
     });
+
+    // 合计行/导出时间也要保证不溢出页底
+    if (y + 50 > pageBottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
 
     y += 8;
     doc.moveTo(startX, y).lineTo(startX + pageWidth, y).stroke();
