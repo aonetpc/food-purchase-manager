@@ -19,8 +19,16 @@ const DEPT_MERGE_MAP = {
 };
 
 // 将子部门名称替换为父部门名称
+// 匹配优先级：精确匹配 > 前缀匹配（如 "礼品-严"、"礼品-张" → 礼品 → 院办）
 function mergeDeptName(name) {
-  return DEPT_MERGE_MAP[name] || name;
+  if (!name) return name;
+  // 1. 精确匹配
+  if (DEPT_MERGE_MAP[name]) return DEPT_MERGE_MAP[name];
+  // 2. 前缀匹配：遍历所有子部门 key，检测 name 是否以 "子部门-" 开头
+  for (const [sub, parent] of Object.entries(DEPT_MERGE_MAP)) {
+    if (name.startsWith(sub + '-')) return parent;
+  }
+  return name;
 }
 
 // 食材采购分类 → 原材料 L2 分类（warehouse_categories）映射
