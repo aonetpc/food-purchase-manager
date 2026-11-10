@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Users, Activity, DollarSign, Building, Target, TrendingUp, TrendingDown, Download } from 'lucide-react';
+import { Calendar, Users, Activity, DollarSign, Building, Target, TrendingUp, TrendingDown, Download, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -32,6 +32,29 @@ interface PositionStat {
   final_amount: number;
 }
 
+interface DepartmentWorker {
+  user_id: string;
+  user_name: string | null;
+  user_phone: string | null;
+  checkin_count: number;
+  approved_count: number;
+  approved_amount: number;
+  final_amount: number;
+}
+
+interface DepartmentWorkersResult {
+  department_id: string;
+  department_name: string;
+  month: string;
+  totals: {
+    total_checkins: number;
+    approved_checkins: number;
+    approved_amount: number;
+    final_amount: number;
+  };
+  workers: DepartmentWorker[];
+}
+
 export default function TempStats() {
   const { user } = useAuthStore();
   const token = user?.token;
@@ -44,10 +67,59 @@ export default function TempStats() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [detailDept, setDetailDept] = useState<DepartmentStat | null>(null);
+  const [detailData, setDetailData] = useState<DepartmentWorkersResult | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
 
   useEffect(() => {
+    setDetailDept(null);
+    setDetailData(null);
+    setDetailError('');
     fetchData();
   }, [selectedMonth]);
+
+  const closeDetail = () => {
+    setDetailDept(null);
+    setDetailData(null);
+    setDetailError('');
+  };
+
+  useEffect(() => {
+    if (!detailDept) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeDetail();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [detailDept]);
+
+  const openDepartmentDetail = async (dept: DepartmentStat) => {
+    setDetailDept(dept);
+    setDetailData(null);
+    setDetailError('');
+    setDetailLoading(true);
+    try {
+      const data = await api.get<DepartmentWorkersResult>(
+        `/temp/stats/departments/${encodeURIComponent(dept.department_id)}/workers?month=${selectedMonth}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setDetailData(data);
+    } catch (err: any) {
+      console.error('获取部门人员明细失败:', err);
+      setDetailError(err.message || '获取人员明细失败');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const formatWorkerName = (worker: DepartmentWorker) => {
+    const name = (worker.user_name || '').trim();
+    if (name) return name;
+    const phone = (worker.user_phone || '').trim();
+    if (phone.length >= 4) return `未命名（尾号${phone.slice(-4)}）`;
+    return `未命名（${worker.user_id.slice(0, 6)}）`;
+  };
 
   const fetchData = async () => {
     try {
@@ -271,7 +343,20 @@ export default function TempStats() {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {departments.map(dept => (
-                  <div key={dept.department_id} className="bg-gray-50 rounded-xl p-4">
+                  <div
+                    key={dept.department_id}
+                    role="button"
+                    tabIndex={0}
+                    title="点击查看人员明细"
+                    onClick={() => openDepartmentDetail(dept)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openDepartmentDetail(dept);
+                      }
+                    }}
+                    className="bg-gray-50 rounded-xl p-4 cursor-pointer transition hover:bg-gray-100 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                  >
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="font-medium text-gray-800">{dept.department_name}</h3>
                       <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
@@ -309,6 +394,7 @@ export default function TempStats() {
                         )}
                       </div>
                     </div>
+                    <p className="mt-2 text-right text-xs text-primary-600">点击查看人员明细</p>
                   </div>
                 ))}
               </div>
@@ -382,6 +468,122 @@ export default function TempStats() {
             </div>
           )}
         </>
+      )}
+
+      {detailDept && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={closeDetail}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">{detailDept.department_name} · 人员明细</h3>
+                <p className="mt-0.5 text-sm text-gray-500">{selectedMonth} 打卡与金额汇总</p>
+              </div>
+              <button
+                onClick={closeDetail}
+                className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                aria-label="关闭"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {detailLoading ? (
+                <div className="py-10 text-center text-gray-500">加载中...</div>
+              ) : detailError ? (
+                <div className="rounded-lg border border-danger-200 bg-danger-50 p-4 text-sm text-danger-700">
+                  {detailError}
+                </div>
+              ) : detailData && detailData.workers.length > 0 ? (
+                <>
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="py-2 px-2 text-left text-sm font-medium text-gray-600">姓名</th>
+                        <th className="py-2 px-2 text-right text-sm font-medium text-gray-600">打卡数</th>
+                        <th className="py-2 px-2 text-right text-sm font-medium text-gray-600">通过数</th>
+                        <th className="py-2 px-2 text-right text-sm font-medium text-gray-600">通过金额</th>
+                        <th className="py-2 px-2 text-right text-sm font-medium text-gray-600">最终金额</th>
+                        <th className="py-2 px-2 text-right text-sm font-medium text-gray-600">差额</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailData.workers.map(worker => (
+                        <tr key={worker.user_id} className="border-b border-gray-100">
+                          <td className="py-2.5 px-2 text-sm text-gray-800">{formatWorkerName(worker)}</td>
+                          <td className="py-2.5 px-2 text-right text-sm text-gray-700">{worker.checkin_count}</td>
+                          <td className="py-2.5 px-2 text-right text-sm text-gray-700">{worker.approved_count}</td>
+                          <td className="py-2.5 px-2 text-right text-sm text-gray-700">
+                            ¥{Number(worker.approved_amount).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-sm font-semibold text-red-600">
+                            ¥{Number(worker.final_amount).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-sm">
+                            {Number(worker.approved_amount) > 0 ? (
+                              <span className={
+                                Number(worker.final_amount) >= Number(worker.approved_amount)
+                                  ? 'text-green-600'
+                                  : 'text-orange-600'
+                              }>
+                                {((Number(worker.final_amount) - Number(worker.approved_amount)) /
+                                  Number(worker.approved_amount) * 100).toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-gray-200 bg-gray-50">
+                        <td className="py-3 px-2 text-sm font-medium text-gray-700">
+                          合计（{detailData.workers.length}人）
+                        </td>
+                        <td className="py-3 px-2 text-right text-sm font-semibold text-gray-800">
+                          {detailData.totals.total_checkins}
+                        </td>
+                        <td className="py-3 px-2 text-right text-sm font-semibold text-gray-800">
+                          {detailData.totals.approved_checkins}
+                        </td>
+                        <td className="py-3 px-2 text-right text-sm font-semibold text-gray-800">
+                          ¥{Number(detailData.totals.approved_amount).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-2 text-right text-sm font-semibold text-red-600">
+                          ¥{Number(detailData.totals.final_amount).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-2 text-right text-sm font-medium">
+                          {Number(detailData.totals.approved_amount) > 0 ? (
+                            <span className={
+                              Number(detailData.totals.final_amount) >= Number(detailData.totals.approved_amount)
+                                ? 'text-green-600'
+                                : 'text-orange-600'
+                            }>
+                              {((Number(detailData.totals.final_amount) - Number(detailData.totals.approved_amount)) /
+                                Number(detailData.totals.approved_amount) * 100).toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <p className="mt-3 text-xs text-gray-400">统计口径与部门卡片一致，仅审核通过的记录计入金额。</p>
+                </>
+              ) : (
+                <div className="py-10 text-center text-gray-500">该部门本月暂无人员数据</div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

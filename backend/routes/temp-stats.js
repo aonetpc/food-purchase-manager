@@ -177,6 +177,95 @@ router.get('/departments', requireAuth, attachDataScope, async (req, res) => {
   }
 });
 
+// 部门人员明细
+router.get('/departments/:departmentId/workers', requireAuth, attachDataScope, async (req, res) => {
+  try {
+    const { departmentId } = req.params;
+    const { month } = req.query;
+    const targetMonth = month || getCurrentMonthStr();
+
+    if (!departmentId) {
+      return res.status(400).json({ error: '部门ID不能为空' });
+    }
+    if (!/^\d{4}-\d{2}$/.test(targetMonth)) {
+      return res.status(400).json({ error: '月份格式不正确，应为 YYYY-MM' });
+    }
+
+    const params = [departmentId, targetMonth, ...req.dataScope.params];
+
+    // 汇总口径与 /departments 卡片保持一致
+    const [summaryRows] = await pool.query(`
+      SELECT
+        d.name as department_name,
+        COUNT(*) as total_checkins,
+        SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved_checkins,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
+      FROM checkin_records cr
+      LEFT JOIN departments d ON cr.department_id = d.id
+      ${req.dataScope.join}
+      WHERE cr.department_id = ?
+        AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND ${req.dataScope.sql}
+      GROUP BY cr.department_id, d.name
+    `, params);
+
+    const [workerRows] = await pool.query(`
+      SELECT
+        cr.user_id,
+        MAX(cr.user_name) as user_name,
+        MAX(cr.user_phone) as user_phone,
+        COUNT(*) as checkin_count,
+        SUM(CASE WHEN cr.status = 'approved' THEN 1 ELSE 0 END) as approved_count,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN cr.status = 'approved' AND cr.assessment_status = 'discounted'
+                         THEN cr.amount * cr.assessment_discount
+                    WHEN cr.status = 'approved' THEN cr.amount ELSE 0 END), 0) as final_amount
+      FROM checkin_records cr
+      ${req.dataScope.join}
+      WHERE cr.department_id = ?
+        AND DATE_FORMAT(cr.checkin_date, "%Y-%m") = ?
+        AND ${req.dataScope.sql}
+      GROUP BY cr.user_id
+      ORDER BY final_amount DESC, checkin_count DESC, cr.user_id ASC
+    `, params);
+
+    const summary = summaryRows[0];
+    if (!summary) {
+      return res.json({
+        department_id: departmentId,
+        department_name: '',
+        month: targetMonth,
+        totals: {
+          total_checkins: 0,
+          approved_checkins: 0,
+          approved_amount: 0,
+          final_amount: 0,
+        },
+        workers: [],
+      });
+    }
+
+    res.json({
+      department_id: departmentId,
+      department_name: summary.department_name,
+      month: targetMonth,
+      totals: {
+        total_checkins: summary.total_checkins,
+        approved_checkins: summary.approved_checkins,
+        approved_amount: summary.approved_amount,
+        final_amount: summary.final_amount,
+      },
+      workers: workerRows,
+    });
+  } catch (err) {
+    console.error('stats department workers error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/positions', requireAuth, attachDataScope, async (req, res) => {
   try {
     const { month } = req.query;
