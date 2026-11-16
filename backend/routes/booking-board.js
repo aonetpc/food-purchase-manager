@@ -1727,14 +1727,28 @@ router.get('/orders', requireAuth, async (req, res) => {
     const params = [];
 
     // 日期覆盖：订单里任一 item 日期在范围内，或 没有 items 的 pending 草稿（待完善），或 不是模板的订单
+    // fix/227：住宿 item 的 date 存的是入住日，跨周续住会漏单；额外用「住期与本周重叠」兜住
+    //   住宿占用区间为 [入住日, 退房日)，故「退房日 > 本周一」即与本周有交集
+    //   退房日优先取 extra.dateCheckOut，缺失时用 入住日 + extra.nights 兜底
     wheres.push(`(
       o.is_template = 0
       AND (
-        o.id IN (SELECT DISTINCT order_id FROM booking_items WHERE date BETWEEN ? AND ?)
+        o.id IN (
+          SELECT DISTINCT order_id FROM booking_items i
+          WHERE i.date BETWEEN ? AND ?
+             OR (
+               i.item_type = 'lodging'
+               AND i.date < ?
+               AND COALESCE(
+                     STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(i.extra, '$.dateCheckOut')), '%Y-%m-%d'),
+                     DATE_ADD(i.date, INTERVAL COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(i.extra, '$.nights')) AS UNSIGNED), 0) DAY)
+                   ) > ?
+             )
+        )
         OR (o.status = 'pending' AND o.id NOT IN (SELECT DISTINCT order_id FROM booking_items))
       )
     )`);
-    params.push(weekStart, weekEnd);
+    params.push(weekStart, weekEnd, weekStart, weekStart);
 
     if (status) {
       const list = String(status).split(',').map(s => s.trim()).filter(Boolean);
