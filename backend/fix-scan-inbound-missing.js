@@ -35,17 +35,6 @@ async function fixScanInboundMissing() {
   try {
     conn = await pool.getConnection();
 
-    // 0. 先确保 movement_type ENUM 包含 'expense'
-    try {
-      await conn.query(
-        `ALTER TABLE stock_movements
-         MODIFY COLUMN movement_type ENUM('inbound','outbound','adjust','expense') NOT NULL COMMENT '类型：入库/出库/盘点调整/即买即用消耗'`
-      );
-      console.log('✅ 已确保 movement_type 包含 expense\n');
-    } catch (e) {
-      // 已包含则忽略
-    }
-
     // 1. 查找所有已审核/自动出库的领料单
     console.log('🔍 步骤1：查找已审核领料单...');
     const [requisitions] = await conn.query(`

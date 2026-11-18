@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Flame,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
@@ -43,7 +44,7 @@ interface StockMovementItem {
   warehouse_name: string;
   item_id: string;
   item_name: string;
-  movement_type: 'inbound' | 'outbound' | 'expense' | 'adjust';
+  movement_type: 'inbound' | 'outbound' | 'expense' | 'adjust' | 'return';
   quantity: number;
   unit: string;
   unit_price: number;
@@ -290,6 +291,14 @@ export default function StockMovement() {
         </span>
       );
     }
+    if (type === 'return') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700">
+          <RotateCcw size={12} />
+          采购退货
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-700">
         <ArrowUpFromLine size={12} />
@@ -377,6 +386,7 @@ export default function StockMovement() {
             <option value="outbound">出库</option>
             <option value="expense">即买即用</option>
             <option value="adjust">盘点调整</option>
+            <option value="return">采购退货</option>
           </select>
 
           {/* 物资名称搜索 */}
