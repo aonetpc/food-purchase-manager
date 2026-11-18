@@ -3488,6 +3488,12 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const row = rows[0];
+    // 业务依据：撤销的付款申请一定未付款，unknown 亦按未付款处理，均可重发；
+    // 仅当明确查到付款记录（月结已付 / 预付已回填凭证 / 费用支付记录已付）时禁止重发。
+    const paymentState = await derivePaymentState(pool, row);
+    if (paymentState === 'paid') {
+      return res.status(400).json({ error: '该采购单已记录付款，禁止重新发起报销' });
+    }
     // 允许两种场景：1) 首次发起报销（status=confirmed 且无 reimbursement_sp_no）；
     // 2) 报销被驳回/被撤销后重新发起（frozen 为异常冻结，禁止重发）
     const isFirstTime = row.status === 'confirmed' && !row.reimbursement_sp_no;
@@ -4190,9 +4196,13 @@ function isAdminUser(req) {
 
 /**
  * 派生付款状态（只读，不允许手工写）
- *  - 月结：monthly_paid_at
- *  - 预付：prepay_status=paid
- *  - 普通报销：wecom_expense_payments 中按报销审批单号能查到支付记录才算已付；查不到一律 unknown
+ * 业务依据（勿按「未知即危险」再收紧）：
+ *  - 企微付款申请可以撤销，能撤销就说明一定还没付款；已付款的场景不会发生退货。
+ *  - 因此「未知」在业务上等同「未付款」，只用于展示，不阻塞退货完成与报销重发。
+ *  - 只有系统能明确查到付款记录时才判定 paid，并据此拦截（禁止重发、完成退货需退款凭证）。
+ *  - 月结：monthly_paid_at 非空即已付
+ *  - 预付：prepay_status='paid'（回填付款凭证后才会置 paid）即已付
+ *  - 普通报销：已撤销直接视为未付款；否则按当前报销单号查支付记录，查不到返回 unknown（不阻塞）
  */
 async function derivePaymentState(exec, purchase) {
   if (purchase.purchase_type === 'monthly') {
@@ -4201,7 +4211,9 @@ async function derivePaymentState(exec, purchase) {
   if (purchase.purchase_type === 'prepay') {
     return purchase.prepay_status === 'paid' ? 'paid' : 'unpaid';
   }
-  if (!purchase.reimbursement_sp_no) return 'unknown';
+  // 撤销场景（reimbursement_status='revoked'）直接视同未付款
+  if (purchase.reimbursement_status === 'revoked') return 'unpaid';
+  if (!purchase.reimbursement_sp_no) return 'unpaid';
   const [rows] = await exec.query(
     'SELECT payment_status FROM wecom_expense_payments WHERE sp_no = ? LIMIT 1',
     [purchase.reimbursement_sp_no]
@@ -4833,10 +4845,8 @@ router.post('/returns/:returnId/complete', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const paymentState = await derivePaymentState(connection, pRows[0]);
-    if (paymentState === 'unknown') {
-      await connection.rollback();
-      return res.status(400).json({ error: '付款状态未知：请先在费用审批中确认该报销是否已付款，再完成退货' });
-    }
+    // 业务依据：撤销的付款申请一定未付款，unknown 也按未付款处理，均不阻塞完成；
+    // 仅当明确查到已付款时，才要求先登记退款/抵扣凭证。
     if (paymentState === 'paid' && !returnRow.settlement_ref) {
       await connection.rollback();
       return res.status(400).json({ error: '已付款退货请先登记退款/抵扣凭证号，再完成退货' });
