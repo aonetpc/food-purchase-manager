@@ -4183,6 +4183,16 @@ function round3(n) {
   return Math.round((Number(n) || 0) * 1000) / 1000;
 }
 
+// 退货日期：不传默认今天；禁止未来日期
+function normalizeReturnDate(raw) {
+  const today = formatLocalNow().slice(0, 10);
+  if (raw === undefined || raw === null || raw === '') return { date: today };
+  const s = String(raw).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { error: '退货日期格式错误，应为 YYYY-MM-DD' };
+  if (s > today) return { error: '退货日期不能晚于今天' };
+  return { date: s };
+}
+
 function genReturnNo() {
   const d = new Date();
   const p = (v, l = 2) => String(v).padStart(l, '0');
@@ -4230,11 +4240,21 @@ async function derivePaymentState(exec, purchase) {
  * @param {string|null} excludeReturnId 确认时排除本单（本单尚未计入已确认统计）
  */
 async function buildReturnItemAmounts(exec, purchaseId, lines, excludeReturnId = null) {
+  lines.forEach((line, idx) => {
+    if (!line || !line.purchase_item_id) {
+      const err = new Error(`第 ${idx + 1} 行退货明细缺少物资明细ID`);
+      err.httpStatus = 400;
+      throw err;
+    }
+  });
   const ids = [...new Set(lines.map((l) => l.purchase_item_id).filter(Boolean))];
   if (ids.length === 0) return [];
 
+  // 注意：warehouse_purchase_items 没有 unit 列，只有 received_unit / requested_unit
   const [itemRows] = await exec.query(
-    `SELECT id, item_id, item_name, spec, unit, warehouse_id, received_quantity, received_amount,
+    `SELECT id, item_id, item_name, spec,
+            COALESCE(received_unit, requested_unit) AS unit,
+            warehouse_id, received_quantity, received_amount,
             received_unit_price, requested_quantity, requested_unit_price
      FROM warehouse_purchase_items
      WHERE purchase_id = ? AND id IN (?)`,
@@ -4254,10 +4274,11 @@ async function buildReturnItemAmounts(exec, purchaseId, lines, excludeReturnId =
   const result = [];
   const pendingQty = new Map(); // 同一请求内同明细的累计
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
     const item = itemMap.get(line.purchase_item_id);
     if (!item) {
-      const err = new Error('退货明细不属于该采购单');
+      const err = new Error(`第 ${i + 1} 行退货明细不属于该采购单（明细ID：${line.purchase_item_id}）`);
       err.httpStatus = 400;
       throw err;
     }
@@ -4331,6 +4352,7 @@ async function sendReturnGroupMessage(purchase, returnRow, items, operatorName) 
       '**采购退货已确认**',
       `> 采购单号：${purchase.purchase_no || purchase.id}`,
       `> 退货单号：${returnRow.return_no}`,
+      `> 退货日期：${returnRow.return_date || '-'}`,
       itemLines,
       `> 退货金额：¥${(Number(returnRow.total_amount) || 0).toFixed(2)}`,
       `> 退货后净额：¥${(Number(returnRow.net_amount) || 0).toFixed(2)}`,
@@ -4349,9 +4371,13 @@ router.post('/:id/returns', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const { id } = req.params;
-    const { items, remark, submit } = req.body || {};
+    const { items, remark, submit, return_date: returnDateRaw } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: '请选择退货明细' });
+    }
+    const returnDate = normalizeReturnDate(returnDateRaw);
+    if (returnDate.error) {
+      return res.status(400).json({ error: returnDate.error });
     }
     const lineItemIds = items.map((it) => it && it.purchase_item_id).filter(Boolean);
     if (new Set(lineItemIds).size !== lineItemIds.length) {
@@ -4383,11 +4409,11 @@ router.post('/:id/returns', requireAuth, async (req, res) => {
     await connection.beginTransaction();
     await connection.query(
       `INSERT INTO warehouse_purchase_returns
-       (id, return_no, purchase_id, purchase_no, warehouse_id, warehouse_name, status,
+       (id, return_no, purchase_id, purchase_no, warehouse_id, warehouse_name, status, return_date,
         total_quantity, total_amount, payment_state, remark, created_by, created_by_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?)`,
       [returnId, returnNo, purchase.id, purchase.purchase_no, purchase.warehouse_id, purchase.warehouse_name,
-       status, totalQty, totalAmount, remark || null, operatorId, operatorName]
+       status, returnDate.date, totalQty, totalAmount, remark || null, operatorId, operatorName]
     );
     for (const line of computed) {
       await connection.query(

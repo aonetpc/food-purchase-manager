@@ -175,6 +175,7 @@ interface PurchaseReturn {
   return_no: string;
   purchase_id: string;
   status: 'draft' | 'submitted' | 'confirmed' | 'completed' | 'voided';
+  return_date?: string | null;
   total_quantity: number;
   total_amount: number;
   net_amount?: number | null;
@@ -222,6 +223,13 @@ const isReturnSettled = (p: WarehousePurchase) =>
   p.status === 'reimbursed'
   || !!p.monthly_paid_at
   || (p.purchase_type === 'prepay' && p.prepay_status === 'paid' && !!p.writeoff_status);
+
+// 本地日期 YYYY-MM-DD（退货日期默认当天、不允许未来）
+const todayDateStr = () => {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 
 // ====== 状态显示配置 ======
 
@@ -355,6 +363,7 @@ export default function WarehousePurchaseList() {
   const [returnTarget, setReturnTarget] = useState<WarehousePurchase | null>(null);
   const [returnRows, setReturnRows] = useState<ReturnFormRow[]>([]);
   const [returnRemark, setReturnRemark] = useState('');
+  const [returnDate, setReturnDate] = useState(todayDateStr());
   const [returnLoading, setReturnLoading] = useState(false);
   const [returnSubmitting, setReturnSubmitting] = useState(false);
 
@@ -535,6 +544,7 @@ export default function WarehousePurchaseList() {
     setShowReturnModal(true);
     setReturnRows([]);
     setReturnRemark('');
+    setReturnDate(todayDateStr());
     setReturnLoading(true);
     try {
       let items = p.items;
@@ -603,6 +613,10 @@ export default function WarehousePurchaseList() {
       setError('请填写至少一项退货数量');
       return;
     }
+    if (!returnDate || returnDate > todayDateStr()) {
+      setError('退货日期不能为空且不能晚于今天');
+      return;
+    }
     for (const r of lines) {
       const qty = parseFloat(r.quantity) || 0;
       if (qty > r.maxQty + 0.0005) {
@@ -619,6 +633,7 @@ export default function WarehousePurchaseList() {
           quantity: parseFloat(r.quantity) || 0,
         })),
         remark: returnRemark.trim() || undefined,
+        return_date: returnDate || undefined,
         submit: !asDraft,
       });
       setShowReturnModal(false);
@@ -2189,15 +2204,27 @@ export default function WarehousePurchaseList() {
                 </div>
               )}
 
-              <div className="mt-4">
-                <label className="block text-xs text-gray-500 mb-1">退货备注（可选）</label>
-                <input
-                  type="text"
-                  value={returnRemark}
-                  onChange={(e) => setReturnRemark(e.target.value)}
-                  placeholder="如退货原因、物流单号等"
-                  className="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
-                />
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">退货日期</label>
+                  <input
+                    type="date"
+                    value={returnDate}
+                    max={todayDateStr()}
+                    onChange={(e) => setReturnDate(e.target.value)}
+                    className="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">退货备注（可选）</label>
+                  <input
+                    type="text"
+                    value={returnRemark}
+                    onChange={(e) => setReturnRemark(e.target.value)}
+                    placeholder="如退货原因、物流单号等"
+                    className="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                  />
+                </div>
               </div>
               <p className="text-xs text-gray-400 mt-2">
                 退货金额按原明细实收金额与数量比例自动拆分，单价不可修改；确认后将扣减库存并冲减采购净额。
@@ -2271,6 +2298,7 @@ export default function WarehousePurchaseList() {
                       <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gray-50">
                         <span className="font-mono text-xs text-gray-800">{ret.return_no}</span>
                         <span className={`px-2 py-0.5 rounded-full text-xs ${cfg.color}`}>{cfg.text}</span>
+                        <span className="text-xs text-gray-500">退货日期 {ret.return_date || '-'}</span>
                         <span className="text-xs text-gray-500">
                           数量 {safeNum(ret.total_quantity)}　金额 {formatCurrency(safeNum(ret.total_amount))}
                         </span>
