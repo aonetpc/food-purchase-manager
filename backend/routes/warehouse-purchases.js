@@ -73,6 +73,82 @@ if (!fs.existsSync(PDF_DIR)) {
 }
 
 // ================================================
+// 确认单 PDF 版本化
+//   - 有退货的单据：warehouse_{id}_v{YYYYMMDDHHmmssSSS}.pdf，绝不覆盖既有归档
+//   - 无退货的单据：仍写 warehouse_{id}.pdf，保持改动前行为
+// ================================================
+const CONFIRM_PDF_VERSION_RE = /^(.+)_v(\d{17})\.pdf$/;
+
+function pdfTimestamp(d = new Date()) {
+  const p = (n, len = 2) => String(n).padStart(len, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${p(d.getMilliseconds(), 3)}`;
+}
+
+/** 列出某采购单的全部确认单版本文件（按时间戳升序，最后一个最新） */
+function listConfirmPdfVersions(purchaseId) {
+  try {
+    const prefix = `warehouse_${purchaseId}_v`;
+    return fs.readdirSync(PDF_DIR)
+      .filter((name) => name.startsWith(prefix) && CONFIRM_PDF_VERSION_RE.test(name))
+      .sort()
+      .map((name) => path.join(PDF_DIR, name));
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 最新版本的确认单 PDF 路径（无版本文件时返回 null） */
+function latestConfirmPdfVersion(purchaseId) {
+  const versions = listConfirmPdfVersions(purchaseId);
+  return versions.length > 0 ? versions[versions.length - 1] : null;
+}
+
+/** 解析当前应使用的确认单 PDF：优先最新版本，其次原归档件，都没有返回 null */
+function resolveConfirmPdfPath(purchaseId) {
+  const latest = latestConfirmPdfVersion(purchaseId);
+  if (latest && fs.existsSync(latest)) return latest;
+  const base = path.join(PDF_DIR, `warehouse_${purchaseId}.pdf`);
+  return fs.existsSync(base) ? base : null;
+}
+
+/** 原归档件路径（不做存在性判断） */
+function originalConfirmPdfPath(purchaseId) {
+  return path.join(PDF_DIR, `warehouse_${purchaseId}.pdf`);
+}
+
+/**
+ * 确认单是否需要因退货变化生成新版本：
+ *   - 有已确认/已完成退货但没有任何版本文件 → 需要
+ *   - 最新版本文件早于最近一次退货变更（新建/确认/作废）→ 需要
+ * 仅新增版本文件，绝不覆盖原归档件
+ */
+async function confirmPdfNeedsRefresh(purchaseId) {
+  const [rows] = await pool.query(
+    `SELECT MAX(GREATEST(created_at, COALESCE(confirmed_at, created_at), COALESCE(voided_at, created_at))) AS last_change
+       FROM warehouse_purchase_returns
+      WHERE purchase_id = ? AND status <> 'draft'`,
+    [purchaseId]
+  );
+  const lastChange = rows[0]?.last_change;
+  if (!lastChange) return false;
+
+  const latest = latestConfirmPdfVersion(purchaseId);
+  if (!latest) {
+    const [cntRows] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM warehouse_purchase_returns
+        WHERE purchase_id = ? AND status IN ('confirmed', 'completed')`,
+      [purchaseId]
+    );
+    return toNum(cntRows[0]?.cnt) > 0;
+  }
+  try {
+    return fs.statSync(latest).mtimeMs < new Date(lastChange).getTime();
+  } catch (e) {
+    return false;
+  }
+}
+
+// ================================================
 // 工具函数
 // ================================================
 
@@ -187,10 +263,10 @@ function normalizePurchaseRow(row) {
   const id = row.id;
   let pdfUrl = row.pdf_url;
   let applyPdfUrl = row.apply_pdf_url;
-  const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
+  const confirmPdfPath = resolveConfirmPdfPath(id);
   const applyPdfPath = row.apply_pdf_path || path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
   // 确认单 PDF 与申请单 PDF 走独立 URL（带 type 参数区分）
-  if (fs.existsSync(confirmPdfPath)) {
+  if (confirmPdfPath && fs.existsSync(confirmPdfPath)) {
     pdfUrl = `/api/warehouse-purchases/${id}/pdf?type=confirm`;
   }
   if (fs.existsSync(applyPdfPath)) {
@@ -1000,9 +1076,28 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   const reimburseAmount = isPrepayTail
     ? Math.max(0, fullAmount - toNum(row.prepay_amount))
     : fullAmount;
-  const reason = isPrepayTail
-    ? `${monthDayStr}仓库采购预付尾款，实际入库¥${fullAmount.toFixed(2)}，已预付¥${toNum(row.prepay_amount).toFixed(2)}，尾款¥${reimburseAmount.toFixed(2)}`
-    : `${monthDayStr}仓库采购单，实际入库¥${reimburseAmount.toFixed(2)}`;
+
+  // 已确认/已完成的退货单：仅用于把「退货金额 + 退货单号」写进报销事由
+  // 无退货时保持原有文案完全不变（只对之后发起的报销生效，历史报销单不重算）
+  const [returnRows] = await pool.query(
+    `SELECT return_no, total_amount FROM warehouse_purchase_returns
+     WHERE purchase_id = ? AND status IN ('confirmed', 'completed')
+     ORDER BY created_at ASC`,
+    [row.id]
+  );
+  const hasReturns = returnRows.length > 0;
+  const returnedTotal = Math.round(returnRows.reduce((s, r) => s + toNum(r.total_amount), 0) * 100) / 100;
+  const returnNos = Array.from(new Set(returnRows.map((r) => r.return_no).filter(Boolean))).join('、');
+  const grossAmount = toNum(row.actual_amount) > 0 ? toNum(row.actual_amount) : toNum(row.total_amount);
+
+  let reason;
+  if (hasReturns) {
+    reason = `${monthDayStr}仓库采购单，原入库 ¥${grossAmount.toFixed(2)}，退货 ¥${returnedTotal.toFixed(2)}（${returnNos}），本次报销 ¥${reimburseAmount.toFixed(2)}`;
+  } else if (isPrepayTail) {
+    reason = `${monthDayStr}仓库采购预付尾款，实际入库¥${fullAmount.toFixed(2)}，已预付¥${toNum(row.prepay_amount).toFixed(2)}，尾款¥${reimburseAmount.toFixed(2)}`;
+  } else {
+    reason = `${monthDayStr}仓库采购单，实际入库¥${reimburseAmount.toFixed(2)}`;
+  }
 
   // 收款人 = 申请人自己，取企微真实姓名
   let payeeName = creatorUserid;
@@ -1013,10 +1108,10 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
     console.warn('[仓库报销] 获取申请人姓名失败，回退使用userid作为收款人:', e.message);
   }
 
-  // 确保 PDF 存在（确认单 PDF）
-  const pdfPath = path.join(PDF_DIR, `warehouse_${row.id}.pdf`);
-  if (!fs.existsSync(pdfPath)) {
-    try { await generateWarehousePDF(row.id); } catch (e) { console.error('生成PDF失败:', e.message); }
+  // 确保 PDF 存在（确认单 PDF）：优先最新版本，其次原归档件，都没有才新生成
+  let pdfPath = resolveConfirmPdfPath(row.id);
+  if (!pdfPath) {
+    try { pdfPath = await generateWarehousePDF(row.id); } catch (e) { console.error('生成PDF失败:', e.message); }
   }
 
   const applyData = await buildWarehouseApplyData(config, fieldMapping, controlTypeMap, selectorOptionsMap, {
@@ -1274,8 +1369,53 @@ async function generateWarehousePDF(purchaseId) {
 
   const userConfirmations = parseJsonField(row.user_confirmations) || {};
 
+  // ===== 退货数据（只统计已确认/已完成，作废与草稿不计） =====
+  const [returnItemRows] = await pool.query(
+    `SELECT r.return_no, COALESCE(r.return_date, DATE(r.created_at)) AS return_date,
+            r.created_by_name, r.created_at AS return_created_at,
+            ri.purchase_item_id, ri.item_name, ri.unit, ri.quantity, ri.amount
+       FROM warehouse_purchase_return_items ri
+       INNER JOIN warehouse_purchase_returns r ON r.id = ri.return_id
+      WHERE r.purchase_id = ? AND r.status IN ('confirmed', 'completed')
+      ORDER BY r.created_at ASC, ri.created_at ASC`,
+    [purchaseId]
+  );
+  const hasReturns = returnItemRows.length > 0;
+  const returnedByItem = new Map(); // purchase_item_id -> { qty, amt }
+  let returnedTotal = 0;
+  for (const r of returnItemRows) {
+    const qty = toNum(r.quantity);
+    const amt = toNum(r.amount);
+    returnedTotal += amt;
+    const prev = returnedByItem.get(r.purchase_item_id) || { qty: 0, amt: 0 };
+    returnedByItem.set(r.purchase_item_id, { qty: prev.qty + qty, amt: prev.amt + amt });
+  }
+  returnedTotal = Math.round(returnedTotal * 100) / 100;
+
+  // 明细展示值预先计算：表头净额、明细行、合计区三处必须来自同一份数字
+  const itemDisplay = new Map();
+  let grossTotal = 0;
+  for (const item of itemRows) {
+    const notArrived = item.not_arrived ? Number(item.not_arrived) === 1 : false;
+    const hasReceived = toNum(item.received_amount) > 0 || toNum(item.received_quantity) > 0;
+    const price = hasReceived ? toNum(item.received_unit_price) : toNum(item.requested_unit_price);
+    const qty = hasReceived ? toNum(item.received_quantity) : toNum(item.requested_quantity);
+    const amt = hasReceived ? toNum(item.received_amount) : toNum(item.requested_amount);
+    const unit = hasReceived ? (item.received_unit || item.requested_unit || '') : (item.requested_unit || '');
+    itemDisplay.set(item.id, { notArrived, price, qty, amt, unit });
+    if (!notArrived) grossTotal += amt;
+  }
+  grossTotal = Math.round(grossTotal * 100) / 100;
+  // 应结净额 = 入库合计（毛额）- 退货合计；无退货时沿用原有净额口径，输出与改动前一致
+  const netTotal = hasReturns
+    ? Math.round((grossTotal - returnedTotal) * 100) / 100
+    : computeNetAmount(row);
+
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
-  const pdfPath = path.join(PDF_DIR, `warehouse_${purchaseId}.pdf`);
+  // 有退货：时间戳版本文件，不覆盖原归档；无退货：沿用原文件名，输出与改动前一致
+  const pdfPath = hasReturns
+    ? path.join(PDF_DIR, `warehouse_${purchaseId}_v${pdfTimestamp()}.pdf`)
+    : originalConfirmPdfPath(purchaseId);
   const writeStream = fs.createWriteStream(pdfPath);
   doc.pipe(writeStream);
 
@@ -1297,7 +1437,8 @@ async function generateWarehousePDF(purchaseId) {
     : row.status === 'reimbursing' ? '报销中'
     : row.status === 'reimbursed' ? '已报销'
     : row.status;
-  const amountLabel = computeNetAmount(row);
+  // 表头金额与合计区「应结净额」使用同一数字，避免单据自相矛盾
+  const amountLabel = netTotal;
   // 汇总涉及仓库
   const pdfWarehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
   doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${pdfWarehouseNames.join('、') || '-'}    供应商：${row.supplier_name || '-'}`);
@@ -1479,12 +1620,8 @@ async function generateWarehousePDF(purchaseId) {
     doc.font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica').fontSize(7);
     let subtotal = 0;
     for (const item of items) {
-      const notArrived = item.not_arrived ? Number(item.not_arrived) === 1 : false;
-      const hasReceived = toNum(item.received_amount) > 0 || toNum(item.received_quantity) > 0;
-      const price = hasReceived ? toNum(item.received_unit_price) : toNum(item.requested_unit_price);
-      const qty = hasReceived ? toNum(item.received_quantity) : toNum(item.requested_quantity);
-      const amt = hasReceived ? toNum(item.received_amount) : toNum(item.requested_amount);
-      const unit = hasReceived ? (item.received_unit || item.requested_unit || '') : (item.requested_unit || '');
+      const disp = itemDisplay.get(item.id) || { notArrived: false, price: 0, qty: 0, amt: 0, unit: '' };
+      const { notArrived, price, qty, amt, unit } = disp;
       const itemName = notArrived ? `${item.item_name}（未到货）` : item.item_name;
       const qtyDisplay = notArrived ? '0' : String(qty);
       const amtDisplay = notArrived ? '¥0.00' : `¥${amt.toFixed(2)}`;
@@ -1497,6 +1634,19 @@ async function generateWarehousePDF(purchaseId) {
       ];
       currentY += drawTableRow(currentY, cells);
       if (!notArrived) subtotal += amt;
+
+      // 已退物资：原行下方增加灰色标注，黑白打印仍可辨识（不改变原行数量/金额列）
+      const ret = returnedByItem.get(item.id);
+      if (!notArrived && ret && ret.qty > 0) {
+        currentY = checkPageBreak(currentY, 9);
+        doc.fontSize(6.5).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica')
+          .fillColor('#666666')
+          .text(`已退 ${ret.qty}${unit} / 退货金额 ¥${ret.amt.toFixed(2)}`, tableX + 6, currentY + 1, {
+            width: tableWidth * 0.7,
+          });
+        doc.fillColor('#000000');
+        currentY += 9;
+      }
     }
     grandTotal += subtotal;
 
@@ -1515,11 +1665,80 @@ async function generateWarehousePDF(purchaseId) {
     doc.fontSize(10).text('暂无采购明细', { align: 'center' });
   }
 
-  // 合计
-  currentY = checkPageBreak(currentY, 30);
-  doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
-  doc.fontSize(11).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
-    .text(`合计金额：¥${grandTotal.toFixed(2)}`, tableX, currentY + 3, { width: tableWidth, align: 'right' });
+  // 合计：无退货保持原样一行；有退货改为「入库合计（毛额）→ 退货 −金额 → 应结净额」三行
+  if (hasReturns) {
+    currentY = checkPageBreak(currentY, 64);
+    doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+    let totalY = currentY + 5;
+    doc.fontSize(10).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+      .text(`入库合计（毛额）：¥${grossTotal.toFixed(2)}`, tableX, totalY, { width: tableWidth, align: 'right' });
+    totalY += 14;
+    doc.text(`退货：−¥${returnedTotal.toFixed(2)}`, tableX, totalY, { width: tableWidth, align: 'right' });
+    totalY += 14;
+    doc.fontSize(11).text(`应结净额：¥${netTotal.toFixed(2)}`, tableX, totalY, { width: tableWidth, align: 'right' });
+    currentY = totalY + 18;
+  } else {
+    currentY = checkPageBreak(currentY, 30);
+    doc.moveTo(tableX, currentY).lineTo(tableX + tableWidth, currentY).stroke();
+    doc.fontSize(11).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+      .text(`合计金额：¥${grandTotal.toFixed(2)}`, tableX, currentY + 3, { width: tableWidth, align: 'right' });
+  }
+
+  // 退货记录区块：仅在有退货时渲染，保证无退货单据输出与改动前完全一致
+  if (hasReturns) {
+    currentY = checkPageBreak(currentY, 60);
+    doc.fontSize(12).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+      .text('退货记录', tableX, currentY + 8, { width: tableWidth });
+    currentY += 22;
+
+    const retHeaders = ['退货单号', '退货日期', '物资名称', '退货数量', '退货金额', '操作人'];
+    const retColWidths = [
+      tableWidth * 0.18,
+      tableWidth * 0.13,
+      tableWidth * 0.27,
+      tableWidth * 0.11,
+      tableWidth * 0.15,
+      tableWidth * 0.16,
+    ];
+    const drawReturnRow = (y, cells, isHeader = false) => {
+      const font = isHeader ? 'Chinese-Bold' : 'Chinese-Regular';
+      const helveticaFont = isHeader ? 'Helvetica-Bold' : 'Helvetica';
+      doc.font(hasChineseFont ? font : helveticaFont).fontSize(isHeader ? 7.5 : 7);
+      const lineHeight = doc.currentLineHeight();
+      let x = tableX;
+      for (let i = 0; i < cells.length; i++) {
+        const align = i === 0 || i === 2 ? 'left' : (i === 5 ? 'center' : 'right');
+        doc.text(String(cells[i]), x + 2, y + (fixedRowHeight - lineHeight) / 2, {
+          width: retColWidths[i] - 4,
+          align,
+        });
+        x += retColWidths[i];
+      }
+      return fixedRowHeight;
+    };
+
+    currentY += drawReturnRow(currentY, retHeaders, true);
+    doc.moveTo(tableX, currentY - 1).lineTo(tableX + tableWidth, currentY - 1).stroke();
+    for (const r of returnItemRows) {
+      currentY = checkPageBreak(currentY, fixedRowHeight);
+      const dateText = r.return_date
+        ? (r.return_date instanceof Date
+            ? `${r.return_date.getFullYear()}-${String(r.return_date.getMonth() + 1).padStart(2, '0')}-${String(r.return_date.getDate()).padStart(2, '0')}`
+            : String(r.return_date).slice(0, 10))
+        : '-';
+      currentY += drawReturnRow(currentY, [
+        r.return_no || '-',
+        dateText,
+        r.item_name || '-',
+        `${toNum(r.quantity)}${r.unit || ''}`,
+        `¥${toNum(r.amount).toFixed(2)}`,
+        r.created_by_name || '-',
+      ]);
+    }
+    doc.fontSize(8).font(hasChineseFont ? 'Chinese-Bold' : 'Helvetica-Bold')
+      .text(`退货合计：¥${returnedTotal.toFixed(2)}`, tableX, currentY + 2, { width: tableWidth, align: 'right' });
+    currentY += 16;
+  }
 
   doc.moveDown(0.5);
   doc.fontSize(7).font(hasChineseFont ? 'Chinese-Regular' : 'Helvetica')
@@ -3325,7 +3544,7 @@ router.post('/:id/generate-pdf', requireAuth, async (req, res) => {
 router.get('/:id/pdf', async (req, res) => {
   try {
     const { id } = req.params;
-    const { type } = req.query; // 'apply' = 申请单, 'confirm' = 确认单
+    const { type, version } = req.query; // type: 'apply'=申请单 'confirm'=确认单；version=original 取原归档件
 
     const [rows] = await pool.query('SELECT status FROM warehouse_purchases WHERE id = ?', [id]);
     if (rows.length === 0) {
@@ -3335,8 +3554,12 @@ router.get('/:id/pdf', async (req, res) => {
     const applyStatuses = ['draft', 'pending_approval', 'rejected', 'approved'];
     const isApplyPdf = type === 'apply' ? true : (type === 'confirm' ? false : applyStatuses.includes(orderStatus));
 
-    const confirmPdfPath = path.join(PDF_DIR, `warehouse_${id}.pdf`);
+    const originalConfirmPath = originalConfirmPdfPath(id);
     const applyPdfPath = path.join(PDF_DIR, `warehouse_apply_${id}.pdf`);
+    // 确认单：默认优先最新版本文件，version=original 时取原归档件；原归档件始终保留可下载
+    let confirmPdfPath = version === 'original'
+      ? (fs.existsSync(originalConfirmPath) ? originalConfirmPath : null)
+      : (resolveConfirmPdfPath(id) || null);
 
     if (isApplyPdf) {
       // 申请单 PDF
@@ -3354,15 +3577,29 @@ router.get('/:id/pdf', async (req, res) => {
       }
       return res.status(404).json({ error: '申请单PDF不存在' });
     } else {
-      // 确认单 PDF
-      if (fs.existsSync(confirmPdfPath)) {
+      // 确认单 PDF：退货发生变化时先生成新版本（不覆盖原归档），再优先返回最新版本
+      if (version !== 'original') {
+        try {
+          if (await confirmPdfNeedsRefresh(id)) {
+            const refreshed = await generateWarehousePDF(id);
+            if (refreshed && fs.existsSync(refreshed)) confirmPdfPath = refreshed;
+          }
+        } catch (refreshErr) {
+          console.error('刷新确认单版本失败:', refreshErr.message);
+        }
+      }
+      if (confirmPdfPath && fs.existsSync(confirmPdfPath)) {
         return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
       }
+      // version=original 明确只要原归档件，不存在即 404，不生成新版本顶替
+      if (version === 'original') {
+        return res.status(404).json({ error: '原归档确认单PDF不存在' });
+      }
       try {
-        await generateWarehousePDF(id);
-        if (fs.existsSync(confirmPdfPath)) {
+        const generatedPath = await generateWarehousePDF(id);
+        if (generatedPath && fs.existsSync(generatedPath)) {
           try { await pool.query('UPDATE warehouse_purchases SET pdf_url = ? WHERE id = ?', [`/api/warehouse-purchases/${id}/pdf?type=confirm`, id]); } catch (e) {}
-          return res.download(confirmPdfPath, `仓库采购确认单_${id}.pdf`);
+          return res.download(generatedPath, `仓库采购确认单_${id}.pdf`);
         }
       } catch (genErr) {
         console.error('生成确认单PDF失败:', genErr.message);

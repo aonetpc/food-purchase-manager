@@ -1458,8 +1458,9 @@ export default function WarehousePurchaseList() {
                               {warehouseNames.length > 0 ? warehouseNames.join('、') : '-'}
                             </p>
                           </div>
+                          {/* 实收 / 已退 / 净额：无需打开 PDF 即可核对退货影响 */}
                           <div className="bg-gray-50 rounded-lg p-2">
-                            <p className="text-gray-500">实际入库金额</p>
+                            <p className="text-gray-500">实收</p>
                             <p className="font-medium text-primary-600 mt-0.5">
                               {p.received_at
                                 ? formatCurrency(safeNum(p.actual_amount ?? p.total_amount))
@@ -1467,13 +1468,13 @@ export default function WarehousePurchaseList() {
                             </p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2">
-                            <p className="text-gray-500">累计已退</p>
+                            <p className="text-gray-500">已退</p>
                             <p className="font-medium text-orange-600 mt-0.5">
                               {formatCurrency(safeNum(p.returned_amount))}
                             </p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2">
-                            <p className="text-gray-500">净额（实收-已退）</p>
+                            <p className="text-gray-500">净额</p>
                             <p className="font-medium text-emerald-600 mt-0.5">
                               {p.received_at
                                 ? formatCurrency(
