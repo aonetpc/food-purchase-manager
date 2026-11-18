@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Warehouse as WarehouseIcon,
@@ -374,6 +374,62 @@ export default function WarehousePurchaseList() {
   const [returnsLoading, setReturnsLoading] = useState(false);
   const [returnActioningId, setReturnActioningId] = useState<string | null>(null);
 
+  // 退货弹窗内部提示（不依赖页面级 error，避免被遮罩挡住）
+  const [returnFormMsg, setReturnFormMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [returnModalMsg, setReturnModalMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 页面内通用确认对话框（替代 window.confirm / window.prompt）
+  const [actionDialog, setActionDialog] = useState<{
+    title: string;
+    message?: string;
+    confirmText?: string;
+    danger?: boolean;
+    input?: { label: string; placeholder?: string; required?: boolean; defaultValue?: string };
+    onConfirm: (value: string) => Promise<void> | void;
+  } | null>(null);
+  const [actionDialogValue, setActionDialogValue] = useState('');
+  const [actionDialogBusy, setActionDialogBusy] = useState(false);
+
+  // 页面内轻提示（替代 window.alert）
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback((type: 'success' | 'error' | 'info', text: string) => {
+    setToast({ type, text });
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  const openActionDialog = (cfg: NonNullable<typeof actionDialog>) => {
+    setActionDialogValue(cfg.input?.defaultValue || '');
+    setActionDialog(cfg);
+  };
+
+  const closeActionDialog = () => {
+    if (actionDialogBusy) return;
+    setActionDialog(null);
+    setActionDialogValue('');
+  };
+
+  const confirmActionDialog = async () => {
+    if (!actionDialog) return;
+    const value = actionDialogValue.trim();
+    if (actionDialog.input?.required && !value) {
+      showToast('error', '请填写必填内容');
+      return;
+    }
+    setActionDialogBusy(true);
+    try {
+      await actionDialog.onConfirm(value);
+      setActionDialog(null);
+      setActionDialogValue('');
+    } catch (err: any) {
+      showToast('error', err?.message || '操作失败');
+    } finally {
+      setActionDialogBusy(false);
+    }
+  };
+
   // ===== 加载列表 =====
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -439,18 +495,26 @@ export default function WarehousePurchaseList() {
   };
 
   // ===== 提交审批 =====
-  const handleSubmit = async (id: string) => {
-    if (!window.confirm('确定提交审批吗？提交后将无法编辑。')) return;
-    setActioningId(id);
-    setError('');
-    try {
-      await api.post(`/warehouse-purchases/${id}/submit`);
-      await fetchList();
-    } catch (err: any) {
-      setError(err.message || '提交审批失败');
-    } finally {
-      setActioningId(null);
-    }
+  const handleSubmit = (id: string) => {
+    openActionDialog({
+      title: '提交审批',
+      message: '确定提交审批吗？提交后将无法编辑。',
+      confirmText: '提交',
+      onConfirm: async () => {
+        setActioningId(id);
+        setError('');
+        try {
+          await api.post(`/warehouse-purchases/${id}/submit`);
+          await fetchList();
+        } catch (err: any) {
+          const msg = err.message || '提交审批失败';
+          setError(msg);
+          showToast('error', msg);
+        } finally {
+          setActioningId(null);
+        }
+      },
+    });
   };
 
   // ===== 打开收货弹窗 =====
@@ -545,6 +609,7 @@ export default function WarehousePurchaseList() {
     setReturnRows([]);
     setReturnRemark('');
     setReturnDate(todayDateStr());
+    setReturnFormMsg(null);
     setReturnLoading(true);
     try {
       let items = p.items;
@@ -610,22 +675,23 @@ export default function WarehousePurchaseList() {
     if (!returnTarget) return;
     const lines = returnRows.filter((r) => (parseFloat(r.quantity) || 0) > 0);
     if (lines.length === 0) {
-      setError('请填写至少一项退货数量');
+      setReturnFormMsg({ type: 'error', text: '请填写至少一项退货数量' });
       return;
     }
     if (!returnDate || returnDate > todayDateStr()) {
-      setError('退货日期不能为空且不能晚于今天');
+      setReturnFormMsg({ type: 'error', text: '退货日期不能为空且不能晚于今天' });
       return;
     }
     for (const r of lines) {
       const qty = parseFloat(r.quantity) || 0;
       if (qty > r.maxQty + 0.0005) {
-        setError(`物资「${r.itemName}」退货数量超过可退数量`);
+        setReturnFormMsg({ type: 'error', text: `物资「${r.itemName}」退货数量超过可退数量` });
         return;
       }
     }
     setReturnSubmitting(true);
     setError('');
+    setReturnFormMsg(null);
     try {
       await api.post(`/warehouse-purchases/${returnTarget.id}/returns`, {
         items: lines.map((r) => ({
@@ -640,7 +706,9 @@ export default function WarehousePurchaseList() {
       setReturnTarget(null);
       await fetchList();
     } catch (err: any) {
-      setError(err.message || '创建退货单失败');
+      const msg = err.message || '创建退货单失败';
+      setReturnFormMsg({ type: 'error', text: msg });
+      setError(msg);
     } finally {
       setReturnSubmitting(false);
     }
@@ -650,6 +718,7 @@ export default function WarehousePurchaseList() {
     setReturnsTarget(p);
     setShowReturnsModal(true);
     setReturnsList([]);
+    setReturnModalMsg(null);
     setReturnsLoading(true);
     try {
       const list = await fetchReturns(p.id);
@@ -661,44 +730,75 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  const handleReturnAction = async (
+  const handleReturnAction = (
     action: 'confirm' | 'void' | 'complete' | 'settlement',
     ret: PurchaseReturn,
   ) => {
     if (!returnsTarget) return;
-    let confirmText = '';
-    if (action === 'confirm') confirmText = `确定确认退货单 ${ret.return_no}？确认后将扣减库存并冲减采购金额。`;
-    if (action === 'void') confirmText = `确定作废退货单 ${ret.return_no}？已确认的退货将整单反向冲回。`;
-    if (action === 'complete') confirmText = `确定完成退货单 ${ret.return_no}？`;
-    if (confirmText && !window.confirm(confirmText)) return;
+    const targetId = returnsTarget.id;
 
-    setReturnActioningId(ret.id);
-    setError('');
-    try {
-      if (action === 'confirm') {
-        await api.post(`/warehouse-purchases/returns/${ret.id}/confirm`);
-      } else if (action === 'void') {
-        const reason = window.prompt('作废原因（可选）');
-        if (reason === null) return;
-        await api.post(`/warehouse-purchases/returns/${ret.id}/void`, { reason });
-      } else if (action === 'complete') {
-        await api.post(`/warehouse-purchases/returns/${ret.id}/complete`);
-      } else {
-        const ref = window.prompt('请输入退款/抵扣凭证号');
-        if (ref === null) return;
-        if (!ref.trim()) {
-          setError('请填写退款/抵扣凭证号');
-          return;
+    const doRequest = async (input?: string) => {
+      setReturnActioningId(ret.id);
+      setReturnModalMsg(null);
+      setError('');
+      try {
+        if (action === 'confirm') {
+          await api.post(`/warehouse-purchases/returns/${ret.id}/confirm`);
+        } else if (action === 'void') {
+          await api.post(`/warehouse-purchases/returns/${ret.id}/void`, { reason: input || '' });
+        } else if (action === 'complete') {
+          await api.post(`/warehouse-purchases/returns/${ret.id}/complete`);
+        } else {
+          await api.put(`/warehouse-purchases/returns/${ret.id}/settlement`, { settlement_ref: input });
         }
-        await api.put(`/warehouse-purchases/returns/${ret.id}/settlement`, { settlement_ref: ref.trim() });
+        const okText = action === 'confirm' ? '退货已确认' : action === 'void' ? '退货单已作废'
+          : action === 'complete' ? '退货已完成' : '凭证号已保存';
+        setReturnModalMsg({ type: 'success', text: okText });
+        setReturnsList(await fetchReturns(targetId));
+        await fetchList();
+      } catch (err: any) {
+        const msg = err.message || '退货操作失败';
+        setReturnModalMsg({ type: 'error', text: msg });
+        setError(msg);
+      } finally {
+        setReturnActioningId(null);
       }
-      setReturnsList(await fetchReturns(returnsTarget.id));
-      await fetchList();
-    } catch (err: any) {
-      setError(err.message || '退货操作失败');
-    } finally {
-      setReturnActioningId(null);
+    };
+
+    if (action === 'void') {
+      openActionDialog({
+        title: '作废退货单',
+        message: `确定作废退货单 ${ret.return_no}？已确认的退货将整单反向冲回。`,
+        confirmText: '作废',
+        danger: true,
+        input: { label: '作废原因（可选）', placeholder: '如数量填错、供应商协商取消' },
+        onConfirm: (value) => doRequest(value),
+      });
+      return;
     }
+    if (action === 'settlement') {
+      openActionDialog({
+        title: '登记退款/抵扣凭证',
+        message: `为退货单 ${ret.return_no} 登记退款/抵扣凭证号。`,
+        confirmText: '保存',
+        input: {
+          label: '退款/抵扣凭证号',
+          placeholder: '请输入凭证号',
+          required: true,
+          defaultValue: ret.settlement_ref || '',
+        },
+        onConfirm: (value) => doRequest(value),
+      });
+      return;
+    }
+    openActionDialog({
+      title: action === 'confirm' ? '确认退货' : '完成退货',
+      message: action === 'confirm'
+        ? `确定确认退货单 ${ret.return_no}？确认后将扣减库存并冲减采购金额。`
+        : `确定完成退货单 ${ret.return_no}？`,
+      confirmText: action === 'confirm' ? '确认' : '完成',
+      onConfirm: () => doRequest(),
+    });
   };
 
   // ===== 发送确认通知（打开弹窗） =====
@@ -804,17 +904,25 @@ export default function WarehousePurchaseList() {
   };
 
   // ===== 重新发起报销 / 发起报销 =====
-  const handleResubmit = async (id: string) => {
-    if (!window.confirm('确定发起/重新发起报销吗？')) return;
-    setActioningId(id);
-    try {
-      await api.post(`/warehouse-purchases/${id}/resubmit`);
-      await fetchList();
-    } catch (err: any) {
-      setError(err.message || '发起报销失败');
-    } finally {
-      setActioningId(null);
-    }
+  const handleResubmit = (id: string) => {
+    openActionDialog({
+      title: '发起报销',
+      message: '确定发起/重新发起报销吗？',
+      confirmText: '发起',
+      onConfirm: async () => {
+        setActioningId(id);
+        try {
+          await api.post(`/warehouse-purchases/${id}/resubmit`);
+          await fetchList();
+        } catch (err: any) {
+          const msg = err.message || '发起报销失败';
+          setError(msg);
+          showToast('error', msg);
+        } finally {
+          setActioningId(null);
+        }
+      },
+    });
   };
 
   // ===== 预付款相关操作 =====
@@ -842,7 +950,7 @@ export default function WarehousePurchaseList() {
       }
     } catch (e: any) {
       console.error('附件上传失败:', e);
-      alert(e.message || '附件上传失败');
+      showToast('error', e.message || '附件上传失败');
       setPrepayUploadProgress(null);
     } finally {
       setPrepayAttaching(false);
@@ -930,39 +1038,56 @@ export default function WarehousePurchaseList() {
     }
   };
 
-  const handleWriteoffPrepay = async (id: string) => {
-    if (!window.confirm('确定手动核销预付款吗？')) return;
-    setActioningId(id);
-    try {
-      const result = await api.post<{ message: string }>(`/warehouse-purchases/${id}/writeoff-prepay`);
-      alert(result.message || '核销完成');
-      await fetchList();
-    } catch (err: any) {
-      setError(err.message || '核销失败');
-    } finally {
-      setActioningId(null);
-    }
+  const handleWriteoffPrepay = (id: string) => {
+    openActionDialog({
+      title: '手动核销预付款',
+      message: '确定手动核销预付款吗？',
+      confirmText: '核销',
+      onConfirm: async () => {
+        setActioningId(id);
+        try {
+          const result = await api.post<{ message: string }>(`/warehouse-purchases/${id}/writeoff-prepay`);
+          showToast('success', result.message || '核销完成');
+          await fetchList();
+        } catch (err: any) {
+          const msg = err.message || '核销失败';
+          setError(msg);
+          showToast('error', msg);
+        } finally {
+          setActioningId(null);
+        }
+      },
+    });
   };
 
   // ===== 删除 =====
   // 权限：管理员可删除任意状态；非管理员只能删除自己创建的草稿单
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     const target = purchases.find((p) => p.id === id);
     const isDraft = target?.status === 'draft';
     const confirmMsg = isDraft
       ? '确定删除该采购单吗？删除后不可恢复。'
       : '该采购单非草稿状态，删除后不可恢复且关联数据将一并清除，确定继续吗？';
-    if (!window.confirm(confirmMsg)) return;
-    setActioningId(id);
-    try {
-      await api.delete(`/warehouse-purchases/${id}`);
-      setPurchases((prev) => prev.filter((it) => it.id !== id));
-      if (expandedId === id) setExpandedId(null);
-    } catch (err: any) {
-      setError(err.message || '删除失败');
-    } finally {
-      setActioningId(null);
-    }
+    openActionDialog({
+      title: '删除采购单',
+      message: confirmMsg,
+      confirmText: '删除',
+      danger: true,
+      onConfirm: async () => {
+        setActioningId(id);
+        try {
+          await api.delete(`/warehouse-purchases/${id}`);
+          setPurchases((prev) => prev.filter((it) => it.id !== id));
+          if (expandedId === id) setExpandedId(null);
+        } catch (err: any) {
+          const msg = err.message || '删除失败';
+          setError(msg);
+          showToast('error', msg);
+        } finally {
+          setActioningId(null);
+        }
+      },
+    });
   };
 
   // ===== 分页计算 =====
@@ -983,11 +1108,11 @@ export default function WarehousePurchaseList() {
         setPurchases(prev => prev.map(x => x.id === p.id
           ? { ...x, monthly_paid_at: new Date().toISOString().replace('T', ' ').slice(0, 19) }
           : x));
-        window.alert('审批已通过，已标记付款完成');
+        showToast('success', '审批已通过，已标记付款完成');
       } else if (r?.sp_status === 3) {
-        window.alert('审批已驳回');
+        showToast('error', '审批已驳回');
       } else {
-        window.alert('审批仍在进行中');
+        showToast('info', '审批仍在进行中');
       }
     } catch (e: any) {
       setError(e.message || '刷新失败');
@@ -2147,6 +2272,19 @@ export default function WarehousePurchaseList() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5">
+              {returnFormMsg && (
+                <div className={`mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                  returnFormMsg.type === 'error'
+                    ? 'bg-danger-50 border-danger-200 text-danger-700'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                }`}>
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <span className="flex-1">{returnFormMsg.text}</span>
+                  <button onClick={() => setReturnFormMsg(null)} className="p-0.5 hover:opacity-70">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               {returnLoading ? (
                 <div className="text-center py-10 text-gray-400 flex items-center justify-center gap-2">
                   <RefreshCw size={16} className="animate-spin" />
@@ -2282,6 +2420,19 @@ export default function WarehousePurchaseList() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {returnModalMsg && (
+                <div className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                  returnModalMsg.type === 'error'
+                    ? 'bg-danger-50 border-danger-200 text-danger-700'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                }`}>
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <span className="flex-1">{returnModalMsg.text}</span>
+                  <button onClick={() => setReturnModalMsg(null)} className="p-0.5 hover:opacity-70">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               {returnsLoading ? (
                 <div className="text-center py-10 text-gray-400 flex items-center justify-center gap-2">
                   <RefreshCw size={16} className="animate-spin" />
@@ -2711,6 +2862,81 @@ export default function WarehousePurchaseList() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===== 页面内通用确认对话框（替代原生 confirm/prompt） ===== */}
+      {actionDialog && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+          onClick={closeActionDialog}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${actionDialog.danger ? 'bg-red-50' : 'bg-blue-50'}`}>
+                {actionDialog.danger
+                  ? <AlertCircle size={20} className="text-red-500" />
+                  : <AlertCircle size={20} className="text-blue-500" />}
+              </div>
+              <h3 className="text-base font-medium text-gray-800">{actionDialog.title}</h3>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {actionDialog.message && (
+                <p className="text-sm text-gray-600 whitespace-pre-wrap">{actionDialog.message}</p>
+              )}
+              {actionDialog.input && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">
+                    {actionDialog.input.label}
+                    {actionDialog.input.required && <span className="text-red-500"> *</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={actionDialogValue}
+                    onChange={(e) => setActionDialogValue(e.target.value)}
+                    placeholder={actionDialog.input.placeholder}
+                    autoFocus
+                    className="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-gray-100">
+              <button
+                onClick={closeActionDialog}
+                disabled={actionDialogBusy}
+                className="btn-secondary disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmActionDialog}
+                disabled={actionDialogBusy}
+                className={`flex items-center gap-2 disabled:opacity-50 ${actionDialog.danger
+                  ? 'px-4 py-2 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600'
+                  : 'btn-primary'}`}
+              >
+                {actionDialogBusy ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    处理中...
+                  </>
+                ) : (actionDialog.confirmText || '确定')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 页面内轻提示（替代原生 alert） ===== */}
+      {toast && (
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2 rounded-lg shadow-lg text-sm text-white ${
+          toast.type === 'success' ? 'bg-emerald-600' : toast.type === 'error' ? 'bg-red-500' : 'bg-gray-700'
+        }`}>
+          {toast.text}
         </div>
       )}
     </div>
