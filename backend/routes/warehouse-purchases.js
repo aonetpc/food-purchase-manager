@@ -32,6 +32,7 @@ const {
   applyFields,
   writeAlertLog,
 } = require('../utils/wecom-approval-status');
+const { computeNetAmount } = require('../utils/purchase-net-amount');
 
 // 带超时的 fetch 包装函数
 async function fetchWithTimeout(url, options = {}, timeout = 10000) {
@@ -199,6 +200,8 @@ function normalizePurchaseRow(row) {
     ...row,
     total_amount: toNum(row.total_amount),
     actual_amount: toNum(row.actual_amount),
+    returned_amount: toNum(row.returned_amount),
+    net_amount: computeNetAmount(row),
     prepay_amount: toNum(row.prepay_amount),
     writeoff_amount: toNum(row.writeoff_amount),
     user_departments: userDepartments,
@@ -229,6 +232,7 @@ function normalizeItemRow(item) {
     received_quantity: toNum(item.received_quantity),
     received_unit_price: toNum(item.received_unit_price),
     received_amount: toNum(item.received_amount),
+    returned_quantity: toNum(item.returned_quantity),
     // 采购人申报的当前库存（NULL = 未填报）
     stock_at_purchase: item.stock_at_purchase != null ? toNum(item.stock_at_purchase) : null,
   };
@@ -989,7 +993,7 @@ async function submitWarehouseReimbursement(row, items, creatorUserid) {
   // 付款事由：对齐采购申请事由格式，如"8月2日仓库采购单，实际入库¥414.41"
   // 日期使用采购单创建时间，而非报销提交时间
   const orderDate = new Date(row.created_at || row.apply_time || now);
-  const fullAmount = toNum(row.actual_amount) || toNum(row.total_amount);
+  const fullAmount = computeNetAmount(row);
   const monthDayStr = `${orderDate.getMonth() + 1}月${orderDate.getDate()}日`;
   // 预付款少付尾款报销：仅报销差额（实际 - 预付）
   const isPrepayTail = row.purchase_type === 'prepay' && row.writeoff_status === 'manual';
@@ -1293,7 +1297,7 @@ async function generateWarehousePDF(purchaseId) {
     : row.status === 'reimbursing' ? '报销中'
     : row.status === 'reimbursed' ? '已报销'
     : row.status;
-  const amountLabel = toNum(row.actual_amount) > 0 ? toNum(row.actual_amount) : toNum(row.total_amount);
+  const amountLabel = computeNetAmount(row);
   // 汇总涉及仓库
   const pdfWarehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
   doc.text(`采购单号：${row.purchase_no || '-'}    仓库：${pdfWarehouseNames.join('、') || '-'}    供应商：${row.supplier_name || '-'}`);
@@ -2697,29 +2701,42 @@ async function reversePurchaseStock(connection, purchaseId, strict = true) {
     return { reversed: false, reason: '无关联流水需要冲回' };
   }
 
-  // 2. 校验 + 逐条冲回库存
+  // 2. 先按 仓库+物资 汇总冲回增量
+  //    inbound 流水：库存增加过 +qty，冲回 -qty
+  //    expense 流水：quantity 为负数（库存减少过），冲回 -quantity（即恢复）
+  const deltaMap = new Map();
   for (const m of oldMoves) {
+    if (m.movement_type !== 'inbound' && m.movement_type !== 'expense') continue;
+    const delta = -toNum(m.quantity);
+    if (!delta) continue;
+    const key = `${m.warehouse_id}::${m.item_id}`;
+    const cur = deltaMap.get(key) || { warehouse_id: m.warehouse_id, item_id: m.item_id, delta: 0 };
+    cur.delta += delta;
+    deltaMap.set(key, cur);
+  }
+
+  // 3. 按 warehouse_id, item_id 升序加锁并校验，避免逐条校验漏掉合计超扣
+  const entries = Array.from(deltaMap.values()).sort((a, b) => {
+    const wa = String(a.warehouse_id);
+    const wb = String(b.warehouse_id);
+    if (wa !== wb) return wa < wb ? -1 : 1;
+    const ia = String(a.item_id);
+    const ib = String(b.item_id);
+    return ia === ib ? 0 : (ia < ib ? -1 : 1);
+  });
+
+  for (const e of entries) {
     const [invRows] = await connection.query(
-      'SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ?',
-      [m.warehouse_id, m.item_id]
+      'SELECT quantity FROM inventory WHERE warehouse_id = ? AND item_id = ? FOR UPDATE',
+      [e.warehouse_id, e.item_id]
     );
     const currentQty = invRows.length > 0 ? toNum(invRows[0].quantity) : 0;
-    // inbound 流水：库存增加过 +qty，冲回需 -qty
-    // expense 流水：库存减少过 -qty，冲回需 +qty
-    let delta;
-    if (m.movement_type === 'inbound') {
-      delta = -toNum(m.quantity);
-    } else if (m.movement_type === 'expense') {
-      delta = toNum(m.quantity); // expense 的 quantity 是负数，直接加回来等于恢复
-    } else {
-      continue; // 其他 movement_type 暂不处理
-    }
 
     if (strict) {
-      const newQty = currentQty + delta;
+      const newQty = currentQty + e.delta;
       if (newQty < 0) {
         throw new Error(
-          `冲回库存失败：仓库/物资 ${m.warehouse_id}/${m.item_id} 当前库存 ${currentQty}，` +
+          `冲回库存失败：仓库/物资 ${e.warehouse_id}/${e.item_id} 当前库存 ${currentQty}，` +
           `冲回后将变为 ${newQty}（负数）。可能已有其他出库操作，请先盘点调账。`
         );
       }
@@ -2728,13 +2745,13 @@ async function reversePurchaseStock(connection, purchaseId, strict = true) {
     if (invRows.length > 0) {
       await connection.query(
         'UPDATE inventory SET quantity = quantity + ? WHERE warehouse_id = ? AND item_id = ?',
-        [delta, m.warehouse_id, m.item_id]
+        [e.delta, e.warehouse_id, e.item_id]
       );
     }
     // 如果 inventory 记录已被删除（极端情况），也不再补，保持现状
   }
 
-  // 3. 删除旧流水
+  // 4. 删除旧流水
   await connection.query(
     'DELETE FROM stock_movements WHERE related_type = ? AND related_id = ?',
     ['purchase', purchaseId]
@@ -2769,6 +2786,19 @@ async function checkPurchaseNoBlocked(connection, purchaseId) {
   return { blocked: false };
 }
 
+// ================================================
+// 通用辅助：存在未完结退货单（submitted/confirmed/completed）时
+//   禁止修改收货、删除整单
+// ================================================
+async function findActiveReturn(connection, purchaseId) {
+  const [rows] = await connection.query(
+    `SELECT id, return_no, status FROM warehouse_purchase_returns
+     WHERE purchase_id = ? AND status IN (?) LIMIT 1`,
+    [purchaseId, ACTIVE_RETURN_STATUSES]
+  );
+  return rows[0] || null;
+}
+
 // 6. POST /:id/receive — 录入实际收货（支持对已收货的采购单重新录入 = 修改收货）
 router.post('/:id/receive', requireAuth, async (req, res) => {
   const connection = await pool.getConnection();
@@ -2793,6 +2823,15 @@ router.post('/:id/receive', requireAuth, async (req, res) => {
     if (!Array.isArray(items) || items.length === 0) {
       await connection.rollback();
       return res.status(400).json({ error: '收货明细不能为空' });
+    }
+
+    // 存在未完结退货单时禁止修改收货（避免实收数量与已退数量口径冲突）
+    const activeReturn = await findActiveReturn(connection, id);
+    if (activeReturn) {
+      await connection.rollback();
+      return res.status(400).json({
+        error: `该采购单存在未完结退货单（${activeReturn.return_no}，状态 ${activeReturn.status}），请先处理退货后再修改收货`,
+      });
     }
 
     // 如果已经收货过，先冲回旧库存和流水（严格校验不允许负库存）
@@ -3062,7 +3101,7 @@ router.post('/:id/send-confirm', requireAuth, async (req, res) => {
 
     const domain = config.app_domain || (req.headers.origin || (req.protocol + '://' + req.get('host')));
     const purchaseNo = row.purchase_no || '';
-    const totalAmount = toNum(row.actual_amount) || toNum(row.total_amount);
+    const totalAmount = computeNetAmount(row);
 
     // 汇总涉及仓库
     const warehouseNames = Array.from(new Set(itemRows.map(i => i.warehouse_name).filter(Boolean)));
@@ -3471,14 +3510,32 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
 
     const spNo = await submitWarehouseReimbursement(row, itemRows, req.user?.wecom_userid);
 
-    await pool.query(
-      row.purchase_type === 'prepay' && row.writeoff_status === 'manual'
-        ? 'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ?, writeoff_status = ? WHERE id = ?'
-        : 'UPDATE warehouse_purchases SET reimbursement_status = ?, reimbursement_sp_no = ?, status = ? WHERE id = ?',
-      row.purchase_type === 'prepay' && row.writeoff_status === 'manual'
-        ? ['pending', spNo, 'reimbursing', 'reimbursing', id]
-        : ['pending', spNo, 'reimbursing', id]
-    );
+    // 记录历史报销单号（重发前把旧单号追加进历史，便于追溯已撤销/驳回的审批单）
+    let historySpNos = [];
+    try {
+      const parsed = JSON.parse(row.reimbursement_sp_no_history || '[]');
+      if (Array.isArray(parsed)) historySpNos = parsed.filter(Boolean);
+    } catch (e) { historySpNos = []; }
+    if (row.reimbursement_sp_no && !historySpNos.includes(row.reimbursement_sp_no)) {
+      historySpNos.push(row.reimbursement_sp_no);
+    }
+    const historyJson = JSON.stringify(historySpNos);
+
+    if (row.purchase_type === 'prepay' && row.writeoff_status === 'manual') {
+      await pool.query(
+        `UPDATE warehouse_purchases
+         SET reimbursement_status = ?, reimbursement_sp_no = ?, reimbursement_sp_no_history = ?, status = ?, writeoff_status = ?
+         WHERE id = ?`,
+        ['pending', spNo, historyJson, 'reimbursing', 'reimbursing', id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE warehouse_purchases
+         SET reimbursement_status = ?, reimbursement_sp_no = ?, reimbursement_sp_no_history = ?, status = ?
+         WHERE id = ?`,
+        ['pending', spNo, historyJson, 'reimbursing', id]
+      );
+    }
 
     const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
     res.json(normalizePurchaseRow(updatedRows[0]));
@@ -3534,7 +3591,16 @@ router.delete('/:id', requireAuth, async (req, res) => {
       }
     }
 
-    // 3. 冲回已产生的库存和流水（received/confirming/confirmed 状态）
+    // 3. 存在未完结退货单时拒绝删除整单
+    const activeReturn = await findActiveReturn(connection, id);
+    if (activeReturn) {
+      await connection.rollback();
+      return res.status(400).json({
+        error: `该采购单存在未完结退货单（${activeReturn.return_no}，状态 ${activeReturn.status}），请先处理退货后再删除`,
+      });
+    }
+
+    // 4. 冲回已产生的库存和流水（received/confirming/confirmed 状态）
     if (['received', 'confirming', 'confirmed'].includes(row.status)) {
       try {
         await reversePurchaseStock(connection, id, true);
@@ -3544,7 +3610,19 @@ router.delete('/:id', requireAuth, async (req, res) => {
       }
     }
 
-    // 4. 删除明细 + 主表
+    // 5. 清理草稿/已作废的退货记录（未对库存与金额产生残留影响）
+    await connection.query(
+      `DELETE ri FROM warehouse_purchase_return_items ri
+       INNER JOIN warehouse_purchase_returns r ON r.id = ri.return_id
+       WHERE r.purchase_id = ? AND r.status IN ('draft', 'voided')`,
+      [id]
+    );
+    await connection.query(
+      `DELETE FROM warehouse_purchase_returns WHERE purchase_id = ? AND status IN ('draft', 'voided')`,
+      [id]
+    );
+
+    // 6. 删除明细 + 主表
     await connection.query('DELETE FROM warehouse_purchase_items WHERE purchase_id = ?', [id]);
     await connection.query('DELETE FROM warehouse_purchases WHERE id = ?', [id]);
 
@@ -3812,7 +3890,7 @@ router.post('/:id/refresh-prepay', requireAuth, async (req, res) => {
 // - prepay < actual：writeoff_status='manual'（对账中心发起尾款报销）
 // 由 /prepay-voucher（回填凭证）和 confirm-submit（收货确认）共同调用，覆盖两种执行顺序
 async function autoWriteoffPrepayIfReady(row, connection = null) {
-  const actualAmount = toNum(row.actual_amount);
+  const actualAmount = computeNetAmount(row);
   const prepayAmount = toNum(row.prepay_amount);
   // 需同时满足：已收货 + 已回填凭证（prepay_status='paid'）+ 尚未核销
   if (actualAmount <= 0 || row.prepay_status !== 'paid' || row.writeoff_status) return false;
@@ -3930,7 +4008,7 @@ router.post('/:id/writeoff-prepay', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '该采购单已核销，请勿重复操作' });
     }
 
-    const actualAmount = toNum(row.actual_amount);
+    const actualAmount = computeNetAmount(row);
     const prepayAmount = toNum(row.prepay_amount);
     let diffAmount = 0;
     let writeoffAmount = prepayAmount;
@@ -4084,6 +4162,730 @@ router.get('/logs', requireAuth, (req, res) => {
     total: _logCache.length,
     logs: logs.slice(-lines)
   });
+});
+
+// ================================================
+// 8. 采购退货单（P1）
+//    draft → submitted → confirmed → completed
+//                       ↘ voided
+// ================================================
+
+const RETURNABLE_PURCHASE_STATUSES = ['received', 'confirming', 'confirmed', 'reimbursing', 'reimbursed'];
+const ACTIVE_RETURN_STATUSES = ['submitted', 'confirmed', 'completed'];
+
+function round3(n) {
+  return Math.round((Number(n) || 0) * 1000) / 1000;
+}
+
+function genReturnNo() {
+  const d = new Date();
+  const p = (v, l = 2) => String(v).padStart(l, '0');
+  return `TH${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${p(d.getMilliseconds(), 3)}`;
+}
+
+function isAdminUser(req) {
+  const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+  return roles.includes('admin');
+}
+
+/**
+ * 派生付款状态（只读，不允许手工写）
+ *  - 月结：monthly_paid_at
+ *  - 预付：prepay_status=paid
+ *  - 普通报销：wecom_expense_payments 中按报销审批单号能查到支付记录才算已付；查不到一律 unknown
+ */
+async function derivePaymentState(exec, purchase) {
+  if (purchase.purchase_type === 'monthly') {
+    return purchase.monthly_paid_at ? 'paid' : 'unpaid';
+  }
+  if (purchase.purchase_type === 'prepay') {
+    return purchase.prepay_status === 'paid' ? 'paid' : 'unpaid';
+  }
+  if (!purchase.reimbursement_sp_no) return 'unknown';
+  const [rows] = await exec.query(
+    'SELECT payment_status FROM wecom_expense_payments WHERE sp_no = ? LIMIT 1',
+    [purchase.reimbursement_sp_no]
+  );
+  if (rows.length === 0) return 'unknown';
+  return rows[0].payment_status === 'paid' ? 'paid' : 'unpaid';
+}
+
+/**
+ * 计算本次退货明细金额：
+ *   按原明细 received_amount 数量比例拆分，四舍五入到分，最后一笔取剩余
+ *   —— 通过「累计到本次的应退金额 - 之前已退金额」自然获得尾差归属
+ * @param {Array<{purchase_item_id:string, quantity:number}>} lines
+ * @param {string|null} excludeReturnId 确认时排除本单（本单尚未计入已确认统计）
+ */
+async function buildReturnItemAmounts(exec, purchaseId, lines, excludeReturnId = null) {
+  const ids = [...new Set(lines.map((l) => l.purchase_item_id).filter(Boolean))];
+  if (ids.length === 0) return [];
+
+  const [itemRows] = await exec.query(
+    `SELECT id, item_id, item_name, spec, unit, warehouse_id, received_quantity, received_amount,
+            received_unit_price, requested_quantity, requested_unit_price
+     FROM warehouse_purchase_items
+     WHERE purchase_id = ? AND id IN (?)`,
+    [purchaseId, ids]
+  );
+  const itemMap = new Map(itemRows.map((r) => [r.id, r]));
+
+  const aggSql = `SELECT ri.purchase_item_id, SUM(ri.quantity) AS qty, SUM(ri.amount) AS amt
+                  FROM warehouse_purchase_return_items ri
+                  INNER JOIN warehouse_purchase_returns r ON r.id = ri.return_id
+                  WHERE r.status IN ('confirmed', 'completed') AND r.purchase_id = ?
+                  ${excludeReturnId ? 'AND r.id <> ?' : ''}
+                  GROUP BY ri.purchase_item_id`;
+  const [aggRows] = await exec.query(aggSql, excludeReturnId ? [purchaseId, excludeReturnId] : [purchaseId]);
+  const aggMap = new Map(aggRows.map((r) => [r.purchase_item_id, { qty: Number(r.qty) || 0, amt: Number(r.amt) || 0 }]));
+
+  const result = [];
+  const pendingQty = new Map(); // 同一请求内同明细的累计
+
+  for (const line of lines) {
+    const item = itemMap.get(line.purchase_item_id);
+    if (!item) {
+      const err = new Error('退货明细不属于该采购单');
+      err.httpStatus = 400;
+      throw err;
+    }
+    const qty = round3(line.quantity);
+    if (!(qty > 0)) {
+      const err = new Error(`物资「${item.item_name || ''}」退货数量必须大于 0`);
+      err.httpStatus = 400;
+      throw err;
+    }
+
+    const receivedQty = Number(item.received_quantity) || 0;
+    const receivedAmount = Number(item.received_amount) || 0;
+    const agg = aggMap.get(item.id) || { qty: 0, amt: 0 };
+    const alreadyPending = pendingQty.get(item.id) || 0;
+
+    if (receivedQty <= 0) {
+      const err = new Error(`物资「${item.item_name || ''}」尚未收货，不能退货`);
+      err.httpStatus = 400;
+      throw err;
+    }
+    if (agg.qty + alreadyPending + qty > receivedQty + 0.0005) {
+      const err = new Error(`物资「${item.item_name || ''}」累计退货数量超过实收数量`);
+      err.httpStatus = 400;
+      throw err;
+    }
+
+    // 累计到本次应退金额 - 之前已退金额 = 本笔金额（最后一笔自动吸收尾差）
+    const cumQty = agg.qty + alreadyPending + qty;
+    const cumAmount = Math.round((receivedAmount * cumQty / receivedQty) * 100) / 100;
+    const amount = Math.max(0, Math.round((cumAmount - agg.amt) * 100) / 100);
+    pendingQty.set(item.id, alreadyPending + qty);
+
+    const unitPrice = receivedQty > 0
+      ? Math.round((receivedAmount / receivedQty) * 100) / 100
+      : (Number(item.received_unit_price) || Number(item.requested_unit_price) || 0);
+
+    result.push({ item, qty, amount, unitPrice });
+  }
+
+  return result;
+}
+
+async function insertReturnMovement(exec, {
+  warehouseId, itemId, itemName, movementType, quantity, unit, unitPrice, totalAmount,
+  reason, relatedId, operatorId, operatorName, departmentId, departmentName,
+}) {
+  await exec.query(
+    `INSERT INTO stock_movements
+     (id, warehouse_id, item_id, item_name, movement_type, quantity, unit, unit_price, total_amount,
+      reason, related_type, related_id, operator_id, operator_name, department_id, department_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'purchase_return', ?, ?, ?, ?, ?)`,
+    [uuidv4(), warehouseId, itemId, itemName, movementType, quantity, unit, unitPrice, totalAmount,
+     reason, relatedId, operatorId, operatorName, departmentId || null, departmentName]
+  );
+}
+
+/**
+ * 退货确认群消息（失败不影响主流程）
+ */
+async function sendReturnGroupMessage(purchase, returnRow, items, operatorName) {
+  try {
+    const config = await getWecomConfig();
+    const webhookUrl = config?.webhook_url || config?.test_webhook_url;
+    if (!webhookUrl) return;
+
+    const itemLines = items.map((it) =>
+      `> ${it.item_name || ''} ${Number(it.quantity)}${it.unit || ''}　¥${(Number(it.amount) || 0).toFixed(2)}`
+    ).join('\n');
+
+    const content = [
+      '**采购退货已确认**',
+      `> 采购单号：${purchase.purchase_no || purchase.id}`,
+      `> 退货单号：${returnRow.return_no}`,
+      itemLines,
+      `> 退货金额：¥${(Number(returnRow.total_amount) || 0).toFixed(2)}`,
+      `> 退货后净额：¥${(Number(returnRow.net_amount) || 0).toFixed(2)}`,
+      `> 操作人：${operatorName || '-'}`,
+      `> 时间：${new Date().toLocaleString('zh-CN')}`,
+    ].filter(Boolean).join('\n');
+
+    await sendTextViaWebhook(webhookUrl, content);
+  } catch (err) {
+    console.error('[采购退货] 群消息发送失败（不影响主流程）:', err.message);
+  }
+}
+
+// 8.1 POST /:id/returns — 创建退货单（草稿/提交）
+router.post('/:id/returns', requireAuth, async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const { items, remark, submit } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: '请选择退货明细' });
+    }
+    const lineItemIds = items.map((it) => it && it.purchase_item_id).filter(Boolean);
+    if (new Set(lineItemIds).size !== lineItemIds.length) {
+      return res.status(400).json({ error: '同一物资不能重复提交退货明细' });
+    }
+
+    const [pRows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
+    if (pRows.length === 0) return res.status(404).json({ error: '采购单不存在' });
+    const purchase = pRows[0];
+
+    if (!RETURNABLE_PURCHASE_STATUSES.includes(purchase.status)) {
+      return res.status(400).json({ error: '当前采购单状态不允许退货' });
+    }
+    if (!isAdminUser(req) && purchase.created_by !== req.user.id) {
+      return res.status(403).json({ error: '无权操作该采购单' });
+    }
+
+    const computed = await buildReturnItemAmounts(connection, purchase.id, items);
+    if (computed.length === 0) return res.status(400).json({ error: '请选择退货明细' });
+
+    const returnId = uuidv4();
+    const returnNo = genReturnNo();
+    const status = submit === false ? 'draft' : 'submitted';
+    const totalQty = computed.reduce((s, x) => s + x.qty, 0);
+    const totalAmount = Math.round(computed.reduce((s, x) => s + x.amount, 0) * 100) / 100;
+    const operatorId = req.user?.id || null;
+    const operatorName = req.user?.name || null;
+
+    await connection.beginTransaction();
+    await connection.query(
+      `INSERT INTO warehouse_purchase_returns
+       (id, return_no, purchase_id, purchase_no, warehouse_id, warehouse_name, status,
+        total_quantity, total_amount, payment_state, remark, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?)`,
+      [returnId, returnNo, purchase.id, purchase.purchase_no, purchase.warehouse_id, purchase.warehouse_name,
+       status, totalQty, totalAmount, remark || null, operatorId, operatorName]
+    );
+    for (const line of computed) {
+      await connection.query(
+        `INSERT INTO warehouse_purchase_return_items
+         (id, return_id, purchase_item_id, item_id, item_name, spec, unit, warehouse_id,
+          quantity, unit_price, amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), returnId, line.item.id, line.item.item_id, line.item.item_name, line.item.spec, line.item.unit,
+         line.item.warehouse_id, line.qty, line.unitPrice, line.amount]
+      );
+    }
+    await connection.commit();
+
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchase_returns WHERE id = ?', [returnId]);
+    const [itemRows] = await pool.query('SELECT * FROM warehouse_purchase_return_items WHERE return_id = ?', [returnId]);
+    res.json({ ...rows[0], items: itemRows });
+  } catch (err) {
+    await connection.rollback();
+    console.error('创建退货单失败:', err);
+    res.status(err.httpStatus || 500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 8.2 GET /:id/returns — 查询该采购单的退货记录
+router.get('/:id/returns', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [returns] = await pool.query(
+      'SELECT * FROM warehouse_purchase_returns WHERE purchase_id = ? ORDER BY created_at DESC',
+      [id]
+    );
+    let items = [];
+    if (returns.length > 0) {
+      [items] = await pool.query(
+        'SELECT * FROM warehouse_purchase_return_items WHERE return_id IN (?) ORDER BY created_at ASC',
+        [returns.map((r) => r.id)]
+      );
+    }
+    const byReturn = new Map(returns.map((r) => [r.id, []]));
+    items.forEach((it) => {
+      if (byReturn.has(it.return_id)) byReturn.get(it.return_id).push(it);
+    });
+    res.json(returns.map((r) => ({ ...r, items: byReturn.get(r.id) })));
+  } catch (err) {
+    console.error('查询退货记录失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8.3 POST /returns/:returnId/confirm — 管理员确认退货（扣库存 / 写流水）
+router.post('/returns/:returnId/confirm', requireAuth, async (req, res) => {
+  if (!isAdminUser(req)) {
+    return res.status(403).json({ error: '仅管理员可确认退货' });
+  }
+  const connection = await pool.getConnection();
+  let committed = false;
+  try {
+    const { returnId } = req.params;
+    await connection.beginTransaction();
+
+    // 锁顺序：退货单头 → 采购单头 → 明细（按明细 id 升序）→ 库存行（按仓库+物资升序）
+    const [rRows] = await connection.query('SELECT * FROM warehouse_purchase_returns WHERE id = ? FOR UPDATE', [returnId]);
+    if (rRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '退货单不存在' });
+    }
+    const returnRow = rRows[0];
+    if (!['draft', 'submitted'].includes(returnRow.status)) {
+      await connection.rollback();
+      return res.status(400).json({ error: '当前退货单状态不可确认' });
+    }
+
+    const [pRows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ? FOR UPDATE', [returnRow.purchase_id]);
+    if (pRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const purchase = pRows[0];
+    if (!RETURNABLE_PURCHASE_STATUSES.includes(purchase.status)) {
+      await connection.rollback();
+      return res.status(400).json({ error: '采购单当前状态不允许退货' });
+    }
+
+    const [returnItems] = await connection.query(
+      `SELECT ri.*, wpi.received_quantity, wpi.received_amount, wpi.item_name AS wpi_item_name
+       FROM warehouse_purchase_return_items ri
+       INNER JOIN warehouse_purchase_items wpi ON wpi.id = ri.purchase_item_id
+       WHERE ri.return_id = ?
+       ORDER BY wpi.id ASC`,
+      [returnId]
+    );
+    if (returnItems.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ error: '退货单没有明细' });
+    }
+    const uniqueItemIds = new Set(returnItems.map((it) => it.purchase_item_id));
+    if (uniqueItemIds.size !== returnItems.length) {
+      await connection.rollback();
+      return res.status(409).json({ error: '退货单存在重复物资明细，请作废后重新创建' });
+    }
+
+    // 金额重算（以已确认退货为基准，保证尾差归属正确）
+    const recomputed = await buildReturnItemAmounts(
+      connection,
+      purchase.id,
+      returnItems.map((it) => ({ purchase_item_id: it.purchase_item_id, quantity: Number(it.quantity) })),
+      returnId
+    );
+    const amountByItem = new Map(recomputed.map((x) => [x.item.id, x]));
+
+    const operatorId = req.user?.id || null;
+    const operatorName = req.user?.name || null;
+    let totalAmount = 0;
+    let totalQty = 0;
+
+    // 阶段一：按明细 id 升序做行级累计原子校验（锁 warehouse_purchase_items）
+    const itemsById = [...returnItems].sort((a, b) => String(a.purchase_item_id).localeCompare(String(b.purchase_item_id)));
+    for (const ri of itemsById) {
+      const calc = amountByItem.get(ri.purchase_item_id);
+      if (!calc) {
+        const err = new Error('退货明细数据异常');
+        err.httpStatus = 400;
+        throw err;
+      }
+      const [upd] = await connection.query(
+        `UPDATE warehouse_purchase_items
+         SET returned_quantity = returned_quantity + ?
+         WHERE id = ? AND returned_quantity + ? <= received_quantity`,
+        [calc.qty, ri.purchase_item_id, calc.qty]
+      );
+      if (upd.affectedRows !== 1) {
+        const err = new Error(`物资「${ri.item_name || ''}」累计退货数量超过实收数量`);
+        err.httpStatus = 400;
+        throw err;
+      }
+    }
+
+    // 阶段二：按「仓库 + 物资」升序处理库存与流水，固定锁顺序避免死锁
+    const stockItems = [...returnItems].sort((a, b) => {
+      const wa = String(a.warehouse_id || '');
+      const wb = String(b.warehouse_id || '');
+      if (wa !== wb) return wa.localeCompare(wb);
+      return String(a.item_id || '').localeCompare(String(b.item_id || ''));
+    });
+    for (const ri of stockItems) {
+      const calc = amountByItem.get(ri.purchase_item_id);
+      const qty = calc.qty;
+      const amount = calc.amount;
+
+      // 即采即用判定：原采购入库时存在 expense 流水
+      const [expRows] = await connection.query(
+        `SELECT id, warehouse_id, department_id, department_name
+         FROM stock_movements
+         WHERE related_type = 'purchase' AND related_id = ? AND item_id = ? AND movement_type = 'expense'
+         ORDER BY created_at ASC LIMIT 1`,
+        [purchase.id, ri.item_id]
+      );
+      const isInstant = expRows.length > 0;
+      const flowRow = expRows[0] || {};
+      const warehouseId = ri.warehouse_id || flowRow.warehouse_id || purchase.warehouse_id;
+
+      if (isInstant) {
+        // 即采即用：只写 expense（quantity 为正、金额为负），不动 inventory
+        await insertReturnMovement(connection, {
+          warehouseId,
+          itemId: ri.item_id,
+          itemName: ri.item_name,
+          movementType: 'expense',
+          quantity: qty,
+          unit: ri.unit,
+          unitPrice: calc.unitPrice,
+          totalAmount: -amount,
+          reason: `采购退货（即采即用冲减） ${returnRow.return_no}`,
+          relatedId: returnId,
+          operatorId,
+          operatorName,
+          departmentId: flowRow.department_id,
+          departmentName: flowRow.department_name,
+        });
+      } else {
+        // 普通物资：校验当前库存充足后扣减
+        const [invRows] = await connection.query(
+          'SELECT id, quantity FROM inventory WHERE warehouse_id = ? AND item_id = ? FOR UPDATE',
+          [warehouseId, ri.item_id]
+        );
+        const stockQty = invRows.length > 0 ? Number(invRows[0].quantity) || 0 : 0;
+        if (stockQty + 0.0005 < qty) {
+          const err = new Error(`物资「${ri.item_name || ''}」库存不足，当前库存 ${stockQty}，本次退货 ${qty}`);
+          err.httpStatus = 400;
+          throw err;
+        }
+        if (invRows.length > 0) {
+          await connection.query(
+            'UPDATE inventory SET quantity = quantity - ? WHERE warehouse_id = ? AND item_id = ?',
+            [qty, warehouseId, ri.item_id]
+          );
+        }
+        await insertReturnMovement(connection, {
+          warehouseId,
+          itemId: ri.item_id,
+          itemName: ri.item_name,
+          movementType: 'return',
+          quantity: -qty,
+          unit: ri.unit,
+          unitPrice: calc.unitPrice,
+          totalAmount: -amount,
+          reason: `采购退货 ${returnRow.return_no}`,
+          relatedId: returnId,
+          operatorId,
+          operatorName,
+          departmentId: flowRow.department_id,
+          departmentName: flowRow.department_name,
+        });
+      }
+
+      await connection.query(
+        'UPDATE warehouse_purchase_return_items SET amount = ?, unit_price = ?, is_instant = ? WHERE id = ?',
+        [amount, calc.unitPrice, isInstant ? 1 : 0, ri.id]
+      );
+      totalAmount += amount;
+      totalQty += qty;
+    }
+
+    totalAmount = Math.round(totalAmount * 100) / 100;
+    totalQty = round3(totalQty);
+
+    // 订单级上限：累计退货金额不得超过实收金额（atomic）
+    const [capUpd] = await connection.query(
+      `UPDATE warehouse_purchases
+       SET returned_amount = returned_amount + ?
+       WHERE id = ?
+         AND returned_amount + ? <= (CASE WHEN IFNULL(actual_amount, 0) > 0 THEN actual_amount ELSE IFNULL(total_amount, 0) END)`,
+      [totalAmount, purchase.id, totalAmount]
+    );
+    if (capUpd.affectedRows !== 1) {
+      const err = new Error('累计退货金额超过实收金额');
+      err.httpStatus = 400;
+      throw err;
+    }
+
+    const paymentState = await derivePaymentState(connection, purchase);
+    const [freshRows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ?', [purchase.id]);
+    const netAmount = computeNetAmount(freshRows[0]);
+
+    await connection.query(
+      `UPDATE warehouse_purchase_returns
+       SET status = 'confirmed', total_quantity = ?, total_amount = ?, net_amount = ?, payment_state = ?,
+           confirmed_by = ?, confirmed_by_name = ?, confirmed_at = NOW()
+       WHERE id = ?`,
+      [totalQty, totalAmount, netAmount, paymentState, operatorId, operatorName, returnId]
+    );
+
+    await connection.commit();
+    committed = true;
+
+    const [freshReturn] = await pool.query('SELECT * FROM warehouse_purchase_returns WHERE id = ?', [returnId]);
+    const [freshItems] = await pool.query('SELECT * FROM warehouse_purchase_return_items WHERE return_id = ?', [returnId]);
+    const [freshPurchase] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [purchase.id]);
+
+    await sendReturnGroupMessage(freshPurchase[0], freshReturn[0], freshItems, operatorName);
+
+    res.json({
+      ...freshReturn[0],
+      items: freshItems,
+      purchase: normalizePurchaseRow(freshPurchase[0]),
+    });
+  } catch (err) {
+    if (!committed) await connection.rollback();
+    console.error('确认退货失败:', err);
+    res.status(err.httpStatus || 500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 8.4 POST /returns/:returnId/void — 作废退货单
+router.post('/returns/:returnId/void', requireAuth, async (req, res) => {
+  if (!isAdminUser(req)) {
+    return res.status(403).json({ error: '仅管理员可作废退货单' });
+  }
+  const connection = await pool.getConnection();
+  try {
+    const { returnId } = req.params;
+    const { reason } = req.body || {};
+    await connection.beginTransaction();
+
+    const [rRows] = await connection.query('SELECT * FROM warehouse_purchase_returns WHERE id = ? FOR UPDATE', [returnId]);
+    if (rRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '退货单不存在' });
+    }
+    const returnRow = rRows[0];
+    if (returnRow.status === 'completed') {
+      await connection.rollback();
+      return res.status(400).json({ error: '已完成的退货单禁止作废' });
+    }
+    if (returnRow.status === 'voided') {
+      await connection.rollback();
+      return res.status(400).json({ error: '退货单已作废' });
+    }
+
+    const [pRows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ? FOR UPDATE', [returnRow.purchase_id]);
+    if (pRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const purchase = pRows[0];
+    const operatorId = req.user?.id || null;
+    const operatorName = req.user?.name || null;
+
+    // 付款状态实时派生，避免确认后采购单才付款导致漏判
+    const currentPaymentState = await derivePaymentState(connection, purchase);
+    if (returnRow.settlement_ref || returnRow.payment_state === 'paid' || currentPaymentState === 'paid') {
+      await connection.rollback();
+      return res.status(400).json({ error: '已付款或已登记退款/抵扣凭证的退货单禁止作废' });
+    }
+
+    // 已确认的退货需要整单反向冲回
+    if (returnRow.status === 'confirmed') {
+      const [items] = await connection.query(
+        'SELECT * FROM warehouse_purchase_return_items WHERE return_id = ? ORDER BY purchase_item_id ASC',
+        [returnId]
+      );
+
+      for (const it of items) {
+        const qty = Number(it.quantity) || 0;
+        const amount = Number(it.amount) || 0;
+
+        // 原子扣减累计已退数量
+        const [qtyUpd] = await connection.query(
+          `UPDATE warehouse_purchase_items
+           SET returned_quantity = returned_quantity - ?
+           WHERE id = ? AND returned_quantity >= ?`,
+          [qty, it.purchase_item_id, qty]
+        );
+        if (qtyUpd.affectedRows !== 1) {
+          const err = new Error('冲回累计退货数量失败，请人工核对');
+          err.httpStatus = 409;
+          throw err;
+        }
+
+        if (Number(it.is_instant) === 1) {
+          // 即采即用：反向 expense（quantity 为负、金额为正）
+          await insertReturnMovement(connection, {
+            warehouseId: it.warehouse_id,
+            itemId: it.item_id,
+            itemName: it.item_name,
+            movementType: 'expense',
+            quantity: -qty,
+            unit: it.unit,
+            unitPrice: it.unit_price,
+            totalAmount: amount,
+            reason: `采购退货作废冲回（即采即用） ${returnRow.return_no}`,
+            relatedId: returnId,
+            operatorId,
+            operatorName,
+            departmentId: it.department_id,
+            departmentName: it.department_name,
+          });
+        } else {
+          // 普通物资：反向 return 流水（数量/金额为正）并恢复库存
+          await insertReturnMovement(connection, {
+            warehouseId: it.warehouse_id,
+            itemId: it.item_id,
+            itemName: it.item_name,
+            movementType: 'return',
+            quantity: qty,
+            unit: it.unit,
+            unitPrice: it.unit_price,
+            totalAmount: amount,
+            reason: `采购退货作废冲回 ${returnRow.return_no}`,
+            relatedId: returnId,
+            operatorId,
+            operatorName,
+            departmentId: it.department_id,
+            departmentName: it.department_name,
+          });
+          const [invRows] = await connection.query(
+            'SELECT id FROM inventory WHERE warehouse_id = ? AND item_id = ? FOR UPDATE',
+            [it.warehouse_id, it.item_id]
+          );
+          if (invRows.length > 0) {
+            await connection.query(
+              'UPDATE inventory SET quantity = quantity + ? WHERE warehouse_id = ? AND item_id = ?',
+              [qty, it.warehouse_id, it.item_id]
+            );
+          } else {
+            await connection.query(
+              'INSERT INTO inventory (id, warehouse_id, item_id, quantity, unit) VALUES (?, ?, ?, ?, ?)',
+              [uuidv4(), it.warehouse_id, it.item_id, qty, it.unit]
+            );
+          }
+        }
+      }
+
+      // 订单级累计金额回退
+      const [amtUpd] = await connection.query(
+        `UPDATE warehouse_purchases
+         SET returned_amount = returned_amount - ?
+         WHERE id = ? AND returned_amount >= ?`,
+        [returnRow.total_amount, purchase.id, returnRow.total_amount]
+      );
+      if (amtUpd.affectedRows !== 1) {
+        const err = new Error('冲回累计退货金额失败，请人工核对');
+        err.httpStatus = 409;
+        throw err;
+      }
+    }
+
+    await connection.query(
+      `UPDATE warehouse_purchase_returns
+       SET status = 'voided', voided_by = ?, voided_by_name = ?, voided_at = NOW(), void_reason = ?
+       WHERE id = ? AND status IN ('draft', 'submitted', 'confirmed')`,
+      [operatorId, operatorName, reason || null, returnId]
+    );
+
+    await connection.commit();
+    const [fresh] = await pool.query('SELECT * FROM warehouse_purchase_returns WHERE id = ?', [returnId]);
+    res.json(fresh[0]);
+  } catch (err) {
+    await connection.rollback();
+    console.error('作废退货单失败:', err);
+    res.status(err.httpStatus || 500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 8.5 POST /returns/:returnId/complete — 完成退货（付款状态未知时禁止）
+router.post('/returns/:returnId/complete', requireAuth, async (req, res) => {
+  if (!isAdminUser(req)) {
+    return res.status(403).json({ error: '仅管理员可完成退货单' });
+  }
+  const connection = await pool.getConnection();
+  try {
+    const { returnId } = req.params;
+    await connection.beginTransaction();
+
+    const [rRows] = await connection.query('SELECT * FROM warehouse_purchase_returns WHERE id = ? FOR UPDATE', [returnId]);
+    if (rRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '退货单不存在' });
+    }
+    const returnRow = rRows[0];
+    if (returnRow.status !== 'confirmed') {
+      await connection.rollback();
+      return res.status(400).json({ error: '只有已确认的退货单可以完成' });
+    }
+
+    const [pRows] = await connection.query('SELECT * FROM warehouse_purchases WHERE id = ?', [returnRow.purchase_id]);
+    if (pRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: '采购单不存在' });
+    }
+    const paymentState = await derivePaymentState(connection, pRows[0]);
+    if (paymentState === 'unknown') {
+      await connection.rollback();
+      return res.status(400).json({ error: '付款状态未知：请先在费用审批中确认该报销是否已付款，再完成退货' });
+    }
+    if (paymentState === 'paid' && !returnRow.settlement_ref) {
+      await connection.rollback();
+      return res.status(400).json({ error: '已付款退货请先登记退款/抵扣凭证号，再完成退货' });
+    }
+
+    await connection.query(
+      `UPDATE warehouse_purchase_returns
+       SET status = 'completed', payment_state = ?, completed_by = ?, completed_by_name = ?, completed_at = NOW()
+       WHERE id = ? AND status = 'confirmed'`,
+      [paymentState, req.user?.id || null, req.user?.name || null, returnId]
+    );
+
+    await connection.commit();
+    const [fresh] = await pool.query('SELECT * FROM warehouse_purchase_returns WHERE id = ?', [returnId]);
+    res.json(fresh[0]);
+  } catch (err) {
+    await connection.rollback();
+    console.error('完成退货单失败:', err);
+    res.status(err.httpStatus || 500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// 8.6 PUT /returns/:returnId/settlement — 登记退款/抵扣凭证号（已付款退货完成前置）
+router.put('/returns/:returnId/settlement', requireAuth, async (req, res) => {
+  if (!isAdminUser(req)) {
+    return res.status(403).json({ error: '仅管理员可登记退款/抵扣凭证' });
+  }
+  try {
+    const { returnId } = req.params;
+    const { settlement_ref } = req.body || {};
+    if (!settlement_ref || !String(settlement_ref).trim()) {
+      return res.status(400).json({ error: '请填写退款/抵扣凭证号' });
+    }
+    const [rows] = await pool.query('SELECT * FROM warehouse_purchase_returns WHERE id = ?', [returnId]);
+    if (rows.length === 0) return res.status(404).json({ error: '退货单不存在' });
+    if (rows[0].status === 'voided') return res.status(400).json({ error: '已作废的退货单不能登记凭证' });
+
+    await pool.query(
+      'UPDATE warehouse_purchase_returns SET settlement_ref = ? WHERE id = ?',
+      [String(settlement_ref).trim(), returnId]
+    );
+    const [fresh] = await pool.query('SELECT * FROM warehouse_purchase_returns WHERE id = ?', [returnId]);
+    res.json(fresh[0]);
+  } catch (err) {
+    console.error('登记退款凭证失败:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -67,8 +67,11 @@ interface PurchaseItem {
   received_quantity?: number;
   received_unit?: string;
   received_unit_price?: number;
+  received_amount?: number;
   received_spec?: string;
   not_arrived?: boolean;
+  // 累计已退数量
+  returned_quantity?: number;
 }
 
 // 确认部门
@@ -89,6 +92,8 @@ interface WarehousePurchase {
   warehouse_name?: string;
   total_amount: number;
   actual_amount?: number;
+  returned_amount?: number;
+  net_amount?: number;
   received_at?: string | null;
   created_at?: string;
   updated_at?: string;
@@ -117,6 +122,10 @@ interface WarehousePurchase {
   prepay_status?: string;
   writeoff_status?: string;
   prepay_attachments?: Array<{ filename: string; path: string; mime: string; size: number }> | null;
+  prepay_voucher_no?: string | null;
+  monthly_payment_sp_no?: string | null;
+  monthly_paid_at?: string | null;
+  monthly_pending?: number | string | null;
   created_by_name?: string;
   created_by?: string;
 }
@@ -146,6 +155,73 @@ interface ReceiveFormRow {
   received_spec: string;
   not_arrived: boolean;
 }
+
+// ====== 退货相关类型 ======
+
+interface PurchaseReturnItem {
+  id: string;
+  purchase_item_id: string;
+  item_id?: string;
+  item_name: string;
+  unit?: string;
+  warehouse_id?: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+}
+
+interface PurchaseReturn {
+  id: string;
+  return_no: string;
+  purchase_id: string;
+  status: 'draft' | 'submitted' | 'confirmed' | 'completed' | 'voided';
+  total_quantity: number;
+  total_amount: number;
+  net_amount?: number | null;
+  payment_state?: string;
+  settlement_ref?: string | null;
+  remark?: string;
+  created_by_name?: string;
+  confirmed_by_name?: string;
+  confirmed_at?: string;
+  completed_at?: string;
+  voided_at?: string;
+  void_reason?: string;
+  created_at?: string;
+  items?: PurchaseReturnItem[];
+}
+
+// 退货表单行
+interface ReturnFormRow {
+  purchaseItemId: string;
+  itemName: string;
+  unit: string;
+  maxQty: number;
+  quantity: string;
+  unitPrice: number;
+  receivedAmount: number;
+  receivedQty: number;
+  returnedQty: number;
+  returnedAmount: number;
+}
+
+// 退货单状态显示
+const RETURN_STATUS_CONFIG: Record<string, { text: string; color: string }> = {
+  draft: { text: '草稿', color: 'bg-gray-100 text-gray-700' },
+  submitted: { text: '待确认', color: 'bg-blue-50 text-blue-700' },
+  confirmed: { text: '已确认', color: 'bg-teal-50 text-teal-700' },
+  completed: { text: '已完成', color: 'bg-green-50 text-green-700' },
+  voided: { text: '已作废', color: 'bg-gray-100 text-gray-500' },
+};
+
+// 可发起/查看退货的采购单状态
+const RETURN_PURCHASE_STATUSES = ['received', 'confirming', 'confirmed', 'reimbursing', 'reimbursed'];
+
+// 已完成结算的采购单不再提供退货入口
+const isReturnSettled = (p: WarehousePurchase) =>
+  p.status === 'reimbursed'
+  || !!p.monthly_paid_at
+  || (p.purchase_type === 'prepay' && p.prepay_status === 'paid' && !!p.writeoff_status);
 
 // ====== 状态显示配置 ======
 
@@ -273,6 +349,21 @@ export default function WarehousePurchaseList() {
   // 批量刷新审批状态弹窗
   const [showBatchRefreshModal, setShowBatchRefreshModal] = useState(false);
   const [batchRefreshing, setBatchRefreshing] = useState(false);
+
+  // 退货弹窗
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnTarget, setReturnTarget] = useState<WarehousePurchase | null>(null);
+  const [returnRows, setReturnRows] = useState<ReturnFormRow[]>([]);
+  const [returnRemark, setReturnRemark] = useState('');
+  const [returnLoading, setReturnLoading] = useState(false);
+  const [returnSubmitting, setReturnSubmitting] = useState(false);
+
+  // 退货记录弹窗
+  const [showReturnsModal, setShowReturnsModal] = useState(false);
+  const [returnsTarget, setReturnsTarget] = useState<WarehousePurchase | null>(null);
+  const [returnsList, setReturnsList] = useState<PurchaseReturn[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [returnActioningId, setReturnActioningId] = useState<string | null>(null);
 
   // ===== 加载列表 =====
   const fetchList = useCallback(async () => {
@@ -429,6 +520,169 @@ export default function WarehousePurchaseList() {
       setError(err.message || '收货录入失败');
     } finally {
       setReceiveSubmitting(false);
+    }
+  };
+
+  // ===== 退货相关 =====
+  const fetchReturns = async (purchaseId: string) => {
+    const data = await api.get<PurchaseReturn[]>(`/warehouse-purchases/${purchaseId}/returns`);
+    return data || [];
+  };
+
+  // 打开退货弹窗：按明细行计算可退数量，金额按实收金额比例自动带出
+  const openReturnModal = async (p: WarehousePurchase) => {
+    setReturnTarget(p);
+    setShowReturnModal(true);
+    setReturnRows([]);
+    setReturnRemark('');
+    setReturnLoading(true);
+    try {
+      let items = p.items;
+      if (!items || items.length === 0) {
+        const detail = await api.get<WarehousePurchase>(`/warehouse-purchases/${p.id}`);
+        items = detail.items || [];
+        setPurchases((prev) => prev.map((it) => (it.id === p.id ? { ...it, ...detail } : it)));
+      }
+      const returns = await fetchReturns(p.id);
+      const returnedByItem = new Map<string, { qty: number; amt: number }>();
+      returns
+        .filter((r) => r.status === 'confirmed' || r.status === 'completed')
+        .forEach((r) => {
+          (r.items || []).forEach((ri) => {
+            const cur = returnedByItem.get(ri.purchase_item_id) || { qty: 0, amt: 0 };
+            cur.qty += safeNum(ri.quantity);
+            cur.amt += safeNum(ri.amount);
+            returnedByItem.set(ri.purchase_item_id, cur);
+          });
+        });
+      const rows: ReturnFormRow[] = (items || [])
+        .map((it) => {
+          const receivedQty = safeNum(it.received_quantity);
+          const receivedAmount = safeNum(it.received_amount);
+          const returned = returnedByItem.get(it.id) || { qty: 0, amt: 0 };
+          const maxQty = Math.max(0, Math.round((receivedQty - returned.qty) * 1000) / 1000);
+          return {
+            purchaseItemId: it.id,
+            itemName: it.item_name,
+            unit: it.received_unit || it.unit || '',
+            maxQty,
+            quantity: '',
+            unitPrice: receivedQty > 0
+              ? Math.round((receivedAmount / receivedQty) * 100) / 100
+              : safeNum(it.received_unit_price) || safeNum(it.unit_price),
+            receivedAmount,
+            receivedQty,
+            returnedQty: returned.qty,
+            returnedAmount: returned.amt,
+          };
+        })
+        .filter((r) => r.maxQty > 0);
+      setReturnRows(rows);
+    } catch (err: any) {
+      setError(err.message || '加载退货数据失败');
+      setShowReturnModal(false);
+      setReturnTarget(null);
+    } finally {
+      setReturnLoading(false);
+    }
+  };
+
+  // 退货金额按实收金额比例拆分（与服务端口径一致，最终以服务端重算为准）
+  const calcReturnAmount = (row: ReturnFormRow) => {
+    const qty = parseFloat(row.quantity) || 0;
+    if (qty <= 0 || row.receivedQty <= 0) return 0;
+    const cumQty = row.returnedQty + qty;
+    const cumAmount = Math.round((row.receivedAmount * cumQty / row.receivedQty) * 100) / 100;
+    return Math.max(0, Math.round((cumAmount - row.returnedAmount) * 100) / 100);
+  };
+
+  const submitReturn = async (asDraft: boolean) => {
+    if (!returnTarget) return;
+    const lines = returnRows.filter((r) => (parseFloat(r.quantity) || 0) > 0);
+    if (lines.length === 0) {
+      setError('请填写至少一项退货数量');
+      return;
+    }
+    for (const r of lines) {
+      const qty = parseFloat(r.quantity) || 0;
+      if (qty > r.maxQty + 0.0005) {
+        setError(`物资「${r.itemName}」退货数量超过可退数量`);
+        return;
+      }
+    }
+    setReturnSubmitting(true);
+    setError('');
+    try {
+      await api.post(`/warehouse-purchases/${returnTarget.id}/returns`, {
+        items: lines.map((r) => ({
+          purchase_item_id: r.purchaseItemId,
+          quantity: parseFloat(r.quantity) || 0,
+        })),
+        remark: returnRemark.trim() || undefined,
+        submit: !asDraft,
+      });
+      setShowReturnModal(false);
+      setReturnTarget(null);
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '创建退货单失败');
+    } finally {
+      setReturnSubmitting(false);
+    }
+  };
+
+  const openReturnsModal = async (p: WarehousePurchase) => {
+    setReturnsTarget(p);
+    setShowReturnsModal(true);
+    setReturnsList([]);
+    setReturnsLoading(true);
+    try {
+      const list = await fetchReturns(p.id);
+      setReturnsList(list);
+    } catch (err: any) {
+      setError(err.message || '加载退货记录失败');
+    } finally {
+      setReturnsLoading(false);
+    }
+  };
+
+  const handleReturnAction = async (
+    action: 'confirm' | 'void' | 'complete' | 'settlement',
+    ret: PurchaseReturn,
+  ) => {
+    if (!returnsTarget) return;
+    let confirmText = '';
+    if (action === 'confirm') confirmText = `确定确认退货单 ${ret.return_no}？确认后将扣减库存并冲减采购金额。`;
+    if (action === 'void') confirmText = `确定作废退货单 ${ret.return_no}？已确认的退货将整单反向冲回。`;
+    if (action === 'complete') confirmText = `确定完成退货单 ${ret.return_no}？`;
+    if (confirmText && !window.confirm(confirmText)) return;
+
+    setReturnActioningId(ret.id);
+    setError('');
+    try {
+      if (action === 'confirm') {
+        await api.post(`/warehouse-purchases/returns/${ret.id}/confirm`);
+      } else if (action === 'void') {
+        const reason = window.prompt('作废原因（可选）');
+        if (reason === null) return;
+        await api.post(`/warehouse-purchases/returns/${ret.id}/void`, { reason });
+      } else if (action === 'complete') {
+        await api.post(`/warehouse-purchases/returns/${ret.id}/complete`);
+      } else {
+        const ref = window.prompt('请输入退款/抵扣凭证号');
+        if (ref === null) return;
+        if (!ref.trim()) {
+          setError('请填写退款/抵扣凭证号');
+          return;
+        }
+        await api.put(`/warehouse-purchases/returns/${ret.id}/settlement`, { settlement_ref: ref.trim() });
+      }
+      setReturnsList(await fetchReturns(returnsTarget.id));
+      await fetchList();
+    } catch (err: any) {
+      setError(err.message || '退货操作失败');
+    } finally {
+      setReturnActioningId(null);
     }
   };
 
@@ -1073,6 +1327,24 @@ export default function WarehousePurchaseList() {
                             </p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-gray-500">累计已退</p>
+                            <p className="font-medium text-orange-600 mt-0.5">
+                              {formatCurrency(safeNum(p.returned_amount))}
+                            </p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-gray-500">净额（实收-已退）</p>
+                            <p className="font-medium text-emerald-600 mt-0.5">
+                              {p.received_at
+                                ? formatCurrency(
+                                    p.net_amount != null
+                                      ? safeNum(p.net_amount)
+                                      : safeNum(p.actual_amount ?? p.total_amount) - safeNum(p.returned_amount),
+                                  )
+                                : '-'}
+                            </p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2">
                             <p className="text-gray-500">入库时间</p>
                             <p className="font-medium text-gray-800 mt-0.5">
                               {p.received_at ? formatDateTime(p.received_at) : '-'}
@@ -1170,6 +1442,7 @@ export default function WarehousePurchaseList() {
                                     <th className="px-3 py-2 text-right">金额</th>
                                     <th className="px-3 py-2 text-left">采购理由</th>
                                     <th className="px-3 py-2 text-right">实收数量</th>
+                                    <th className="px-3 py-2 text-right">已退数量</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200">
@@ -1201,6 +1474,9 @@ export default function WarehousePurchaseList() {
                                           : it.received_quantity != null
                                             ? safeNum(it.received_quantity)
                                             : '-'}
+                                      </td>
+                                      <td className="px-3 py-2 text-right text-orange-600">
+                                        {safeNum(it.returned_quantity) > 0 ? safeNum(it.returned_quantity) : '-'}
                                       </td>
                                     </tr>
                                   ))}
@@ -1566,6 +1842,35 @@ export default function WarehousePurchaseList() {
                             </>
                           )}
 
+                          {/* 退货：未完成结算前可发起退货；退货记录始终可查看 */}
+                          {RETURN_PURCHASE_STATUSES.includes(p.status) && !isReturnSettled(p) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openReturnModal(p);
+                              }}
+                              disabled={returnLoading && returnTarget?.id === p.id}
+                              title="按明细行发起退货，退货金额按实收金额比例自动拆分"
+                              className="btn-secondary text-xs flex items-center gap-1 text-orange-600 hover:bg-orange-50 disabled:opacity-50"
+                            >
+                              <RotateCcw size={14} />
+                              退货
+                            </button>
+                          )}
+                          {RETURN_PURCHASE_STATUSES.includes(p.status) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openReturnsModal(p);
+                              }}
+                              title="查看退货记录"
+                              className="btn-secondary text-xs flex items-center gap-1 text-orange-600 hover:bg-orange-50"
+                            >
+                              <ClipboardCheck size={14} />
+                              退货记录
+                            </button>
+                          )}
+
                           {/* 非草稿/非审批中：仅管理员可删除已收货/已确认订单 */}
                           {isAdminUser && ['received', 'confirming', 'confirmed'].includes(p.status) && (
                             <button
@@ -1795,6 +2100,279 @@ export default function WarehousePurchaseList() {
                 <PackageCheck size={16} />
                 {receiveSubmitting ? '提交中...' : '确认收货'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 采购退货弹窗 ===== */}
+      {showReturnModal && returnTarget && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => !returnSubmitting && setShowReturnModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">采购退货</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  采购单：{returnTarget.purchase_no || returnTarget.id}
+                </p>
+              </div>
+              <button
+                onClick={() => !returnSubmitting && setShowReturnModal(false)}
+                className="p-1 hover:bg-gray-100 rounded-md"
+                disabled={returnSubmitting}
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {returnLoading ? (
+                <div className="text-center py-10 text-gray-400 flex items-center justify-center gap-2">
+                  <RefreshCw size={16} className="animate-spin" />
+                  加载退货数据...
+                </div>
+              ) : returnRows.length === 0 ? (
+                <div className="text-center py-10 text-gray-400">暂无可退明细（未收货或已全部退货）</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-gray-600">
+                      <tr>
+                        <th className="px-3 py-2 text-left">物资名称</th>
+                        <th className="px-3 py-2 text-left">单位</th>
+                        <th className="px-3 py-2 text-right">实收数量</th>
+                        <th className="px-3 py-2 text-right">已退数量</th>
+                        <th className="px-3 py-2 text-right">可退数量</th>
+                        <th className="px-3 py-2 text-right">退货数量</th>
+                        <th className="px-3 py-2 text-right">单价</th>
+                        <th className="px-3 py-2 text-right">退货金额</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {returnRows.map((row, idx) => (
+                        <tr key={row.purchaseItemId || idx}>
+                          <td className="px-3 py-2 text-gray-800 font-medium">{row.itemName}</td>
+                          <td className="px-3 py-2 text-gray-500">{row.unit || '-'}</td>
+                          <td className="px-3 py-2 text-right text-gray-700">{row.receivedQty}</td>
+                          <td className="px-3 py-2 text-right text-orange-600">{row.returnedQty || '-'}</td>
+                          <td className="px-3 py-2 text-right text-gray-700">{row.maxQty}</td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min="0"
+                              max={row.maxQty}
+                              step="0.001"
+                              value={row.quantity}
+                              onChange={(e) =>
+                                setReturnRows((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, quantity: e.target.value } : r)),
+                                )
+                              }
+                              placeholder="0"
+                              className="w-24 text-right border border-gray-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right text-gray-500">{row.unitPrice.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium text-gray-800">
+                            {formatCurrency(calcReturnAmount(row))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <label className="block text-xs text-gray-500 mb-1">退货备注（可选）</label>
+                <input
+                  type="text"
+                  value={returnRemark}
+                  onChange={(e) => setReturnRemark(e.target.value)}
+                  placeholder="如退货原因、物流单号等"
+                  className="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                退货金额按原明细实收金额与数量比例自动拆分，单价不可修改；确认后将扣减库存并冲减采购净额。
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button
+                onClick={() => setShowReturnModal(false)}
+                className="btn-secondary"
+                disabled={returnSubmitting}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => submitReturn(true)}
+                disabled={returnSubmitting || returnLoading || returnRows.length === 0}
+                className="btn-secondary disabled:opacity-50"
+              >
+                保存草稿
+              </button>
+              <button
+                onClick={() => submitReturn(false)}
+                disabled={returnSubmitting || returnLoading || returnRows.length === 0}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                <RotateCcw size={16} />
+                {returnSubmitting ? '提交中...' : '提交退货单'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 退货记录弹窗 ===== */}
+      {showReturnsModal && returnsTarget && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowReturnsModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">退货记录</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  采购单：{returnsTarget.purchase_no || returnsTarget.id}
+                </p>
+              </div>
+              <button onClick={() => setShowReturnsModal(false)} className="p-1 hover:bg-gray-100 rounded-md">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {returnsLoading ? (
+                <div className="text-center py-10 text-gray-400 flex items-center justify-center gap-2">
+                  <RefreshCw size={16} className="animate-spin" />
+                  加载退货记录...
+                </div>
+              ) : returnsList.length === 0 ? (
+                <div className="text-center py-10 text-gray-400">暂无退货记录</div>
+              ) : (
+                returnsList.map((ret) => {
+                  const cfg = RETURN_STATUS_CONFIG[ret.status] || { text: ret.status, color: 'bg-gray-100 text-gray-700' };
+                  const actioning = returnActioningId === ret.id;
+                  return (
+                    <div key={ret.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gray-50">
+                        <span className="font-mono text-xs text-gray-800">{ret.return_no}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${cfg.color}`}>{cfg.text}</span>
+                        <span className="text-xs text-gray-500">
+                          数量 {safeNum(ret.total_quantity)}　金额 {formatCurrency(safeNum(ret.total_amount))}
+                        </span>
+                        {ret.net_amount != null && (
+                          <span className="text-xs text-emerald-600">退货后净额 {formatCurrency(safeNum(ret.net_amount))}</span>
+                        )}
+                        <span className="text-xs text-gray-400">
+                          付款状态：{ret.payment_state === 'paid' ? '已付款' : ret.payment_state === 'unpaid' ? '未付款' : '未知'}
+                        </span>
+                        <span className="text-xs text-gray-400 ml-auto">
+                          {ret.created_by_name ? `创建：${ret.created_by_name}` : ''}
+                          {ret.confirmed_at ? `　确认：${formatDateTime(ret.confirmed_at)}` : ''}
+                          {ret.completed_at ? `　完成：${formatDateTime(ret.completed_at)}` : ''}
+                        </span>
+                      </div>
+
+                      {ret.items && ret.items.length > 0 && (
+                        <table className="w-full text-xs">
+                          <thead className="text-gray-500 bg-white">
+                            <tr>
+                              <th className="px-3 py-1.5 text-left">物资名称</th>
+                              <th className="px-3 py-1.5 text-right">退货数量</th>
+                              <th className="px-3 py-1.5 text-right">单价</th>
+                              <th className="px-3 py-1.5 text-right">退货金额</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {ret.items!.map((ri) => (
+                              <tr key={ri.id}>
+                                <td className="px-3 py-1.5 text-gray-700">{ri.item_name}</td>
+                                <td className="px-3 py-1.5 text-right text-gray-700">
+                                  {safeNum(ri.quantity)}{ri.unit || ''}
+                                </td>
+                                <td className="px-3 py-1.5 text-right text-gray-500">{safeNum(ri.unit_price).toFixed(2)}</td>
+                                <td className="px-3 py-1.5 text-right font-medium text-gray-800">
+                                  {formatCurrency(safeNum(ri.amount))}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+
+                      {ret.status === 'voided' && (
+                        <div className="px-3 py-1.5 text-xs text-gray-500 bg-white">
+                          作废时间：{ret.voided_at ? formatDateTime(ret.voided_at) : '-'}
+                          {ret.void_reason ? `　原因：${ret.void_reason}` : ''}
+                        </div>
+                      )}
+
+                      {isAdminUser && ['draft', 'submitted', 'confirmed'].includes(ret.status) && (
+                        <div className="flex gap-2 px-3 py-2 border-t border-gray-100 bg-white">
+                          {['draft', 'submitted'].includes(ret.status) && (
+                            <button
+                              onClick={() => handleReturnAction('confirm', ret)}
+                              disabled={actioning}
+                              className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <CheckCircle2 size={14} />
+                              确认退货
+                            </button>
+                          )}
+                          {ret.status === 'confirmed' && (
+                            <button
+                              onClick={() => handleReturnAction('complete', ret)}
+                              disabled={actioning}
+                              className="btn-primary text-xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              <CheckCircle2 size={14} />
+                              完成退货
+                            </button>
+                          )}
+                          {ret.status === 'confirmed' && (
+                            <button
+                              onClick={() => handleReturnAction('settlement', ret)}
+                              disabled={actioning}
+                              className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <FileText size={14} />
+                              {ret.settlement_ref ? '修改凭证号' : '登记退款凭证'}
+                            </button>
+                          )}
+                          {!ret.settlement_ref && (
+                            <button
+                              onClick={() => handleReturnAction('void', ret)}
+                              disabled={actioning}
+                              className="btn-secondary text-xs flex items-center gap-1 text-red-500 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              <Trash2 size={14} />
+                              作废
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100">
+              <button onClick={() => setShowReturnsModal(false)} className="btn-secondary">关闭</button>
             </div>
           </div>
         </div>

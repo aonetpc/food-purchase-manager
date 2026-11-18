@@ -4,6 +4,7 @@ const pool = require('../db');
 const PDFDocument = require('pdfkit');
 const { findChineseFont, findChineseBoldFont, toNum } = require('../utils/pdf');
 const { requireAuth } = require('../middleware/rbac');
+const { netAmountSql, returnedItemAggSql } = require('../utils/purchase-net-amount');
 
 function formatMoney(n) {
   const v = toNum(n);
@@ -1101,10 +1102,7 @@ router.get('/supplier-statistics', async (req, res) => {
         ) as supplier_name,
         COALESCE(NULLIF(wp.supplier_id, ''), '') as supplier_id,
         -- 主表使用采购单头部金额（业务人员最终确认的结算总额，含运费/抹零/折扣/税费整单调差；未到货物资已在此处被人工排除）
-        SUM(CASE
-          WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-          ELSE IFNULL(wp.total_amount, 0)
-        END) as amount
+        SUM(${netAmountSql('wp')}) as amount
       FROM warehouse_purchases wp
       LEFT JOIN suppliers s ON wp.supplier_id = s.id
       INNER JOIN (
@@ -1162,14 +1160,15 @@ router.get('/supplier-statistics/detail', async (req, res) => {
         SUM(CASE
           WHEN wpi.id IS NOT NULL THEN
             CASE WHEN IFNULL(wpi.not_arrived, 0) = 1 THEN 0
-                 WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
-                 ELSE IFNULL(wpi.requested_amount, 0) END
+                 WHEN IFNULL(wpi.received_amount, 0) > 0
+                   THEN GREATEST(0, IFNULL(wpi.received_amount, 0) - IFNULL(ret.returned_amt, 0))
+                 ELSE GREATEST(0, IFNULL(wpi.requested_amount, 0) - IFNULL(ret.returned_amt, 0)) END
           ELSE
-            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-                 ELSE IFNULL(wp.total_amount, 0) END
+            ${netAmountSql('wp')} END
         END) as amount
       FROM warehouse_purchases wp
       LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
+      LEFT JOIN (${returnedItemAggSql()}) ret ON ret.purchase_item_id = wpi.id
       LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
       LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
       -- 找 L2：wc 本身是 level 2 或 wc 的父级是 level 2
@@ -1235,8 +1234,7 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
             ELSE 'none'
           END as group_key,
           COALESCE(NULLIF(wp.supplier_name, ''), s.name, '无供应商采购') as supplier_name,
-          CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-               ELSE IFNULL(wp.total_amount, 0) END as amount
+          ${netAmountSql('wp')} as amount
         FROM warehouse_purchases wp
         LEFT JOIN suppliers s ON wp.supplier_id = s.id
         INNER JOIN (
@@ -1272,14 +1270,15 @@ router.get('/pdf/supplier-statistics', async (req, res) => {
           -- 明细金额：not_arrived=1 剔除；否则 received→requested 回退；无明细行回退头部金额归"未分类"
           CASE WHEN wpi.id IS NOT NULL THEN
             CASE WHEN IFNULL(wpi.not_arrived, 0) = 1 THEN 0
-                 WHEN IFNULL(wpi.received_amount, 0) > 0 THEN wpi.received_amount
-                 ELSE IFNULL(wpi.requested_amount, 0) END
+                 WHEN IFNULL(wpi.received_amount, 0) > 0
+                   THEN GREATEST(0, IFNULL(wpi.received_amount, 0) - IFNULL(ret.returned_amt, 0))
+                 ELSE GREATEST(0, IFNULL(wpi.requested_amount, 0) - IFNULL(ret.returned_amt, 0)) END
           ELSE
-            CASE WHEN IFNULL(wp.actual_amount, 0) > 0 THEN wp.actual_amount
-                 ELSE IFNULL(wp.total_amount, 0) END
+            ${netAmountSql('wp')}
           END as amount
         FROM warehouse_purchases wp
         LEFT JOIN warehouse_purchase_items wpi ON wpi.purchase_id = wp.id
+        LEFT JOIN (${returnedItemAggSql()}) ret ON ret.purchase_item_id = wpi.id
         LEFT JOIN warehouse_items wi ON wpi.item_id = wi.id
         LEFT JOIN warehouse_categories wc ON wi.category_id = wc.id
         LEFT JOIN warehouse_categories wc_l2 ON (

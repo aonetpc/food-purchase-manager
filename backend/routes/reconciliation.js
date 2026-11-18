@@ -16,6 +16,7 @@ const {
   getApprovalDetail,
   uploadMedia,
 } = require('./wecom');
+const { computeNetAmount, netAmountSql } = require('../utils/purchase-net-amount');
 
 // ================================================
 // 工具函数
@@ -91,6 +92,8 @@ router.get('/:id', requireAuth, async (req, res) => {
         ...p,
         total_amount: toNum(p.total_amount),
         actual_amount: toNum(p.actual_amount),
+        returned_amount: toNum(p.returned_amount),
+        net_amount: computeNetAmount(p),
         prepay_amount: toNum(p.prepay_amount),
       }));
     }
@@ -114,7 +117,7 @@ router.post('/generate', requireAuth, async (req, res) => {
 
     // 查询范围内已确认且未关联网结账单的月结采购单（跨月按入库日期 = confirmed_at）
     let sql = `
-      SELECT id, supplier_id, supplier_name, total_amount, actual_amount, confirmed_at
+      SELECT id, supplier_id, supplier_name, total_amount, actual_amount, returned_amount, confirmed_at
       FROM warehouse_purchases
       WHERE purchase_type = 'monthly'
         AND status = 'confirmed'
@@ -139,8 +142,8 @@ router.post('/generate', requireAuth, async (req, res) => {
         supplierGroup[sid] = { supplier_name: row.supplier_name || '未命名', items: [], total: 0 };
       }
       supplierGroup[sid].items.push(row);
-      // 优先使用实际收货金额，没有则用申购金额
-      supplierGroup[sid].total += toNum(row.actual_amount) || toNum(row.total_amount);
+      // 净额：实收金额扣除已退金额（actual_amount 为 0 时回退 total_amount）
+      supplierGroup[sid].total += computeNetAmount(row);
     }
 
     if (Object.keys(supplierGroup).length === 0) {
@@ -397,7 +400,7 @@ router.get('/prepay-writeoff/list', requireAuth, async (req, res) => {
     const [rows] = await pool.query(sql, params);
     res.json(rows.map(r => {
       const prepaid = toNum(r.prepay_amount);
-      const actual = toNum(r.actual_amount) > 0 ? toNum(r.actual_amount) : toNum(r.total_amount);
+      const actual = computeNetAmount(r);
       const diff = actual - prepaid;
       return {
         ...r,
@@ -443,13 +446,13 @@ router.get('/stats/overview', requireAuth, async (req, res) => {
 
     // 待月结采购单数量和金额
     const [pendMonth] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE total_amount END),0) amt FROM warehouse_purchases WHERE purchase_type='monthly' AND status='confirmed' AND monthly_statement_id IS NULL`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(${netAmountSql('warehouse_purchases')}),0) amt FROM warehouse_purchases WHERE purchase_type='monthly' AND status='confirmed' AND monthly_statement_id IS NULL`
     );
     const pendingMonthly = { count: pendMonth[0].cnt, amount: toNum(pendMonth[0].amt) };
 
     // 待人工核销预付款采购单（含未核销 NULL 及少付待尾款 manual，支持 confirmed/reimbursing 状态）
     const [pendPrepay] = await pool.query(
-      `SELECT COUNT(*) cnt, IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE total_amount END),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status IN ('confirmed', 'reimbursing') AND (writeoff_status='manual' OR writeoff_status IS NULL)`
+      `SELECT COUNT(*) cnt, IFNULL(SUM(${netAmountSql('warehouse_purchases')}),0) amt FROM warehouse_purchases WHERE purchase_type='prepay' AND status IN ('confirmed', 'reimbursing') AND (writeoff_status='manual' OR writeoff_status IS NULL)`
     );
     const pendingPrepayWriteoff = { count: pendPrepay[0].cnt, amount: toNum(pendPrepay[0].amt) };
 
@@ -475,7 +478,7 @@ router.get('/monthly/pending-suppliers', requireAuth, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT supplier_id, supplier_name,
              COUNT(*) as purchase_count,
-             IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE total_amount END), 0) as total_amount
+             IFNULL(SUM(${netAmountSql('warehouse_purchases')}), 0) as total_amount
       FROM warehouse_purchases
       WHERE purchase_type = 'monthly'
         AND status = 'confirmed'
@@ -502,7 +505,7 @@ router.get('/monthly/supplier/:id/pending', requireAuth, async (req, res) => {
     const { id } = req.params;
     const [rows] = await pool.query(`
       SELECT id, purchase_no, created_at AS purchase_date, supplier_name, total_amount,
-             actual_amount, confirmed_at, approval_sp_no, pdf_url
+             actual_amount, returned_amount, confirmed_at, approval_sp_no, pdf_url
       FROM warehouse_purchases
       WHERE supplier_id = ?
         AND purchase_type = 'monthly'
@@ -515,6 +518,8 @@ router.get('/monthly/supplier/:id/pending', requireAuth, async (req, res) => {
       ...r,
       total_amount: toNum(r.total_amount),
       actual_amount: toNum(r.actual_amount),
+      returned_amount: toNum(r.returned_amount),
+      net_amount: computeNetAmount(r),
     })));
   } catch (err) {
     console.error('[supplier pending purchases]', err);
@@ -559,7 +564,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     // 查询选中的采购单
     const placeholders = purchase_ids.map(() => '?').join(',');
     const [purchases] = await pool.query(
-      `SELECT id, purchase_no, supplier_id, supplier_name, total_amount, actual_amount, approval_sp_no, confirmed_at
+      `SELECT id, purchase_no, supplier_id, supplier_name, total_amount, actual_amount, returned_amount, approval_sp_no, confirmed_at
        FROM warehouse_purchases
        WHERE id IN (${placeholders})
          AND purchase_type = 'monthly'
@@ -580,7 +585,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
 
     const supplierName = purchases[0].supplier_name || '供应商';
     const totalAmount = purchases.reduce((sum, p) => {
-      const amt = toNum(p.actual_amount) > 0 ? toNum(p.actual_amount) : toNum(p.total_amount);
+      const amt = computeNetAmount(p);
       return sum + amt;
     }, 0);
     const purchaseNos = purchases.map(p => p.purchase_no || p.id.substring(0, 8));
@@ -699,7 +704,7 @@ router.post('/monthly/payment/submit', requireAuth, async (req, res) => {
     if (fieldMapping.details) {
       let detailText = `月结供应商：${supplierName}\n采购单数：${purchases.length}张\n合计金额：¥${totalAmount.toFixed(2)}\n\n`;
       for (const p of purchases) {
-        const lineAmt = toNum(p.actual_amount) > 0 ? toNum(p.actual_amount) : toNum(p.total_amount);
+        const lineAmt = computeNetAmount(p);
         const line = `${p.purchase_no || p.id.substring(0, 8)}  ¥${lineAmt.toFixed(2)}`;
         // 明细文本里始终追加审批单号（无论是否有效），方便审批人查看
         if (p.approval_sp_no) {
