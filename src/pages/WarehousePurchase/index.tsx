@@ -96,7 +96,8 @@ interface WarehousePurchase {
   pdf_url?: string;
   apply_pdf_path?: string;
   apply_pdf_url?: string;
-  // 报销相关
+  // 审批 / 报销相关
+  approval_status?: string;
   reimbursement_no?: string;
   reimbursement_sp_no?: string;
   reimbursement_status?: string;
@@ -922,6 +923,18 @@ export default function WarehousePurchaseList() {
                         >
                           {statusConf.text}
                         </span>
+                        {/* 报销已撤销（待重发） */}
+                        {p.reimbursement_status === 'revoked' && (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700 font-medium">
+                            报销已撤销（待重发）
+                          </span>
+                        )}
+                        {/* 审批异常冻结（企微 6/7） */}
+                        {(p.reimbursement_status === 'frozen' || p.approval_status === 'frozen') && (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700 font-medium">
+                            审批异常冻结
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
                         <span className="flex items-center gap-1">
@@ -1304,8 +1317,8 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* pending_approval: 审批中，刷新审批状态 */}
-                          {p.status === 'pending_approval' && (
+                          {/* pending_approval: 审批中，刷新审批状态（冻结后不再允许自动刷新） */}
+                          {p.status === 'pending_approval' && p.approval_status !== 'frozen' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1438,8 +1451,8 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* confirmed: 发起报销（预付款/月结不显示） */}
-                          {p.status === 'confirmed' && p.purchase_type !== 'prepay' && p.purchase_type !== 'monthly' && (
+                          {/* confirmed 且尚未发起过报销：发起报销（预付款/月结不显示） */}
+                          {p.status === 'confirmed' && !p.reimbursement_sp_no && p.purchase_type !== 'prepay' && p.purchase_type !== 'monthly' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1453,8 +1466,8 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* reimbursing: 刷新状态 */}
-                          {p.status === 'reimbursing' && (
+                          {/* reimbursing: 刷新状态（冻结后不再允许自动刷新） */}
+                          {p.status === 'reimbursing' && p.reimbursement_status !== 'frozen' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1468,8 +1481,8 @@ export default function WarehousePurchaseList() {
                             </button>
                           )}
 
-                          {/* 报销被拒绝：重新发起 */}
-                          {p.reimbursement_status === 'rejected' && (
+                          {/* 报销被驳回 / 被撤销：重新发起（冻结不在此列） */}
+                          {(p.reimbursement_status === 'rejected' || p.reimbursement_status === 'revoked') && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1481,6 +1494,14 @@ export default function WarehousePurchaseList() {
                               <RotateCcw size={14} />
                               重新发起
                             </button>
+                          )}
+
+                          {/* 审批异常冻结：不提供任何自动操作，只提示联系财务 */}
+                          {(p.reimbursement_status === 'frozen' || p.approval_status === 'frozen') && (
+                            <span className="text-xs text-red-600 flex items-center gap-1">
+                              <AlertCircle size={14} />
+                              审批异常冻结，请联系财务
+                            </span>
                           )}
 
                           {/* 采购申请单 PDF：生成/下载（与操作按钮同一行） */}

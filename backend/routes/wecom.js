@@ -2497,64 +2497,82 @@ router.post('/callback', async (req, res) => {
     console.log('[企微回调] 解析结果:', { msgType, event, fromUser, eventKey, taskId, selectedId, responseCode });
 
     // 审批状态变更事件
+    // 统一走 wecom-approval-status 映射：先解析 sp_status，解析不到不写库；
+    // sp_status=4 撤销、6/7 通过后撤销/删除 按单据类型处理，重复回调幂等。
     if (msgType === 'event' && event === 'open_approval_change' && spNo) {
       try {
-        // 先查食材采购确认单
-        const [rows] = await pool.query(
-          'SELECT id FROM purchase_confirmations WHERE reimbursement_sp_no = ?',
-          [spNo]
-        );
-        if (rows.length > 0) {
-          let reimburseStatus = 'processing';
-          let status = 'reimbursing';
-          if (spStatus === 2) {
-            reimburseStatus = 'approved';
-            status = 'reimbursed';
-          } else if (spStatus === 3) {
-            reimburseStatus = 'rejected';
-          }
-          await pool.query(
-            'UPDATE purchase_confirmations SET reimbursement_status = ?, status = ? WHERE reimbursement_sp_no = ?',
-            [reimburseStatus, status, spNo]
-          );
+        const {
+          parseSpStatus,
+          mapPurchaseApproval,
+          mapReimbursement,
+          isApplied,
+          applyFields,
+          writeAlertLog,
+        } = require('../utils/wecom-approval-status');
+
+        const parsedStatus = parseSpStatus(spStatus);
+        if (parsedStatus === null) {
+          // 未知/非法状态：不写任何业务状态，避免把单据改错
+          console.warn(`[企微回调] sp_status 无法识别，跳过写库: spNo=${spNo}, spStatus=${spStatus}`);
         } else {
-          // 再查仓库采购单（包括采购审批和报销审批）
-          const [whRows] = await pool.query(
-            'SELECT id, approval_sp_no, reimbursement_sp_no FROM warehouse_purchases WHERE approval_sp_no = ? OR reimbursement_sp_no = ?',
-            [spNo, spNo]
+          // 先查食材采购确认单（只涉及报销审批）
+          const [rows] = await pool.query(
+            'SELECT id, status, reimbursement_status FROM purchase_confirmations WHERE reimbursement_sp_no = ?',
+            [spNo]
           );
-          if (whRows.length > 0) {
-            const wh = whRows[0];
-            if (wh.approval_sp_no === spNo) {
-              // 采购审批状态变更
-              let approvalStatus = 'pending';
-              let newStatus = 'pending_approval';
-              if (spStatus === 2) {
-                approvalStatus = 'approved';
-                newStatus = 'approved';
-              } else if (spStatus === 3) {
-                approvalStatus = 'rejected';
-                newStatus = 'rejected';
-              }
-              await pool.query(
-                'UPDATE warehouse_purchases SET approval_status = ?, status = ? WHERE id = ?',
-                [approvalStatus, newStatus, wh.id]
-              );
+          if (rows.length > 0) {
+            const current = rows[0];
+            const mapping = mapReimbursement(parsedStatus, current);
+            if (mapping && !isApplied(current, mapping.fields)) {
+              await applyFields(pool, 'purchase_confirmations', current.id, mapping.fields);
             }
-            if (wh.reimbursement_sp_no === spNo) {
-              // 报销审批状态变更
-              let reimburseStatus = 'processing';
-              let newStatus = 'reimbursing';
-              if (spStatus === 2) {
-                reimburseStatus = 'approved';
-                newStatus = 'reimbursed';
-              } else if (spStatus === 3) {
-                reimburseStatus = 'rejected';
+            if (mapping && mapping.alert && current.reimbursement_status !== 'frozen') {
+              await writeAlertLog(pool, {
+                purchaseId: current.id,
+                spNo,
+                docType: 'purchase_confirmation_reimbursement',
+                spStatus: parsedStatus,
+                message: mapping.message,
+              });
+            }
+          } else {
+            // 再查仓库采购单（包括采购审批和报销审批）
+            const [whRows] = await pool.query(
+              'SELECT id, status, approval_sp_no, approval_status, reimbursement_sp_no, reimbursement_status FROM warehouse_purchases WHERE approval_sp_no = ? OR reimbursement_sp_no = ?',
+              [spNo, spNo]
+            );
+            if (whRows.length > 0) {
+              const wh = whRows[0];
+              if (wh.approval_sp_no === spNo) {
+                const mapping = mapPurchaseApproval(parsedStatus);
+                if (mapping && !isApplied(wh, mapping.fields)) {
+                  await applyFields(pool, 'warehouse_purchases', wh.id, mapping.fields);
+                }
+                if (mapping && mapping.alert && wh.approval_status !== 'frozen') {
+                  await writeAlertLog(pool, {
+                    purchaseId: wh.id,
+                    spNo,
+                    docType: 'warehouse_purchase_approval',
+                    spStatus: parsedStatus,
+                    message: mapping.message,
+                  });
+                }
               }
-              await pool.query(
-                'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ? WHERE id = ?',
-                [reimburseStatus, newStatus, wh.id]
-              );
+              if (wh.reimbursement_sp_no === spNo) {
+                const mapping = mapReimbursement(parsedStatus, wh);
+                if (mapping && !isApplied(wh, mapping.fields)) {
+                  await applyFields(pool, 'warehouse_purchases', wh.id, mapping.fields);
+                }
+                if (mapping && mapping.alert && wh.reimbursement_status !== 'frozen') {
+                  await writeAlertLog(pool, {
+                    purchaseId: wh.id,
+                    spNo,
+                    docType: 'warehouse_purchase_reimbursement',
+                    spStatus: parsedStatus,
+                    message: mapping.message,
+                  });
+                }
+              }
             }
           }
         }

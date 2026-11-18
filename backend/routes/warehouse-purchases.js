@@ -24,6 +24,14 @@ const {
   getApprovalDetail,
   uploadMedia,
 } = require('./wecom');
+const {
+  mapPurchaseApproval,
+  mapReimbursement,
+  mapPrepayApproval,
+  isApplied,
+  applyFields,
+  writeAlertLog,
+} = require('../utils/wecom-approval-status');
 
 // 带超时的 fetch 包装函数
 async function fetchWithTimeout(url, options = {}, timeout = 10000) {
@@ -2378,6 +2386,11 @@ async function refreshWarehousePurchaseCore(row, config) {
     return { ok: true, data: normalizePurchaseRow(row), skipped: true, reason: 'terminal status' };
   }
 
+  // 已冻结（企微 6/7）：禁止自动回退，跳过所有自动刷新，等人工核对
+  if (row.approval_status === 'frozen' || row.reimbursement_status === 'frozen' || row.prepay_status === 'frozen') {
+    return { ok: true, data: normalizePurchaseRow(row), skipped: true, reason: 'approval frozen' };
+  }
+
   if (!config || !config.corp_id || !config.app_secret) {
     return { ok: false, error: '请先完成企业微信应用配置' };
   }
@@ -2387,24 +2400,22 @@ async function refreshWarehousePurchaseCore(row, config) {
     try {
       const detail = await getApprovalDetail(config, row.approval_sp_no);
       const spStatus = detail?.info?.sp_status ?? detail?.sp_status;
-      let newStatus = row.status;
-      let newApprovalStatus = row.approval_status || 'pending';
-      if (spStatus === 1 || spStatus === '1') {
-        newApprovalStatus = 'pending';
-      } else if (spStatus === 2 || spStatus === '2') {
-        newStatus = 'approved';
-        newApprovalStatus = 'approved';
-      } else if (spStatus === 3 || spStatus === '3') {
-        newStatus = 'rejected';
-        newApprovalStatus = 'rejected';
-      } else if (spStatus === 4 || spStatus === '4') {
-        newStatus = 'draft';
-        newApprovalStatus = 'canceled';
+      const mapping = mapPurchaseApproval(spStatus);
+      if (!mapping) {
+        return { ok: true, data: normalizePurchaseRow(row), skipped: true, reason: `unsupported sp_status ${spStatus}` };
       }
-      await pool.query(
-        'UPDATE warehouse_purchases SET status = ?, approval_status = ? WHERE id = ?',
-        [newStatus, newApprovalStatus, row.id]
-      );
+      if (!isApplied(row, mapping.fields)) {
+        await applyFields(pool, 'warehouse_purchases', row.id, mapping.fields);
+      }
+      if (mapping.alert) {
+        await writeAlertLog(pool, {
+          purchaseId: row.id,
+          spNo: row.approval_sp_no,
+          docType: 'warehouse_purchase_approval',
+          spStatus: mapping.spStatus,
+          message: mapping.message,
+        });
+      }
       const [fresh] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [row.id]);
       return { ok: true, data: normalizePurchaseRow(fresh[0]) };
     } catch (err) {
@@ -2418,39 +2429,32 @@ async function refreshWarehousePurchaseCore(row, config) {
       const detail = await getApprovalDetail(config, row.reimbursement_sp_no);
       const info = detail.info || {};
       const spStatus = info.sp_status;
-      let newReimburseStatus = row.reimbursement_status;
-      let newStatus = row.status;
-      let writeoffDone = false;
-      if (spStatus === 2) {
-        newReimburseStatus = 'approved';
-        newStatus = 'reimbursed';
-        if (row.purchase_type === 'prepay' &&
-            (row.writeoff_status === 'manual' || row.writeoff_status === 'reimbursing')) {
-          writeoffDone = true;
-        }
-      } else if (spStatus === 1) {
-        newReimburseStatus = 'processing';
-      } else if (spStatus === 3) {
-        newReimburseStatus = 'rejected';
-        if (row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing') {
-          await pool.query(
-            'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ?, writeoff_status = ? WHERE id = ?',
-            [newReimburseStatus, newStatus, 'manual', row.id]
-          );
-          const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [row.id]);
-          return { ok: true, data: normalizePurchaseRow(freshRows[0]) };
-        }
+      const mapping = mapReimbursement(spStatus, row);
+      if (!mapping) {
+        return { ok: true, data: normalizePurchaseRow(row), skipped: true, reason: `unsupported sp_status ${spStatus}` };
       }
-      if (writeoffDone) {
-        await pool.query(
-          'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ?, writeoff_status = ? WHERE id = ?',
-          [newReimburseStatus, newStatus, 'auto', row.id]
-        );
-      } else {
-        await pool.query(
-          'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ? WHERE id = ?',
-          [newReimburseStatus, newStatus, row.id]
-        );
+
+      const fields = { ...mapping.fields };
+      if (mapping.action === 'approve' && row.purchase_type === 'prepay' &&
+          (row.writeoff_status === 'manual' || row.writeoff_status === 'reimbursing')) {
+        fields.writeoff_status = 'auto';
+      }
+      if ((mapping.action === 'reject' || mapping.action === 'revoke') &&
+          row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing') {
+        fields.writeoff_status = 'manual';
+      }
+
+      if (!isApplied(row, fields)) {
+        await applyFields(pool, 'warehouse_purchases', row.id, fields);
+      }
+      if (mapping.alert) {
+        await writeAlertLog(pool, {
+          purchaseId: row.id,
+          spNo: row.reimbursement_sp_no,
+          docType: 'warehouse_purchase_reimbursement',
+          spStatus: mapping.spStatus,
+          message: mapping.message,
+        });
       }
       const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [row.id]);
       return { ok: true, data: normalizePurchaseRow(freshRows[0]) };
@@ -2464,16 +2468,21 @@ async function refreshWarehousePurchaseCore(row, config) {
     try {
       const detail = await getApprovalDetail(config, row.prepay_sp_no);
       const spStatus = detail?.info?.sp_status ?? detail?.sp_status;
-      let newStatus = row.prepay_status;
-      if (spStatus === 2 || spStatus === '2') {
-        newStatus = 'approved';
-        await pool.query('UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?', [newStatus, row.id]);
-      } else if (spStatus === 3 || spStatus === '3') {
-        newStatus = 'rejected';
-        await pool.query('UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?', [newStatus, row.id]);
-      } else if (spStatus === 4 || spStatus === '4') {
-        newStatus = 'revoked';
-        await pool.query('UPDATE warehouse_purchases SET prepay_status = ? WHERE id = ?', [newStatus, row.id]);
+      const mapping = mapPrepayApproval(spStatus);
+      if (!mapping) {
+        return { ok: true, data: normalizePurchaseRow(row), skipped: true, reason: `unsupported sp_status ${spStatus}` };
+      }
+      if (!isApplied(row, mapping.fields)) {
+        await applyFields(pool, 'warehouse_purchases', row.id, mapping.fields);
+      }
+      if (mapping.alert) {
+        await writeAlertLog(pool, {
+          purchaseId: row.id,
+          spNo: row.prepay_sp_no,
+          docType: 'warehouse_purchase_prepay',
+          spStatus: mapping.spStatus,
+          message: mapping.message,
+        });
       }
       const [freshRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [row.id]);
       return { ok: true, data: normalizePurchaseRow(freshRows[0]) };
@@ -2590,6 +2599,30 @@ router.post('/batch-refresh-status', requireAuth, async (req, res) => {
   }
 });
 
+// 5.4. POST /admin/reconcile-approvals — 管理员一键对账
+// 入参: { dry_run?: boolean }  默认 true（只预览差异，不写库）
+// 权限: 服务端校验 req.user.roles 包含 admin
+router.post('/admin/reconcile-approvals', requireAuth, async (req, res) => {
+  try {
+    const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+    if (!roles.includes('admin')) {
+      return res.status(403).json({ error: '仅管理员可执行审批对账' });
+    }
+
+    const dryRun = req.body?.dry_run !== false;
+    const { reconcileApprovals } = require('../utils/warehouse-approval-reconcile');
+    const result = await reconcileApprovals({ dryRun });
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('审批对账失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 5.5. POST /:id/refresh-approval — 刷新采购审批状态
 router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
   try {
@@ -2599,6 +2632,10 @@ router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
     const row = rows[0];
     if (!row.approval_sp_no) {
       return res.status(400).json({ error: '该采购单未发起审批' });
+    }
+    // 已冻结（企微 6/7）不允许自动回退，需人工核对后处理
+    if (row.approval_status === 'frozen') {
+      return res.json(normalizePurchaseRow(row));
     }
 
     const config = await getWecomConfig();
@@ -2611,32 +2648,30 @@ router.post('/:id/refresh-approval', requireAuth, async (req, res) => {
     // 企微API返回结构: { errcode, errmsg, info: { sp_status, ... } }
     const spStatus = detail?.info?.sp_status ?? detail?.sp_status;
     console.log(`[刷新采购审批] sp_status=${spStatus} (类型: ${typeof spStatus})`);
-    // sp_status: 1=审批中，2=已通过，3=已驳回，4=已撤销
+    // sp_status: 1=审批中，2=已通过，3=已驳回，4=已撤销，6=通过后撤销，7=已删除
 
-    let newStatus = row.status;
-    let newApprovalStatus = row.approval_status || 'pending';
-
-    if (spStatus === 1 || spStatus === '1') {
-      newApprovalStatus = 'pending';
-    } else if (spStatus === 2 || spStatus === '2') {
-      // 采购审批通过：预付款订单也走完整收货流程，统一设为 approved
-      newStatus = 'approved';
-      newApprovalStatus = 'approved';
-    } else if (spStatus === 3 || spStatus === '3') {
-      newStatus = 'rejected';
-      newApprovalStatus = 'rejected';
-    } else if (spStatus === 4 || spStatus === '4') {
-      newStatus = 'draft';
-      newApprovalStatus = 'canceled';
+    const mapping = mapPurchaseApproval(spStatus);
+    if (!mapping) {
+      // 解析失败/未知状态：不写库，原样返回
+      console.warn(`[刷新采购审批] sp_status 无法识别，跳过写库: ${spStatus}`);
+      return res.json(normalizePurchaseRow(row));
     }
 
-    await pool.query(
-      'UPDATE warehouse_purchases SET status = ?, approval_status = ? WHERE id = ?',
-      [newStatus, newApprovalStatus, id]
-    );
+    if (!isApplied(row, mapping.fields)) {
+      await applyFields(pool, 'warehouse_purchases', id, mapping.fields);
+    }
+    if (mapping.alert && row.approval_status !== 'frozen') {
+      await writeAlertLog(pool, {
+        purchaseId: id,
+        spNo: row.approval_sp_no,
+        docType: 'warehouse_purchase_approval',
+        spStatus: mapping.spStatus,
+        message: mapping.message,
+      });
+    }
 
     const [fresh] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
-    console.log(`[刷新采购审批] ${id}: spStatus=${spStatus} -> status=${newStatus}, approval=${newApprovalStatus}`);
+    console.log(`[刷新采购审批] ${id}: spStatus=${spStatus} -> ${JSON.stringify(mapping.fields)}`);
     res.json(normalizePurchaseRow(fresh[0]));
   } catch (err) {
     console.error('刷新采购审批状态失败:', err);
@@ -3311,6 +3346,14 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
     }
     const row = rows[0];
 
+    // 已冻结（企微 6/7）：禁止自动回退，原样返回
+    if (row.reimbursement_status === 'frozen') {
+      return res.json({
+        ...normalizePurchaseRow(row),
+        warning: '审批异常已冻结，请联系财务人工核对',
+      });
+    }
+
     // 如果订单还在确认中，没有报销单号，直接返回最新数据（用于刷新确认进度）
     if (row.status === 'confirming' && !row.reimbursement_sp_no) {
       const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
@@ -3341,34 +3384,26 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
       return res.status(500).json({ error: `查询审批状态失败：${detailErr.message}` });
     }
 
-    let newReimburseStatus = row.reimbursement_status;
-    let newStatus = row.status;
-    let writeoffDone = false;
-    if (spStatus === 2) {
-      newReimburseStatus = 'approved';
-      newStatus = 'reimbursed';
-      // 预付款少付尾款报销通过后，标记核销完成
-      if ((row.purchase_type === 'prepay' && row.writeoff_status === 'manual') ||
-          (row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing')) {
-        writeoffDone = true;
-      }
-    } else if (spStatus === 1) {
-      newReimburseStatus = 'processing';
-    } else if (spStatus === 3) {
-      newReimburseStatus = 'rejected';
-      // 预付款尾款报销被拒绝时，恢复 writeoff_status 以便重新发起
-      if (row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing') {
-        await pool.query(
-          'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ?, writeoff_status = ? WHERE id = ?',
-          [newReimburseStatus, newStatus, 'manual', id]
-        );
-        const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
-        res.json({
-          ...normalizePurchaseRow(updatedRows[0]),
-          ...{ reimbursement_sp_no: row.reimbursement_sp_no }
-        });
-        return;
-      }
+    const mapping = mapReimbursement(spStatus, row);
+    if (!mapping) {
+      // 解析失败 / 未知状态：一律不写库
+      return res.json({
+        ...normalizePurchaseRow(row),
+        sp_status: spStatus,
+        warning: `企微审批状态 ${spStatus ?? '未知'} 暂不支持自动同步，本单状态未修改`,
+      });
+    }
+
+    const fields = { ...mapping.fields };
+    // 预付款尾款报销通过后，标记核销完成
+    if (mapping.action === 'approve' && row.purchase_type === 'prepay' &&
+        (row.writeoff_status === 'manual' || row.writeoff_status === 'reimbursing')) {
+      fields.writeoff_status = 'auto';
+    }
+    // 报销被驳回或撤销后，恢复 writeoff_status 以便重新发起
+    if ((mapping.action === 'reject' || mapping.action === 'revoke') &&
+        row.purchase_type === 'prepay' && row.writeoff_status === 'reimbursing') {
+      fields.writeoff_status = 'manual';
     }
 
     let latestApprover = null;
@@ -3379,16 +3414,17 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
       }
     }
 
-    if (writeoffDone) {
-      await pool.query(
-        'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ?, writeoff_status = ? WHERE id = ?',
-        [newReimburseStatus, newStatus, 'auto', id]
-      );
-    } else {
-      await pool.query(
-        'UPDATE warehouse_purchases SET reimbursement_status = ?, status = ? WHERE id = ?',
-        [newReimburseStatus, newStatus, id]
-      );
+    if (!isApplied(row, fields)) {
+      await applyFields(pool, 'warehouse_purchases', id, fields);
+    }
+    if (mapping.alert) {
+      await writeAlertLog(pool, {
+        purchaseId: id,
+        spNo: row.reimbursement_sp_no,
+        docType: 'warehouse_purchase_reimbursement',
+        spStatus: mapping.spStatus,
+        message: mapping.message,
+      });
     }
 
     const [updatedRows] = await pool.query('SELECT * FROM warehouse_purchases WHERE id = ?', [id]);
@@ -3396,6 +3432,7 @@ router.post('/:id/refresh-status', requireAuth, async (req, res) => {
       ...normalizePurchaseRow(updatedRows[0]),
       sp_status: spStatus,
       latest_approver: latestApprover,
+      ...(mapping.frozen ? { warning: mapping.message } : {}),
     });
   } catch (err) {
     console.error('刷新仓库采购报销状态失败:', err);
@@ -3412,11 +3449,12 @@ router.post('/:id/resubmit', requireAuth, async (req, res) => {
       return res.status(404).json({ error: '采购单不存在' });
     }
     const row = rows[0];
-    // 允许两种场景：1) 首次发起报销（status=confirmed 且无 reimbursement_sp_no）；2) 报销被拒绝后重新发起
+    // 允许两种场景：1) 首次发起报销（status=confirmed 且无 reimbursement_sp_no）；
+    // 2) 报销被驳回/被撤销后重新发起（frozen 为异常冻结，禁止重发）
     const isFirstTime = row.status === 'confirmed' && !row.reimbursement_sp_no;
-    const isResubmit = row.reimbursement_status === 'rejected';
+    const isResubmit = row.reimbursement_status === 'rejected' || row.reimbursement_status === 'revoked';
     if (!isFirstTime && !isResubmit) {
-      return res.status(400).json({ error: '只有已确认未报销或报销被拒绝的采购单可以发起报销' });
+      return res.status(400).json({ error: '只有已确认未报销或报销被驳回/撤销的采购单可以发起报销' });
     }
 
     const [itemRows] = await pool.query(
